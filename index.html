@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>12-Factor Agents - Interactive Explorer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 3em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            font-size: 1.2em;
+            opacity: 0.9;
+            margin-bottom: 20px;
+        }
+
+        .factors-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .factor-card {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .factor-card:hover {
+            transform: translateY(-5px);
+            background: rgba(255, 255, 255, 0.25);
+            border-color: rgba(255, 255, 255, 0.5);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        .factor-number {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #ffd700;
+        }
+
+        .factor-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .factor-summary {
+            font-size: 0.95em;
+            line-height: 1.5;
+            opacity: 0.9;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: #fff;
+            color: #333;
+            max-width: 900px;
+            width: 100%;
+            border-radius: 20px;
+            padding: 40px;
+            position: relative;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 2em;
+            cursor: pointer;
+            color: #666;
+            transition: color 0.3s;
+        }
+
+        .close-btn:hover {
+            color: #000;
+        }
+
+        .modal-header {
+            margin-bottom: 30px;
+        }
+
+        .modal-factor-number {
+            font-size: 4em;
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        .modal-title {
+            font-size: 2.5em;
+            margin: 10px 0;
+            color: #333;
+        }
+
+        .modal-body {
+            line-height: 1.8;
+        }
+
+        .principle-box {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+
+        .example-box {
+            background: #e7f3ff;
+            border-left: 4px solid #0066cc;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+
+        .benefits-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .benefits-list li {
+            padding: 10px 0;
+            padding-left: 30px;
+            position: relative;
+        }
+
+        .benefits-list li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #28a745;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            padding: 20px;
+            opacity: 0.8;
+        }
+
+        footer a {
+            color: #fff;
+            text-decoration: none;
+            border-bottom: 1px solid #fff;
+        }
+
+        footer a:hover {
+            border-bottom: 2px solid #fff;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2em;
+            }
+
+            .modal-content {
+                padding: 20px;
+            }
+
+            .modal-factor-number {
+                font-size: 2.5em;
+            }
+
+            .modal-title {
+                font-size: 1.8em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>12-Factor Agents</h1>
+            <p class="subtitle">Principles for Building Reliable LLM Applications</p>
+            <p>Click any factor to explore in detail</p>
+        </header>
+
+        <div class="factors-grid" id="factorsGrid"></div>
+
+        <footer>
+            <p>Based on <a href="https://github.com/humanlayer/12-factor-agents" target="_blank">12-Factor Agents</a> by HumanLayer</p>
+            <p style="margin-top: 10px; font-size: 0.9em;">Interactive Explorer - Understanding Agent Design Patterns</p>
+        </footer>
+    </div>
+
+    <div class="modal" id="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal()">&times;</span>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+
+    <script>
+        const factors = [
+            {
+                number: 1,
+                title: "Natural Language to Tool Calls",
+                summary: "Transform natural language into structured tool calls",
+                principle: "Agents should bridge the gap between human intent and machine execution through structured tool calling.",
+                description: "The first factor emphasizes that LLMs should serve as a translation layer between natural language and structured tool calls. Rather than trying to parse free-form text, design your agents to output structured JSON that can be executed deterministically.",
+                example: "Instead of: 'Send an email to John about the meeting'\nBetter: LLM outputs {\"tool\": \"send_email\", \"to\": \"john@example.com\", \"subject\": \"Meeting Update\", \"body\": \"...\"}",
+                benefits: ["Deterministic execution", "Easier testing", "Better error handling", "Clear audit trail"]
+            },
+            {
+                number: 2,
+                title: "Own Your Prompts",
+                summary: "Maintain control over your prompt templates",
+                principle: "Never surrender control of your prompts to frameworks or abstractions.",
+                description: "Your prompts are the core logic of your agent. Frameworks that hide prompt construction behind abstractions make it impossible to debug, optimize, or understand your agent's behavior.",
+                example: "Bad: Using framework's default agent prompt\nGood: Explicitly defining system prompts, role definitions, and tool descriptions in version control",
+                benefits: ["Version control your logic", "Easier debugging", "Framework independence", "Fine-grained optimization"]
+            },
+            {
+                number: 3,
+                title: "Own Your Context Window",
+                summary: "Actively manage what goes into your context",
+                principle: "Context window management is critical - don't let frameworks decide for you.",
+                description: "The context window is your agent's working memory. You should explicitly control what information is included, in what format, and how it's prioritized. This includes conversation history, tool outputs, and state information.",
+                example: "Implement custom context building:\n- Summarize old messages\n- Prioritize recent relevant information\n- Compress tool outputs\n- Include only necessary state",
+                benefits: ["Better token efficiency", "Improved accuracy", "Lower costs", "Consistent behavior"]
+            },
+            {
+                number: 4,
+                title: "Tools are Just Structured Outputs",
+                summary: "Think of tools as structured outputs, not magic",
+                principle: "Tool calling is just structured output generation with a clear contract.",
+                description: "Tools are not special - they're just a way to get the LLM to output structured JSON that your code can execute. The power comes from the execution layer, not the LLM magic.",
+                example: "Tool definition is just JSON Schema:\n{\n  \"name\": \"search_database\",\n  \"parameters\": {\n    \"query\": \"string\",\n    \"limit\": \"number\"\n  }\n}",
+                benefits: ["Clear interfaces", "Type safety", "Easy to test", "Language agnostic"]
+            },
+            {
+                number: 5,
+                title: "Unify Execution State and Business State",
+                summary: "Combine agent execution state with business logic state",
+                principle: "Don't separate agent state from application state.",
+                description: "Your agent's execution state (conversation history, tool calls, etc.) should be stored alongside your business state. This enables resumability, debugging, and audit trails.",
+                example: "Store everything in one place:\n{\n  \"conversation\": [...],\n  \"tool_calls\": [...],\n  \"business_data\": {...},\n  \"metadata\": {...}\n}",
+                benefits: ["Single source of truth", "Easy to resume", "Complete audit trail", "Simpler architecture"]
+            },
+            {
+                number: 6,
+                title: "Launch/Pause/Resume with Simple APIs",
+                summary: "Design agents to be long-running but pausable",
+                principle: "Agents should support long-running operations with simple pause/resume semantics.",
+                description: "Real-world agents often need to wait for external events (human approval, API callbacks, etc.). Design your agent with simple APIs to pause and resume execution.",
+                example: "Simple state machine:\nPOST /agents/start\nPOST /agents/{id}/pause\nPOST /agents/{id}/resume\nGET /agents/{id}/status",
+                benefits: ["Handle long-running tasks", "Support human-in-the-loop", "Better resource management", "Resumable workflows"]
+            },
+            {
+                number: 7,
+                title: "Contact Humans with Tool Calls",
+                summary: "Treat human interaction as a special type of tool",
+                principle: "Reaching out to humans should be just another tool call.",
+                description: "When an agent needs human input or approval, treat it like any other tool call. This creates a consistent interface and makes human-in-the-loop patterns natural.",
+                example: "Tool for human contact:\n{\n  \"tool\": \"request_human_approval\",\n  \"message\": \"Should I proceed with X?\",\n  \"options\": [\"yes\", \"no\", \"modify\"]\n}",
+                benefits: ["Consistent interface", "Natural human-in-the-loop", "Easy to test", "Clear audit trail"]
+            },
+            {
+                number: 8,
+                title: "Own Your Control Flow",
+                summary: "Maintain explicit control over agent flow",
+                principle: "Don't let the LLM make all control flow decisions - be explicit about your agent's behavior.",
+                description: "While LLMs can make decisions, your application should have clear rules about when to call the LLM, what to do with its output, and when to handle things deterministically.",
+                example: "Explicit flow control:\nif (confidence > 0.9) {\n  execute_action()\n} else {\n  request_human_review()\n}",
+                benefits: ["Predictable behavior", "Easier debugging", "Better error handling", "Clear boundaries"]
+            },
+            {
+                number: 9,
+                title: "Compact Errors into Context Window",
+                summary: "Intelligently compress error information",
+                principle: "Don't overwhelm the context window with raw error messages.",
+                description: "When errors occur, compress them into useful summaries rather than dumping stack traces. This helps the agent recover without wasting tokens.",
+                example: "Instead of: Full stack trace\nUse: \"API call failed after 3 retries. Error: Rate limit exceeded. Suggested action: Wait 60 seconds or reduce request frequency.\"",
+                benefits: ["Better token efficiency", "Improved recovery", "Clearer context", "Faster debugging"]
+            },
+            {
+                number: 10,
+                title: "Small, Focused Agents",
+                summary: "Build specialized agents over general-purpose ones",
+                principle: "Small, specialized agents outperform large, general-purpose ones.",
+                description: "Instead of building one agent that does everything, create multiple focused agents that each handle a specific domain or task well.",
+                example: "Instead of: One 'universal assistant'\nBetter: EmailAgent, CalendarAgent, SearchAgent, each optimized for their domain",
+                benefits: ["Better accuracy", "Easier to test", "Clearer scope", "More maintainable"]
+            },
+            {
+                number: 11,
+                title: "Trigger from Anywhere",
+                summary: "Design agents to be triggered from multiple sources",
+                principle: "Agents should be able to receive triggers from various sources - webhooks, cron jobs, messages, etc.",
+                description: "Don't limit your agent to one interface. Design it to be triggered from web apps, APIs, chat interfaces, scheduled jobs, or any other source.",
+                example: "Unified trigger interface:\n- Web app: User clicks button\n- API: POST request\n- Chat: @mention\n- Cron: Scheduled time\nAll trigger the same agent logic",
+                benefits: ["Flexible deployment", "Multiple interfaces", "Better integration", "Reusable logic"]
+            },
+            {
+                number: 12,
+                title: "Make Your Agent a Stateless Reducer",
+                summary: "Design agents as stateless functions with explicit state",
+                principle: "Agents should be pure functions that take state + event and return new state.",
+                description: "Treat your agent as a stateless reducer (like Redux). It takes the current state and an event, and returns the new state. This makes agents easier to test, debug, and scale.",
+                example: "Stateless reducer pattern:\nfunction agentReducer(state, event) {\n  const newState = processEvent(state, event)\n  return newState\n}\n// State is stored externally",
+                benefits: ["Easy to test", "Horizontally scalable", "Clear debugging", "Time-travel debugging"]
+            }
+        ];
+
+        // Render factors grid
+        const grid = document.getElementById('factorsGrid');
+        factors.forEach(factor => {
+            const card = document.createElement('div');
+            card.className = 'factor-card';
+            card.onclick = () => openModal(factor);
+            card.innerHTML = `
+                <div class="factor-number">${factor.number}</div>
+                <div class="factor-title">${factor.title}</div>
+                <div class="factor-summary">${factor.summary}</div>
+            `;
+            grid.appendChild(card);
+        });
+
+        function openModal(factor) {
+            const modalBody = document.getElementById('modalBody');
+            modalBody.innerHTML = `
+                <div class="modal-header">
+                    <div class="modal-factor-number">Factor ${factor.number}</div>
+                    <h2 class="modal-title">${factor.title}</h2>
+                </div>
+                <div class="modal-body">
+                    <div class="principle-box">
+                        <strong>Core Principle:</strong>
+                        <p style="margin-top: 10px; font-size: 1.1em;">${factor.principle}</p>
+                    </div>
+
+                    <h3 style="margin: 20px 0 10px 0; color: #667eea;">Description</h3>
+                    <p>${factor.description}</p>
+
+                    <div class="example-box">
+                        <strong>Example:</strong>
+                        <pre style="margin-top: 10px; white-space: pre-wrap; background: #f5f5f5; padding: 15px; border-radius: 5px;">${factor.example}</pre>
+                    </div>
+
+                    <h3 style="margin: 20px 0 10px 0; color: #667eea;">Benefits</h3>
+                    <ul class="benefits-list">
+                        ${factor.benefits.map(b => `<li>${b}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
+            document.getElementById('modal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.remove('active');
+        }
+
+        // Close modal on outside click
+        document.getElementById('modal').addEventListener('click', (e) => {
+            if (e.target.id === 'modal') {
+                closeModal();
+            }
+        });
+
+        // Close modal on escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+    </script>
+</body>
+</html>
