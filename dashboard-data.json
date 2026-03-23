@@ -1,0 +1,122 @@
+{
+  "lastUpdated": "2026-03-24T06:00:00+08:00",
+  "lastUpdatedUTC": "2026-03-23T22:00:00Z",
+  "cronJobs": [
+    {
+      "id": "f38e0365-7bbf-46fd-bab7-14d51a5d4df0",
+      "name": "dashboard-update-morning",
+      "schedule": "0 6 * * *",
+      "next": "1d",
+      "last": "1d ago",
+      "status": "running"
+    },
+    {
+      "id": "610a8d6d-faba-40c2-945c-9ba8472c4839",
+      "name": "github-creative-evening",
+      "schedule": "0 19 * * *",
+      "next": "in 13h",
+      "last": "11h ago",
+      "status": "ok"
+    },
+    {
+      "id": "265091b6-6c5f-4afb-8485-7108945fe1f7",
+      "name": "deep-exploration-evening",
+      "schedule": "0 20 * * *",
+      "next": "in 14h",
+      "last": "10h ago",
+      "status": "ok"
+    },
+    {
+      "id": "13a2f284-a1ed-4394-979a-5392fbdf50f7",
+      "name": "code-lab-evening",
+      "schedule": "0 21 * * *",
+      "next": "in 15h",
+      "last": "9h ago",
+      "status": "ok"
+    },
+    {
+      "id": "ce2fb615-132a-4c40-864f-86de27bea24c",
+      "name": "tool-development-evening",
+      "schedule": "0 22 * * *",
+      "next": "in 16h",
+      "last": "8h ago",
+      "status": "ok"
+    },
+    {
+      "id": "78eac6fc-c2d7-41d2-a5d1-9a52892f89ab",
+      "name": "key-development-1",
+      "schedule": "0 23 * * *",
+      "next": "in 17h",
+      "last": "7h ago",
+      "status": "ok"
+    },
+    {
+      "id": "88679f9e-ba09-4e1a-8dbd-a2dc12808544",
+      "name": "key-development-2",
+      "schedule": "0 0 * * *",
+      "next": "in 18h",
+      "last": "6h ago",
+      "status": "ok"
+    },
+    {
+      "id": "b0fd7e8d-f946-4228-bb85-1baaa3502c7c",
+      "name": "key-development-3",
+      "schedule": "0 1 * * *",
+      "next": "in 19h",
+      "last": "5h ago",
+      "status": "ok"
+    },
+    {
+      "id": "fd0515b0-f483-411d-b110-3a16fbc49983",
+      "name": "knowledge-organization",
+      "schedule": "0 2 * * *",
+      "next": "in 20h",
+      "last": "4h ago",
+      "status": "ok"
+    },
+    {
+      "id": "f7510f1f-9db8-46e7-8019-3c9a4858db2e",
+      "name": "project-testing-morning",
+      "schedule": "0 3 * * *",
+      "next": "in 21h",
+      "last": "3h ago",
+      "status": "ok"
+    },
+    {
+      "id": "77a5bcc6-1342-4ff4-836a-f640973006dc",
+      "name": "documentation-morning",
+      "schedule": "0 4 * * *",
+      "next": "in 22h",
+      "last": "2h ago",
+      "status": "ok"
+    },
+    {
+      "id": "686ec55c-17ca-43a9-9977-65a3c320ec3a",
+      "name": "essay-generation-morning",
+      "schedule": "0 5 * * *",
+      "next": "in 23h",
+      "last": "1h ago",
+      "status": "ok"
+    }
+  ],
+  "sessions": {
+    "total": 37,
+    "active": {
+      "recent24h": 26,
+      "recent7d": 37
+    },
+    "models": {
+      "glm-5": 37
+    },
+    "types": {
+      "direct": 36,
+      "group": 1
+    }
+  },
+  "systemHealth": {
+    "status": "healthy",
+    "cronJobsRunning": 12,
+    "cronJobsOk": 11,
+    "uptime": "stable"
+  }
+}
