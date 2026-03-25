@@ -51,6 +51,91 @@
     └── procedural/            # 过程记忆
 ```
 
+## 🏗️ 系统架构
+
+### 整体架构图
+
+```mermaid
+graph TB
+    subgraph "工作区层"
+        A[文档系统]
+        B[配置管理]
+        C[记忆系统]
+    end
+    
+    subgraph "项目层"
+        D[Agent Task CLI<br/>任务编排]
+        E[Local Embedding<br/>语义搜索]
+        F[Agent Trust Network<br/>信任评估]
+    end
+    
+    subgraph "技能层"
+        G[财经技能]
+        H[记忆管理]
+        I[开发工具]
+    end
+    
+    A --> D
+    A --> E
+    A --> F
+    B --> D
+    B --> E
+    B --> F
+    C --> E
+    D --> G
+    E --> H
+    F --> I
+    
+    style A fill:#e1f5ff
+    style D fill:#fff4e6
+    style E fill:#e8f5e9
+    style F fill:#f3e5f5
+```
+
+### 数据流架构
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant CLI as Agent Task CLI
+    participant Memory as Embedding Memory
+    participant Trust as Trust Network
+    
+    User->>CLI: 提交任务
+    CLI->>Memory: 查询相关记忆
+    Memory-->>CLI: 返回语义上下文
+    CLI->>Trust: 验证 Agent 可信度
+    Trust-->>CLI: 返回信任分数
+    CLI->>CLI: 执行任务编排
+    CLI-->>User: 返回结果
+    
+    Note over Memory: 本地嵌入模型
+    Note over Trust: PageRank 算法
+```
+
+### 技能调用流程
+
+```mermaid
+graph LR
+    A[用户请求] --> B{技能路由}
+    B -->|财经查询| C[akshare-finance]
+    B -->|记忆管理| D[memory-manager]
+    B -->|新闻聚合| E[finance-news-pro]
+    
+    C --> F[返回财经数据]
+    D --> G[更新记忆文件]
+    E --> H[聚合新闻内容]
+    
+    F --> I[结果整合]
+    G --> I
+    H --> I
+    
+    I --> J[用户响应]
+    
+    style B fill:#ffe0b2
+    style I fill:#c8e6c9
+```
+
 ## 🚀 快速开始（5 分钟）
 
 ### 1. 选择你的路径
