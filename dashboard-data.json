@@ -1,6 +1,6 @@
 {
-  "lastUpdated": "2026-03-25T06:00:00+08:00",
-  "generatedAt": "2026-03-24T22:00:00Z",
+  "timestamp": "2026-03-26T06:00:00+08:00",
+  "generatedAt": "2026-03-25T22:00:00Z",
   "cronJobs": [
     {
       "id": "f38e0365-7bbf-46fd-bab7-14d51a5d4df0",
@@ -8,7 +8,8 @@
       "schedule": "0 6 * * *",
       "status": "running",
       "lastRun": "1d ago",
-      "nextRun": "<1m ago"
+      "nextRun": "<1m ago",
+      "target": "isolated"
     },
     {
       "id": "610a8d6d-faba-40c2-945c-9ba8472c4839",
@@ -16,7 +17,8 @@
       "schedule": "0 19 * * *",
       "status": "ok",
       "lastRun": "11h ago",
-      "nextRun": "in 13h"
+      "nextRun": "in 13h",
+      "target": "isolated"
     },
     {
       "id": "265091b6-6c5f-4afb-8485-7108945fe1f7",
@@ -24,7 +26,8 @@
       "schedule": "0 20 * * *",
       "status": "ok",
       "lastRun": "10h ago",
-      "nextRun": "in 14h"
+      "nextRun": "in 14h",
+      "target": "isolated"
     },
     {
       "id": "13a2f284-a1ed-4394-979a-5392fbdf50f7",
@@ -32,15 +35,17 @@
       "schedule": "0 21 * * *",
       "status": "ok",
       "lastRun": "9h ago",
-      "nextRun": "in 15h"
+      "nextRun": "in 15h",
+      "target": "isolated"
     },
     {
       "id": "ce2fb615-132a-4c40-864f-86de27bea24c",
       "name": "tool-development-evening",
       "schedule": "0 22 * * *",
-      "status": "error",
+      "status": "ok",
       "lastRun": "8h ago",
-      "nextRun": "in 16h"
+      "nextRun": "in 16h",
+      "target": "isolated"
     },
     {
       "id": "78eac6fc-c2d7-41d2-a5d1-9a52892f89ab",
@@ -48,7 +53,8 @@
       "schedule": "0 23 * * *",
       "status": "ok",
       "lastRun": "7h ago",
-      "nextRun": "in 17h"
+      "nextRun": "in 17h",
+      "target": "isolated"
     },
     {
       "id": "88679f9e-ba09-4e1a-8dbd-a2dc12808544",
@@ -56,7 +62,8 @@
       "schedule": "0 0 * * *",
       "status": "ok",
       "lastRun": "6h ago",
-      "nextRun": "in 18h"
+      "nextRun": "in 18h",
+      "target": "isolated"
     },
     {
       "id": "b0fd7e8d-f946-4228-bb85-1baaa3502c7c",
@@ -64,7 +71,8 @@
       "schedule": "0 1 * * *",
       "status": "ok",
       "lastRun": "5h ago",
-      "nextRun": "in 19h"
+      "nextRun": "in 19h",
+      "target": "isolated"
     },
     {
       "id": "fd0515b0-f483-411d-b110-3a16fbc49983",
@@ -72,7 +80,8 @@
       "schedule": "0 2 * * *",
       "status": "ok",
       "lastRun": "4h ago",
-      "nextRun": "in 20h"
+      "nextRun": "in 20h",
+      "target": "isolated"
     },
     {
       "id": "f7510f1f-9db8-46e7-8019-3c9a4858db2e",
@@ -80,7 +89,8 @@
       "schedule": "0 3 * * *",
       "status": "ok",
       "lastRun": "3h ago",
-      "nextRun": "in 21h"
+      "nextRun": "in 21h",
+      "target": "isolated"
     },
     {
       "id": "77a5bcc6-1342-4ff4-836a-f640973006dc",
@@ -88,7 +98,8 @@
       "schedule": "0 4 * * *",
       "status": "ok",
       "lastRun": "2h ago",
-      "nextRun": "in 22h"
+      "nextRun": "in 22h",
+      "target": "isolated"
     },
     {
       "id": "686ec55c-17ca-43a9-9977-65a3c320ec3a",
@@ -96,25 +107,57 @@
       "schedule": "0 5 * * *",
       "status": "ok",
       "lastRun": "1h ago",
-      "nextRun": "in 23h"
+      "nextRun": "in 23h",
+      "target": "isolated"
     }
   ],
   "sessions": {
-    "total": 38,
+    "total": 37,
     "recent": [
-      { "key": "agent:main:main", "age": "26m ago", "model": "glm-5", "tokens": "22k/200k (11%)" },
-      { "key": "agent:main:cron:essay-generation", "age": "1h ago", "model": "glm-5", "tokens": "24k/200k (12%)" },
-      { "key": "agent:main:cron:documentation", "age": "2h ago", "model": "glm-5", "tokens": "60k/200k (30%)" },
-      { "key": "agent:main:cron:project-testing", "age": "3h ago", "model": "glm-5", "tokens": "27k/200k (13%)" },
-      { "key": "agent:main:cron:knowledge-org", "age": "4h ago", "model": "glm-5", "tokens": "34k/200k (17%)" }
+      {
+        "key": "agent:main:cron:dashboard-update-morning",
+        "age": "just now",
+        "model": "glm-5",
+        "tokensUsed": "25k/200k",
+        "contextPercent": "12%"
+      },
+      {
+        "key": "agent:main:cron:essay-generation-morning",
+        "age": "1h ago",
+        "model": "glm-5",
+        "tokensUsed": "26k/200k",
+        "contextPercent": "13%"
+      },
+      {
+        "key": "agent:main:cron:documentation-morning",
+        "age": "2h ago",
+        "model": "glm-5",
+        "tokensUsed": "43k/200k",
+        "contextPercent": "22%"
+      },
+      {
+        "key": "agent:main:cron:project-testing-morning",
+        "age": "3h ago",
+        "model": "glm-5",
+        "tokensUsed": "42k/200k",
+        "contextPercent": "21%"
+      },
+      {
+        "key": "agent:main:cron:knowledge-organization",
+        "age": "4h ago",
+        "model": "glm-5",
+        "tokensUsed": "28k/200k",
+        "contextPercent": "14%"
+      }
     ]
   },
   "summary": {
     "cronJobsTotal": 12,
-    "cronJobsOk": 10,
+    "cronJobsHealthy": 11,
     "cronJobsRunning": 1,
-    "cronJobsError": 1,
-    "sessionsActive": 38,
-    "model": "glm-5"
+    "sessionsTotal": 37,
+    "sessionsLast24h": 25,
+    "model": "glm-5",
+    "status": "operational"
   }
 }
