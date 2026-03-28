@@ -1,34 +1,57 @@
 {
-  "timestamp": "2026-03-28T06:00:00.000Z",
-  "localTime": "2026-03-28 14:00:00 +08:00",
+  "timestamp": "2026-03-28T22:00:53.000Z",
+  "localTime": "2026-03-29 06:00:55 +0800",
   "dashboard": {
     "cronStatus": {
       "enabled": true,
       "totalJobs": 13,
-      "nextWakeAtMs": 1774648800000
+      "nextWakeAtMs": 1774735200005,
+      "currentJobRunning": "dashboard-update-morning"
     },
     "sessions": {
       "totalSessions": 39,
-      "directSessions": 37,
+      "directSessions": 38,
       "groupSessions": 1,
+      "modelDistribution": {
+        "glm-5.1": 30,
+        "glm-5": 7,
+        "glm-5-turbo": 1
+      },
       "recentActivity": [
         {
           "kind": "direct",
           "age": "just now",
-          "model": "glm-5",
-          "tokens": "20k/200k (10%)"
-        },
-        {
-          "kind": "direct", 
-          "age": "1m ago",
-          "model": "glm-5",
-          "tokens": "30k/200k (15%)"
+          "model": "glm-5.1",
+          "tokens": "25k/200k (12%)",
+          "key": "agent:main:cron:f38e0365-7bbf-46fd-bab7-14d51a5d4df0"
         },
         {
           "kind": "direct",
-          "age": "1h ago", 
-          "model": "glm-5",
-          "tokens": "40k/200k (20%)"
+          "age": "1m ago", 
+          "model": "glm-5.1",
+          "tokens": "25k/200k (12%)",
+          "key": "agent:main:cron:ae10e5a1-4e8d-4419-a903-7810afc4c319"
+        },
+        {
+          "kind": "direct",
+          "age": "22m ago",
+          "model": "glm-5.1", 
+          "tokens": "21k/205k (10%)",
+          "key": "agent:main:main"
+        },
+        {
+          "kind": "direct",
+          "age": "1h ago",
+          "model": "glm-5.1",
+          "tokens": "34k/205k (17%)",
+          "key": "agent:main:cron:686ec55c-17ca-43a9-9977-65a3c320ec3a"
+        },
+        {
+          "kind": "direct",
+          "age": "1h ago",
+          "model": "glm-5.1",
+          "tokens": "34k/205k (17%)", 
+          "key": "agent:main:cron:fa66d182-c296-46af-8f2e-9930389c28b4"
         }
       ]
     },
@@ -37,40 +60,85 @@
         "id": "f38e0365-7bbf-46fd-bab7-14d51a5d4df0",
         "name": "dashboard-update-morning",
         "schedule": "cron 0 6 * * * (exact)",
-        "next": "<1m ago",
+        "next": "just now",
         "last": "1d ago",
-        "status": "running"
+        "status": "running",
+        "durationMs": 157410,
+        "target": "isolated"
       },
       {
         "id": "610a8d6d-faba-40c2-945c-9ba8472c4839",
-        "name": "github-creative-evening", 
+        "name": "github-creative-evening",
         "schedule": "cron 0 19 * * * (exact)",
         "next": "in 13h",
-        "last": "11h ago",
-        "status": "ok"
+        "last": "11h ago", 
+        "status": "ok",
+        "durationMs": 600983,
+        "target": "isolated"
       },
       {
         "id": "265091b6-6c5f-4afb-8485-7108945fe1f7",
         "name": "deep-exploration-evening",
-        "schedule": "cron 0 20 * * * (exact)", 
+        "schedule": "cron 0 20 * * * (exact)",
         "next": "in 14h",
         "last": "10h ago",
-        "status": "ok"
+        "status": "ok", 
+        "durationMs": 801701,
+        "target": "isolated"
       },
       {
         "id": "bb46cb70-ec67-4790-b98d-bdacf280f2a1",
         "name": "deep-exploration-evening",
         "schedule": "cron 0 12 * * * @ UTC (exact)",
         "next": "in 14h",
-        "last": "10h ago", 
-        "status": "error"
+        "last": "10h ago",
+        "status": "error",
+        "durationMs": 540408,
+        "target": "isolated",
+        "agentId": "main",
+        "error": "Channel is required when multiple channels are configured: feishu, wecom Set delivery.channel explicitly or use a main session with a previous channel."
+      },
+      {
+        "id": "13a2f284-a1ed-4394-979a-5392fbdf50f7",
+        "name": "code-lab-evening",
+        "schedule": "cron 0 21 * * * (exact)",
+        "next": "in 15h", 
+        "last": "9h ago",
+        "status": "ok",
+        "durationMs": 62669,
+        "target": "isolated"
       }
-    ]
+    ],
+    "cronJobSummary": {
+      "bySchedule": {
+        "morning_jobs": 4,
+        "evening_jobs": 3, 
+        "night_jobs": 5,
+        "early_morning_jobs": 1
+      },
+      "byStatus": {
+        "ok": 10,
+        "error": 2,
+        "running": 1
+      },
+      "byTarget": {
+        "isolated": 13
+      }
+    }
   },
   "git": {
     "status": "prepared",
     "action": "push",
     "target": "robertsong2019/robertsong2019.github.io",
-    "branch": "main"
+    "branch": "main",
+    "lastUpdated": "2026-03-28T22:00:53.000Z"
+  },
+  "system": {
+    "uptime": "running",
+    "agentId": "main",
+    "host": "VM-0-5-ubuntu",
+    "os": "Linux 6.8.0-71-generic (x64)",
+    "node": "v22.22.1",
+    "model": "zai/glm-5.1"
   }
 }
