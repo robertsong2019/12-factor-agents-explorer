@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "openclaw": {
+      "command": "node",
+      "args": ["/root/.openclaw/workspace/mcp-server/dist/index.js"],
+      "env": {
+        "OPENCLAW_API_URL": "http://localhost:8080",
+        "OPENCLAW_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}
