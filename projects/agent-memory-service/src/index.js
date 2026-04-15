@@ -998,6 +998,22 @@ export class MemoryService {
   }
 
   /**
+   * Get memories within a time range, sorted by creation date.
+   * @param {{from?: number, to?: number, layer?: MemoryLayer, limit?: number}} opts
+   * @returns {Promise<Memory[]>}
+   */
+  async timeline(opts = {}) {
+    await this.#ensureLoaded();
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+    if (opts.from) memories = memories.filter(m => m.createdAt >= opts.from);
+    if (opts.to) memories = memories.filter(m => m.createdAt <= opts.to);
+    memories.sort((a, b) => b.createdAt - a.createdAt);
+    if (opts.limit) memories = memories.slice(0, opts.limit);
+    return memories;
+  }
+
+  /**
    * Clear all memories
    */
   async clear() {

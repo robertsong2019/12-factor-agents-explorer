@@ -844,6 +844,76 @@ describe('Memory Associations (Links)', () => {
     });
   });
 
+  // ─── Timeline ───────────────────────────────────────
+
+  describe('Timeline', () => {
+    it('returns memories sorted by creation date descending', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'First', layer: 'short' });
+        await svc.add({ content: 'Second', layer: 'short' });
+        await svc.add({ content: 'Third', layer: 'short' });
+
+        const timeline = await svc.timeline();
+        assert.equal(timeline.length, 3);
+        assert.ok(timeline[0].createdAt >= timeline[1].createdAt);
+        assert.ok(timeline[1].createdAt >= timeline[2].createdAt);
+      } finally { cleanup(); }
+    });
+
+    it('filters by time range', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const old = await svc.add({ content: 'Old', layer: 'short' });
+        // Manually set createdAt to past
+        const svcInternal = svc;
+        // We'll use from/to with known timestamps
+        const now = Date.now();
+        const oneDayAgo = now - 86400000;
+        const twoDaysAgo = now - 172800000;
+
+        const recent = await svc.add({ content: 'Recent', layer: 'short' });
+
+        const result = await svc.timeline({ from: oneDayAgo });
+        assert.ok(result.length >= 1);
+        assert.ok(result.every(m => m.createdAt >= oneDayAgo));
+      } finally { cleanup(); }
+    });
+
+    it('filters by layer', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Core', layer: 'core' });
+        await svc.add({ content: 'Short', layer: 'short' });
+        await svc.add({ content: 'Long', layer: 'long' });
+
+        const coreOnly = await svc.timeline({ layer: 'core' });
+        assert.equal(coreOnly.length, 1);
+        assert.equal(coreOnly[0].content, 'Core');
+      } finally { cleanup(); }
+    });
+
+    it('respects limit', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        for (let i = 0; i < 10; i++) {
+          await svc.add({ content: `Memory ${i}`, layer: 'short' });
+        }
+        const limited = await svc.timeline({ limit: 3 });
+        assert.equal(limited.length, 3);
+      } finally { cleanup(); }
+    });
+
+    it('returns empty for range with no memories', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Current', layer: 'short' });
+        const future = await svc.timeline({ from: Date.now() + 100000 });
+        assert.equal(future.length, 0);
+      } finally { cleanup(); }
+    });
+  });
+
   it('all link types are supported', async () => {
     const { svc, cleanup } = createService();
     try {
