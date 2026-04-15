@@ -113,6 +113,43 @@ function ngramSimilarity(a, b) {
   return intersection / union;
 }
 
+// ─── Changelog Store (lightweight append-only change log) ─
+
+class ChangelogStore {
+  /** @type {Array<{ts: number, action: 'add'|'update'|'delete', memoryId: string, layer?: MemoryLayer}>} */
+  #entries = [];
+  #filePath;
+  #dirty = false;
+
+  constructor(dirPath) {
+    this.#filePath = join(dirPath, 'changelog.json');
+  }
+
+  async load() {
+    try {
+      const raw = await readFile(this.#filePath, 'utf-8');
+      this.#entries = JSON.parse(raw);
+    } catch { this.#entries = []; }
+  }
+
+  async save() {
+    if (!this.#dirty) return;
+    await mkdir(dirname(this.#filePath), { recursive: true });
+    await writeFile(this.#filePath, JSON.stringify(this.#entries, null, 2));
+    this.#dirty = false;
+  }
+
+  record(action, memoryId, layer) {
+    this.#entries.push({ ts: now(), action, memoryId, layer });
+    this.#dirty = true;
+  }
+
+  /** Return all entries since a given timestamp */
+  since(ts) {
+    return this.#entries.filter(e => e.ts > ts);
+  }
+}
+
 // ─── Memory Store (JSON file-based) ──────────────────────
 
 class MemoryStore {
@@ -459,6 +496,8 @@ export class MemoryService {
   #store;
   /** @type {LinkStore} */
   #links;
+  /** @type {ChangelogStore} */
+  #changelog;
   /** @type {MemoryExtractor} */
   #extractor;
   /** @type {string} */
@@ -473,6 +512,7 @@ export class MemoryService {
     this.#dirPath = options.dbPath || './data/memory';
     this.#store = new MemoryStore(this.#dirPath);
     this.#links = new LinkStore(this.#dirPath);
+    this.#changelog = new ChangelogStore(this.#dirPath);
     this.#extractor = new MemoryExtractor();
   }
 
@@ -480,6 +520,7 @@ export class MemoryService {
     if (!this.#loaded) {
       await this.#store.load();
       await this.#links.load();
+      await this.#changelog.load();
       this.#loaded = true;
     }
   }
@@ -512,7 +553,9 @@ export class MemoryService {
       hash: contentHash(opts.content),
     };
     this.#store.put(memory);
+    this.#changelog.record('add', id, memory.layer);
     await this.#store.save();
+    await this.#changelog.save();
     return memory;
   }
 
@@ -962,11 +1005,13 @@ export class MemoryService {
       const m = this.#store.get(id);
       if (!m) { notFound++; continue; }
       this.#links.cleanForMemory(id);
+      this.#changelog.record('delete', id, m.layer);
       this.#store.delete(id);
       deleted++;
     }
     await this.#store.save();
     await this.#links.save();
+    await this.#changelog.save();
     return { deleted, notFound };
   }
 
@@ -1014,6 +1059,53 @@ export class MemoryService {
   }
 
   /**
+   * Update an existing memory's content and/or metadata.
+   * Records an 'update' entry in the changelog so changes() can report it.
+   * @param {string} id
+   * @param {{content?: string, tags?: string[], entities?: string[], layer?: MemoryLayer}} opts
+   * @returns {Promise<Memory|null>} null if not found
+   */
+  async update(id, opts = {}) {
+    await this.#ensureLoaded();
+    const m = this.#store.get(id);
+    if (!m) return null;
+
+    if (opts.content !== undefined) {
+      m.content = opts.content;
+      m.hash = contentHash(opts.content);
+    }
+    if (opts.tags !== undefined) m.tags = opts.tags;
+    if (opts.entities !== undefined) m.entities = opts.entities;
+    if (opts.layer !== undefined) m.layer = opts.layer;
+
+    this.#store.put(m); // re-index
+    this.#changelog.record('update', id, m.layer);
+    await this.#store.save();
+    await this.#changelog.save();
+    return m;
+  }
+
+  /**
+   * Compact changelog by removing entries older than `maxAge` ms.
+   * Keeps the store healthy for long-running agents.
+   * @param {{maxAge?: number}} opts — maxAge defaults to 30 days (ms)
+   * @returns {Promise<{removed: number, remaining: number}>}
+   */
+  async compactChangelog(opts = {}) {
+    await this.#ensureLoaded();
+    const maxAge = opts.maxAge ?? 30 * 24 * 60 * 60 * 1000;
+    const cutoff = now() - maxAge;
+    const entries = this.#changelog.since(0);
+    const before = entries.length;
+    const kept = entries.filter(e => e.ts >= cutoff);
+    const filePath = join(this.#dirPath, 'changelog.json');
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, JSON.stringify(kept, null, 2));
+    await this.#changelog.load();
+    return { removed: before - kept.length, remaining: kept.length };
+  }
+
+  /**
    * Clear all memories
    */
   async clear() {
@@ -1021,11 +1113,85 @@ export class MemoryService {
     const all = this.#store.all();
     for (const m of all) {
       this.#links.cleanForMemory(m.id);
+      this.#changelog.record('delete', m.id, m.layer);
       this.#store.delete(m.id);
     }
     await this.#store.save();
     await this.#links.save();
+    await this.#changelog.save();
+  }
+
+  /**
+   * Get incremental changes since a given timestamp.
+   * Returns memories that were added/updated/deleted since `since`.
+   * Useful for cross-session sync — agents can call this to learn what's new.
+   * @param {number} since — Unix timestamp (ms)
+   * @returns {Promise<{added: Memory[], updated: Memory[], deleted: string[], snapshot: {total: number, byLayer: Object}}>}
+   */
+  async changes(since) {
+    await this.#ensureLoaded();
+    const entries = this.#changelog.since(since);
+    const added = [];
+    const updated = [];
+    const deletedIds = new Set();
+    const seenAdded = new Set();
+
+    for (const entry of entries) {
+      if (entry.action === 'delete') {
+        deletedIds.add(entry.memoryId);
+        // If it was added then deleted in the same window, skip it from added
+        seenAdded.delete(entry.memoryId);
+      } else if (entry.action === 'add' && !deletedIds.has(entry.memoryId)) {
+        seenAdded.add(entry.memoryId);
+      }
+    }
+
+    // Populate added memories (still in store)
+    for (const id of seenAdded) {
+      const m = this.#store.get(id);
+      if (m) added.push(m);
+    }
+
+    // Populate updated memories (update action, still in store, not in added)
+    const seenUpdated = new Set();
+    for (const entry of entries) {
+      if (entry.action === 'update' && !seenAdded.has(entry.memoryId) && !seenUpdated.has(entry.memoryId)) {
+        const m = this.#store.get(entry.memoryId);
+        if (m) { updated.push(m); seenUpdated.add(entry.memoryId); }
+      }
+    }
+
+    const allMemories = this.#store.all();
+    const byLayer = { core: 0, long: 0, short: 0 };
+    for (const m of allMemories) byLayer[m.layer]++;
+
+    return {
+      added,
+      updated,
+      deleted: [...deletedIds],
+      snapshot: { total: allMemories.length, byLayer },
+    };
+  }
+
+  /**
+   * Return memory statistics for self-monitoring.
+   * @returns {Promise<{total: number, byLayer: Object, oldestAgeMs: number, changelogEntries: number, links: number}>}
+   */
+  async stats() {
+    await this.#ensureLoaded();
+    const all = this.#store.all();
+    const byLayer = { core: 0, long: 0, short: 0 };
+    for (const m of all) byLayer[m.layer]++;
+    const oldest = all.length ? Math.min(...all.map(m => m.createdAt)) : now();
+    const linkCount = this.#links.stats ? this.#links.stats().totalLinks : 0;
+    return {
+      total: all.length,
+      byLayer,
+      oldestAgeMs: now() - oldest,
+      changelogEntries: this.#changelog.since(0).length,
+      links: linkCount,
+    };
   }
 }
 
-export { MemoryStore, MemoryExtractor, LinkStore, LAYERS, tokenize, ngramSimilarity, keywordScore };
+export { MemoryStore, MemoryExtractor, LinkStore, ChangelogStore, LAYERS, tokenize, ngramSimilarity, keywordScore };

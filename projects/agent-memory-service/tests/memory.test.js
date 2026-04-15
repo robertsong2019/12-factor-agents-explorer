@@ -931,4 +931,148 @@ describe('Memory Associations (Links)', () => {
       assert.ok(links.length >= 1, 'should have at least 1 link for first memory');
     } finally { cleanup(); }
   });
+
+  describe('changes() — incremental change tracking', () => {
+    it('returns empty for timestamp before any changes', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const before = Date.now();
+        await svc.add({ content: 'M1', layer: 'short' });
+        const changes = await svc.changes(before);
+        assert.equal(changes.added.length, 1);
+        assert.equal(changes.updated.length, 0);
+        assert.equal(changes.deleted.length, 0);
+      } finally { cleanup(); }
+    });
+
+    it('tracks added memories', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const ts = Date.now();
+        await svc.add({ content: 'M1', layer: 'short' });
+        await svc.add({ content: 'M2', layer: 'long' });
+        const changes = await svc.changes(ts);
+        assert.equal(changes.added.length, 2);
+        assert.ok(changes.added.some(m => m.content === 'M1'));
+        assert.ok(changes.added.some(m => m.content === 'M2'));
+      } finally { cleanup(); }
+    });
+
+    it('tracks deleted memories', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const ts = Date.now();
+        const m = await svc.add({ content: 'To delete', layer: 'short' });
+        await svc.batchDelete([m.id]);
+        const changes = await svc.changes(ts);
+        assert.equal(changes.added.length, 0); // added then deleted = skip
+        assert.equal(changes.deleted.length, 1);
+        assert.equal(changes.deleted[0], m.id);
+      } finally { cleanup(); }
+    });
+
+    it('includes snapshot with total and byLayer', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'C', layer: 'core' });
+        await svc.add({ content: 'L1', layer: 'long' });
+        await svc.add({ content: 'L2', layer: 'long' });
+        await svc.add({ content: 'S', layer: 'short' });
+        const changes = await svc.changes(0);
+        assert.equal(changes.snapshot.total, 4);
+        assert.equal(changes.snapshot.byLayer.core, 1);
+        assert.equal(changes.snapshot.byLayer.long, 2);
+        assert.equal(changes.snapshot.byLayer.short, 1);
+      } finally { cleanup(); }
+    });
+
+    it('clear() records all deletions in changelog', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const ts = Date.now();
+        await svc.add({ content: 'M1', layer: 'short' });
+        await svc.add({ content: 'M2', layer: 'long' });
+        await svc.clear();
+        const changes = await svc.changes(ts);
+        assert.equal(changes.deleted.length, 2);
+      } finally { cleanup(); }
+    });
+
+    it('update() modifies content and records in changelog', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m = await svc.add({ content: 'original', layer: 'short' });
+        const ts = Date.now();
+        const updated = await svc.update(m.id, { content: 'modified content' });
+        assert.ok(updated);
+        assert.equal(updated.content, 'modified content');
+
+        const changes = await svc.changes(ts);
+        assert.equal(changes.updated.length, 1);
+        assert.equal(changes.updated[0].content, 'modified content');
+        assert.equal(changes.added.length, 0);
+      } finally { cleanup(); }
+    });
+
+    it('update() changes layer', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m = await svc.add({ content: 'layer test', layer: 'short' });
+        const updated = await svc.update(m.id, { layer: 'core' });
+        assert.equal(updated.layer, 'core');
+      } finally { cleanup(); }
+    });
+
+    it('update() returns null for nonexistent memory', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const result = await svc.update('nonexistent', { content: 'x' });
+        assert.equal(result, null);
+      } finally { cleanup(); }
+    });
+
+    it('update() preserves unmodified fields', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m = await svc.add({ content: 'original', layer: 'short', tags: ['a'], entities: ['x'] });
+        await svc.update(m.id, { content: 'new content' });
+        const fetched = await svc.get(m.id);
+        assert.equal(fetched.tags[0], 'a');
+        assert.equal(fetched.entities[0], 'x');
+        assert.equal(fetched.layer, 'short');
+      } finally { cleanup(); }
+    });
+
+    it('compactChangelog removes old entries', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'M1', layer: 'short' });
+        await svc.add({ content: 'M2', layer: 'short' });
+        // Compact with maxAge=0 → removes everything
+        const result = await svc.compactChangelog({ maxAge: 0 });
+        assert.ok(result.removed >= 2);
+        assert.equal(result.remaining, 0);
+        // Changes since epoch should now be empty
+        const changes = await svc.changes(0);
+        assert.equal(changes.added.length, 0);
+        // But memories still exist
+        const stats = await svc.stats();
+        assert.equal(stats.total, 2);
+      } finally { cleanup(); }
+    });
+
+    it('compactChangelog keeps recent entries', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const ts = Date.now();
+        await svc.add({ content: 'M1', layer: 'short' });
+        // Compact with large maxAge → keeps everything
+        const result = await svc.compactChangelog({ maxAge: 999999999 });
+        assert.equal(result.remaining, 1);
+        assert.equal(result.removed, 0);
+        const changes = await svc.changes(ts);
+        assert.equal(changes.added.length, 1);
+      } finally { cleanup(); }
+    });
+  });
 });
