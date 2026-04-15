@@ -962,6 +962,8 @@ describe('Memory Associations (Links)', () => {
       const { svc, cleanup } = createService();
       try {
         const ts = Date.now();
+        // Small delay to ensure ts is strictly before operations
+        await new Promise(r => setTimeout(r, 5));
         const m = await svc.add({ content: 'To delete', layer: 'short' });
         await svc.batchDelete([m.id]);
         const changes = await svc.changes(ts);
@@ -1002,7 +1004,10 @@ describe('Memory Associations (Links)', () => {
       const { svc, cleanup } = createService();
       try {
         const m = await svc.add({ content: 'original', layer: 'short' });
+        await new Promise(r => setTimeout(r, 10));
         const ts = Date.now();
+        // Delay to ensure update happens after ts
+        await new Promise(r => setTimeout(r, 10));
         const updated = await svc.update(m.id, { content: 'modified content' });
         assert.ok(updated);
         assert.equal(updated.content, 'modified content');
@@ -1048,6 +1053,8 @@ describe('Memory Associations (Links)', () => {
       try {
         await svc.add({ content: 'M1', layer: 'short' });
         await svc.add({ content: 'M2', layer: 'short' });
+        // Small delay to ensure entries are older than maxAge=0
+        await new Promise(r => setTimeout(r, 2));
         // Compact with maxAge=0 → removes everything
         const result = await svc.compactChangelog({ maxAge: 0 });
         assert.ok(result.removed >= 2);
@@ -1065,6 +1072,7 @@ describe('Memory Associations (Links)', () => {
       const { svc, cleanup } = createService();
       try {
         const ts = Date.now();
+        await new Promise(r => setTimeout(r, 5));
         await svc.add({ content: 'M1', layer: 'short' });
         // Compact with large maxAge → keeps everything
         const result = await svc.compactChangelog({ maxAge: 999999999 });

@@ -734,6 +734,9 @@ export class MemoryService {
       avgWeight: all.length > 0 ? totalWeight / all.length : 0,
       uniqueTags: tags.size,
       uniqueEntities: entities.size,
+      oldestAgeMs: all.length ? now() - Math.min(...all.map(m => m.createdAt)) : 0,
+      changelogEntries: this.#changelog.since(0).length,
+      links: this.#links.size,
     };
   }
 
@@ -1170,26 +1173,6 @@ export class MemoryService {
       updated,
       deleted: [...deletedIds],
       snapshot: { total: allMemories.length, byLayer },
-    };
-  }
-
-  /**
-   * Return memory statistics for self-monitoring.
-   * @returns {Promise<{total: number, byLayer: Object, oldestAgeMs: number, changelogEntries: number, links: number}>}
-   */
-  async stats() {
-    await this.#ensureLoaded();
-    const all = this.#store.all();
-    const byLayer = { core: 0, long: 0, short: 0 };
-    for (const m of all) byLayer[m.layer]++;
-    const oldest = all.length ? Math.min(...all.map(m => m.createdAt)) : now();
-    const linkCount = this.#links.stats ? this.#links.stats().totalLinks : 0;
-    return {
-      total: all.length,
-      byLayer,
-      oldestAgeMs: now() - oldest,
-      changelogEntries: this.#changelog.since(0).length,
-      links: linkCount,
     };
   }
 }
