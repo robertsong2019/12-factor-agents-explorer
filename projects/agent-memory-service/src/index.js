@@ -144,6 +144,17 @@ class ChangelogStore {
     this.#dirty = true;
   }
 
+  /** Return all entries */
+  all() {
+    return [...this.#entries];
+  }
+
+  /** Replace all entries (for import) */
+  replace(entries) {
+    this.#entries = entries || [];
+    this.#dirty = true;
+  }
+
   /** Return all entries since a given timestamp */
   since(ts) {
     return this.#entries.filter(e => e.ts > ts);
@@ -815,7 +826,7 @@ export class MemoryService {
       uniqueTags: tags.size,
       uniqueEntities: entities.size,
       oldestAgeMs: all.length ? now() - Math.min(...all.map(m => m.createdAt)) : 0,
-      changelogEntries: this.#changelog.since(0).length,
+      changelogEntries: this.#changelog.all().length,
       links: this.#links.size,
     };
   }
@@ -826,6 +837,52 @@ export class MemoryService {
   async export() {
     await this.#ensureLoaded();
     return this.#store.all();
+  }
+
+  /**
+   * Full export: memories + links + changelog for backup
+   * @returns {Promise<{memories: Memory[], links: Link[], changelog: Array, exportedAt: number}>}
+   */
+  async exportAll() {
+    await this.#ensureLoaded();
+    return {
+      memories: this.#store.all(),
+      links: this.#links.all(),
+      changelog: this.#changelog.all(),
+      exportedAt: now(),
+    };
+  }
+
+  /**
+   * Full import: restore from a previous exportAll() backup
+   * Clears existing data before importing.
+   * @param {{memories: Memory[], links: Link[], changelog?: Array}} data
+   * @returns {Promise<{memories: number, links: number}>}
+   */
+  async importAll(data) {
+    await this.#ensureLoaded();
+    if (!data || !Array.isArray(data.memories)) {
+      throw new Error('importAll requires {memories: Array}');
+    }
+    // Clear existing
+    for (const m of this.#store.all()) this.#store.delete(m.id);
+    for (const l of this.#links.all()) this.#links.delete(l.id);
+    this.#changelog.replace([]);
+
+    // Import memories
+    for (const m of data.memories) this.#store.put(m);
+    // Import links
+    if (Array.isArray(data.links)) {
+      for (const l of data.links) this.#links.put(l);
+    }
+    // Import changelog
+    if (Array.isArray(data.changelog)) {
+      this.#changelog.replace(data.changelog);
+    }
+    await this.#store.save();
+    await this.#links.save();
+    await this.#changelog.save();
+    return { memories: data.memories.length, links: (data.links || []).length };
   }
 
   /**

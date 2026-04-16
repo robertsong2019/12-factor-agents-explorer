@@ -1213,4 +1213,63 @@ describe('Memory Associations (Links)', () => {
       } finally { cleanup(); }
     });
   });
+
+  // ─── Export / Import ────────────────────────────────────
+
+  describe('exportAll() / importAll()', () => {
+    it('exports and imports all data', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'M1', layer: 'core', tags: ['t1'] });
+        await svc.add({ content: 'M2', layer: 'long', tags: ['t2'] });
+        const m1 = await svc.add({ content: 'M3', layer: 'core' });
+        const m2 = await svc.add({ content: 'M4', layer: 'long' });
+        await svc.link({ source: m1.id, target: m2.id, type: 'relates_to' });
+
+        const exported = await svc.exportAll();
+        assert.ok(exported.memories.length >= 4);
+        assert.ok(exported.links.length >= 1);
+        assert.ok(Array.isArray(exported.changelog));
+        assert.ok(exported.exportedAt > 0);
+
+        // Import into fresh service
+        const { svc: svc2, cleanup: cleanup2 } = createService();
+        try {
+          const result = await svc2.importAll(exported);
+          assert.equal(result.memories, exported.memories.length);
+          assert.equal(result.links, exported.links.length);
+          // Verify data integrity
+          const stats = await svc2.stats();
+          assert.equal(stats.total, exported.memories.length);
+          const links = await svc2.getLinks(m1.id);
+          assert.ok(links.some(l => l.source === m1.id));
+        } finally { cleanup2(); }
+      } finally { cleanup(); }
+    });
+
+    it('import clears existing data', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Old', layer: 'core' });
+        const { svc: svc2, cleanup: cleanup2 } = createService();
+        try {
+          await svc2.add({ content: 'Existing', layer: 'core' });
+          const result = await svc2.importAll(await svc.exportAll());
+          assert.equal(result.memories, 1);
+          const stats = await svc2.stats();
+          assert.equal(stats.total, 1);
+        } finally { cleanup2(); }
+      } finally { cleanup(); }
+    });
+
+    it('throws error on invalid import data', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await assert.rejects(
+          () => svc.importAll({}),
+          /importAll requires/
+        );
+      } finally { cleanup(); }
+    });
+  });
 });
