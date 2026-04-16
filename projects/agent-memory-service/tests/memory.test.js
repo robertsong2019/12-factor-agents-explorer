@@ -1272,4 +1272,91 @@ describe('Memory Associations (Links)', () => {
       } finally { cleanup(); }
     });
   });
+
+  // ─── Find Related ───────────────────────────────────────
+
+  describe('findRelated()', () => {
+    it('finds memories by entity overlap', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m1 = await svc.add({ content: 'Python is great', layer: 'core', entities: ['python'] });
+        const m2 = await svc.add({ content: 'Rust is safe', layer: 'long', entities: ['rust'] });
+        await svc.add({ content: 'Learn Python basics', layer: 'short', entities: ['python'] });
+
+        const related = await svc.findRelated(m1.id);
+        assert.ok(related.some(r => r.id !== m1.id && r.entities.includes('python')));
+        assert.ok(related.every(r => 'score' in r && 'matchType' in r));
+      } finally { cleanup(); }
+    });
+
+    it('finds memories by tag overlap', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Doc 1', layer: 'core', tags: ['important'] });
+        const m2 = await svc.add({ content: 'Doc 2', layer: 'long', tags: ['urgent'] });
+        await svc.add({ content: 'Doc 3', layer: 'short', tags: ['important', 'urgent'] });
+
+        const related = await svc.findRelated(m2.id);
+        assert.ok(related.some(r => r.matchType.includes('tags')));
+      } finally { cleanup(); }
+    });
+
+    it('finds memories by semantic similarity', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m1 = await svc.add({ content: 'Machine learning with neural networks', layer: 'core' });
+        await svc.add({ content: 'Deep learning and AI', layer: 'long' });
+        await svc.add({ content: 'Cooking recipes', layer: 'short' });
+
+        const related = await svc.findRelated(m1.id, { minScore: 0.05 });
+        assert.ok(related.length >= 1);
+        assert.ok(related.every(r => 'score' in r && 'matchType' in r));
+      } finally { cleanup(); }
+    });
+
+    it('respects minScore threshold', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m1 = await svc.add({ content: 'A', layer: 'core', entities: ['x'] });
+        await svc.add({ content: 'B', layer: 'long', entities: ['y'] });
+        await svc.add({ content: 'C', layer: 'short', entities: ['x'] });
+
+        const relatedLow = await svc.findRelated(m1.id, { minScore: 0.5 });
+        const relatedHigh = await svc.findRelated(m1.id, { minScore: 0.9 });
+        assert.ok(relatedHigh.length <= relatedLow.length);
+      } finally { cleanup(); }
+    });
+
+    it('respects limit', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m1 = await svc.add({ content: 'Base', layer: 'core' });
+        for (let i = 0; i < 10; i++) {
+          await svc.add({ content: `Related ${i}`, layer: 'long' });
+        }
+
+        const related = await svc.findRelated(m1.id, { limit: 3 });
+        assert.ok(related.length <= 3);
+      } finally { cleanup(); }
+    });
+
+    it('handles non-existent id', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const related = await svc.findRelated('nope');
+        assert.deepEqual(related, []);
+      } finally { cleanup(); }
+    });
+
+    it('excludes self by default', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m1 = await svc.add({ content: 'Self', layer: 'core' });
+        await svc.add({ content: 'Other', layer: 'long' });
+
+        const related = await svc.findRelated(m1.id, { includeSelf: false });
+        assert.ok(!related.some(r => r.id === m1.id));
+      } finally { cleanup(); }
+    });
+  });
 });

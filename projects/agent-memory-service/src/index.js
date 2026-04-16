@@ -1363,6 +1363,59 @@ export class MemoryService {
       snapshot: { total: allMemories.length, byLayer },
     };
   }
+
+  /**
+   * Find memories related to a given memory
+   * Considers: entity overlap, tag overlap, and semantic similarity
+   * @param {string} memoryId
+   * @param {{limit?: number, minScore?: number, includeSelf?: boolean}} opts
+   * @returns {Promise<Array<Memory & {score: number, matchType: string[]}>>}
+   */
+  async findRelated(memoryId, opts = {}) {
+    await this.#ensureLoaded();
+    const target = this.#store.get(memoryId);
+    if (!target) return [];
+
+    const limit = opts.limit || 10;
+    const minScore = opts.minScore || 0.1;
+    const includeSelf = opts.includeSelf ?? false;
+
+    const candidates = this.#store.all().filter(m => includeSelf || m.id !== memoryId);
+
+    const scored = candidates.map(m => {
+      const matchType = [];
+      let score = 0;
+
+      // Entity overlap (strong signal)
+      const sharedEntities = target.entities.filter(e => m.entities.includes(e));
+      if (sharedEntities.length > 0) {
+        score += sharedEntities.length * 0.4;
+        matchType.push('entities');
+      }
+
+      // Tag overlap
+      const sharedTags = target.tags.filter(t => m.tags.includes(t));
+      if (sharedTags.length > 0) {
+        score += sharedTags.length * 0.2;
+        matchType.push('tags');
+      }
+
+      // Semantic similarity
+      const sim = ngramSimilarity(target.content, m.content);
+      if (sim > 0.1) {
+        score += sim * 0.4;
+        matchType.push('semantic');
+      }
+
+      return { ...m, score, matchType };
+    });
+
+    // Filter by min score and sort
+    const filtered = scored.filter(r => r.score >= minScore);
+    filtered.sort((a, b) => b.score - a.score);
+
+    return filtered.slice(0, limit);
+  }
 }
 
 export { MemoryStore, MemoryExtractor, LinkStore, ChangelogStore, LAYERS, tokenize, ngramSimilarity, keywordScore };
