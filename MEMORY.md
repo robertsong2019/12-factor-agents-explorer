@@ -38,10 +38,10 @@ AI Agent 协议与通信 — MCP+A2A双栈架构，Agent Memory 服务化，Agen
 ## Next Actions (Updated 2026-04-15)
 
 ### High Priority (本周完成)
-- [ ] **实现 OpenClaw MCP Server** — 研究完成（见 [catalyst-research/exploration-notes/2026-04-15-mcp-server-implementation.md](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/2026-04-15-mcp-server-implementation.md)）。下一步：审计 lab/mcp-client-explorer 代码 → STDIO 模式 MVP（web_search, memory_search, exec 三个工具）→ MCP Inspector 验证 → Streamable HTTP transport + OAuth
+- [ ] **实现 OpenClaw MCP Server** — 研究完成（见 [catalyst-research/exploration-notes/2026-04-15-mcp-server-implementation.md](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/2026-04-15-mcp-server-implementation.md)）。下一步：审计 lab/mcp-client-explorer 代码 → STDIO 模式 MVP（web_search, memory_search, exec 三个工具）→ MCP Inspector 验证 → Streamable HTTP transport + OAuth
 - [ ] **Agent Memory Service 增强** - 接入LLM记忆提取、添加embedding支持、探索OpenClaw插件化（✅ v0.6.0 基础功能完整，90/90 tests）
 - [ ] **A2A Agent Trust 集成原型** - Agent Card嵌入信任元数据，与Agent Trust Network对接
-- [ ] **集成多Agent框架** — 研究完成（见 [catalyst-research/exploration-notes/2026-04-15-multi-agent-framework-integration.md](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/2026-04-15-multi-agent-framework-integration.md)）。关键发现: LangGraph Supervisor 10行代码搞定编排；A2A是跨框架互操作标准；框架混合使用成常态。下一步: OpenClaw→LangGraph/CrewAI桥接原型 + Agent Card Schema设计
+- [ ] **集成多Agent框架** — 研究完成（见 [catalyst-research/exploration-notes/2026-04-15-multi-agent-framework-integration.md](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/2026-04-15-multi-agent-framework-integration.md)）。关键发现: LangGraph Supervisor 10行代码搞定编排；A2A是跨框架互操作标准；框架混合使用成常态。下一步: OpenClaw→LangGraph/CrewAI桥接原型 + Agent Card Schema设计
 
 ### Medium Priority (本月完成)
 - [ ] **实现 A2A Agent Trust 集成** — 在 Agent Card 中嵌入信任元数据，为 A2A 联邦添加信任层
@@ -62,7 +62,7 @@ AI Agent 协议与通信 — MCP+A2A双栈架构，Agent Memory 服务化，Agen
 ## Pending Publications
 
 - **AI Agent 架构设计** (~7,000 words)
-  - Location: [catalyst-research/daily-posts/2026-03-21-ai-agent-architecture.md](https://github.com/robertsong2019/catalyst-research/blob/main/daily-posts/2026-03-21-ai-agent-architecture.md)
+  - Location: [catalyst-research/daily-posts/2026-03-21-ai-agent-architecture.md](https://github.com/robertsong2019/catalyst-research/blob/master/daily-posts/2026-03-21-ai-agent-architecture.md)
   - Status: 等待确认
 
 ---
@@ -106,11 +106,11 @@ curl -X POST "https://api.tavily.com/search" \
 - **12-Factor Agents** — 可靠 LLM 应用的设计原则
 - **Agno** (19.4k⭐) — 生产级 Agent 运行时
 - **Memori** (12.4k⭐) — SQL Native Memory Layer
-- **A2A协议** — Agent间的"HTTP"，Agent Card发现+Task生命周期+Transport-agnostic，50+企业支持，Linux Foundation AAIF 管理（[深度研究](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/2026-04-14-a2a-protocol.md)）
+- **A2A协议** — Agent间的"HTTP"，Agent Card发现+Task生命周期+Transport-agnostic，50+企业支持，Linux Foundation AAIF 管理（[深度研究](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/2026-04-14-a2a-protocol.md)）
   - 与 MCP 互补: MCP纵向(Agent→工具), A2A横向(Agent→Agent)
   - 三层架构: MCP(工具) + A2A(Agent) + WebMCP(Web)
   - 关键缺口: 信任层 — Agent Trust Network 可填补
-- **MCP协议** — Agent的"USB接口"，97M+下载量，成为工具访问标准（[研究](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/2026-04-04-mcp-protocol-deep-dive.md)）
+- **MCP协议** — Agent的"USB接口"，97M+下载量，成为工具访问标准（[研究](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/2026-04-04-mcp-protocol-deep-dive.md)）
 - **多Agent编排模式** — Pipeline, Supervisor, Council, Router, Hierarchical等11种模式
 - **Agent Memory 框架**:
   - **Mem0** (48K+⭐) - Vector + Graph，最大生态，LongMemEval 49.0%，0.71s 延迟
@@ -155,15 +155,15 @@ curl -X POST "https://api.tavily.com/search" \
   - 设计决策: append-only changelog 做同步, stats() 做自检, 零外部依赖保持
 
 ### 2026-04-15
-- ✅ **多Agent框架集成深度研究** — CrewAI/LangGraph/Google ADK/A2A 全景分析（[详情](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/2026-04-15-multi-agent-framework-integration.md)）
+- ✅ **多Agent框架集成深度研究** — CrewAI/LangGraph/Google ADK/A2A 全景分析（[详情](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/2026-04-15-multi-agent-framework-integration.md)）
   - **核心概念**: 编排三范式(Graph/Crew/Chat)、Supervisor模式(2026标配)、A2A跨框架通信、MCP+A2A双栈、框架选择决策树
   - **可运行代码**: 零依赖Multi-Agent Supervisor（Worker路由+状态管理），与OpenClaw sessions_spawn高度对应
   - **关键洞察**: LangGraph Supervisor 10行搞定编排；A2A解决框架锁定(ADK/CrewAI/MAF已支持)；70B supervisor+7B workers>四个32B agents；状态管理是核心差异化
   - **项目关联**: MCP Server(MCP+A2A双栈)、A2A Lab(跨框架通信)、ATN(信任元数据嵌入Agent Card)、Edge Mesh(Supervisor模式)
-- ✅ **MCP Server 实现研究** — OpenClaw工具暴露为MCP标准接口的架构设计（[详情](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/2026-04-15-mcp-server-implementation.md)）
+- ✅ **MCP Server 实现研究** — OpenClaw工具暴露为MCP标准接口的架构设计（[详情](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/2026-04-15-mcp-server-implementation.md)）
 
 ### 2026-04-14
-- ✅ **A2A 协议深度研究** — Agent-to-Agent 通信协议完整分析（[详情](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/2026-04-14-a2a-protocol.md)）
+- ✅ **A2A 协议深度研究** — Agent-to-Agent 通信协议完整分析（[详情](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/2026-04-14-a2a-protocol.md)）
   - **核心概念**: Agent Card(发现)、Task Lifecycle(任务)、Three-Layer Stack(MCP+A2A+WebMCP)、Transport-agnostic(Protobuf)、Federation(联邦)
   - **可运行代码**: 零依赖 Python A2A Agent（Server + Client + Federation Demo），`lab/a2a-minimal/`，测试通过
   - **关键洞察**: MCP+A2A=Agent互联网的TCP/IP栈；Agent Card是Agent的DNS；Task-centric>Message-centric；信任层缺失=ATN机会
@@ -179,7 +179,7 @@ curl -X POST "https://api.tavily.com/search" \
   - **设计决策**: JSON > SQLite(更简单)、n-gram > embedding(离线可用)、规则 > LLM提取(快速原型)
 
 ### 2026-04-13
-- ✅ **AI Agent 编程深度探索**（2小时）- 长期记忆与上下文管理专题研究（[探索笔记索引](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/ai-agent-programming-2026-04-13.md)）
+- ✅ **AI Agent 编程深度探索**（2小时）- 长期记忆与上下文管理专题研究（[探索笔记索引](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/ai-agent-programming-2026-04-13.md)）
   - **范式转变**: 从 RAG（被动检索）到 Agent Memory（主动管理）
   - **架构发现**: 三层存储模型（短期/中期/长期）+ 混合存储（Vector+Graph+Structured）
   - **框架对比**: Mem0（生态最好）、Hindsight（准确率91.4%最高）、Letta（OS启发）、Zep（时间推理）
@@ -194,7 +194,7 @@ curl -X POST "https://api.tavily.com/search" \
   - OpenClaw 本身的记忆系统可借鉴 Agent Memory 架构：当前有 MEMORY.md（长期）和 memory/YYYY-MM-DD.md（短期），可考虑添加中期记忆层和知识图谱关系
 
 ### 2026-04-12
-- ✅ **MCP Client Explorer** (1149行) — 纯Python零依赖MCP客户端+服务器+演示（[详情](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/2026-04-12-mcp-to-mcu-bridge.md)）
+- ✅ **MCP Client Explorer** (1149行) — 纯Python零依赖MCP客户端+服务器+演示（[详情](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/2026-04-12-mcp-to-mcu-bridge.md)）
   - MCP Client (342行): JSON-RPC 2.0, stdio transport, 线程安全
   - MCP Server (379行): 3资源/3工具/2提示模板
   - 演示+文档 (428行): 完整使用指南
@@ -203,7 +203,7 @@ curl -X POST "https://api.tavily.com/search" \
   - MockLLM, ReAct Loop, Episodic Memory, 运行时工具生成
 
 ### 2026-04-10
-- ✅ **AI Agent 编程深度探索**（2小时研究）- 系统性学习2026年最新技术栈（[探索笔记索引](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/ai-agent-programming-2026-04-10.md)）
+- ✅ **AI Agent 编程深度探索**（2小时研究）- 系统性学习2026年最新技术栈（[探索笔记索引](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/ai-agent-programming-2026-04-10.md)）
   - **核心框架对比**：LangGraph（状态图，生产级首选）、CrewAI（角色化团队，快速原型）、AutoGen（已维护）
   - **MCP协议**：Agent的"USB接口"，97M+下载量，成为工具访问标准
   - **内存系统**：Mem0, Letta, LangGraph Memory等独立技术栈
@@ -283,7 +283,7 @@ curl -X POST "https://api.tavily.com/search" \
 - ✅ New features: orchestrator-v2.js, cache.js, concurrency-manager.js, retry-handler.js
 - ✅ **Documentation**: README.md, CONTRIBUTING.md, CHANGELOG.md (质量评分 4.5/5)
 - ✅ **Exploration**: Embedded AI & Edge Intelligence, Agent Mesh Network concept design
-- ✅ **AI Agent Programming Deep Dive** (24KB notes): execution modes, orchestration patterns, memory strategies（[详情](https://github.com/robertsong2019/catalyst-research/blob/main/exploration-notes/ai-agent-programming-deep-dive.md)）
+- ✅ **AI Agent Programming Deep Dive** (24KB notes): execution modes, orchestration patterns, memory strategies（[详情](https://github.com/robertsong2019/catalyst-research/blob/master/exploration-notes/ai-agent-programming-deep-dive.md)）
 
 ---
 
