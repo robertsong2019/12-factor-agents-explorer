@@ -167,6 +167,14 @@ export class MultimodalAgent extends BaseAgent {
     };
   }
 
+  async think(task: string): Promise<string> {
+    return this.process(task);
+  }
+
+  async act(action: string): Promise<any> {
+    return this.process(action);
+  }
+
   async process(input: string): Promise<string> {
     const multimodalInput: MultimodalInput = {
       type: 'text',

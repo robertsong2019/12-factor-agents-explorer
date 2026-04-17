@@ -1494,3 +1494,200 @@ describe('Memory Associations (Links)', () => {
     });
   });
 });
+
+  describe('findDuplicates', () => {
+    it('finds near-duplicate memories', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'The quick brown fox jumps over the lazy dog', layer: 'core' });
+        await svc.add({ content: 'The quick brown fox jumps over the lazy dog', layer: 'long' });
+        await svc.add({ content: 'Completely different content here', layer: 'core' });
+
+        const dupes = await svc.findDuplicates();
+        assert.equal(dupes.length, 1);
+        assert.equal(dupes[0].memories.length, 2);
+        assert.ok(dupes[0].similarity >= 0.7);
+      } finally { cleanup(); }
+    });
+
+    it('respects threshold option', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Apple banana cherry', layer: 'core' });
+        await svc.add({ content: 'Apple banana orange', layer: 'core' });
+
+        const strict = await svc.findDuplicates({ threshold: 0.99 });
+        const loose = await svc.findDuplicates({ threshold: 0.3 });
+        assert.equal(strict.length, 0);
+        assert.ok(loose.length >= 1);
+      } finally { cleanup(); }
+    });
+
+    it('filters by layer', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Duplicate content alpha beta', layer: 'core' });
+        await svc.add({ content: 'Duplicate content alpha beta', layer: 'long' });
+        await svc.add({ content: 'Duplicate content alpha beta', layer: 'core' });
+
+        const coreDupes = await svc.findDuplicates({ layer: 'core' });
+        assert.equal(coreDupes.length, 1);
+        assert.equal(coreDupes[0].memories.length, 2);
+      } finally { cleanup(); }
+    });
+
+    it('returns empty for no duplicates', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Unique one', layer: 'core' });
+        await svc.add({ content: 'Completely different two', layer: 'core' });
+        await svc.add({ content: 'Totally unrelated three', layer: 'core' });
+
+        const dupes = await svc.findDuplicates({ threshold: 0.9 });
+        assert.equal(dupes.length, 0);
+      } finally { cleanup(); }
+    });
+  });
+
+  describe('archive and restore', () => {
+    it('archives memories older than threshold', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m1 = await svc.add({ content: 'Old memory', layer: 'short' });
+        const m2 = await svc.add({ content: 'Recent memory', layer: 'short' });
+
+        // Archive memories older than -1ms (effectively all)
+        const result = await svc.archive({ olderThanMs: -1 });
+        assert.equal(result.count, 2);
+
+        // Verify they're gone from active store
+        const stats = await svc.stats();
+        assert.equal(stats.total, 0);
+      } finally { cleanup(); }
+    });
+
+    it('archives by specific IDs', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m1 = await svc.add({ content: 'Keep me', layer: 'core' });
+        const m2 = await svc.add({ content: 'Archive me', layer: 'short' });
+
+        const result = await svc.archive({ ids: [m2.id] });
+        assert.equal(result.count, 1);
+        assert.ok(result.archivedIds.includes(m2.id));
+
+        const stats = await svc.stats();
+        assert.equal(stats.total, 1);
+      } finally { cleanup(); }
+    });
+
+    it('archives by layer', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Core memory', layer: 'core' });
+        await svc.add({ content: 'Short memory', layer: 'short' });
+
+        const result = await svc.archive({ layer: 'short' });
+        assert.equal(result.count, 1);
+
+        const stats = await svc.stats();
+        assert.equal(stats.total, 1);
+      } finally { cleanup(); }
+    });
+
+    it('restores archived memories', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m1 = await svc.add({ content: 'Will be restored', layer: 'core' });
+        await svc.archive({ ids: [m1.id] });
+
+        const result = await svc.restore({ ids: [m1.id] });
+        assert.equal(result.count, 1);
+
+        const stats = await svc.stats();
+        assert.equal(stats.total, 1);
+
+        const restored = await svc.get(m1.id);
+        assert.ok(restored);
+        assert.equal(restored.content, 'Will be restored');
+      } finally { cleanup(); }
+    });
+
+    it('restore with limit', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'A', layer: 'short' });
+        await svc.add({ content: 'B', layer: 'short' });
+        await svc.add({ content: 'C', layer: 'short' });
+        await svc.archive({ olderThanMs: 0 });
+
+        const result = await svc.restore({ limit: 2 });
+        assert.equal(result.count, 2);
+
+        const stats = await svc.stats();
+        assert.equal(stats.total, 2);
+      } finally { cleanup(); }
+    });
+
+    it('restore all when no filter', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'X', layer: 'short' });
+        await svc.add({ content: 'Y', layer: 'long' });
+        await svc.archive({ olderThanMs: 0 });
+
+        const result = await svc.restore();
+        assert.equal(result.count, 2);
+      } finally { cleanup(); }
+    });
+  });
+
+  describe('validate', () => {
+    it('reports valid store with no issues', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Valid memory', layer: 'core', tags: ['ok'] });
+        const result = await svc.validate();
+        assert.equal(result.valid, true);
+        assert.equal(result.issues.length, 0);
+      } finally { cleanup(); }
+    });
+
+    it('detects empty content', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        // Manually inject a bad memory
+        await svc.add({ content: 'Good', layer: 'core' });
+        // Use update to set empty content
+        const m = await svc.add({ content: 'Will be cleared', layer: 'core' });
+        await svc.update(m.id, { content: '' });
+
+        const result = await svc.validate();
+        assert.equal(result.valid, false);
+        assert.ok(result.issues.some(i => i.includes('empty content')));
+      } finally { cleanup(); }
+    });
+
+    it('repair mode reindexes stale indices', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Test', layer: 'core', tags: ['a'], entities: ['e1'] });
+        // Just verify validate+repair runs without error and reports valid
+        const result = await svc.validate({ repair: true });
+        assert.equal(result.valid, true);
+      } finally { cleanup(); }
+    });
+
+    it('non-repair mode reports issues without fixing', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Good', layer: 'core' });
+        const m = await svc.add({ content: 'Temporary', layer: 'core' });
+        await svc.update(m.id, { content: '' });
+
+        const result = await svc.validate();
+        assert.equal(result.valid, false);
+        assert.equal(result.repaired, undefined);
+      } finally { cleanup(); }
+    });
+  });

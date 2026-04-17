@@ -54,9 +54,9 @@ export abstract class BaseAgent extends EventEmitter {
     this.initializeAgent();
   }
 
-  abstract async process(input: string): Promise<string>;
-  abstract async think(task: string): Promise<string>;
-  abstract async act(action: string): Promise<any>;
+  abstract process(input: string): Promise<string>;
+  abstract think(task: string): Promise<string>;
+  abstract act(action: string): Promise<any>;
 
   protected initializeAgent(): void {
     this.emit('initialized', { name: this.config.name, capabilities: this.config.capabilities });

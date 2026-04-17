@@ -5,3 +5,4 @@ timestamp	commit	metric	value	status	description
 date	project	baseline_tests	baseline_pass	baseline_fail	after_tests	after_pass	after_fail	change	notes
 2026-04-16	better-ralph-core	25	22	3	25	25	0	+3 pass	Fixed IterationContext missing notes field, added to_dict(), fixed get_memory_summary missing iterations_summary
 2026-04-16	catalyst-agent-mesh	68	68	0	83	83	0	+15 tests	Added test_pipeline_executor.py covering PipelineStage, CRUD, statistics, execution
+2026-04-17	github-creative-project	0	0	0	36	36	0	+36 tests (from 0 to all passing)	Fixed TS compilation bugs: abstract async modifiers, missing think/act implementations, untracked intervals, capabilities type mismatch, Record type for merged object

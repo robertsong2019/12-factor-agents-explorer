@@ -2,7 +2,7 @@
 
 <div align="center">
   <img src="https://img.shields.io/badge/Type-AI%20Agent%20Workspace-blue" alt="Workspace">
-  <img src="https://img.shields.io/badge/Projects-3%20Core%20Tools-green" alt="Projects">
+  <img src="https://img.shields.io/badge/Projects-7%20Tools-green" alt="Projects">
   <img src="https://img.shields.io/badge/Skills-4%2B%20OpenClaw%20Skills-purple" alt="Skills">
   <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License">
 </div>
@@ -30,6 +30,10 @@
 │
 ├── 🛠️ 项目 (projects/)
 │   ├── agent-task-cli/        # ⭐ 多 Agent 任务编排 CLI
+│   ├── agent-memory-service/  # Agent 记忆服务
+│   ├── agent-memory-graph/    # Agent 记忆图谱
+│   ├── agent-log/             # Agent 日志系统
+│   ├── context-forge/         # AI 上下文文件生成
 │   ├── mission-control/       # Agent 监控仪表板
 │   └── prompt-mgr/            # Prompt 管理系统
 │
@@ -313,11 +317,15 @@ npm test
 
 ### 项目文档
 
-| 项目 | README | 教程 | API |
-|------|--------|------|-----|
-| agent-task-cli | [README](projects/agent-task-cli/README.md) | [TUTORIAL](projects/agent-task-cli/TUTORIAL.md) | [API](projects/agent-task-cli/README.md#api-usage) |
-| local-embedding-memory | [README](experiments/local-embedding-memory/README.md) | [TUTORIAL](experiments/local-embedding-memory/TUTORIAL.md) | [API](experiments/local-embedding-memory/API.md) |
-| agent-trust-network | [README](experiments/agent-trust-network/README.md) | [TUTORIAL](experiments/agent-trust-network/TUTORIAL.md) | [API](experiments/agent-trust-network/API.md) |
+| 项目 | 语言 | README | 教程 |
+|------|------|--------|------|
+| agent-task-cli | Node.js | [README](projects/agent-task-cli/README.md) | [TUTORIAL](projects/agent-task-cli/TUTORIAL.md) |
+| agent-memory-service | Python | [README](projects/agent-memory-service/README.md) | — |
+| agent-memory-graph | Python | [README](projects/agent-memory-graph/README.md) | — |
+| agent-log | Node.js | [README](projects/agent-log/README.md) | — |
+| context-forge | Python | [README](projects/context-forge/README.md) | [TUTORIAL](projects/TUTORIAL-context-forge.md) |
+| mission-control | Node.js | [README](projects/mission-control/README.md) | [TUTORIAL](projects/mission-control/TUTORIAL.md) |
+| prompt-mgr | Python | [README](projects/prompt-mgr/README.md) | [TUTORIAL](projects/prompt-mgr/docs/TUTORIAL.md) |
 
 ### 技能文档
 
@@ -443,13 +451,15 @@ chmod +x skills/memory-manager/*.sh
 
 ## 📊 项目状态
 
-| 项目 | 状态 | 测试 | 文档 |
+| 项目 | 语言 | 状态 | 文档 |
 |------|------|------|------|
-| agent-task-cli | ✅ 稳定 | 109 tests (80%+) | ✅ 完整 |
-| local-embedding-memory | ✅ 稳定 | ✅ 有 | ✅ 完整 |
-| agent-trust-network | ✅ 稳定 | ✅ 有 | ✅ 完整 |
-| mission-control | 🚧 开发中 | - | 📝 基础 |
-| prompt-mgr | 🚧 开发中 | - | 📝 基础 |
+| agent-task-cli | Node.js | ✅ 稳定 | ✅ README + 教程 |
+| agent-memory-service | Python | ✅ 稳定 | ✅ README |
+| agent-memory-graph | Python | ✅ 稳定 | ✅ README |
+| agent-log | Node.js | ✅ 稳定 | ✅ README |
+| context-forge | Python | ✅ 稳定 | ✅ README + 教程 |
+| mission-control | Node.js | 🚧 开发中 | ✅ README + 教程 |
+| prompt-mgr | Python | ✅ 稳定 | ✅ README + 教程 + API |
 
 ## 📞 获取帮助
 
@@ -484,5 +494,5 @@ MIT License - 详见各项目的 LICENSE 文件
 
 ---
 
-*最后更新: 2026-03-25*
+*最后更新: 2026-04-17*
 *维护者: OpenClaw Workspace Team*

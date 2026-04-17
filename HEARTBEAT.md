@@ -1,12 +1,12 @@
-# HEARTBEAT.md - April 16, 2026 (Wednesday)
+# HEARTBEAT.md - April 17, 2026 (Friday)
 
 ## 待办任务
 
 ### 高优先级（本周）
-- [ ] **实现 OpenClaw MCP Server** - 基于lab/mcp-client-explorer代码，将feishu/web-search等工具暴露为MCP标准接口
-- [ ] **A2A Agent Trust 集成原型** - Agent Card嵌入信任元数据，与Agent Trust Network对接
-- [ ] **集成多Agent框架** - CrewAI/LangGraph与OpenClaw集成
-- [ ] **Agent Memory Service v0.7.0+** - 接入LLM记忆提取、添加embedding支持、OpenClaw插件化
+- [ ] **Agent Memory Service v0.9.0+** — LLM记忆提取、embedding支持、BM25混合检索
+- [ ] **实现 OpenClaw MCP Server** — TypeScript SDK + Streamable HTTP，创建项目并验证
+- [ ] **A2A Agent Trust 集成原型** - Agent Card嵌入信任元数据
+- [ ] **集成多Agent框架** - LangGraph Supervisor桥接OpenClaw原型
 
 ### 中优先级（本月）
 - [ ] Hindsight 多策略检索原型
@@ -16,15 +16,13 @@
 - [ ] Edge Agent Mesh 继续开发
 
 ### 探索性（下季度）
-- [ ] Edge Agent Runtime 增强 (MLReasoner/硬件驱动/Async/MicroPython)
+- [ ] Edge Agent Runtime 增强
 - [ ] Agent Mesh Network P2P通信协议
 - [ ] Agent状态与会话管理结合
 
 ## 系统状态
-- 周三凌晨，12个项目并行
-- **最新完成**: Agent Memory Service v0.6.0 ✅ (90/90 tests, 变更追踪+自监控)
-- 核心项目均已完成: tiny-agent-workshop, edge-agent-runtime, prompt-weaver, ctxgen, agent-log, local-embedding-memory, a2a-protocol-lab
-- wiki/ 知识库已建立 (11个知识页面)
-- **探索笔记积累**: 70+ 文件，从03-18到04-15持续积累
-- **本周重点**: MCP Server实现 + A2A Trust集成 + 多Agent框架集成
-- **注意**: key-development-3 cron 昨晚超时，tool-development cron 出错，需要关注
+- 周五凌晨，核心项目已完成: tiny-agent-workshop, edge-agent-runtime, prompt-weaver, ctxgen, agent-log, local-embedding-memory, a2a-protocol-lab
+- **最新完成**: Agent Memory Service v0.8.0 ✅ (133/133 tests, reindex+stale index fix)
+- **Autoresearch方法验证**: prompt-router 8→15 tests, agent-context-store 8→12 tests, 零回滚
+- **探索笔记积累**: 70+ 文件
+- **本周重点**: Agent Memory Service v0.9.0 (LLM提取) + MCP Server实现

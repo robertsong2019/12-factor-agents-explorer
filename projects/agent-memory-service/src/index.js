@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, appendFile } from 'node:fs/promises';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 // ─── Types ───────────────────────────────────────────────
@@ -1517,6 +1518,160 @@ export class MemoryService {
     filtered.sort((a, b) => b.score - a.score);
 
     return filtered.slice(0, limit);
+  }
+
+  /**
+   * Find near-duplicate memories using n-gram similarity.
+   * Returns groups of duplicate memories.
+   * @param {{threshold?: number, layer?: string}} opts
+   * @returns {Promise<Array<{memories: object[], similarity: number}>>}
+   */
+  async findDuplicates(opts = {}) {
+    await this.#ensureLoaded();
+    const threshold = opts.threshold || 0.7;
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+
+    const groups = [];
+    const assigned = new Set();
+
+    for (let i = 0; i < memories.length; i++) {
+      if (assigned.has(memories[i].id)) continue;
+      const group = [memories[i]];
+      for (let j = i + 1; j < memories.length; j++) {
+        if (assigned.has(memories[j].id)) continue;
+        const sim = ngramSimilarity(memories[i].content, memories[j].content);
+        if (sim >= threshold) {
+          group.push(memories[j]);
+          assigned.add(memories[j].id);
+        }
+      }
+      if (group.length > 1) {
+        const sim = ngramSimilarity(group[0].content, group[1].content);
+        assigned.add(group[0].id);
+        groups.push({ memories: group, similarity: sim });
+      }
+    }
+    return groups;
+  }
+
+  /**
+   * Archive memories (move to cold storage, remove from active store).
+   * Returns archived memory IDs.
+   * @param {{olderThanMs?: number, layer?: string, ids?: string[]}} opts
+   * @returns {Promise<{archivedIds: string[], count: number}>}
+   */
+  async archive(opts = {}) {
+    await this.#ensureLoaded();
+    let targets;
+    if (opts.ids) {
+      targets = opts.ids.map(id => this.#store.get(id)).filter(Boolean);
+    } else {
+      targets = this.#store.all();
+      if (opts.layer) targets = targets.filter(m => m.layer === opts.layer);
+      if (opts.olderThanMs) {
+        const cutoff = Date.now() - opts.olderThanMs;
+        targets = targets.filter(m => m.createdAt < cutoff);
+      }
+    }
+
+    const archiveDir = join(this.#dirPath, 'archive');
+    mkdirSync(archiveDir, { recursive: true });
+    const archivePath = join(archiveDir, 'archived.json');
+    let archived = [];
+    try { archived = JSON.parse(readFileSync(archivePath, 'utf8')); } catch {}
+
+    for (const m of targets) {
+      archived.push({ ...m, archivedAt: Date.now() });
+      this.#store.delete(m.id);
+      this.#links.cleanForMemory(m.id);
+      this.#changelog.record('archive', m.id, m.layer);
+    }
+
+    writeFileSync(archivePath, JSON.stringify(archived, null, 2));
+    return { archivedIds: targets.map(m => m.id), count: targets.length };
+  }
+
+  /**
+   * Restore archived memories back to active store.
+   * @param {{ids?: string[], limit?: number}} opts
+   * @returns {Promise<{restoredIds: string[], count: number}>}
+   */
+  async restore(opts = {}) {
+    await this.#ensureLoaded();
+    const archivePath = join(this.#dirPath, 'archive', 'archived.json');
+    let archived;
+    try { archived = JSON.parse(readFileSync(archivePath, 'utf8')); } catch { archived = []; }
+
+    let toRestore = opts.ids
+      ? archived.filter(m => opts.ids.includes(m.id))
+      : archived;
+    if (opts.limit) toRestore = toRestore.slice(0, opts.limit);
+
+    const restoreIds = new Set(toRestore.map(m => m.id));
+    for (const m of toRestore) {
+      const { archivedAt, ...memory } = m;
+      this.#store.put({ ...memory, updatedAt: Date.now() });
+    }
+
+    const remaining = archived.filter(m => !restoreIds.has(m.id));
+    writeFileSync(archivePath, JSON.stringify(remaining, null, 2));
+
+    return { restoredIds: [...restoreIds], count: restoreIds.size };
+  }
+
+  /**
+   * Validate store integrity. Checks for orphan links, missing indices, stale data.
+   * @param {{repair?: boolean}} opts
+   * @returns {Promise<{valid: boolean, issues: string[], repaired?: number}>}
+   */
+  async validate(opts = {}) {
+    await this.#ensureLoaded();
+    const issues = [];
+    let repaired = 0;
+    const allMemories = this.#store.all();
+    const allIds = new Set(allMemories.map(m => m.id));
+
+    // Check orphan links
+    const allLinks = this.#links.all();
+    for (const link of allLinks) {
+      if (!allIds.has(link.sourceId)) {
+        issues.push(`Orphan link ${link.id}: source ${link.sourceId} missing`);
+        if (opts.repair) { this.#links.delete(link.id); repaired++; }
+      }
+      if (!allIds.has(link.targetId)) {
+        issues.push(`Orphan link ${link.id}: target ${link.targetId} missing`);
+        if (opts.repair) { this.#links.delete(link.id); repaired++; }
+      }
+    }
+
+    // Check tag/entity indices consistency
+    for (const m of allMemories) {
+      const byTag = this.#store.byTag('__check__');
+      // Verify each memory's tags are indexed
+      for (const tag of m.tags) {
+        const tagged = this.#store.byTag(tag);
+        if (!tagged.some(t => t.id === m.id)) {
+          issues.push(`Memory ${m.id} tag "${tag}" not in index`);
+          if (opts.repair) { this.#store.reindex(); repaired++; break; }
+        }
+      }
+      if (issues.some(i => i.includes(m.id) && i.includes('not in index'))) break; // one reindex enough
+    }
+
+    // Check for memories with missing required fields
+    for (const m of allMemories) {
+      if (!m.content) issues.push(`Memory ${m.id} has empty content`);
+      if (!m.id) issues.push(`Memory missing id`);
+    }
+
+    if (opts.repair && repaired > 0) {
+      await this.#store.save();
+      await this.#links.save();
+      await this.#changelog.save();
+    }
+
+    return { valid: issues.length === 0, issues, ...(opts.repair ? { repaired } : {}) };
   }
 }
 

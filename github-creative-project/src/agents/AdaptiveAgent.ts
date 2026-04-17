@@ -42,6 +42,7 @@ export class AdaptiveAgent extends BaseAgent {
   private confidenceThreshold: number;
   private enableTransferLearning: boolean;
   
+  private intervals: ReturnType<typeof setInterval>[] = [];
   private performanceMetrics: {
     totalTasks: number;
     successfulTasks: number;
@@ -80,24 +81,39 @@ export class AdaptiveAgent extends BaseAgent {
 
   private setupPatternRecognition(): void {
     // Pattern recognition system for identifying successful patterns
-    setInterval(() => {
+    this.intervals.push(setInterval(() => {
       this.analyzePatterns();
-    }, 60000); // Analyze patterns every minute
+    }, 60000)); // Analyze patterns every minute
   }
 
   private setupKnowledgeManagement(): void {
     // Knowledge management and consolidation
-    setInterval(() => {
+    this.intervals.push(setInterval(() => {
       this.consolidateKnowledge();
       this.applyForgetting();
-    }, 300000); // Every 5 minutes
+    }, 300000)); // Every 5 minutes
   }
 
   private setupTransferLearning(): void {
     // Transfer learning mechanism for cross-task knowledge sharing
-    setInterval(() => {
+    this.intervals.push(setInterval(() => {
       this.transferKnowledge();
-    }, 120000); // Every 2 minutes
+    }, 120000)); // Every 2 minutes
+  }
+
+  clearAllIntervals(): void {
+    for (const id of this.intervals) {
+      clearInterval(id);
+    }
+    this.intervals = [];
+  }
+
+  async think(task: string): Promise<string> {
+    return this.process(task);
+  }
+
+  async act(action: string): Promise<any> {
+    return this.process(action);
   }
 
   async process(input: string): Promise<string> {

@@ -66,6 +66,7 @@ export class CollaborativeCreationAgent extends BaseAgent {
   private enableInnovationBoost: boolean;
   private protocol: CollaborationProtocol;
   
+  private intervals: ReturnType<typeof setInterval>[] = [];
   private taskQueue: CreativeTask[] = [];
   private innovationPrompts: string[] = [
     "Think outside the box and challenge conventional approaches",
@@ -131,7 +132,7 @@ export class CollaborativeCreationAgent extends BaseAgent {
     const role: AgentRole = {
       name,
       expertise,
-      capabilities: agent.getCapabilities().then(caps => caps),
+      capabilities: [],  // populated asynchronously
       assignedAgent: agent,
       workload: 0
     };
@@ -146,6 +147,14 @@ export class CollaborativeCreationAgent extends BaseAgent {
     agent.on('completed', (result) => {
       this.handleAgentCompletion(name, result);
     });
+  }
+
+  async think(task: string): Promise<string> {
+    return this.process(task);
+  }
+
+  async act(action: string): Promise<any> {
+    return this.process(action);
   }
 
   async process(input: string): Promise<string> {
@@ -336,7 +345,7 @@ export class CollaborativeCreationAgent extends BaseAgent {
     if (results.length === 0) return {};
     
     // Simple merge strategy - in real implementation, would be more sophisticated
-    const merged = {};
+    const merged: Record<string, any> = {};
     
     results.forEach((result, index) => {
       const agentName = `agent_${index + 1}`;
@@ -433,20 +442,20 @@ export class CollaborativeCreationAgent extends BaseAgent {
 
   private setupCollaborationWorkflows(): void {
     // Setup regular collaboration workflows
-    setInterval(() => {
+    this.intervals.push(setInterval(() => {
       this.processTaskQueue();
-    }, 30000); // Process queue every 30 seconds
+    }, 30000)); // Process queue every 30 seconds
     
-    setInterval(() => {
+    this.intervals.push(setInterval(() => {
       this.optimizeAgentAllocation();
-    }, 60000); // Optimize allocation every minute
+    }, 60000)); // Optimize allocation every minute
   }
 
   private setupQualityControl(): void {
     // Setup quality control mechanisms
-    setInterval(() => {
+    this.intervals.push(setInterval(() => {
       this.reviewPendingOutputs();
-    }, 120000); // Review outputs every 2 minutes
+    }, 120000)); // Review outputs every 2 minutes
   }
 
   private async processTaskQueue(): Promise<void> {
@@ -495,6 +504,13 @@ export class CollaborativeCreationAgent extends BaseAgent {
   }
 
   // Public methods
+  clearAllIntervals(): void {
+    for (const id of this.intervals) {
+      clearInterval(id);
+    }
+    this.intervals = [];
+  }
+
   async getCollaborationStatus(): Promise<any> {
     return {
       activeTasks: Array.from(this.activeTasks.values()),

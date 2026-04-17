@@ -15,10 +15,10 @@
 
 ---
 
-## Current Focus (2026-04-15)
+## Current Focus (2026-04-17)
 
 ### Active Theme
-AI Agent 协议与通信 — MCP+A2A双栈架构，Agent Memory 服务化，Agent联邦信任层设计
+Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，Agent Memory Service 已从 v0.6.0 迭代至 v0.8.0 (133 tests)
 
 ### Core Projects
 1. **Agent Task CLI** - 多 Agent 任务编排 (109 tests, 80%+ coverage, ✅ 已完成)
@@ -38,10 +38,10 @@ AI Agent 协议与通信 — MCP+A2A双栈架构，Agent Memory 服务化，Agen
 ## Next Actions (Updated 2026-04-16)
 
 ### High Priority (本周完成)
-- [ ] **实现 OpenClaw MCP Server** — 研究完成（TypeScript SDK + Streamable HTTP 方案已验证，见 [2026-04-16 笔记](catalyst-research/exploration-notes/2026-04-16-openclaw-mcp-server.md)）。关键决策: stateless Streamable HTTP + 官方 TS SDK + zod 验证。下一步: 创建 `openclaw-mcp-server` 项目，暴露 web_search/exec/list_files → MCP Inspector 验证 → 接入 OpenClaw 内部 API
-- [ ] **Agent Memory Service v0.7.0** — 研究完成（见 [2026-04-16 笔记](catalyst-research/exploration-notes/2026-04-16-llm-agent-memory-architecture.md)）。关键发现: ①2026行业标配三层记忆(Episodic/Semantic/Procedural) ②混合检索管线(Semantic+BM25+Temporal)是生产级标配 ③检索时不需要LLM推理是重要趋势。下一步: 在 core/long/short 基础上增加 procedural 层 → 实现 BM25+向量混合检索 → LLM记忆提取器
+- [ ] **Agent Memory Service v0.9.0+** — 接入 LLM 记忆提取、添加 embedding 支持、BM25 混合检索。基于研究笔记(2026-04-16)的架构方案
+- [ ] **实现 OpenClaw MCP Server** — ✅ 研究完成(2026-04-17)。v2 SDK split packages (`@modelcontextprotocol/server` + `@modelcontextprotocol/node` + `@modelcontextprotocol/express`)。研究笔记含完整可运行代码。**下一步: 创建项目 `openclaw-mcp-server` → 实现 Phase 1 核心工具(get-system-status, search-memory) → MCP Inspector 验证 → 接入 Edge Agent Runtime**
 - [ ] **A2A Agent Trust 集成原型** - Agent Card嵌入信任元数据，与Agent Trust Network对接
-- [ ] **集成多Agent框架** — 研究完成（见 [catalyst-research/exploration-notes/2026-04-15-multi-agent-framework-integration.md](catalyst-research/exploration-notes/2026-04-15-multi-agent-framework-integration.md)）。关键发现: LangGraph Supervisor 10行代码搞定编排；A2A是跨框架互操作标准；框架混合使用成常态。下一步: OpenClaw→LangGraph/CrewAI桥接原型 + Agent Card Schema设计
+- [ ] **集成多Agent框架** — LangGraph Supervisor桥接OpenClaw原型 + Agent Card Schema设计
 
 ### Medium Priority (本月完成)
 - [ ] **实现 A2A Agent Trust 集成** — 在 Agent Card 中嵌入信任元数据，为 A2A 联邦添加信任层
@@ -145,6 +145,16 @@ curl -X POST "https://api.tavily.com/search" \
 ---
 
 ## Recent Achievements
+
+### 2026-04-17
+- ✅ **Agent Memory Service v0.6.0 → v0.8.0** — 3个版本跃升，90→133 tests
+  - **v0.7.0**: delete(id) + scheduledMaintenance() 一键维护 (90→130 tests)
+  - **v0.8.0**: reindex() API + 修复 put() 导致的 tag/entity 索引过期 bug (130→133 tests)
+  - 设计决策: scheduledMaintenance 集成 decay+consolidate+compact+reindex，agent 单入口调维护
+- ✅ **Autoresearch 实验循环验证** — prompt-router 和 agent-context-store 快速迭代
+  - prompt-router: 8→15 tests (explain() 路由可解释性 + confidence threshold routing)
+  - agent-context-store: 8→12 tests (batch operations + 单次磁盘写入优化)
+  - 方法论验证: 快速实验→测试→keep/rollback 决策，零回滚率
 
 ### 2026-04-16
 - ✅ **Agent Memory Service v0.2.0 → v0.6.0** — 4个版本跃升，54→90 tests
@@ -287,5 +297,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-04-16 02:00*
-*Next review: 2026-04-17*
+*Last updated: 2026-04-17 02:00*
+*Next review: 2026-04-18*
