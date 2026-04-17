@@ -1691,3 +1691,86 @@ describe('Memory Associations (Links)', () => {
       } finally { cleanup(); }
     });
   });
+
+  describe('tagCloud', () => {
+    it('returns tag frequencies sorted by count', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'A', layer: 'core', tags: ['x', 'y'] });
+        await svc.add({ content: 'B', layer: 'long', tags: ['x', 'z'] });
+        await svc.add({ content: 'C', layer: 'short', tags: ['x'] });
+
+        const cloud = await svc.tagCloud();
+        assert.equal(cloud[0].tag, 'x');
+        assert.equal(cloud[0].count, 3);
+        assert.equal(cloud[0].layers.core, 1);
+        assert.equal(cloud[0].layers.long, 1);
+      } finally { cleanup(); }
+    });
+
+    it('respects top limit', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'A', layer: 'core', tags: ['a', 'b', 'c'] });
+        const cloud = await svc.tagCloud({ top: 2 });
+        assert.equal(cloud.length, 2);
+      } finally { cleanup(); }
+    });
+
+    it('returns empty for no tags', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'No tags', layer: 'core' });
+        const cloud = await svc.tagCloud();
+        assert.deepEqual(cloud, []);
+      } finally { cleanup(); }
+    });
+  });
+
+  describe('aggregate', () => {
+    it('groups by layer', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'A', layer: 'core' });
+        await svc.add({ content: 'B', layer: 'core' });
+        await svc.add({ content: 'C', layer: 'long' });
+
+        const result = await svc.aggregate({ groupBy: 'layer' });
+        assert.equal(result.length, 2);
+        assert.equal(result.find(r => r.group === 'core').count, 2);
+        assert.equal(result.find(r => r.group === 'long').count, 1);
+      } finally { cleanup(); }
+    });
+
+    it('groups by tag', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'A', layer: 'core', tags: ['ai', 'ml'] });
+        await svc.add({ content: 'B', layer: 'long', tags: ['ai'] });
+
+        const result = await svc.aggregate({ groupBy: 'tag' });
+        const ai = result.find(r => r.group === 'ai');
+        assert.equal(ai.count, 2);
+        assert.ok(ai.avgWeight > 0);
+      } finally { cleanup(); }
+    });
+
+    it('groups by entity', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'A', layer: 'core', entities: ['user1', 'user2'] });
+        await svc.add({ content: 'B', layer: 'long', entities: ['user1'] });
+
+        const result = await svc.aggregate({ groupBy: 'entity' });
+        assert.equal(result.find(r => r.group === 'user1').count, 2);
+      } finally { cleanup(); }
+    });
+
+    it('returns empty for empty store', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const result = await svc.aggregate({ groupBy: 'layer' });
+        assert.deepEqual(result, []);
+      } finally { cleanup(); }
+    });
+  });

@@ -1673,6 +1673,55 @@ export class MemoryService {
 
     return { valid: issues.length === 0, issues, ...(opts.repair ? { repaired } : {}) };
   }
+
+  /**
+   * Tag frequency analysis across all memories.
+   * @param {{top?: number}} opts
+   * @returns {Promise<Array<{tag: string, count: number, layers: Record<string, number>}>>}
+   */
+  async tagCloud(opts = {}) {
+    await this.#ensureLoaded();
+    const freq = new Map();
+    for (const m of this.#store.all()) {
+      for (const tag of m.tags) {
+        if (!freq.has(tag)) freq.set(tag, { tag, count: 0, layers: {} });
+        const entry = freq.get(tag);
+        entry.count++;
+        entry.layers[m.layer] = (entry.layers[m.layer] || 0) + 1;
+      }
+    }
+    const result = [...freq.values()].sort((a, b) => b.count - a.count);
+    return opts.top ? result.slice(0, opts.top) : result;
+  }
+
+  /**
+   * Aggregate statistics grouped by a field.
+   * @param {{groupBy: 'layer'|'tag'|'entity'}} opts
+   * @returns {Promise<Array<{group: string, count: number, avgWeight: number}>>}
+   */
+  async aggregate(opts) {
+    await this.#ensureLoaded();
+    const groups = new Map();
+    const all = this.#store.all();
+
+    for (const m of all) {
+      const keys = opts.groupBy === 'layer' ? [m.layer]
+        : opts.groupBy === 'tag' ? m.tags
+        : m.entities;
+      for (const key of keys) {
+        if (!groups.has(key)) groups.set(key, { group: key, count: 0, totalWeight: 0 });
+        const g = groups.get(key);
+        g.count++;
+        g.totalWeight += m.weight;
+      }
+    }
+
+    return [...groups.values()].map(g => ({
+      group: g.group,
+      count: g.count,
+      avgWeight: g.count ? Math.round(g.totalWeight / g.count * 100) / 100 : 0
+    })).sort((a, b) => b.count - a.count);
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────
