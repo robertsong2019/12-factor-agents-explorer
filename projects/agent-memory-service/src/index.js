@@ -1722,6 +1722,51 @@ export class MemoryService {
       avgWeight: g.count ? Math.round(g.totalWeight / g.count * 100) / 100 : 0
     })).sort((a, b) => b.count - a.count);
   }
+
+  /**
+   * Search memories by time range.
+   * @param {{from?: number, to?: number, layer?: string, limit?: number}} opts
+   * @returns {Promise<object[]>}
+   */
+  async searchByTime(opts = {}) {
+    await this.#ensureLoaded();
+    let results = this.#store.all();
+    if (opts.from) results = results.filter(m => m.createdAt >= opts.from);
+    if (opts.to) results = results.filter(m => m.createdAt <= opts.to);
+    if (opts.layer) results = results.filter(m => m.layer === opts.layer);
+    results.sort((a, b) => b.createdAt - a.createdAt);
+    return opts.limit ? results.slice(0, opts.limit) : results;
+  }
+
+  /**
+   * Auto-merge duplicate memories. Uses findDuplicates then merge for each group.
+   * @param {{threshold?: number, dryRun?: boolean}} opts
+   * @returns {Promise<{merged: number, groups: number, details: Array}>}
+   */
+  async deduplicate(opts = {}) {
+    await this.#ensureLoaded();
+    const threshold = opts.threshold || 0.8;
+    const dupes = await this.findDuplicates({ threshold });
+    let merged = 0;
+    const details = [];
+
+    for (const group of dupes) {
+      if (opts.dryRun) {
+        details.push({ action: 'would_merge', ids: group.memories.map(m => m.id) });
+        continue;
+      }
+      // Keep the oldest memory, merge others into it
+      const sorted = [...group.memories].sort((a, b) => a.createdAt - b.createdAt);
+      const keeper = sorted[0];
+      for (let i = 1; i < sorted.length; i++) {
+        await this.merge(keeper.id, sorted[i].id);
+        merged++;
+      }
+      details.push({ action: 'merged', keeperId: keeper.id, absorbed: sorted.slice(1).map(m => m.id) });
+    }
+
+    return { merged, groups: dupes.length, details };
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────

@@ -7,3 +7,4 @@ timestamp	commit	metric	value	status	description
 2026-04-17T00:00	key-dev-2	test_count	130/130	keep	v0.7.0: Added delete(id) single-memory deletion + scheduledMaintenance() combining decay/consolidate/compact. 130 tests (was 90). 40 new tests, ~45 lines src added.
 2026-04-17T01:00	key-dev-3	test_count	133/133	keep	v0.8.0: reindex() API + fix stale tag/entity index bug in put(). scheduledMaintenance now includes reindex. 133 tests (was 130). 3 new tests.
 2026-04-17T13:10	3d1f469	test_count	147/147	keep	v0.9.0: findDuplicates+archive/restore+validate, 14 new tests (133→147), 1642→1797 lines
+2026-04-17T13:20	f121ae7	test_count	154/154	keep	v0.9.1: tagCloud+aggregate, 7 new tests (147→154)

@@ -1774,3 +1774,99 @@ describe('Memory Associations (Links)', () => {
       } finally { cleanup(); }
     });
   });
+
+  describe('searchByTime', () => {
+    it('finds memories in time range', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        const m1 = await svc.add({ content: 'First', layer: 'core' });
+        await new Promise(r => setTimeout(r, 10));
+        const m2 = await svc.add({ content: 'Second', layer: 'long' });
+        await new Promise(r => setTimeout(r, 10));
+        const m3 = await svc.add({ content: 'Third', layer: 'short' });
+
+        // Get only m2 by time range
+        const results = await svc.searchByTime({ from: m2.createdAt - 1, to: m2.createdAt + 1 });
+        assert.equal(results.length, 1);
+        assert.equal(results[0].content, 'Second');
+      } finally { cleanup(); }
+    });
+
+    it('filters by layer', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Core', layer: 'core' });
+        await svc.add({ content: 'Long', layer: 'long' });
+
+        const results = await svc.searchByTime({ layer: 'core' });
+        assert.equal(results.length, 1);
+        assert.equal(results[0].content, 'Core');
+      } finally { cleanup(); }
+    });
+
+    it('respects limit', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'A', layer: 'core' });
+        await svc.add({ content: 'B', layer: 'core' });
+        await svc.add({ content: 'C', layer: 'core' });
+
+        const results = await svc.searchByTime({ limit: 2 });
+        assert.equal(results.length, 2);
+      } finally { cleanup(); }
+    });
+
+    it('returns newest first', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Old', layer: 'core' });
+        await new Promise(r => setTimeout(r, 5));
+        await svc.add({ content: 'New', layer: 'core' });
+
+        const results = await svc.searchByTime({});
+        assert.equal(results[0].content, 'New');
+      } finally { cleanup(); }
+    });
+  });
+
+  describe('deduplicate', () => {
+    it('merges duplicate memories', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Python is great for data science', layer: 'core', tags: ['python'] });
+        await svc.add({ content: 'Python is great for data science', layer: 'long', tags: ['python'] });
+        await svc.add({ content: 'Something totally unique', layer: 'core' });
+
+        const result = await svc.deduplicate({ threshold: 0.7 });
+        assert.ok(result.merged >= 1);
+        assert.ok(result.groups >= 1);
+      } finally { cleanup(); }
+    });
+
+    it('dryRun does not modify store', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Duplicate alpha beta gamma', layer: 'core' });
+        await svc.add({ content: 'Duplicate alpha beta gamma', layer: 'long' });
+
+        const result = await svc.deduplicate({ threshold: 0.7, dryRun: true });
+        assert.equal(result.merged, 0);
+        assert.equal(result.details[0].action, 'would_merge');
+
+        const stats = await svc.stats();
+        assert.equal(stats.total, 2);
+      } finally { cleanup(); }
+    });
+
+    it('returns empty for no duplicates', async () => {
+      const { svc, cleanup } = createService();
+      try {
+        await svc.add({ content: 'Unique A', layer: 'core' });
+        await svc.add({ content: 'Unique B', layer: 'core' });
+
+        const result = await svc.deduplicate({ threshold: 0.9 });
+        assert.equal(result.merged, 0);
+        assert.equal(result.groups, 0);
+      } finally { cleanup(); }
+    });
+  });
