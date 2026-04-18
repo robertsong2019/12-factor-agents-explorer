@@ -2190,6 +2190,38 @@ export class MemoryService {
     }).length;
     return { added, removed, changed, unchanged };
   }
+
+  /**
+   * Aggregate statistics grouped by tag.
+   * @param {{layer?: MemoryLayer, minCount?: number}} [opts]
+   * @returns {Promise<Array<{tag: string, count: number, avgWeight: number, layers: Record<string, number>}>>}
+   */
+  async tagStats(opts = {}) {
+    await this.#ensureLoaded();
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+
+    const map = {};
+    for (const m of memories) {
+      for (const tag of (m.tags || [])) {
+        if (!map[tag]) map[tag] = { tag, count: 0, totalWeight: 0, layers: {} };
+        map[tag].count++;
+        map[tag].totalWeight += m.weight;
+        map[tag].layers[m.layer] = (map[tag].layers[m.layer] || 0) + 1;
+      }
+    }
+
+    let result = Object.values(map).map(t => ({
+      tag: t.tag,
+      count: t.count,
+      avgWeight: Math.round((t.totalWeight / t.count) * 1000) / 1000,
+      layers: t.layers,
+    }));
+
+    if (opts.minCount) result = result.filter(t => t.count >= opts.minCount);
+    result.sort((a, b) => b.count - a.count);
+    return result;
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────

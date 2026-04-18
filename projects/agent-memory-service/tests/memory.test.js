@@ -2638,3 +2638,34 @@ describe('diff()', () => {
     } finally { cleanup(); }
   });
 });
+
+// ─── tagStats() ──────────────────────────────────────────
+describe('tagStats()', () => {
+  it('returns per-tag aggregation', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'a', tags: ['x', 'y'], layer: 'core' });
+      await svc.add({ content: 'b', tags: ['x'], layer: 'long' });
+      await svc.add({ content: 'c', tags: ['z'], layer: 'short' });
+      const stats = await svc.tagStats();
+      const xStat = stats.find(s => s.tag === 'x');
+      assert.equal(xStat.count, 2);
+      assert.ok(xStat.avgWeight > 0);
+      assert.ok(xStat.layers.core >= 1);
+    } finally { cleanup(); }
+  });
+
+  it('filters by minCount', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'a', tags: ['common'] });
+      await svc.add({ content: 'b', tags: ['common'] });
+      await svc.add({ content: 'c', tags: ['rare'] });
+      const stats = await svc.tagStats({ minCount: 2 });
+      assert.ok(stats.every(s => s.count >= 2));
+      assert.equal(stats.length, 1);
+    } finally { cleanup(); }
+  });
+});
