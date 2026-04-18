@@ -1949,6 +1949,40 @@ export class MemoryService {
 
     return { removed: toRemove.length, remaining: this.#store.all().length };
   }
+
+  /**
+   * Count memories matching optional filter criteria.
+   * @param {{layer?: string, tag?: string, minWeight?: number}} [filter]
+   * @returns {Promise<number>}
+   */
+  async count(filter = {}) {
+    await this.#ensureLoaded();
+    let memories = this.#store.all();
+    if (filter.layer) memories = memories.filter(m => m.layer === filter.layer);
+    if (filter.tag) memories = memories.filter(m => m.tags && m.tags.includes(filter.tag));
+    if (filter.minWeight !== undefined) memories = memories.filter(m => m.weight >= filter.minWeight);
+    return memories.length;
+  }
+
+  /**
+   * Get random memories (useful for serendipity/exploration).
+   * @param {{count?: number, layer?: string, tag?: string}} [opts]
+   * @returns {Promise<Memory[]>}
+   */
+  async random(opts = {}) {
+    await this.#ensureLoaded();
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+    if (opts.tag) memories = memories.filter(m => m.tags && m.tags.includes(opts.tag));
+    // Fisher-Yates shuffle then take first N
+    const shuffled = [...memories];
+    const n = Math.min(opts.count ?? 1, shuffled.length);
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, n);
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────

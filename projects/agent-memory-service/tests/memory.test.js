@@ -2196,3 +2196,112 @@ describe('touch(id)', () => {
     } finally { cleanup(); }
   });
 });
+
+describe('count()', () => {
+  it('counts all memories with no filter', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'a', layer: 'core' });
+      await svc.add({ content: 'b', layer: 'short' });
+      await svc.add({ content: 'c', layer: 'core' });
+      assert.equal(await svc.count(), 3);
+    } finally { cleanup(); }
+  });
+
+  it('counts by layer', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'a', layer: 'core' });
+      await svc.add({ content: 'b', layer: 'short' });
+      await svc.add({ content: 'c', layer: 'core' });
+      assert.equal(await svc.count({ layer: 'core' }), 2);
+      assert.equal(await svc.count({ layer: 'short' }), 1);
+    } finally { cleanup(); }
+  });
+
+  it('counts by tag', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'a', tags: ['x', 'y'] });
+      await svc.add({ content: 'b', tags: ['x'] });
+      await svc.add({ content: 'c', tags: ['z'] });
+      assert.equal(await svc.count({ tag: 'x' }), 2);
+      assert.equal(await svc.count({ tag: 'z' }), 1);
+      assert.equal(await svc.count({ tag: 'missing' }), 0);
+    } finally { cleanup(); }
+  });
+
+  it('counts by combined filter', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'a', layer: 'core', tags: ['x'] });
+      await svc.add({ content: 'b', layer: 'short', tags: ['x'] });
+      await svc.add({ content: 'c', layer: 'core', tags: ['y'] });
+      assert.equal(await svc.count({ layer: 'core', tag: 'x' }), 1);
+      assert.equal(await svc.count({ layer: 'core' }), 2);
+    } finally { cleanup(); }
+  });
+});
+
+describe('random()', () => {
+  it('returns up to count memories', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      for (let i = 0; i < 10; i++) await svc.add({ content: `m${i}` });
+      const result = await svc.random({ count: 3 });
+      assert.equal(result.length, 3);
+      // All unique
+      const ids = new Set(result.map(m => m.id));
+      assert.equal(ids.size, 3);
+    } finally { cleanup(); }
+  });
+
+  it('respects layer filter', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'core', layer: 'core' });
+      await svc.add({ content: 'short', layer: 'short' });
+      await svc.add({ content: 'core2', layer: 'core' });
+      const result = await svc.random({ count: 10, layer: 'core' });
+      assert.ok(result.every(m => m.layer === 'core'));
+      assert.equal(result.length, 2);
+    } finally { cleanup(); }
+  });
+
+  it('returns empty for empty store', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const result = await svc.random({ count: 5 });
+      assert.equal(result.length, 0);
+    } finally { cleanup(); }
+  });
+
+  it('defaults to count=1', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'only' });
+      const result = await svc.random();
+      assert.equal(result.length, 1);
+    } finally { cleanup(); }
+  });
+
+  it('respects tag filter', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'a', tags: ['red'] });
+      await svc.add({ content: 'b', tags: ['blue'] });
+      const result = await svc.random({ count: 5, tag: 'red' });
+      assert.equal(result.length, 1);
+      assert.ok(result[0].tags.includes('red'));
+    } finally { cleanup(); }
+  });
+});

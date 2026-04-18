@@ -15,10 +15,10 @@
 
 ---
 
-## Current Focus (2026-04-17)
+## Current Focus (2026-04-18)
 
 ### Active Theme
-Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，Agent Memory Service 已从 v0.6.0 迭代至 v0.8.0 (133 tests)
+Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，Agent Memory Service 已从 v0.6.0 迭代至 v0.9.6 (188 tests)。⚠️ 关键教训：key-dev sessions 必须在每次实验成功后 git commit，否则代码会在 session 重启时丢失（4/17 有多个 session 记录了 experiments.tsv 但未 commit 代码）
 
 ### Core Projects
 1. **Agent Task CLI** - 多 Agent 任务编排 (109 tests, 80%+ coverage, ✅ 已完成)
@@ -30,7 +30,7 @@ Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，
 7. **agent-log** - OpenClaw 日志搜索/汇总 CLI (✅ 单文件 Bash，零依赖)
 8. **ctxgen** - AI 上下文文件生成器 (✅ v1.0, 纯Node.js零依赖, 支持4种目标格式)
 9. **tiny-agent-workshop** - 单文件 Agent 模式教学集 (✅ 7个模式: ReAct/ToolCall/Memory/Router/Guardrail/Chain/EdgeAgent)
-10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v0.6.0, 90/90 tests, 三层存储+自动提取+语义检索+Consolidation+变更追踪+自监控stats)
+10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v0.9.6, 188/188 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+stats+delete+scheduledMaintenance+reindex+query()+touch())
 11. **A2A Protocol Lab** - Agent-to-Agent通信协议实验 (✅ 零依赖Python实现, Server+Client+Federation Demo)
 
 ---
@@ -38,8 +38,8 @@ Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，
 ## Next Actions (Updated 2026-04-16)
 
 ### High Priority (本周完成)
-- [ ] **Agent Memory Service v0.9.0+** — 接入 LLM 记忆提取、添加 embedding 支持、BM25 混合检索。基于研究笔记(2026-04-16)的架构方案
-- [ ] **实现 OpenClaw MCP Server** — ✅ 研究完成(2026-04-17)。v2 SDK split packages (`@modelcontextprotocol/server` + `@modelcontextprotocol/node` + `@modelcontextprotocol/express`)。研究笔记含完整可运行代码。**下一步: 创建项目 `openclaw-mcp-server` → 实现 Phase 1 核心工具(get-system-status, search-memory) → MCP Inspector 验证 → 接入 Edge Agent Runtime**
+- [ ] **Agent Memory Service v1.0** — BM25 混合检索、embedding 支持。v0.9.6 已有 query() unified filter + touch() access tracking (188 tests)
+- [ ] **实现 OpenClaw MCP Server** — ✅ 研究完成(2026-04-17)。v2 SDK split packages。**下一步: 创建项目 → Phase 1 核心工具 → MCP Inspector 验证**
 - [ ] **A2A Agent Trust 集成原型** - Agent Card嵌入信任元数据，与Agent Trust Network对接
 - [ ] **集成多Agent框架** — LangGraph Supervisor桥接OpenClaw原型 + Agent Card Schema设计
 
@@ -49,7 +49,6 @@ Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，
 - [ ] **Agent Trust Network Web UI 原型** - 可视化组件、信任算法优化、网络模拟器
 - [ ] **Edge Agent Runtime Dashboard** - WebSocket接入、pip包化、"5分钟快速原型"教程
 - [ ] **Agent Memory Service v0.2.0** - Memory Consolidation (✅ 54/54 tests), 接入 LLM 提取, embedding 支持
-- [ ] **统一工具链开发** - ai-toolkit CLI、项目间集成、文档系统统一
 - [ ] **技术债务处理** - 测试覆盖率提升、文档更新、性能优化、安全检查
 
 ### Exploratory (下季度)
