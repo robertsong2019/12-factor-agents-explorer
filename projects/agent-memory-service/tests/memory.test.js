@@ -2358,3 +2358,66 @@ describe('recent()', () => {
     } finally { cleanup(); }
   });
 });
+
+describe('mergeMemories()', () => {
+  it('merges two memories into one', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m1 = await svc.add({ content: 'hello', tags: ['a'], entities: ['x'] });
+      const m2 = await svc.add({ content: 'world', tags: ['b'], entities: ['y'] });
+      const { merged, removed } = await svc.mergeMemories([m1.id, m2.id]);
+      assert.ok(merged.content.includes('hello'));
+      assert.ok(merged.content.includes('world'));
+      assert.deepEqual(removed.sort(), [m1.id, m2.id].sort());
+      // Originals gone
+      assert.equal(await svc.get(m1.id), undefined);
+      assert.equal(await svc.get(m2.id), undefined);
+    } finally { cleanup(); }
+  });
+
+  it('merges tags and entities', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m1 = await svc.add({ content: 'a', tags: ['x'], entities: ['e1'] });
+      const m2 = await svc.add({ content: 'b', tags: ['x', 'y'], entities: ['e2'] });
+      const { merged } = await svc.mergeMemories([m1.id, m2.id]);
+      assert.deepEqual(merged.tags.sort(), ['x', 'y']);
+      assert.deepEqual(merged.entities.sort(), ['e1', 'e2']);
+    } finally { cleanup(); }
+  });
+
+  it('throws for fewer than 2 ids', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await assert.rejects(() => svc.mergeMemories(['only-one']), /at least 2/);
+    } finally { cleanup(); }
+  });
+
+  it('accepts custom content override', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m1 = await svc.add({ content: 'alpha' });
+      const m2 = await svc.add({ content: 'beta' });
+      const { merged } = await svc.mergeMemories([m1.id, m2.id], { content: 'custom' });
+      assert.equal(merged.content, 'custom');
+    } finally { cleanup(); }
+  });
+
+  it('transfers access counts', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m1 = await svc.add({ content: 'a' });
+      await svc.touch(m1.id);
+      await svc.touch(m1.id);
+      const m2 = await svc.add({ content: 'b' });
+      await svc.touch(m2.id);
+      const { merged } = await svc.mergeMemories([m1.id, m2.id]);
+      assert.ok(merged.accessCount >= 3);
+    } finally { cleanup(); }
+  });
+});

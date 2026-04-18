@@ -1965,6 +1965,52 @@ export class MemoryService {
   }
 
   /**
+   * Merge multiple memories into one combined memory.
+   * @param {string[]} ids - Memory IDs to merge
+   * @param {{content?: string, layer?: string, tags?: string[]}} [opts] - Override merged fields
+   * @returns {Promise<{merged: Memory, removed: string[]}>}
+   */
+  async mergeMemories(ids, opts = {}) {
+    await this.#ensureLoaded();
+    if (!ids || ids.length < 2) throw new Error('mergeMemories requires at least 2 ids');
+
+    const memories = ids.map(id => this.#store.get(id)).filter(Boolean);
+    if (memories.length < 2) throw new Error('At least 2 existing memories required');
+
+    // Merge content
+    const content = opts.content || memories.map(m => m.content).join(' | ');
+    const tags = opts.tags || [...new Set(memories.flatMap(m => m.tags || []))];
+    const entities = [...new Set(memories.flatMap(m => m.entities || []))];
+    const maxWeight = Math.max(...memories.map(m => m.weight));
+    const totalAccess = memories.reduce((sum, m) => sum + m.accessCount, 0);
+
+    // Create merged memory
+    const merged = await this.add({
+      content,
+      layer: opts.layer || memories[0].layer,
+      tags,
+      entities,
+      source: 'merge'
+    });
+    // Transfer weight and access stats
+    const stored = this.#store.get(merged.id);
+    stored.weight = Math.min(1.0, maxWeight + 0.1);
+    stored.accessCount = totalAccess;
+
+    // Remove originals
+    const removed = [];
+    for (const m of memories) {
+      this.#links.cleanForMemory(m.id);
+      this.#store.delete(m.id);
+      removed.push(m.id);
+    }
+    await this.#store.save();
+    await this.#links.save();
+
+    return { merged: stored, removed };
+  }
+
+  /**
    * Get most recent memories sorted by createdAt or accessedAt.
    * @param {{count?: number, sortBy?: 'createdAt'|'accessedAt', layer?: string, tag?: string}} [opts]
    * @returns {Promise<Memory[]>}
