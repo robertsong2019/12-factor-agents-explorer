@@ -1467,6 +1467,23 @@ export class MemoryService {
   }
 
   /**
+   * List archived memories.
+   * @param {{limit?: number}} opts
+   * @returns {Promise<Memory[]>}
+   */
+  async listArchived(opts = {}) {
+    await this.#ensureLoaded();
+    const archivePath = join(this.#dirPath, 'archive', 'archived.json');
+    let archived = [];
+    try { archived = JSON.parse(await readFile(archivePath, 'utf8')); } catch {}
+    const results = opts.limit ? archived.slice(0, opts.limit) : archived;
+    return results.map(m => {
+      const { archivedAt, ...rest } = m;
+      return rest;
+    });
+  }
+
+  /**
    * Run scheduled maintenance: decay + consolidate + compact changelog.
    * Agents should call this periodically (e.g., on session start or via heartbeat).
    * @param {{consolidateThreshold?: number, changelogMaxAge?: number, dryRun?: boolean}} opts

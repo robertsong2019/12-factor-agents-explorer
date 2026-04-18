@@ -30,7 +30,7 @@ Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，
 7. **agent-log** - OpenClaw 日志搜索/汇总 CLI (✅ 单文件 Bash，零依赖)
 8. **ctxgen** - AI 上下文文件生成器 (✅ v1.0, 纯Node.js零依赖, 支持4种目标格式)
 9. **tiny-agent-workshop** - 单文件 Agent 模式教学集 (✅ 7个模式: ReAct/ToolCall/Memory/Router/Guardrail/Chain/EdgeAgent)
-10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v0.9.7, 206/206 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+stats+delete+scheduledMaintenance+reindex+query()+touch()+count()+random()+recent()+mergeMemories())
+10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v0.9.8, 224/224 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+stats+delete+scheduledMaintenance+reindex+query()+touch()+count()+random()+recent()+mergeMemories()+findByEntity()+batchUpdate()+snapshot()+diff()+tagStats())
 11. **A2A Protocol Lab** - Agent-to-Agent通信协议实验 (✅ 零依赖Python实现, Server+Client+Federation Demo)
 
 ---
@@ -38,7 +38,7 @@ Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，
 ## Next Actions (Updated 2026-04-18)
 
 ### High Priority (本周完成)
-- [ ] **Agent Memory Service v1.0** — BM25 混合检索、embedding 支持。v0.9.6 已有 query() unified filter + touch() access tracking (188 tests)
+- [ ] **Agent Memory Service v1.0** — BM25 混合检索、embedding 支持。v0.9.8 已有 query()+findByEntity()+batchUpdate()+snapshot()+diff()+tagStats() (224 tests)
 - [ ] **实现 OpenClaw MCP Server** — ✅ 研究完成(2026-04-18)。v2 SDK: `server`+`node`+`express` split packages, Zod v4, Streamable HTTP stateful mode。**下一步: 创建项目 → 实现 search_memory/system_status tools → MCP Inspector 验证 → 接入 Agent Memory Service**
   - 研究笔记: `catalyst-research/exploration-notes/2026-04-18-mcp-server-typescript-streamable-http.md`
 - [ ] **A2A Agent Trust 集成原型** - Agent Card嵌入信任元数据，与Agent Trust Network对接

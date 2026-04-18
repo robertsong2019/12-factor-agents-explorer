@@ -2669,3 +2669,61 @@ describe('tagStats()', () => {
     } finally { cleanup(); }
   });
 });
+
+// ─── listArchived() ────────────────────────────────────────
+describe('listArchived()', () => {
+  it('lists archived memories', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m1 = await svc.add({ content: 'Archive 1', layer: 'core' });
+      const m2 = await svc.add({ content: 'Archive 2', layer: 'core' });
+      await svc.add({ content: 'Keep active', layer: 'core' });
+
+      await svc.archive({ ids: [m1.id, m2.id] });
+
+      const archived = await svc.listArchived();
+      assert.equal(archived.length, 2);
+      assert.ok(archived.some(m => m.content === 'Archive 1'));
+      assert.ok(archived.some(m => m.content === 'Archive 2'));
+    } finally { cleanup(); }
+  });
+
+  it('respects limit in listArchived', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m1 = await svc.add({ content: 'A1' });
+      const m2 = await svc.add({ content: 'A2' });
+      const m3 = await svc.add({ content: 'A3' });
+      await svc.archive({ ids: [m1.id, m2.id, m3.id] });
+
+      const archived = await svc.listArchived({ limit: 2 });
+      assert.equal(archived.length, 2);
+    } finally { cleanup(); }
+  });
+
+  it('returns empty array when no archived memories', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'Active memory' });
+      const archived = await svc.listArchived();
+      assert.equal(archived.length, 0);
+    } finally { cleanup(); }
+  });
+
+  it('excludes archivedAt field from results', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m = await svc.add({ content: 'To archive' });
+      await svc.archive({ ids: [m.id] });
+
+      const archived = await svc.listArchived();
+      assert.equal(archived.length, 1);
+      assert.ok(!archived[0].hasOwnProperty('archivedAt'));
+      assert.equal(archived[0].content, 'To archive');
+    } finally { cleanup(); }
+  });
+});

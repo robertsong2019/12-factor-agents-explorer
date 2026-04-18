@@ -18,3 +18,4 @@ timestamp	commit	metric	value	status	description
 2026-04-18T21:00	8d49447	test_pass_rate	219/219	keep	query()+findByEntity()+batchUpdate() — 13 new tests
 2026-04-18T21:05	b51a8ca	test_pass_rate	222/222	keep	snapshot()+diff() — 3 new tests
 2026-04-18T21:10	4a1de39	test_pass_rate	224/224	keep	tagStats() — 2 new tests
+2026-04-18T15:16	e3e5646	test_count	228/228	keep	listArchived() API - lists archived memories with limit support, 4 new tests (224→228)
