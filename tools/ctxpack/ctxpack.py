@@ -465,6 +465,61 @@ def generate_context(
     return result
 
 
+# ── Stats Generation ───────────────────────────────────────────────────
+
+def generate_stats(
+    root: Path, files: list[str], key_files: dict[str, list[str]],
+    languages: list[str], frameworks: list[str], project_name: str,
+) -> dict:
+    """Generate project statistics as a structured dict."""
+    ext_map = {
+        ".py": "Python", ".ts": "TypeScript", ".tsx": "TypeScript",
+        ".js": "JavaScript", ".jsx": "JavaScript", ".go": "Go",
+        ".rs": "Rust", ".java": "Java", ".md": "Markdown",
+        ".json": "JSON", ".yaml": "YAML", ".yml": "YAML",
+    }
+    lang_stats = {}
+    total_lines = 0
+    total_size = 0
+
+    for f in files:
+        ext = os.path.splitext(f)[1]
+        lang = ext_map.get(ext, "Other")
+        info = get_file_info(root, f)
+        lines = info.get("lines", 0)
+        size = info.get("size", 0)
+        total_lines += lines
+        total_size += size
+        if lang not in lang_stats:
+            lang_stats[lang] = {"files": 0, "lines": 0, "bytes": 0}
+        lang_stats[lang]["files"] += 1
+        lang_stats[lang]["lines"] += lines
+        lang_stats[lang]["bytes"] += size
+
+    # Count exports across all source files
+    total_exports = 0
+    for f in files:
+        ext = os.path.splitext(f)[1]
+        lang = ext_map.get(ext, "")
+        if lang in ("TypeScript", "JavaScript", "Python", "Go"):
+            info = get_file_info(root, f)
+            total_exports += len(info.get("exports", []))
+
+    return {
+        "project": project_name,
+        "totalFiles": len(files),
+        "totalLines": total_lines,
+        "totalBytes": total_size,
+        "languages": lang_stats,
+        "frameworks": frameworks,
+        "keyFilesByCategory": {k: len(v) for k, v in key_files.items() if v},
+        "totalExports": total_exports,
+        "estimatedTokens": estimate_tokens(
+            "\n".join(get_file_info(root, f).get("summary", "") for f in files[:100])
+        ),
+    }
+
+
 # ── Main ───────────────────────────────────────────────────────────────
 
 def main():
@@ -481,6 +536,8 @@ def main():
     parser.add_argument("--include", action="append", default=[],
                         help="Additional glob patterns to include")
     parser.add_argument("--name", help="Project name (default: directory name)")
+    parser.add_argument("--stats", action="store_true",
+                        help="Output project statistics as JSON instead of context")
     parser.add_argument("-v", "--version", action="version", version=f"ctxpack {VERSION}")
 
     args = parser.parse_args()
@@ -512,6 +569,21 @@ def main():
             for f in files:
                 if fnmatch.fnmatch(f, pat) and f not in key_files["entry"]:
                     key_files["entry"].append(f)
+
+    if args.stats:
+        eprint(f"📊 Generating stats ...")
+        stats = generate_stats(
+            root=root, files=files, key_files=key_files,
+            languages=languages, frameworks=frameworks,
+            project_name=project_name,
+        )
+        output = json.dumps(stats, indent=2)
+        if args.output:
+            Path(args.output).write_text(output)
+            eprint(f"✅ Stats written to {args.output}")
+        else:
+            print(output)
+        return
 
     eprint(f"🧱 Generating context ({args.format} format) ...")
     context = generate_context(
