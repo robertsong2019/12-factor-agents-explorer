@@ -2592,3 +2592,49 @@ describe('batchUpdate()', () => {
     } finally { cleanup(); }
   });
 });
+
+// ─── snapshot() & diff() ─────────────────────────────────
+describe('snapshot()', () => {
+  it('captures current state', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'a', layer: 'core' });
+      await svc.add({ content: 'b', layer: 'long' });
+      const snap = await svc.snapshot();
+      assert.equal(snap.length, 2);
+      assert.ok(snap[0].hash);
+      assert.ok(snap[0].id);
+    } finally { cleanup(); }
+  });
+});
+
+describe('diff()', () => {
+  it('detects added and removed', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const before = await svc.snapshot();
+      const m = await svc.add({ content: 'new' });
+      const after = await svc.snapshot();
+      const d = svc.diff(before, after);
+      assert.ok(d.added.includes(m.id));
+      assert.equal(d.removed.length, 0);
+    } finally { cleanup(); }
+  });
+
+  it('detects changes and unchanged', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m1 = await svc.add({ content: 'stable', layer: 'core' });
+      const m2 = await svc.add({ content: 'will change', layer: 'long' });
+      const before = await svc.snapshot();
+      await svc.update(m2.id, { content: 'changed' });
+      const after = await svc.snapshot();
+      const d = svc.diff(before, after);
+      assert.ok(d.changed.includes(m2.id));
+      assert.ok(d.unchanged >= 1);
+    } finally { cleanup(); }
+  });
+});

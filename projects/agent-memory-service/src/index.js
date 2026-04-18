@@ -2156,6 +2156,40 @@ export class MemoryService {
     await this.#store.save();
     return { updated, notFound };
   }
+
+  /**
+   * Capture a point-in-time snapshot of all memory IDs and hashes.
+   * Lightweight — only stores id→hash mapping, not full content.
+   * @returns {{id: string, hash: string, layer: MemoryLayer, weight: number}[]}
+   */
+  async snapshot() {
+    await this.#ensureLoaded();
+    return this.#store.all().map(m => ({
+      id: m.id, hash: m.hash, layer: m.layer, weight: m.weight,
+    }));
+  }
+
+  /**
+   * Compare two snapshots. Returns added/removed/changed IDs.
+   * @param {ReturnType<snapshot>} before
+   * @param {ReturnType<snapshot>} after
+   * @returns {{added: string[], removed: string[], changed: string[], unchanged: number}}
+   */
+  diff(before, after) {
+    const beforeMap = new Map(before.map(e => [e.id, e]));
+    const afterMap = new Map(after.map(e => [e.id, e]));
+    const added = after.filter(e => !beforeMap.has(e.id)).map(e => e.id);
+    const removed = before.filter(e => !afterMap.has(e.id)).map(e => e.id);
+    const changed = after.filter(e => {
+      const b = beforeMap.get(e.id);
+      return b && (b.hash !== e.hash || b.layer !== e.layer);
+    }).map(e => e.id);
+    const unchanged = after.filter(e => {
+      const b = beforeMap.get(e.id);
+      return b && b.hash === e.hash && b.layer === e.layer;
+    }).length;
+    return { added, removed, changed, unchanged };
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────
