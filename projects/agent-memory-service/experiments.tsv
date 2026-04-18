@@ -15,3 +15,6 @@ timestamp	commit	metric	value	status	description
 2026-04-18T19:10	8c7ae77	test_count	197/197	keep	Cycle 1: Added count(filter)+random(opts) APIs — 9 new tests (188→197)
 2026-04-18T19:20	c2146b0	test_count	201/201	keep	Cycle 2: Added recent(opts) sorted retrieval — 4 new tests (197→201). v0.9.7 total: 13 new API methods since v0.9.6.
 2026-04-18T19:30	d2b6d46	test_count	206/206	keep	Cycle 3: Added mergeMemories(ids,opts) explicit merging — 5 new tests (201→206). v0.9.7 complete: 3 APIs, 18 new tests, 0 rollbacks.
+2026-04-18T21:00	8d49447	test_pass_rate	219/219	keep	query()+findByEntity()+batchUpdate() — 13 new tests
+2026-04-18T21:05	b51a8ca	test_pass_rate	222/222	keep	snapshot()+diff() — 3 new tests
+2026-04-18T21:10	4a1de39	test_pass_rate	224/224	keep	tagStats() — 2 new tests
