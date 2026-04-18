@@ -2727,3 +2727,168 @@ describe('listArchived()', () => {
     } finally { cleanup(); }
   });
 });
+
+// ─── renameTag & mergeTags Tests ─────────────────────────
+
+describe('renameTag', () => {
+  it('renames a tag across all memories', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'A', tags: ['old'] });
+      await svc.add({ content: 'B', tags: ['old', 'keep'] });
+      const result = await svc.renameTag('old', 'new');
+      assert.equal(result.renamed, 2);
+      const all = await svc.query({ tags: ['new'] });
+      assert.equal(all.total, 2);
+    } finally { cleanup(); }
+  });
+
+  it('skips duplicate when target already exists', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'X', tags: ['a', 'b'] });
+      const result = await svc.renameTag('a', 'b');
+      assert.equal(result.renamed, 1);
+      const m = (await svc.query({ tags: ['b'] })).results[0];
+      assert.deepEqual(m.tags.sort(), ['b']);
+    } finally { cleanup(); }
+  });
+
+  it('returns zero for no-op rename', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'Y', tags: ['x'] });
+      const result = await svc.renameTag('x', 'x');
+      assert.equal(result.renamed, 0);
+    } finally { cleanup(); }
+  });
+
+  it('handles non-existent tag gracefully', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const result = await svc.renameTag('none', 'something');
+      assert.equal(result.renamed, 0);
+    } finally { cleanup(); }
+  });
+
+  it('updates tag index after rename', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'Z', tags: ['alpha'] });
+      await svc.renameTag('alpha', 'beta');
+      const byTag = await svc.query({ tags: ['beta'] });
+      assert.equal(byTag.total, 1);
+      const oldTag = await svc.query({ tags: ['alpha'] });
+      assert.equal(oldTag.total, 0);
+    } finally { cleanup(); }
+  });
+});
+
+describe('mergeTags', () => {
+  it('merges multiple tags into one', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'A', tags: ['x'] });
+      await svc.add({ content: 'B', tags: ['y'] });
+      await svc.add({ content: 'C', tags: ['z'] });
+      const result = await svc.mergeTags(['x', 'y'], 'merged');
+      assert.equal(result.merged, 2);
+      const merged = await svc.query({ tags: ['merged'] });
+      assert.equal(merged.total, 2);
+      const z = await svc.query({ tags: ['z'] });
+      assert.equal(z.total, 1);
+    } finally { cleanup(); }
+  });
+
+  it('handles duplicate target in merge', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'D', tags: ['a', 'target'] });
+      const result = await svc.mergeTags(['a'], 'target');
+      assert.equal(result.duplicates, 1);
+      const m = (await svc.query({ tags: ['target'] })).results[0];
+      assert.deepEqual(m.tags, ['target']);
+    } finally { cleanup(); }
+  });
+
+  it('handles empty source tags', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const result = await svc.mergeTags([], 'target');
+      assert.equal(result.merged, 0);
+    } finally { cleanup(); }
+  });
+});
+
+describe('bulkTag', () => {
+  it('adds and removes tags on multiple memories', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m1 = await svc.add({ content: 'A', tags: ['x'] });
+      const m2 = await svc.add({ content: 'B', tags: ['x'] });
+      const result = await svc.bulkTag([m1.id, m2.id], { add: ['y'], remove: ['x'] });
+      assert.equal(result.updated, 2);
+      assert.deepEqual(result.notFound, []);
+      const r1 = await svc.get(m1.id);
+      assert.deepEqual(r1.tags, ['y']);
+      const r2 = await svc.get(m2.id);
+      assert.deepEqual(r2.tags, ['y']);
+    } finally { cleanup(); }
+  });
+
+  it('skips not-found IDs and reports them', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const result = await svc.bulkTag(['nonexistent'], { add: ['z'] });
+      assert.equal(result.updated, 0);
+      assert.deepEqual(result.notFound, ['nonexistent']);
+    } finally { cleanup(); }
+  });
+
+  it('does not add duplicate tags', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m = await svc.add({ content: 'C', tags: ['existing'] });
+      const result = await svc.bulkTag([m.id], { add: ['existing'] });
+      assert.equal(result.updated, 0);
+      const updated = await svc.get(m.id);
+      assert.deepEqual(updated.tags, ['existing']);
+    } finally { cleanup(); }
+  });
+
+  it('handles add-only and remove-only', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m = await svc.add({ content: 'D', tags: ['a', 'b'] });
+      await svc.bulkTag([m.id], { remove: ['a'] });
+      let mem = await svc.get(m.id);
+      assert.deepEqual(mem.tags, ['b']);
+      await svc.bulkTag([m.id], { add: ['c'] });
+      mem = await svc.get(m.id);
+      assert.deepEqual(mem.tags, ['b', 'c']);
+    } finally { cleanup(); }
+  });
+
+  it('reindexes tag index after modification', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m = await svc.add({ content: 'E' });
+      await svc.bulkTag([m.id], { add: ['newTag'] });
+      const stats = await svc.tagStats();
+      assert.ok(stats.some(s => s.tag === 'newTag'));
+    } finally { cleanup(); }
+  });
+});

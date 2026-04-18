@@ -2239,6 +2239,101 @@ export class MemoryService {
     result.sort((a, b) => b.count - a.count);
     return result;
   }
+
+  /**
+   * Rename a tag across all memories
+   * @param {string} oldTag
+   * @param {string} newTag
+   * @returns {Promise<{renamed: number, skipped: number}>}
+   */
+  async renameTag(oldTag, newTag) {
+    await this.#ensureLoaded();
+    if (!oldTag || !newTag || oldTag === newTag) return { renamed: 0, skipped: 0 };
+    let renamed = 0;
+    const all = this.#store.all();
+    for (const m of all) {
+      if (!m.tags) continue;
+      const idx = m.tags.indexOf(oldTag);
+      if (idx === -1) continue;
+      // Don't add duplicate if newTag already exists
+      if (m.tags.includes(newTag)) {
+        m.tags.splice(idx, 1);
+      } else {
+        m.tags[idx] = newTag;
+      }
+      renamed++;
+    }
+    if (renamed > 0) {
+      this.#store.reindex();
+      await this.#store.save();
+    }
+    return { renamed, skipped: 0 };
+  }
+
+  /**
+   * Merge multiple tags into a single target tag
+   * @param {string[]} sourceTags - Tags to merge
+   * @param {string} targetTag - Tag to merge into
+   * @returns {Promise<{merged: number, duplicates: number}>}
+   */
+  async mergeTags(sourceTags, targetTag) {
+    await this.#ensureLoaded();
+    if (!sourceTags || sourceTags.length === 0 || !targetTag) return { merged: 0, duplicates: 0 };
+    let merged = 0, duplicates = 0;
+    const all = this.#store.all();
+    for (const m of all) {
+      if (!m.tags) continue;
+      for (const src of sourceTags) {
+        const idx = m.tags.indexOf(src);
+        if (idx === -1) continue;
+        if (m.tags.includes(targetTag)) {
+          m.tags.splice(idx, 1);
+          duplicates++;
+        } else {
+          m.tags[idx] = targetTag;
+        }
+        merged++;
+      }
+    }
+    if (merged > 0 || duplicates > 0) {
+      this.#store.reindex();
+      await this.#store.save();
+    }
+    return { merged, duplicates };
+  }
+
+  /**
+   * Batch add/remove tags on specific memories by ID.
+   * @param {string[]} ids - Memory IDs to modify
+   * @param {{add?: string[], remove?: string[]}} opts - Tags to add/remove
+   * @returns {Promise<{updated: number, notFound: string[]}>}
+   */
+  async bulkTag(ids, opts = {}) {
+    await this.#ensureLoaded();
+    const notFound = [];
+    let updated = 0;
+    const addTags = opts.add || [];
+    const removeTags = opts.remove || [];
+    for (const id of ids) {
+      const m = this.#store.get(id);
+      if (!m) { notFound.push(id); continue; }
+      if (!m.tags) m.tags = [];
+      let changed = false;
+      for (const t of addTags) {
+        if (!m.tags.includes(t)) { m.tags.push(t); changed = true; }
+      }
+      for (const t of removeTags) {
+        const idx = m.tags.indexOf(t);
+        if (idx !== -1) { m.tags.splice(idx, 1); changed = true; }
+      }
+      if (changed) updated++;
+    }
+    if (updated > 0) {
+      this.#store.reindex();
+      await this.#store.save();
+    }
+    return { updated, notFound };
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────
