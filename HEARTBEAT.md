@@ -22,9 +22,9 @@
 
 ## 系统状态
 - 周六凌晨，核心项目已完成: tiny-agent-workshop, edge-agent-runtime, prompt-weaver, ctxgen, agent-log, local-embedding-memory, a2a-protocol-lab
-- **最新完成**: Agent Memory Service v0.9.6 ✅ (188/188 tests, query()+touch())
-  - v0.9.5: LLM 提取 (184 tests)
-  - v0.9.6: query() unified filter API + touch() access tracking (188 tests)
-  - ⚠️ 教训：必须每次实验后 git commit，避免代码丢失
+- **最新完成**: Agent Memory Service BM25 Hybrid Search ✅ (265/265 tests, 2704 lines)
+  - v0.9.6: query()+touch() (188 tests)
+  - v1.0-dev: BM25Index + searchBM25() + searchHybrid(RRF fusion) (265 tests, +234 lines, zero deps)
+  - Commit: c6f32bd
 - **Autoresearch方法验证**: prompt-router 8→15 tests, agent-context-store 8→12 tests, 零回滚
 - **本周重点**: Agent Memory Service v1.0 (BM25+embedding) + MCP Server实现
