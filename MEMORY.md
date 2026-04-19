@@ -30,7 +30,7 @@ Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，
 7. **agent-log** - OpenClaw 日志搜索/汇总 CLI (✅ 单文件 Bash，零依赖)
 8. **ctxgen** - AI 上下文文件生成器 (✅ v1.0, 纯Node.js零依赖, 支持4种目标格式)
 9. **tiny-agent-workshop** - 单文件 Agent 模式教学集 (✅ 7个模式: ReAct/ToolCall/Memory/Router/Guardrail/Chain/EdgeAgent)
-10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v0.9.8, 224/224 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+stats+delete+scheduledMaintenance+reindex+query()+touch()+count()+random()+recent()+mergeMemories()+findByEntity()+batchUpdate()+snapshot()+diff()+tagStats())
+10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v0.9.8, 241/241 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+stats+delete+scheduledMaintenance+reindex+query()+touch()+count()+random()+recent()+mergeMemories()+findByEntity()+batchUpdate()+snapshot()+diff()+tagStats()+listArchived()+renameTag()+mergeTags()+bulkTag())
 11. **A2A Protocol Lab** - Agent-to-Agent通信协议实验 (✅ 零依赖Python实现, Server+Client+Federation Demo)
 
 ---
@@ -38,9 +38,13 @@ Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，
 ## Next Actions (Updated 2026-04-18)
 
 ### High Priority (本周完成)
-- [ ] **Agent Memory Service v1.0** — BM25 混合检索、embedding 支持。v0.9.8 已有 query()+findByEntity()+batchUpdate()+snapshot()+diff()+tagStats() (224 tests)
-- [ ] **实现 OpenClaw MCP Server** — ✅ 研究完成(2026-04-18)。v2 SDK: `server`+`node`+`express` split packages, Zod v4, Streamable HTTP stateful mode。**下一步: 创建项目 → 实现 search_memory/system_status tools → MCP Inspector 验证 → 接入 Agent Memory Service**
-  - 研究笔记: `catalyst-research/exploration-notes/2026-04-18-mcp-server-typescript-streamable-http.md`
+- [ ] **Agent Memory Service v1.0** — BM25 混合检索、embedding 支持。v0.9.8 已达 241 tests。**已完成 BM25 混合检索研究**（[笔记](catalyst-research/exploration-notes/2026-04-19-bm25-hybrid-search-agent-memory.md)）：三阶段路径(BM25Index替换→RRF融合→EmbeddingProvider)，预计 +35 tests 达 ~276
+- [ ] **实现 OpenClaw MCP Server** — ✅ 研究完成(2026-04-19)。完整实现模式已就绪：
+  - 研究笔记: [技术选型](catalyst-research/exploration-notes/2026-04-18-mcp-server-typescript-streamable-http.md) + [实现模式](catalyst-research/exploration-notes/2026-04-19-mcp-server-implementation-patterns.md)
+  - SDK v2: registerTool API、多会话工厂模式、createMcpExpressApp、Zod v4
+  - **Step 1 MVP**: 3 tools (search_memories, system_status, list_memories) + Streamable HTTP + MCP Inspector 验证
+  - **Step 2**: 接入 Agent Memory Service query() + OpenClaw Gateway 状态
+  - **Step 3**: Bearer auth + rate limit + Docker 部署
 - [ ] **A2A Agent Trust 集成原型** - Agent Card嵌入信任元数据，与Agent Trust Network对接
 - [ ] **集成多Agent框架** — LangGraph Supervisor桥接OpenClaw原型 + Agent Card Schema设计
 
@@ -146,11 +150,24 @@ curl -X POST "https://api.tavily.com/search" \
 
 ## Recent Achievements
 
-### 2026-04-17
-- ✅ **Agent Memory Service v0.6.0 → v0.8.0** — 3个版本跃升，90→133 tests
-  - **v0.7.0**: delete(id) + scheduledMaintenance() 一键维护 (90→130 tests)
-  - **v0.8.0**: reindex() API + 修复 put() 导致的 tag/entity 索引过期 bug (130→133 tests)
-  - 设计决策: scheduledMaintenance 集成 decay+consolidate+compact+reindex，agent 单入口调维护
+### 2026-04-19
+- ✅ **Agent Memory Service v0.9.8 续升** — 228→241 tests (3个新API)
+  - **renameTag()+mergeTags()**: 批量标签管理（重命名/合并），8 new tests
+  - **bulkTag(ids,{add,remove})**: 按ID批量增删标签，5 new tests
+  - **listArchived()**: 归档记忆列表，4 new tests (来自4/18 late session)
+  - 零回滚率持续，autoresearch 循环方法验证
+- ✅ **MCP Server 实现模式深度研究** — 从技术选型到实现的完整模式分析（[笔记](catalyst-research/exploration-notes/2026-04-19-mcp-server-implementation-patterns.md)）
+  - **核心发现**: SDK v2 registerTool API、多会话工厂模式、createMcpExpressApp
+  - **可运行代码**: 完整多会话 MCP Server（3 tools + resource + prompt）+ 客户端测试脚本 + 安全中间件
+  - **关键洞察**: Resource+Prompt 是差异化因素；MCP Inspector 无需 LLM 测试；Elicitation 做安全网
+  - **3步路线图**: MVP(3 tools) → 接入真实数据 → 生产化(Docker+auth)
+
+### 2026-04-18
+- ✅ **Agent Memory Service v0.9.6 → v0.9.8** — 4个版本/多轮实验，188→241 tests
+  - **v0.9.6**: touch(id) 轻量访问追踪 + query() 统一过滤API
+  - **v0.9.7**: count()+random()+recent()+mergeMemories() — 13 new APIs since v0.9.6
+  - **v0.9.8**: listArchived+renameTag+mergeTags+bulkTag 批量标签管理
+  - experiments.tsv 零回滚率持续验证
 - ✅ **Autoresearch 实验循环验证** — prompt-router 和 agent-context-store 快速迭代
   - prompt-router: 8→15 tests (explain() 路由可解释性 + confidence threshold routing)
   - agent-context-store: 8→12 tests (batch operations + 单次磁盘写入优化)
@@ -297,5 +314,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-04-17 02:00*
-*Next review: 2026-04-18*
+*Last updated: 2026-04-19 20:10*
+*Next review: 2026-04-20*

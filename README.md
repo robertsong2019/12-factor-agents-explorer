@@ -322,7 +322,7 @@ npm test
 | agent-task-cli | Node.js | [README](projects/agent-task-cli/README.md) | [TUTORIAL](projects/agent-task-cli/TUTORIAL.md) |
 | agent-memory-service | Node.js | [README](projects/agent-memory-service/README.md) | [TUTORIAL](projects/agent-memory-service/TUTORIAL.md) |
 | agent-memory-graph | Python | [README](projects/agent-memory-graph/README.md) | [TUTORIAL](projects/agent-memory-graph/TUTORIAL.md) |
-| agent-log | Node.js | [README](projects/agent-log/README.md) | — |
+| agent-log | Bash | [README](projects/agent-log/README.md) | [TUTORIAL](projects/agent-log/TUTORIAL.md) |
 | context-forge | Python | [README](projects/context-forge/README.md) | [TUTORIAL](projects/TUTORIAL-context-forge.md) |
 | mission-control | Node.js | [README](projects/mission-control/README.md) | [TUTORIAL](projects/mission-control/TUTORIAL.md) |
 | prompt-mgr | Python | [README](projects/prompt-mgr/README.md) | [TUTORIAL](projects/prompt-mgr/docs/TUTORIAL.md) |
@@ -456,7 +456,7 @@ chmod +x skills/memory-manager/*.sh
 | agent-task-cli | Node.js | ✅ 稳定 | ✅ README + 教程 |
 | agent-memory-service | Python | ✅ 稳定 | ✅ README |
 | agent-memory-graph | Python | ✅ 稳定 | ✅ README |
-| agent-log | Node.js | ✅ 稳定 | ✅ README |
+| agent-log | Bash | ✅ 稳定 | ✅ README + TUTORIAL |
 | context-forge | Python | ✅ 稳定 | ✅ README + 教程 |
 | mission-control | Node.js | 🚧 开发中 | ✅ README + 教程 |
 | prompt-mgr | Python | ✅ 稳定 | ✅ README + 教程 + API |

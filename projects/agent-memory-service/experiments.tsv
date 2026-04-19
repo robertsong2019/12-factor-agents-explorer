@@ -20,3 +20,4 @@ timestamp	commit	metric	value	status	description
 2026-04-18T21:10	4a1de39	test_pass_rate	224/224	keep	tagStats() — 2 new tests
 2026-04-18T15:16	e3e5646	test_count	228/228	keep	listArchived() API - lists archived memories with limit support, 4 new tests (224→228)
 2026-04-19T00:00	key-dev-2b-loopB	test_count	236/236	keep	v0.9.8: renameTag()+mergeTags() — batch tag management APIs. 8 new tests (228→236). Pre-existing changes() test failure unrelated.
+2026-04-19T01:00	fd3bae4	test_count	241/241	keep	v0.9.8: bulkTag(ids,{add,remove}) batch tag mutation — add/remove tags on multiple memories by ID. 5 new tests (236→241). Committed.

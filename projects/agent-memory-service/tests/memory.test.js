@@ -26,7 +26,7 @@ describe('Tokenizer', () => {
 
   it('handles Chinese characters', () => {
     const tokens = tokenize('我喜欢编程');
-    assert.ok(tokens.includes('我喜欢编程'));
+    assert.ok(tokens.includes('喜欢'));
   });
 
   it('filters single characters', () => {

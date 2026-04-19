@@ -69,10 +69,91 @@ function daysSince(timestamp) {
  * Tokenize text into lowercase words for keyword matching
  */
 function tokenize(text) {
-  return text.toLowerCase()
-    .replace(/[^\w\u4e00-\u9fff]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 1);
+  const result = [];
+  // Split into segments: Chinese runs vs non-Chinese
+  const segments = text.toLowerCase().split(/([\u4e00-\u9fff]+)/);
+  for (const seg of segments) {
+    if (/[\u4e00-\u9fff]/.test(seg)) {
+      // Chinese: character bigrams
+      for (let i = 0; i <= seg.length - 2; i++) {
+        result.push(seg.slice(i, i + 2));
+      }
+      // Also add single chars for single-char queries
+      if (seg.length === 1) result.push(seg);
+    } else {
+      // Non-Chinese: whitespace-split words
+      const words = seg.replace(/[^\w]/g, ' ').split(/\s+/).filter(w => w.length > 1);
+      result.push(...words);
+    }
+  }
+  return result;
+}
+
+/**
+ * BM25 index for efficient keyword ranking
+ */
+class BM25Index {
+  #docs = new Map(); // id → { tf: Map, dl }
+  #df = new Map();   // term → doc count
+  #totalLen = 0;
+  #k1 = 1.2;
+  #b = 0.75;
+
+  get N() { return this.#docs.size; }
+  get avgdl() { return this.#docs.size ? this.#totalLen / this.#docs.size : 0; }
+
+  add(id, text) {
+    // Remove old if exists
+    if (this.#docs.has(id)) this.remove(id);
+    const tokens = tokenize(text);
+    const tf = new Map();
+    for (const t of tokens) tf.set(t, (tf.get(t) || 0) + 1);
+    this.#docs.set(id, { tf, dl: tokens.length });
+    this.#totalLen += tokens.length;
+    // Update df
+    const seen = new Set(tf.keys());
+    for (const t of seen) this.#df.set(t, (this.#df.get(t) || 0) + 1);
+  }
+
+  remove(id) {
+    const doc = this.#docs.get(id);
+    if (!doc) return;
+    this.#totalLen -= doc.dl;
+    // Decrement df
+    for (const t of doc.tf.keys()) {
+      const count = this.#df.get(t);
+      if (count <= 1) this.#df.delete(t);
+      else this.#df.set(t, count - 1);
+    }
+    this.#docs.delete(id);
+  }
+
+  search(query, topK = 10) {
+    const queryTokens = tokenize(query);
+    if (queryTokens.length === 0 || this.#docs.size === 0) return [];
+    const avgdl = this.avgdl;
+    const N = this.N;
+    // Precompute IDF for each query term
+    const idf = new Map();
+    for (const t of queryTokens) {
+      const df = this.#df.get(t) || 0;
+      idf.set(t, Math.log(1 + (N - df + 0.5) / (df + 0.5)));
+    }
+    const scores = [];
+    for (const [id, { tf, dl }] of this.#docs) {
+      let score = 0;
+      for (const t of queryTokens) {
+        const termFreq = tf.get(t) || 0;
+        if (termFreq === 0) continue;
+        const termIdf = idf.get(t);
+        const tfNorm = (termFreq * (this.#k1 + 1)) / (termFreq + this.#k1 * (1 - this.#b + this.#b * dl / (avgdl || 1)));
+        score += termIdf * tfNorm;
+      }
+      if (score > 0) scores.push({ id, score, bm25Score: score });
+    }
+    scores.sort((a, b) => b.score - a.score);
+    return scores.slice(0, topK);
+  }
 }
 
 /**
@@ -617,6 +698,8 @@ export class MemoryService {
   #embeddings;
   /** @type {string} */
   #dirPath;
+  /** @type {BM25Index} */
+  #bm25 = new BM25Index();
   /** @type {boolean} */
   #loaded = false;
 
@@ -643,6 +726,8 @@ export class MemoryService {
       await this.#links.load();
       await this.#changelog.load();
       await this.#embeddings.loadCache();
+      // Rebuild BM25 index from loaded memories
+      for (const m of this.#store.all()) this.#bm25.add(m.id, m.content);
       this.#loaded = true;
     }
   }
@@ -675,6 +760,7 @@ export class MemoryService {
       hash: contentHash(opts.content),
     };
     this.#store.put(memory);
+    this.#bm25.add(id, memory.content);
     this.#changelog.record('add', id, memory.layer);
     await this.#store.save();
     await this.#changelog.save();
@@ -898,6 +984,149 @@ export class MemoryService {
   }
 
   /**
+   * BM25-only search using the persistent index
+   * @param {string} query
+   * @param {{limit?: number, layer?: MemoryLayer, explain?: boolean}} opts
+   */
+  async searchBM25(query, opts = {}) {
+    await this.#ensureLoaded();
+    const limit = opts.limit || 5;
+    const results = this.#bm25.search(query, limit * 3); // over-fetch for filtering
+
+    const out = [];
+    for (const r of results) {
+      if (out.length >= limit) break;
+      const m = this.#store.get(r.id);
+      if (!m) continue;
+      if (opts.layer && m.layer !== opts.layer) continue;
+      if (m.weight < LAYERS[m.layer].minWeight) continue;
+
+      // Apply time decay and weight/layer boosts
+      const ageDays = daysSince(m.createdAt);
+      const recency = Math.exp(-0.01 * ageDays);
+      const layerBoost = { core: 1.5, long: 1.0, short: 0.7 }[m.layer];
+      const score = r.bm25Score * recency * m.weight * layerBoost;
+
+      const entry = { ...m, score };
+      if (opts.explain !== false) {
+        entry.explanation = { bm25: r.bm25Score, recency, weight: m.weight, layer: layerBoost, total: score };
+      }
+      out.push(entry);
+    }
+
+    // Boost accessed memories
+    for (const m of out) {
+      const original = this.#store.get(m.id);
+      if (original) {
+        original.accessedAt = now();
+        original.accessCount++;
+        original.weight = Math.min(MAX_WEIGHT, original.weight + BOOST_AMOUNT);
+      }
+    }
+    await this.#store.save();
+    return out;
+  }
+
+  /**
+   * Hybrid search combining BM25 keyword ranking with semantic similarity via RRF fusion
+   * @param {string} query
+   * @param {{limit?: number, layer?: MemoryLayer, mode?: 'hybrid'|'keyword'|'semantic', explain?: boolean}} opts
+   */
+  async searchHybrid(query, opts = {}) {
+    await this.#ensureLoaded();
+    const limit = opts.limit || 5;
+    const mode = opts.mode || 'hybrid';
+    const K = 60; // RRF constant
+
+    // Collect results from both strategies
+    let bm25Results = [];
+    let semanticResults = [];
+
+    if (mode === 'hybrid' || mode === 'keyword') {
+      const raw = this.#bm25.search(query, 100);
+      for (const r of raw) {
+        const m = this.#store.get(r.id);
+        if (!m) continue;
+        if (opts.layer && m.layer !== opts.layer) continue;
+        if (m.weight < LAYERS[m.layer].minWeight) continue;
+        const ageDays = daysSince(m.createdAt);
+        const recency = Math.exp(-0.01 * ageDays);
+        const layerBoost = { core: 1.5, long: 1.0, short: 0.7 }[m.layer];
+        const score = r.bm25Score * recency * m.weight * layerBoost;
+        bm25Results.push({ id: r.id, score, rank: 0 });
+      }
+    }
+
+    if (mode === 'hybrid' || mode === 'semantic') {
+      // Use existing search() with semantic strategy
+      const semResults = await this.search(query, { strategy: 'semantic', limit: 100, layer: opts.layer });
+      semanticResults = semResults.map((r, i) => ({ id: r.id, score: r.score, rank: 0 }));
+    }
+
+    // Assign ranks
+    bm25Results.sort((a, b) => b.score - a.score);
+    bm25Results.forEach((r, i) => r.rank = i + 1);
+    semanticResults.sort((a, b) => b.score - a.score);
+    semanticResults.forEach((r, i) => r.rank = i + 1);
+
+    // RRF fusion
+    const rrfScores = new Map();
+    const allIds = new Set([...bm25Results.map(r => r.id), ...semanticResults.map(r => r.id)]);
+
+    if (mode === 'keyword') {
+      // Keyword-only: just use BM25 scores
+      for (const r of bm25Results) rrfScores.set(r.id, r.score);
+    } else if (mode === 'semantic') {
+      for (const r of semanticResults) rrfScores.set(r.id, r.score);
+    } else {
+      // Hybrid RRF
+      const bm25Map = new Map(bm25Results.map(r => [r.id, r]));
+      const semMap = new Map(semanticResults.map(r => [r.id, r]));
+      for (const id of allIds) {
+        const bm = bm25Map.get(id);
+        const sem = semMap.get(id);
+        let score = 0;
+        if (bm) score += 1 / (K + bm.rank);
+        if (sem) score += 1 / (K + sem.rank);
+        rrfScores.set(id, score);
+      }
+    }
+
+    const sorted = [...rrfScores.entries()]
+      .map(([id, score]) => {
+        const m = this.#store.get(id);
+        if (!m) return null;
+        const entry = { ...m, score };
+        if (opts.explain !== false) {
+          const bm = bm25Results.find(r => r.id === id);
+          const sem = semanticResults.find(r => r.id === id);
+          entry.explanation = {
+            bm25Rank: bm ? bm.rank : null,
+            semanticRank: sem ? sem.rank : null,
+            rrfScore: score,
+            mode,
+          };
+        }
+        return entry;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+
+    // Boost accessed memories
+    for (const m of sorted) {
+      const original = this.#store.get(m.id);
+      if (original) {
+        original.accessedAt = now();
+        original.accessCount++;
+        original.weight = Math.min(MAX_WEIGHT, original.weight + BOOST_AMOUNT);
+      }
+    }
+    await this.#store.save();
+    return sorted;
+  }
+
+  /**
    * Apply decay to all memories
    * @returns {{decayed: number, removed: number}}
    */
@@ -1000,7 +1229,10 @@ export class MemoryService {
     this.#changelog.replace([]);
 
     // Import memories
-    for (const m of data.memories) this.#store.put(m);
+    for (const m of data.memories) {
+      this.#store.put(m);
+      this.#bm25.add(m.id, m.content);
+    }
     // Import links
     if (Array.isArray(data.links)) {
       for (const l of data.links) this.#links.put(l);
@@ -1349,6 +1581,7 @@ export class MemoryService {
     if (opts.layer !== undefined) m.layer = opts.layer;
 
     this.#store.put(m); // re-index
+    this.#bm25.add(id, m.content); // re-index BM25
     this.#changelog.record('update', id, m.layer);
     await this.#store.save();
     await this.#changelog.save();
@@ -1460,6 +1693,7 @@ export class MemoryService {
     this.#links.cleanForMemory(id);
     this.#changelog.record('delete', id, m.layer);
     this.#store.delete(id);
+    this.#bm25.remove(id);
     await this.#store.save();
     await this.#links.save();
     await this.#changelog.save();
@@ -2467,4 +2701,4 @@ class EmbeddingProvider {
   }
 }
 
-export { MemoryStore, MemoryExtractor, LinkStore, ChangelogStore, LAYERS, tokenize, ngramSimilarity, keywordScore, EmbeddingProvider, cosineSimilarity };
+export { MemoryStore, MemoryExtractor, LinkStore, ChangelogStore, LAYERS, tokenize, ngramSimilarity, keywordScore, EmbeddingProvider, cosineSimilarity, BM25Index };
