@@ -24,3 +24,4 @@ timestamp	commit	metric	value	status	description
 2026-04-19T21:03	c6f32bd	test_count	265/265	keep	BM25 hybrid search: BM25Index class + bigram tokenizer + searchBM25() + searchHybrid() RRF fusion. 24 new tests (241→265), 2470→2704 lines.
 2026-04-19T23:00	5c18c3a	test_count	272/272	keep	searchEmbedding() pure vector search — cosine similarity ranking with layer filter, threshold, limit. 7 new tests (265→272).
 2026-04-19T16:UTC	e39f870	test_count	278/278	keep	searchUnified() — 3-way RRF fusion (BM25+semantic+embedding). Graceful embedding fallback. 6 new tests (272→278).
+2026-04-19T17:00	ca68eec	test_count	284/284	keep	suggestTags() — tag recommendation via content overlap, tag name match, frequency bonus. Supports limit, minScore, layer filter. 6 new tests (278→284).

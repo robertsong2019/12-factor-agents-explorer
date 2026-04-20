@@ -1,28 +1,28 @@
 {
-  "lastUpdated": "2026-04-18T22:00:00Z",
-  "generatedAt": "2026-04-19 06:00 CST",
-  "actionRequired": [],
+  "lastUpdated": "2026-04-19T22:00:00Z",
+  "generatedAt": "2026-04-20 06:00 CST",
+  "actionRequired": ["key-development-2 last run had error (edit failed in embedding.test.js)", "key-development-3 last run had error (edit failed in experiments.tsv)"],
   "activeNow": [],
   "crons": [
-    { "name": "dashboard-update-morning", "schedule": "6:00 AM daily", "lastRun": "2026-04-18T22:00:00Z", "status": "ok", "duration": "1.5min", "errors": 0 },
-    { "name": "essay-generation-morning", "schedule": "5:00 AM daily", "lastRun": "2026-04-18T21:00:00Z", "status": "ok", "duration": "2.8min", "errors": 0 },
-    { "name": "documentation-morning", "schedule": "4:00 AM daily", "lastRun": "2026-04-18T20:00:00Z", "status": "ok", "duration": "1.7min", "errors": 0 },
-    { "name": "project-testing-morning", "schedule": "3:00 AM daily", "lastRun": "2026-04-18T19:00:00Z", "status": "ok", "duration": "2.7min", "errors": 0 },
-    { "name": "knowledge-organization-morning", "schedule": "2:00 AM daily", "lastRun": "2026-04-18T18:00:00Z", "status": "ok", "duration": "1.4min", "errors": 0 },
-    { "name": "key-development-3", "schedule": "1:00 AM daily", "lastRun": "2026-04-18T17:00:00Z", "status": "ok", "duration": "6.7min", "errors": 0 },
-    { "name": "key-development-2", "schedule": "12:00 AM daily", "lastRun": "2026-04-18T16:00:00Z", "status": "ok", "duration": "2.3min", "errors": 0 },
-    { "name": "key-development-1", "schedule": "11:00 PM daily", "lastRun": "2026-04-18T15:00:00Z", "status": "ok", "duration": "16.8min", "errors": 0 },
-    { "name": "tool-development-evening", "schedule": "10:00 PM daily", "lastRun": "2026-04-18T14:00:00Z", "status": "ok", "duration": "6.7min", "errors": 0 },
-    { "name": "code-lab-evening", "schedule": "9:00 PM daily", "lastRun": "2026-04-18T13:00:00Z", "status": "ok", "duration": "7.2min", "errors": 0 },
-    { "name": "deep-exploration-evening", "schedule": "8:00 PM daily (×2)", "lastRun": "2026-04-18T12:00:00Z", "status": "ok", "duration": "3.8min", "errors": 0 },
-    { "name": "github-creative-evening", "schedule": "7:00 PM daily", "lastRun": "2026-04-18T11:00:00Z", "status": "ok", "duration": "9.9min", "errors": 0 },
-    { "name": "github-trending-daily", "schedule": "7:00 AM daily", "lastRun": "2026-04-17T23:00:00Z", "status": "ok", "duration": "0.5min", "errors": 0 }
+    { "name": "dashboard-update-morning", "schedule": "6:00 AM daily", "lastRun": "2026-04-19T22:00:00Z", "status": "ok", "duration": "0.9min", "errors": 0 },
+    { "name": "essay-generation-morning", "schedule": "5:00 AM daily", "lastRun": "2026-04-19T21:00:00Z", "status": "ok", "duration": "2.7min", "errors": 0 },
+    { "name": "documentation-morning", "schedule": "4:00 AM daily", "lastRun": "2026-04-19T20:00:00Z", "status": "ok", "duration": "1.2min", "errors": 0 },
+    { "name": "project-testing-morning", "schedule": "3:00 AM daily", "lastRun": "2026-04-19T19:00:00Z", "status": "ok", "duration": "2.7min", "errors": 0 },
+    { "name": "knowledge-organization-morning", "schedule": "2:00 AM daily", "lastRun": "2026-04-19T18:00:00Z", "status": "ok", "duration": "1.7min", "errors": 0 },
+    { "name": "key-development-3", "schedule": "1:00 AM daily", "lastRun": "2026-04-19T17:00:00Z", "status": "error", "duration": "4.5min", "errors": 1 },
+    { "name": "key-development-2", "schedule": "12:00 AM daily", "lastRun": "2026-04-19T16:00:00Z", "status": "error", "duration": "6.6min", "errors": 1 },
+    { "name": "key-development-1", "schedule": "11:00 PM daily", "lastRun": "2026-04-19T15:00:00Z", "status": "ok", "duration": "5.8min", "errors": 0 },
+    { "name": "tool-development-evening", "schedule": "10:00 PM daily", "lastRun": "2026-04-19T14:00:00Z", "status": "ok", "duration": "7.1min", "errors": 0 },
+    { "name": "code-lab-evening", "schedule": "9:00 PM daily", "lastRun": "2026-04-19T13:00:00Z", "status": "ok", "duration": "3.7min", "errors": 0 },
+    { "name": "deep-exploration-evening", "schedule": "8:00 PM daily (×2)", "lastRun": "2026-04-19T12:00:00Z", "status": "ok", "duration": "4.7min", "errors": 0 },
+    { "name": "github-creative-evening", "schedule": "7:00 PM daily", "lastRun": "2026-04-19T11:00:00Z", "status": "ok", "duration": "6.3min", "errors": 0 },
+    { "name": "github-trending-daily", "schedule": "7:00 AM daily", "lastRun": "2026-04-18T23:00:00Z", "status": "ok", "duration": "0.5min", "errors": 0 }
   ],
   "summary": {
     "totalCronJobs": 14,
     "enabledJobs": 14,
-    "allHealthy": true,
-    "consecutiveErrors": 0,
-    "issues": []
+    "allHealthy": false,
+    "consecutiveErrors": 2,
+    "issues": ["key-development-2: edit failed in agent-memory-service/tests/embedding.test.js", "key-development-3: edit failed in agent-memory-service/experiments.tsv"]
   }
 }

@@ -12,3 +12,4 @@ date	project	baseline_tests	baseline_pass	baseline_fail	after_tests	after_pass	a
 2026-04-19	catalyst-agent-mesh	118	118	0	148	148	0	+30 tests	Added TaskScheduler: priority queue, retry, deadline tracking, batch dispatch
 2026-04-19	catalyst-agent-mesh	148	148	0	171	171	0	+23 tests	Added HealthMonitor: health scores, auto-disable on consecutive failures, auto-recovery, checker registry
 2026-04-19	agent-task-cli	247	247	0	259	259	0	+12 tests	Added orchestrator task timeout (F11) + PriorityQueue util with peek/clear/toArray (F12)
+2026-04-20	better-ralph-core	25	25	0	44	44	0	+19 tests, fixed Set import bug	Added test_orchestrator.py (11 tests) + test_utils.py (8 tests). Fixed NameError: 'Set' not defined in prd_manager.py.

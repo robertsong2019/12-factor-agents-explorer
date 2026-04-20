@@ -15,10 +15,10 @@
 
 ---
 
-## Current Focus (2026-04-18)
+## Current Focus (2026-04-20)
 
 ### Active Theme
-Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，Agent Memory Service 已从 v0.6.0 迭代至 v0.9.6 (188 tests)。⚠️ 关键教训：key-dev sessions 必须在每次实验成功后 git commit，否则代码会在 session 重启时丢失（4/17 有多个 session 记录了 experiments.tsv 但未 commit 代码）
+Autoresearch 方法论实践 — Agent Memory Service 已从 v0.6.0 迭代至 v1.0-dev (284 tests, 2911 lines)。搜索能力三阶段完成：BM25→Embedding→Unified RRF。下一步：MCP Server 实现。⚠️ 关键教训：key-dev sessions 必须在每次实验成功后 git commit，否则代码会在 session 重启时丢失（4/17 有多个 session 记录了 experiments.tsv 但未 commit 代码）
 
 ### Core Projects
 1. **Agent Task CLI** - 多 Agent 任务编排 (109 tests, 80%+ coverage, ✅ 已完成)
@@ -30,7 +30,7 @@ Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，
 7. **agent-log** - OpenClaw 日志搜索/汇总 CLI (✅ 单文件 Bash，零依赖)
 8. **ctxgen** - AI 上下文文件生成器 (✅ v1.0, 纯Node.js零依赖, 支持4种目标格式)
 9. **tiny-agent-workshop** - 单文件 Agent 模式教学集 (✅ 7个模式: ReAct/ToolCall/Memory/Router/Guardrail/Chain/EdgeAgent)
-10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 265/265 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+stats+delete+scheduledMaintenance+reindex+query()+touch()+count()+random()+recent()+mergeMemories()+findByEntity()+batchUpdate()+snapshot()+diff()+tagStats()+listArchived()+renameTag()+mergeTags()+bulkTag()+**BM25Index+searchBM25()+searchHybrid() RRF融合**)
+10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 284/284 tests, 2911 lines, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+stats+delete+scheduledMaintenance+reindex+query()+touch()+count()+random()+recent()+mergeMemories()+findByEntity()+batchUpdate()+snapshot()+diff()+tagStats()+listArchived()+renameTag()+mergeTags()+bulkTag()+**BM25Index+searchBM25()+searchEmbedding()+searchUnified() 3-way RRF+suggestTags()**)
 11. **A2A Protocol Lab** - Agent-to-Agent通信协议实验 (✅ 零依赖Python实现, Server+Client+Federation Demo)
 
 ---
@@ -38,7 +38,7 @@ Autoresearch 方法论实践 — 快速实验循环(实验→测试→决策)，
 ## Next Actions (Updated 2026-04-18)
 
 ### High Priority (本周完成)
-- [ ] **Agent Memory Service v1.0** — BM25 混合检索、embedding 支持。✅ BM25Index+searchBM25()+searchHybrid() RRF融合已实现 (265 tests)。下一步: EmbeddingProvider抽象接口，预计 +15 tests 达 ~280
+- [ ] **Agent Memory Service v1.0** — ✅ 搜索三阶段完成(BM25+Embedding+Unified RRF, 284 tests, suggestTags)。下一步: EmbeddingProvider真实接入(ONNX/远程API), 生产化
 - [ ] **实现 OpenClaw MCP Server** — ✅ 研究完成(2026-04-19)。完整实现模式已就绪：
   - 研究笔记: [技术选型](catalyst-research/exploration-notes/2026-04-18-mcp-server-typescript-streamable-http.md) + [实现模式](catalyst-research/exploration-notes/2026-04-19-mcp-server-implementation-patterns.md)
   - SDK v2: registerTool API、多会话工厂模式、createMcpExpressApp、Zod v4
@@ -152,17 +152,12 @@ curl -X POST "https://api.tavily.com/search" \
 
 ### 2026-04-19
 - ✅ **Agent Memory Service v0.9.8 续升** — 228→241 tests (3个新API)
-  - **renameTag()+mergeTags()**: 批量标签管理（重命名/合并），8 new tests
-  - **bulkTag(ids,{add,remove})**: 按ID批量增删标签，5 new tests
-  - **listArchived()**: 归档记忆列表，4 new tests (来自4/18 late session)
-  - 零回滚率持续，autoresearch 循环方法验证
 - ✅ **BM25 混合检索实现** — 241→265 tests (+24), 2470→2704 lines
-  - **BM25Index 类**: 持久化语料库索引(df/avgdl/N)，增量更新，真正 BM25 评分
-  - **中文 bigram 分词**: tokenize() 升级，中文文本按字符二元组分词
-  - **searchBM25()**: 纯 BM25 排序 API，支持 limit/layer/explain
-  - **searchHybrid()**: RRF 融合 BM25 + 语义搜索，`1/(k+rank_bm25) + 1/(k+rank_semantic)`
-  - 完成研究笔记中的三阶段路径前两阶段，零依赖保持
-- ✅ **MCP Server 实现模式深度研究** — 从技术选型到实现的完整模式分析（[笔记](catalyst-research/exploration-notes/2026-04-19-mcp-server-implementation-patterns.md)）
+- ✅ **搜索三阶段完成** — 265→284 tests (+19), 2704→2911 lines
+  - **searchEmbedding()**: 纯向量余弦相似度搜索，EmbeddingProvider抽象接口，7 new tests
+  - **searchUnified()**: 3-way RRF融合(BM25+semantic+embedding)，embedding优雅降级，6 new tests
+  - **suggestTags()**: 基于内容分析+标签共现+频率加权的标签推荐API，6 new tests
+- ✅ **MCP Server 实现模式深度研究**
   - **核心发现**: SDK v2 registerTool API、多会话工厂模式、createMcpExpressApp
   - **可运行代码**: 完整多会话 MCP Server（3 tools + resource + prompt）+ 客户端测试脚本 + 安全中间件
   - **关键洞察**: Resource+Prompt 是差异化因素；MCP Inspector 无需 LLM 测试；Elicitation 做安全网
@@ -320,5 +315,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-04-19 21:10*
-*Next review: 2026-04-20*
+*Last updated: 2026-04-20 02:00*
+*Next review: 2026-04-21*

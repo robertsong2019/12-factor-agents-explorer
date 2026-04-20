@@ -25,7 +25,7 @@
 │   ├── README.md              # 你正在看的
 │   ├── GETTING-STARTED.md     # 新手指南
 │   ├── API-REFERENCE.md       # API 索引
-│   ├── DOCUMENTATION-GUIDE.md # 文档维护指南
+│   ├── docs/DOCUMENTATION-GUIDE.md # 文档维护指南
 │   └── QUICK-REFERENCE.md     # 快速参考
 │
 ├── 🛠️ 项目 (projects/)
@@ -313,7 +313,7 @@ npm test
 | [README.md](README.md) | 工作区概览（你正在看） | 5 分钟 |
 | [GETTING-STARTED.md](GETTING-STARTED.md) | 新手完整指南 | 20 分钟 |
 | [API-REFERENCE.md](API-REFERENCE.md) | API 文档索引 | 参考 |
-| [DOCUMENTATION-GUIDE.md](DOCUMENTATION-GUIDE.md) | 文档维护指南 | 参考 |
+| [docs/DOCUMENTATION-GUIDE.md](docs/DOCUMENTATION-GUIDE.md) | 文档维护指南 | 参考 |
 
 ### 项目文档
 
@@ -447,7 +447,7 @@ chmod +x skills/memory-manager/*.sh
 3. **添加技能** - 创建新的 OpenClaw 技能
 4. **分享经验** - 在 `catalyst-research/exploration-notes/` 中记录
 
-详见: [DOCUMENTATION-GUIDE.md](DOCUMENTATION-GUIDE.md)
+详见: [docs/DOCUMENTATION-GUIDE.md](docs/DOCUMENTATION-GUIDE.md)
 
 ## 📊 项目状态
 
@@ -472,7 +472,7 @@ chmod +x skills/memory-manager/*.sh
 
 - **新手入门**: [GETTING-STARTED.md](GETTING-STARTED.md)
 - **API 参考**: [API-REFERENCE.md](API-REFERENCE.md)
-- **文档维护**: [DOCUMENTATION-GUIDE.md](DOCUMENTATION-GUIDE.md)
+- **文档维护**: [docs/DOCUMENTATION-GUIDE.md](docs/DOCUMENTATION-GUIDE.md)
 - **快速参考**: [QUICK-REFERENCE.md](QUICK-REFERENCE.md)
 
 ## 📄 许可证
