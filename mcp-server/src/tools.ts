@@ -116,6 +116,14 @@ export const OPENCLAW_TOOLS: Tool[] = [
       required: ["path", "oldText", "newText"],
     },
   },
+  {
+    name: "system_status",
+    description: "Get system status information: platform, Node.js version, uptime, memory usage, workspace info.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 // Handler map — name → async function
@@ -127,6 +135,7 @@ export const toolHandlers: Record<string, (args: any) => Promise<any>> = {
   exec: executeExec,
   memory_search: executeMemorySearch,
   edit: executeEdit,
+  system_status: executeSystemStatus,
 };
 
 // --- Handler implementations ---
@@ -236,5 +245,23 @@ async function executeEdit(args: any): Promise<any> {
     success: true,
     replacements: (content.match(new RegExp(oldText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "g")) || []).length,
     bytesChanged: Buffer.byteLength(newContent, "utf-8") - Buffer.byteLength(content, "utf-8"),
+  };
+}
+
+async function executeSystemStatus(): Promise<any> {
+  const memUsage = process.memoryUsage();
+  return {
+    tool: "system_status",
+    platform: process.platform,
+    arch: process.arch,
+    nodeVersion: process.version,
+    pid: process.pid,
+    uptime: Math.round(process.uptime()),
+    memory: {
+      rss: `${Math.round(memUsage.rss / 1024 / 1024)}MB`,
+      heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`,
+      heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
+    },
+    workspace: WORKSPACE_ROOT,
   };
 }
