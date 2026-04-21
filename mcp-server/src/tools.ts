@@ -144,6 +144,20 @@ export const OPENCLAW_TOOLS: Tool[] = [
     },
   },
   {
+    name: "search_files",
+    description: "Search file contents by regex pattern across the workspace. Returns matching files, lines, and line numbers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pattern: { type: "string", description: "Regex pattern to search for" },
+        path: { type: "string", description: "Directory path relative to workspace root", default: "." },
+        include: { type: "string", description: "Glob pattern for file names to include (e.g. '*.ts')", default: "*" },
+        maxResults: { type: "number", description: "Maximum number of matches to return", default: 50, minimum: 1, maximum: 200 },
+      },
+      required: ["pattern"],
+    },
+  },
+  {
     name: "system_status",
     description: "Get system status information: platform, Node.js version, uptime, memory usage, workspace info.",
     inputSchema: {
@@ -162,6 +176,7 @@ export const toolHandlers: Record<string, (args: any) => Promise<any>> = {
   exec: executeExec,
   memory_search: executeMemorySearch,
   edit: executeEdit,
+  search_files: executeSearchFiles,
   system_status: executeSystemStatus,
 };
 
@@ -287,6 +302,58 @@ async function executeEdit(args: any): Promise<any> {
     replacements: (content.match(new RegExp(oldText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), "g")) || []).length,
     bytesChanged: Buffer.byteLength(newContent, "utf-8") - Buffer.byteLength(content, "utf-8"),
   };
+}
+
+async function executeSearchFiles(args: any): Promise<any> {
+  const { pattern, path: inputPath = ".", include = "*", maxResults = 50 } = args;
+  const resolved = safePath(inputPath);
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern, "i");
+  } catch {
+    return { tool: "search_files", pattern, success: false, error: "Invalid regex pattern" };
+  }
+
+  const globRegex = globToRegex(include);
+  const results: Array<{ file: string; matches: Array<{ line: number; text: string }> }> = [];
+  let totalMatches = 0;
+
+  async function walk(dir: string, relPrefix: string): Promise<void> {
+    if (totalMatches >= maxResults) return;
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (totalMatches >= maxResults) return;
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const fullPath = join(dir, entry.name);
+      const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await walk(fullPath, rel);
+      } else if (globRegex.test(entry.name)) {
+        try {
+          const content = await readFile(fullPath, "utf-8");
+          const lines = content.split("\n");
+          const matches: Array<{ line: number; text: string }> = [];
+          for (let i = 0; i < lines.length && totalMatches + matches.length < maxResults; i++) {
+            if (regex.test(lines[i])) {
+              matches.push({ line: i + 1, text: lines[i] });
+            }
+          }
+          if (matches.length > 0) {
+            results.push({ file: rel, matches });
+            totalMatches += matches.length;
+          }
+        } catch { /* skip unreadable files */ }
+      }
+    }
+  }
+
+  await walk(resolved, "");
+  return { tool: "search_files", pattern, path: inputPath, totalMatches, files: results.length, results };
+}
+
+function globToRegex(glob: string): RegExp {
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
+  return new RegExp(`^${escaped}$`, "i");
 }
 
 async function executeSystemStatus(): Promise<any> {

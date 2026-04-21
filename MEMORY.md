@@ -18,7 +18,7 @@
 ## Current Focus (2026-04-20)
 
 ### Active Theme
-Autoresearch 方法论实践 — Agent Memory Service 已从 v0.6.0 迭代至 v1.0-dev (284 tests, 2911 lines)。搜索能力三阶段完成：BM25→Embedding→Unified RRF。下一步：MCP Server 实现。⚠️ 关键教训：key-dev sessions 必须在每次实验成功后 git commit，否则代码会在 session 重启时丢失（4/17 有多个 session 记录了 experiments.tsv 但未 commit 代码）
+Autoresearch 方法论实践 — Agent Memory Service v1.0-dev 持续迭代 (309 tests)。搜索能力三阶段完成：BM25→Embedding→Unified RRF。新增 healthScore() 自监控 API（4维度评分+可操作建议）。下一步：MCP Server 实现。⚠️ 关键教训：key-dev sessions 必须在每次实验成功后 git commit，否则代码会在 session 重置时丢失
 
 ### Core Projects
 1. **Agent Task CLI** - 多 Agent 任务编排 (109 tests, 80%+ coverage, ✅ 已完成)
@@ -30,7 +30,7 @@ Autoresearch 方法论实践 — Agent Memory Service 已从 v0.6.0 迭代至 v1
 7. **agent-log** - OpenClaw 日志搜索/汇总 CLI (✅ 单文件 Bash，零依赖)
 8. **ctxgen** - AI 上下文文件生成器 (✅ v1.0, 纯Node.js零依赖, 支持4种目标格式)
 9. **tiny-agent-workshop** - 单文件 Agent 模式教学集 (✅ 7个模式: ReAct/ToolCall/Memory/Router/Guardrail/Chain/EdgeAgent)
-10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 284/284 tests, 2911 lines, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+stats+delete+scheduledMaintenance+reindex+query()+touch()+count()+random()+recent()+mergeMemories()+findByEntity()+batchUpdate()+snapshot()+diff()+tagStats()+listArchived()+renameTag()+mergeTags()+bulkTag()+**BM25Index+searchBM25()+searchEmbedding()+searchUnified() 3-way RRF+suggestTags()**)
+10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 309/309 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+自监控+搜索三阶段(BM25+Embedding+Unified RRF)+suggestTags()+**healthScore() 4维度健康监控+可操作建议**)
 11. **A2A Protocol Lab** - Agent-to-Agent通信协议实验 (✅ 零依赖Python实现, Server+Client+Federation Demo)
 
 ---
@@ -150,6 +150,12 @@ curl -X POST "https://api.tavily.com/search" \
 ---
 
 ## Recent Achievements
+
+### 2026-04-21
+- ✅ **Agent Memory Service v1.0-dev 续升** — 284→309 tests
+  - **healthScore()**: 4维度健康监控(expiry/access/weight/changelog)，0-100评分+可操作建议
+  - 7 new tests, ~179 lines added, 零回滚
+  - 使能：Agent自检→自动触发 purgeExpired/compactChangelog/consolidate
 
 ### 2026-04-19
 - ✅ **Agent Memory Service v0.9.8 续升** — 228→241 tests (3个新API)
@@ -316,5 +322,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-04-20 02:00*
-*Next review: 2026-04-21*
+*Last updated: 2026-04-21 02:00*
+*Next review: 2026-04-22*
