@@ -27,3 +27,4 @@ timestamp	commit	metric	value	status	description
 2026-04-19T17:00	ca68eec	test_count	284/284	keep	suggestTags() — tag recommendation via content overlap, tag name match, frequency bonus. Supports limit, minScore, layer filter. 6 new tests (278→284).
 2026-04-20T23:00	a3ec5f3	test_count	297/297	keep	L3 Skill/SOP layer: SkillStore + learnSkill/getSkill/listSkills/deleteSkill/recordSkillUsage. 13 new tests (284→297).
 2026-04-21T01:00	key-dev-3-loopC	test_count	309/309	keep	healthScore() API — comprehensive memory health monitoring (0-100 score) with 4 dimensions: expiry, access, weight, changelog. Returns actionable recommendations. 7 new tests (302→309), ~66 lines src added.
+2026-04-21T13:08	2c36306	test_count	313/313	keep	memoryTimeline(id) — per-memory changelog timeline. 4 new tests (309→313).

@@ -872,7 +872,7 @@ export class MemoryService {
       layer: opts.layer || 'short',
       tags: opts.tags || [],
       entities: opts.entities || [],
-      weight: MAX_WEIGHT,
+      weight: opts.weight ?? MAX_WEIGHT,
       createdAt: ts,
       accessedAt: ts,
       accessCount: 0,
@@ -2795,6 +2795,27 @@ export class MemoryService {
     memories = memories.filter(m => m.entities && m.entities.includes(entity));
     memories.sort((a, b) => b.weight - a.weight);
     return memories.slice(0, opts.limit ?? 10);
+  }
+
+  /**
+   * Search memories by tags with AND/OR logic
+   * @param {string[]} tags - Tags to search for
+   * @param {{mode?: 'and'|'or', limit?: number, layer?: string}} opts
+   * @returns {Promise<Memory[]>}
+   */
+  async searchByTags(tags, opts = {}) {
+    await this.#ensureLoaded();
+    if (!tags || tags.length === 0) return [];
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+    const mode = opts.mode ?? 'or';
+    if (mode === 'and') {
+      memories = memories.filter(m => tags.every(t => m.tags && m.tags.includes(t)));
+    } else {
+      memories = memories.filter(m => m.tags && m.tags.some(t => tags.includes(t)));
+    }
+    memories.sort((a, b) => b.weight - a.weight);
+    return memories.slice(0, opts.limit ?? 20);
   }
 
   /**

@@ -3125,3 +3125,72 @@ describe('MemoryService — memoryTimeline', () => {
     } finally { cleanup(); }
   });
 });
+
+// ─── searchByTags() ──────────────────────────────
+describe('MemoryService — searchByTags', () => {
+  it('returns empty for empty tags array', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const r = await svc.searchByTags([]);
+      assert.equal(r.length, 0);
+    } finally { cleanup(); }
+  });
+
+  it('OR mode returns memories matching any tag', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'a', layer: 'core', tags: ['x'] });
+      await svc.add({ content: 'b', layer: 'core', tags: ['y'] });
+      await svc.add({ content: 'c', layer: 'core', tags: ['z'] });
+      const r = await svc.searchByTags(['x', 'y'], { mode: 'or' });
+      assert.equal(r.length, 2);
+    } finally { cleanup(); }
+  });
+
+  it('AND mode returns memories matching all tags', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'both', layer: 'core', tags: ['x', 'y'] });
+      await svc.add({ content: 'only-x', layer: 'core', tags: ['x'] });
+      const r = await svc.searchByTags(['x', 'y'], { mode: 'and' });
+      assert.equal(r.length, 1);
+      assert.equal(r[0].content, 'both');
+    } finally { cleanup(); }
+  });
+
+  it('respects layer filter', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'core', layer: 'core', tags: ['t'] });
+      await svc.add({ content: 'short', layer: 'short', tags: ['t'] });
+      const r = await svc.searchByTags(['t'], { layer: 'core' });
+      assert.equal(r.length, 1);
+      assert.equal(r[0].content, 'core');
+    } finally { cleanup(); }
+  });
+
+  it('respects limit', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      for (let i = 0; i < 5; i++) await svc.add({ content: `m${i}`, layer: 'core', tags: ['t'] });
+      const r = await svc.searchByTags(['t'], { limit: 2 });
+      assert.equal(r.length, 2);
+    } finally { cleanup(); }
+  });
+
+  it('sorts by weight descending', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'low', layer: 'core', tags: ['t'], weight: 0.1 });
+      await svc.add({ content: 'high', layer: 'core', tags: ['t'], weight: 0.9 });
+      const r = await svc.searchByTags(['t']);
+      assert.equal(r[0].content, 'high');
+    } finally { cleanup(); }
+  });
+});
