@@ -2982,6 +2982,24 @@ export class MemoryService {
   }
 
   /**
+   * Get the full changelog timeline for a specific memory
+   * @param {string} id - Memory ID
+   * @returns {Promise<{id: string, found: boolean, events: Array<{ts: number, action: string, layer?: string}>, currentLayer?: string, totalEvents: number}>}
+   */
+  async memoryTimeline(id) {
+    await this.#ensureLoaded();
+    const m = this.#store.get(id);
+    const events = this.#changelog.all().filter(e => e.memoryId === id);
+    return {
+      id,
+      found: !!m,
+      events,
+      currentLayer: m?.layer,
+      totalEvents: events.length,
+    };
+  }
+
+  /**
    * Suggest tags for content based on existing tag patterns and co-occurrence
    * @param {string} content - Text content to analyze
    * @param {{limit?: number, minScore?: number, layer?: string}} opts

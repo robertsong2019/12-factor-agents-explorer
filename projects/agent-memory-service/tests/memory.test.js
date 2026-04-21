@@ -3070,3 +3070,58 @@ describe('suggestTags()', () => {
     } finally { cleanup(); }
   });
 });
+
+// ─── memoryTimeline() ──────────────────────────────
+describe('MemoryService — memoryTimeline', () => {
+  it('returns empty events for unknown memory', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const tl = await svc.memoryTimeline('nonexistent');
+      assert.equal(tl.found, false);
+      assert.equal(tl.totalEvents, 0);
+      assert.equal(tl.currentLayer, undefined);
+    } finally { cleanup(); }
+  });
+
+  it('returns timeline with add event for a new memory', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m = await svc.add({ content: 'timeline test', layer: 'core' });
+      const tl = await svc.memoryTimeline(m.id);
+      assert.equal(tl.found, true);
+      assert.equal(tl.currentLayer, 'core');
+      assert.ok(tl.totalEvents >= 1);
+      assert.equal(tl.events[0].action, 'add');
+      assert.equal(tl.events[0].memoryId, m.id);
+    } finally { cleanup(); }
+  });
+
+  it('tracks multiple events for the same memory', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m = await svc.add({ content: 'v1', layer: 'short' });
+      await svc.update(m.id, { content: 'v2' });
+      const tl = await svc.memoryTimeline(m.id);
+      assert.ok(tl.totalEvents >= 2);
+      const actions = tl.events.map(e => e.action);
+      assert.ok(actions.includes('add'));
+      assert.ok(actions.includes('update'));
+    } finally { cleanup(); }
+  });
+
+  it('events are sorted chronologically', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m = await svc.add({ content: 'ordered', layer: 'long' });
+      await svc.update(m.id, { content: 'ordered-v2' });
+      const tl = await svc.memoryTimeline(m.id);
+      for (let i = 1; i < tl.events.length; i++) {
+        assert.ok(tl.events[i].ts >= tl.events[i - 1].ts);
+      }
+    } finally { cleanup(); }
+  });
+});
