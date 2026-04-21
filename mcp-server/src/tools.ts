@@ -3,7 +3,7 @@
  */
 
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, stat, unlink, rmdir } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
@@ -171,6 +171,17 @@ export const OPENCLAW_TOOLS: Tool[] = [
     },
   },
   {
+    name: "delete",
+    description: "Delete a file within the workspace. Directories are only deleted if empty. This operation is irreversible.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the file or empty directory to delete" },
+      },
+      required: ["path"],
+    },
+  },
+  {
     name: "system_status",
     description: "Get system status information: platform, Node.js version, uptime, memory usage, workspace info.",
     inputSchema: {
@@ -191,6 +202,7 @@ export const toolHandlers: Record<string, (args: any) => Promise<any>> = {
   memory_search: executeMemorySearch,
   edit: executeEdit,
   search_files: executeSearchFiles,
+  delete: executeDelete,
   system_status: executeSystemStatus,
 };
 
@@ -388,6 +400,27 @@ async function executeSearchFiles(args: any): Promise<any> {
 function globToRegex(glob: string): RegExp {
   const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
   return new RegExp(`^${escaped}$`, "i");
+}
+
+async function executeDelete(args: any): Promise<any> {
+  const { path } = args;
+  const resolved = safePath(path);
+  let s;
+  try {
+    s = await stat(resolved);
+  } catch {
+    return { tool: "delete", path, success: false, error: "File not found" };
+  }
+  if (s.isDirectory()) {
+    try {
+      await rmdir(resolved);
+    } catch {
+      return { tool: "delete", path, success: false, error: "Directory not empty, cannot delete" };
+    }
+  } else {
+    await unlink(resolved);
+  }
+  return { tool: "delete", path, success: true };
 }
 
 async function executeSystemStatus(): Promise<any> {
