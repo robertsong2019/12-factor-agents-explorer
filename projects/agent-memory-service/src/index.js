@@ -2854,6 +2854,25 @@ export class MemoryService {
   }
 
   /**
+   * Export memories in compact format (key fields only)
+   * @param {{layer?: MemoryLayer, includeTags?: boolean}} opts
+   * @returns {Promise<Array<{id: string, content: string, layer: string, weight: number, createdAt: number, tags?: string[]}>>}
+   */
+  async exportCompact(opts = {}) {
+    await this.#ensureLoaded();
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+    return memories.map(m => ({
+      id: m.id,
+      content: m.content,
+      layer: m.layer,
+      weight: m.weight,
+      createdAt: m.createdAt,
+      ...(opts.includeTags && m.tags ? { tags: m.tags } : {}),
+    }));
+  }
+
+  /**
    * Compare two snapshots. Returns added/removed/changed IDs.
    * @param {ReturnType<snapshot>} before
    * @param {ReturnType<snapshot>} after

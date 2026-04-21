@@ -3194,3 +3194,66 @@ describe('MemoryService — searchByTags', () => {
     } finally { cleanup(); }
   });
 });
+
+// ─── exportCompact() ──────────────────────────────
+describe('MemoryService — exportCompact', () => {
+  it('exports only key fields by default', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const m = await svc.add({ content: 'test', layer: 'core', tags: ['t1', 't2'] });
+      const exported = await svc.exportCompact();
+      assert.equal(exported.length, 1);
+      assert.equal(exported[0].id, m.id);
+      assert.equal(exported[0].content, 'test');
+      assert.equal(exported[0].layer, 'core');
+      assert.ok(exported[0].weight > 0);
+      assert.ok(exported[0].createdAt > 0);
+      assert.equal(exported[0].tags, undefined); // tags excluded by default
+    } finally { cleanup(); }
+  });
+
+  it('includes tags when option is set', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'test', layer: 'core', tags: ['t1', 't2'] });
+      const exported = await svc.exportCompact({ includeTags: true });
+      assert.ok(exported[0].tags);
+      assert.equal(exported[0].tags.length, 2);
+    } finally { cleanup(); }
+  });
+
+  it('filters by layer', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'c1', layer: 'core' });
+      await svc.add({ content: 'c2', layer: 'short' });
+      const exported = await svc.exportCompact({ layer: 'core' });
+      assert.equal(exported.length, 1);
+      assert.equal(exported[0].content, 'c1');
+    } finally { cleanup(); }
+  });
+
+  it('returns empty array when no memories', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const exported = await svc.exportCompact();
+      assert.equal(exported.length, 0);
+    } finally { cleanup(); }
+  });
+
+  it('handles multiple memories', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'm1', layer: 'core' });
+      await svc.add({ content: 'm2', layer: 'short' });
+      await svc.add({ content: 'm3', layer: 'long' });
+      const exported = await svc.exportCompact();
+      assert.equal(exported.length, 3);
+    } finally { cleanup(); }
+  });
+});
