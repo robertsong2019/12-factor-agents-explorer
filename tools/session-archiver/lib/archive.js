@@ -65,8 +65,10 @@ function archiveSession({ id, label, history, meta }) {
 /**
  * List all archives, newest first.
  */
-function listArchives({ limit = 50 } = {}) {
+function listArchives({ limit = 50, from, to } = {}) {
   ensureDir();
+  const fromMs = from ? new Date(from).getTime() : -Infinity;
+  const toMs = to ? new Date(to).getTime() : Infinity;
   const files = fs
     .readdirSync(ARCHIVE_DIR)
     .filter((f) => f.endsWith(".json"))
@@ -80,12 +82,17 @@ function listArchives({ limit = 50 } = {}) {
           label: data.label,
           archivedAt: data.archivedAt,
           messageCount: data.messageCount,
+          tags: data.tags || [],
         };
       } catch {
         return null;
       }
     })
     .filter(Boolean)
+    .filter((a) => {
+      const ts = new Date(a.archivedAt).getTime();
+      return ts >= fromMs && ts <= toMs;
+    })
     .sort((a, b) => new Date(b.archivedAt) - new Date(a.archivedAt))
     .slice(0, limit);
 
@@ -277,6 +284,76 @@ function cleanOldArchives(days, dryRun = false) {
   return { count };
 }
 
+/**
+ * Add tags to an archived session.
+ */
+function addTags(id, tags) {
+  const data = _readArchive(id);
+  if (!data) throw new Error(`Archive not found: ${id}`);
+  data.tags = data.tags || [];
+  let added = 0;
+  for (const tag of tags) {
+    if (!data.tags.includes(tag)) {
+      data.tags.push(tag);
+      added++;
+    }
+  }
+  _writeArchive(data);
+  return { id: data.id, tags: data.tags, added };
+}
+
+/**
+ * Remove tags from an archived session.
+ */
+function removeTags(id, tags) {
+  const data = _readArchive(id);
+  if (!data) throw new Error(`Archive not found: ${id}`);
+  data.tags = data.tags || [];
+  const before = data.tags.length;
+  data.tags = data.tags.filter((t) => !tags.includes(t));
+  _writeArchive(data);
+  return { id: data.id, tags: data.tags, removed: before - data.tags.length };
+}
+
+/**
+ * Search archives by tag.
+ */
+function searchByTag(tag, { limit = 50 } = {}) {
+  ensureDir();
+  const results = [];
+  const files = fs.readdirSync(ARCHIVE_DIR).filter((f) => f.endsWith(".json"));
+  for (const f of files) {
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(ARCHIVE_DIR, f), "utf-8"));
+      if ((data.tags || []).includes(tag)) {
+        results.push({
+          id: data.id,
+          label: data.label,
+          archivedAt: data.archivedAt,
+          messageCount: data.messageCount,
+          tags: data.tags,
+        });
+      }
+    } catch {}
+  }
+  return results.sort((a, b) => new Date(b.archivedAt) - new Date(a.archivedAt)).slice(0, limit);
+}
+
+/** Read a single archive by id. */
+function _readArchive(id) {
+  ensureDir();
+  const filePath = path.join(ARCHIVE_DIR, `${id}.json`);
+  if (!fs.existsSync(filePath)) return null;
+  return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+}
+
+/** Write archive data back to disk. */
+function _writeArchive(data) {
+  ensureDir();
+  const filePath = path.join(ARCHIVE_DIR, `${data.id}.json`);
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+}
+
 module.exports = {
   archiveSession,
   listArchives,
@@ -284,4 +361,7 @@ module.exports = {
   exportSession,
   getStats,
   cleanOldArchives,
+  addTags,
+  removeTags,
+  searchByTag,
 };

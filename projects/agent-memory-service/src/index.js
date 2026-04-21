@@ -2819,6 +2819,26 @@ export class MemoryService {
   }
 
   /**
+   * Find memories created or accessed within a time range
+   * @param {number} startTs - Start timestamp (inclusive)
+   * @param {number} endTs - End timestamp (inclusive)
+   * @param {{field?: 'createdAt'|'accessedAt', layer?: string, limit?: number}} opts
+   * @returns {Promise<Memory[]>}
+   */
+  async findByTimeRange(startTs, endTs, opts = {}) {
+    await this.#ensureLoaded();
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+    const field = opts.field ?? 'createdAt';
+    memories = memories.filter(m => {
+      const ts = m[field];
+      return ts >= startTs && ts <= endTs;
+    });
+    memories.sort((a, b) => b[field] - a[field]);
+    return memories.slice(0, opts.limit ?? 50);
+  }
+
+  /**
    * Batch update multiple memories.
    * @param {Array<{id: string, tags?: string[], entities?: string[], weight?: number, layer?: MemoryLayer, source?: string}>} updates
    * @returns {Promise<{updated: number, notFound: string[]}>}

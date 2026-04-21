@@ -29,3 +29,4 @@ timestamp	commit	metric	value	status	description
 2026-04-21T01:00	key-dev-3-loopC	test_count	309/309	keep	healthScore() API — comprehensive memory health monitoring (0-100 score) with 4 dimensions: expiry, access, weight, changelog. Returns actionable recommendations. 7 new tests (302→309), ~66 lines src added.
 2026-04-21T13:08	2c36306	test_count	313/313	keep	memoryTimeline(id) — per-memory changelog timeline. 4 new tests (309→313).
 2026-04-21T13:13	371ba60	test_count	319/319	keep	searchByTags() — tag filter with AND/OR logic. Fix: add() respects passed weight. 6 new tests (313→319).
+2026-04-21T13:16	6f6780f	test_count	324/324	keep	exportCompact() — lightweight export. 5 new tests (319→324).
