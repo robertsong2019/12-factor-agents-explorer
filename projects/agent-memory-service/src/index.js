@@ -3198,6 +3198,114 @@ export class MemoryService {
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
   }
+
+  /**
+   * Find near-duplicate memories based on content similarity
+   * @param {{minSimilarity?: number, layer?: string, limit?: number}} opts
+   * @returns {Promise<{id1: string, id2: string, similarity: number, content1: string, content2: string}[]>}
+   */
+  async findDuplicatePairs(opts = {}) {
+    await this.#ensureLoaded();
+    const minSimilarity = opts.minSimilarity || 0.7;
+    const limit = opts.limit ?? 50;
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+
+    const pairs = [];
+    for (let i = 0; i < memories.length; i++) {
+      for (let j = i + 1; j < memories.length; j++) {
+        const sim = ngramSimilarity(memories[i].content, memories[j].content);
+        if (sim >= minSimilarity) {
+          pairs.push({
+            id1: memories[i].id, id2: memories[j].id,
+            similarity: Math.round(sim * 1000) / 1000,
+            content1: memories[i].content.slice(0, 80),
+            content2: memories[j].content.slice(0, 80),
+          });
+        }
+      }
+    }
+    pairs.sort((a, b) => b.similarity - a.similarity);
+    return pairs.slice(0, limit);
+  }
+
+  /**
+   * Export all data as JSON for backup
+   * @param {{includeChangelog?: boolean, includeLinks?: boolean, includeSkills?: boolean}} opts
+   * @returns {Promise<{version: string, exported: string, memories: object[], links?: object[], changelog?: object[], skills?: object[]}>}
+   */
+  async exportJSON(opts = {}) {
+    await this.#ensureLoaded();
+    const result = {
+      version: '1.0',
+      exported: new Date().toISOString(),
+      memories: this.#store.all().map(m => ({ ...m })),
+    };
+    if (opts.includeLinks !== false) result.links = this.#links.all().map(l => ({ ...l }));
+    if (opts.includeChangelog !== false) result.changelog = this.#changelog.all().map(c => ({ ...c }));
+    if (opts.includeSkills !== false) result.skills = this.#skills.all().map(s => ({ ...s }));
+    return result;
+  }
+
+  /**
+   * Import data from a previous exportJSON() backup
+   * @param {{version: string, memories: object[], links?: object[], changelog?: object[], skills?: object[]}} data
+   * @param {{merge?: boolean}} opts - merge=true appends instead of replacing
+   * @returns {Promise<{memories: number, links: number, changelog: number, skills: number}>}
+   */
+  async importJSON(data, opts = {}) {
+    await this.#ensureLoaded();
+    if (!data || !Array.isArray(data.memories)) throw new Error('Invalid import data: missing memories array');
+
+    if (!opts.merge) {
+      // Replace mode — clear and re-add
+      const allExisting = this.#store.all();
+      for (const m of allExisting) this.#store.delete(m.id);
+      for (const m of data.memories) this.#store.put({ ...m });
+      if (data.links) for (const l of data.links) this.#links.put({ ...l });
+      if (data.changelog) this.#changelog.replace(data.changelog.map(c => ({ ...c })));
+      if (data.skills) for (const s of data.skills) this.#skills.put({ ...s });
+    } else {
+      // Merge mode — add only new items
+      const existing = new Set(this.#store.all().map(m => m.id));
+      let added = 0;
+      for (const m of data.memories) {
+        if (!existing.has(m.id)) { this.#store.put({ ...m }); added++; }
+      }
+      return { memories: added, links: 0, changelog: 0, skills: 0 };
+    }
+
+    return {
+      memories: data.memories.length,
+      links: (data.links || []).length,
+      changelog: (data.changelog || []).length,
+      skills: (data.skills || []).length,
+    };
+  }
+
+  /**
+   * Remove low-weight memories to prune storage
+   * @param {{minWeight?: number, layer?: string, dryRun?: boolean, limit?: number}} opts
+   * @returns {Promise<{removed: number, remaining: number, removedIds: string[]}>}
+   */
+  async pruneLowWeight(opts = {}) {
+    await this.#ensureLoaded();
+    const minWeight = opts.minWeight ?? 0.1;
+    const dryRun = opts.dryRun || false;
+    const limit = opts.limit || Infinity;
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+
+    const toRemove = memories.filter(m => (m.weight || 0) < minWeight).slice(0, limit);
+    if (!dryRun) {
+      for (const m of toRemove) await this.delete(m.id);
+    }
+    return {
+      removed: toRemove.length,
+      remaining: this.#store.all().length,
+      removedIds: toRemove.map(m => m.id),
+    };
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────
