@@ -1,0 +1,2691 @@
+
+> agent-memory-service@0.1.0 test
+> node --test tests/*.test.js
+
+TAP version 13
+# Subtest: Bigram Tokenizer
+    # Subtest: splits Chinese into character bigrams
+    ok 1 - splits Chinese into character bigrams
+      ---
+      duration_ms: 1.364948
+      type: 'test'
+      ...
+    # Subtest: handles mixed Chinese and English
+    ok 2 - handles mixed Chinese and English
+      ---
+      duration_ms: 0.24025
+      type: 'test'
+      ...
+    # Subtest: handles single Chinese character
+    ok 3 - handles single Chinese character
+      ---
+      duration_ms: 0.19042
+      type: 'test'
+      ...
+    # Subtest: still splits English words
+    ok 4 - still splits English words
+      ---
+      duration_ms: 0.14717
+      type: 'test'
+      ...
+    # Subtest: handles empty string
+    ok 5 - handles empty string
+      ---
+      duration_ms: 0.221438
+      type: 'test'
+      ...
+    1..5
+ok 1 - Bigram Tokenizer
+  ---
+  duration_ms: 4.032628
+  type: 'suite'
+  ...
+# Subtest: BM25Index
+    # Subtest: adds and searches documents
+    ok 1 - adds and searches documents
+      ---
+      duration_ms: 0.462984
+      type: 'test'
+      ...
+    # Subtest: removes documents from index
+    ok 2 - removes documents from index
+      ---
+      duration_ms: 0.298142
+      type: 'test'
+      ...
+    # Subtest: returns empty for no matches
+    ok 3 - returns empty for no matches
+      ---
+      duration_ms: 0.26815
+      type: 'test'
+      ...
+    # Subtest: tracks N and avgdl
+    ok 4 - tracks N and avgdl
+      ---
+      duration_ms: 0.217347
+      type: 'test'
+      ...
+    # Subtest: handles Chinese text search
+    ok 5 - handles Chinese text search
+      ---
+      duration_ms: 0.368589
+      type: 'test'
+      ...
+    # Subtest: replacing document updates index
+    ok 6 - replacing document updates index
+      ---
+      duration_ms: 0.14505
+      type: 'test'
+      ...
+    # Subtest: topK limits results
+    ok 7 - topK limits results
+      ---
+      duration_ms: 0.176935
+      type: 'test'
+      ...
+    1..7
+ok 2 - BM25Index
+  ---
+  duration_ms: 2.319923
+  type: 'suite'
+  ...
+# Subtest: searchBM25()
+    # Subtest: returns ranked BM25 results
+    ok 1 - returns ranked BM25 results
+      ---
+      duration_ms: 0.718466
+      type: 'test'
+      ...
+    # Subtest: filters by layer
+    ok 2 - filters by layer
+      ---
+      duration_ms: 0.366111
+      type: 'test'
+      ...
+    # Subtest: respects limit
+    ok 3 - respects limit
+      ---
+      duration_ms: 0.249969
+      type: 'test'
+      ...
+    # Subtest: includes explanation by default
+    ok 4 - includes explanation by default
+      ---
+      duration_ms: 0.430093
+      type: 'test'
+      ...
+    # Subtest: skips explanation when disabled
+    ok 5 - skips explanation when disabled
+      ---
+      duration_ms: 0.270101
+      type: 'test'
+      ...
+    # Subtest: works with Chinese queries
+    ok 6 - works with Chinese queries
+      ---
+      duration_ms: 10.050594
+      type: 'test'
+      ...
+    1..6
+ok 3 - searchBM25()
+  ---
+  duration_ms: 33.52113
+  type: 'suite'
+  ...
+# Subtest: searchHybrid()
+    # Subtest: returns results in hybrid mode
+    ok 1 - returns results in hybrid mode
+      ---
+      duration_ms: 1.285028
+      type: 'test'
+      ...
+    # Subtest: keyword mode uses BM25 ranking
+    ok 2 - keyword mode uses BM25 ranking
+      ---
+      duration_ms: 0.168265
+      type: 'test'
+      ...
+    # Subtest: semantic mode uses ngram similarity
+    ok 3 - semantic mode uses ngram similarity
+      ---
+      duration_ms: 0.518899
+      type: 'test'
+      ...
+    # Subtest: keyword beats semantic for exact match
+    ok 4 - keyword beats semantic for exact match
+      ---
+      duration_ms: 0.69005
+      type: 'test'
+      ...
+    # Subtest: hybrid includes explanation
+    ok 5 - hybrid includes explanation
+      ---
+      duration_ms: 0.548809
+      type: 'test'
+      ...
+    # Subtest: respects limit and layer filter
+    ok 6 - respects limit and layer filter
+      ---
+      duration_ms: 3.849587
+      type: 'test'
+      ...
+    1..6
+ok 4 - searchHybrid()
+  ---
+  duration_ms: 14.698929
+  type: 'suite'
+  ...
+# Subtest: createOpenAIEmbedFn
+    # Subtest: returns an async function
+    ok 1 - returns an async function
+      ---
+      duration_ms: 0.735075
+      type: 'test'
+      ...
+    # Subtest: calls the embeddings API with correct parameters
+    ok 2 - calls the embeddings API with correct parameters
+      ---
+      duration_ms: 0.573999
+      type: 'test'
+      ...
+    # Subtest: uses defaults when opts are omitted
+    ok 3 - uses defaults when opts are omitted
+      ---
+      duration_ms: 0.350575
+      type: 'test'
+      ...
+    # Subtest: throws on non-ok response
+    ok 4 - throws on non-ok response
+      ---
+      duration_ms: 0.500928
+      type: 'test'
+      ...
+    # Subtest: throws when response has no embedding vector
+    ok 5 - throws when response has no embedding vector
+      ---
+      duration_ms: 0.204199
+      type: 'test'
+      ...
+    # Subtest: integrates with EmbeddingProvider for caching
+    ok 6 - integrates with EmbeddingProvider for caching
+      ---
+      duration_ms: 8.037267
+      type: 'test'
+      ...
+    1..6
+ok 5 - createOpenAIEmbedFn
+  ---
+  duration_ms: 11.523311
+  type: 'suite'
+  ...
+# Subtest: cosineSimilarity
+    # Subtest: returns 1 for identical vectors
+    ok 1 - returns 1 for identical vectors
+      ---
+      duration_ms: 0.670121
+      type: 'test'
+      ...
+    # Subtest: returns 0 for orthogonal vectors
+    ok 2 - returns 0 for orthogonal vectors
+      ---
+      duration_ms: 0.185108
+      type: 'test'
+      ...
+    # Subtest: returns 0 for empty or mismatched vectors
+    ok 3 - returns 0 for empty or mismatched vectors
+      ---
+      duration_ms: 0.110488
+      type: 'test'
+      ...
+    1..3
+ok 6 - cosineSimilarity
+  ---
+  duration_ms: 1.70345
+  type: 'suite'
+  ...
+# Subtest: EmbeddingProvider
+    # Subtest: returns null when no embedFn set
+    ok 1 - returns null when no embedFn set
+      ---
+      duration_ms: 1.270876
+      type: 'test'
+      ...
+    # Subtest: embeds text and caches results
+    ok 2 - embeds text and caches results
+      ---
+      duration_ms: 10.08474
+      type: 'test'
+      ...
+    # Subtest: computes similarity between two texts
+    ok 3 - computes similarity between two texts
+      ---
+      duration_ms: 3.275959
+      type: 'test'
+      ...
+    # Subtest: persists cache to disk
+    ok 4 - persists cache to disk
+      ---
+      duration_ms: 2.760278
+      type: 'test'
+      ...
+    # Subtest: handles embedFn errors gracefully
+    ok 5 - handles embedFn errors gracefully
+      ---
+      duration_ms: 1.317584
+      type: 'test'
+      ...
+    # Subtest: setEmbedFn changes provider at runtime
+    ok 6 - setEmbedFn changes provider at runtime
+      ---
+      duration_ms: 0.438457
+      type: 'test'
+      ...
+    # Subtest: clearCache resets cache
+    ok 7 - clearCache resets cache
+      ---
+      duration_ms: 2.357513
+      type: 'test'
+      ...
+    1..7
+ok 7 - EmbeddingProvider
+  ---
+  duration_ms: 22.225811
+  type: 'suite'
+  ...
+# Subtest: MemoryService with embeddings
+    # Subtest: uses embeddings in search when provider is enabled
+    ok 1 - uses embeddings in search when provider is enabled
+      ---
+      duration_ms: 7.365772
+      type: 'test'
+      ...
+    # Subtest: falls back gracefully when embedFn is null
+    ok 2 - falls back gracefully when embedFn is null
+      ---
+      duration_ms: 3.707992
+      type: 'test'
+      ...
+    1..2
+ok 8 - MemoryService with embeddings
+  ---
+  duration_ms: 11.319994
+  type: 'suite'
+  ...
+# Subtest: searchEmbedding
+    # Subtest: throws when embeddings not enabled
+    ok 1 - throws when embeddings not enabled
+      ---
+      duration_ms: 6.516232
+      type: 'test'
+      ...
+    # Subtest: returns results ranked by cosine similarity
+    ok 2 - returns results ranked by cosine similarity
+      ---
+      duration_ms: 4.863914
+      type: 'test'
+      ...
+    # Subtest: respects limit option
+    ok 3 - respects limit option
+      ---
+      duration_ms: 4.738065
+      type: 'test'
+      ...
+    # Subtest: filters by layer
+    ok 4 - filters by layer
+      ---
+      duration_ms: 10.40803
+      type: 'test'
+      ...
+    # Subtest: applies threshold filter
+    ok 5 - applies threshold filter
+      ---
+      duration_ms: 3.858573
+      type: 'test'
+      ...
+    # Subtest: boosts access count on matched results
+    ok 6 - boosts access count on matched results
+      ---
+      duration_ms: 3.488248
+      type: 'test'
+      ...
+    # Subtest: returns empty array when query embedding fails
+    ok 7 - returns empty array when query embedding fails
+      ---
+      duration_ms: 2.18843
+      type: 'test'
+      ...
+    1..7
+ok 9 - searchEmbedding
+  ---
+  duration_ms: 36.64482
+  type: 'suite'
+  ...
+# Subtest: searchUnified
+    # Subtest: fuses BM25 + semantic + embedding results
+    ok 1 - fuses BM25 + semantic + embedding results
+      ---
+      duration_ms: 7.232357
+      type: 'test'
+      ...
+    # Subtest: falls back to BM25+semantic when no embeddings
+    ok 2 - falls back to BM25+semantic when no embeddings
+      ---
+      duration_ms: 9.539581
+      type: 'test'
+      ...
+    # Subtest: returns empty when no matches found
+    ok 3 - returns empty when no matches found
+      ---
+      duration_ms: 3.072312
+      type: 'test'
+      ...
+    # Subtest: respects limit option
+    ok 4 - respects limit option
+      ---
+      duration_ms: 9.198244
+      type: 'test'
+      ...
+    # Subtest: filters by layer
+    ok 5 - filters by layer
+      ---
+      duration_ms: 5.241598
+      type: 'test'
+      ...
+    # Subtest: boosts access count on results
+    ok 6 - boosts access count on results
+      ---
+      duration_ms: 1.936973
+      type: 'test'
+      ...
+    1..6
+ok 10 - searchUnified
+  ---
+  duration_ms: 36.718963
+  type: 'suite'
+  ...
+# Subtest: findDuplicatePairs()
+    # Subtest: finds duplicate pairs by content similarity
+    ok 1 - finds duplicate pairs by content similarity
+      ---
+      duration_ms: 6.308207
+      type: 'test'
+      ...
+    # Subtest: respects layer filter
+    ok 2 - respects layer filter
+      ---
+      duration_ms: 0.273423
+      type: 'test'
+      ...
+    # Subtest: respects limit option
+    ok 3 - respects limit option
+      ---
+      duration_ms: 0.268276
+      type: 'test'
+      ...
+    # Subtest: returns empty for high threshold
+    ok 4 - returns empty for high threshold
+      ---
+      duration_ms: 0.202381
+      type: 'test'
+      ...
+    1..4
+ok 11 - findDuplicatePairs()
+  ---
+  duration_ms: 16.51567
+  type: 'suite'
+  ...
+# Subtest: exportJSON() / importJSON()
+    # Subtest: exports all data with version and timestamp
+    ok 1 - exports all data with version and timestamp
+      ---
+      duration_ms: 3.152576
+      type: 'test'
+      ...
+    # Subtest: exports without optional sections
+    ok 2 - exports without optional sections
+      ---
+      duration_ms: 0.307834
+      type: 'test'
+      ...
+    # Subtest: round-trips via import in replace mode
+    ok 3 - round-trips via import in replace mode
+      ---
+      duration_ms: 2.870797
+      type: 'test'
+      ...
+    # Subtest: import with merge mode skips existing
+    ok 4 - import with merge mode skips existing
+      ---
+      duration_ms: 0.335344
+      type: 'test'
+      ...
+    # Subtest: throws on invalid data
+    ok 5 - throws on invalid data
+      ---
+      duration_ms: 0.599313
+      type: 'test'
+      ...
+    1..5
+ok 12 - exportJSON() / importJSON()
+  ---
+  duration_ms: 12.169296
+  type: 'suite'
+  ...
+# Subtest: pruneLowWeight()
+    # Subtest: removes memories below weight threshold
+    ok 1 - removes memories below weight threshold
+      ---
+      duration_ms: 8.916446
+      type: 'test'
+      ...
+    # Subtest: dryRun does not remove anything
+    ok 2 - dryRun does not remove anything
+      ---
+      duration_ms: 2.092309
+      type: 'test'
+      ...
+    # Subtest: respects layer filter
+    ok 3 - respects layer filter
+      ---
+      duration_ms: 4.011916
+      type: 'test'
+      ...
+    # Subtest: respects limit option
+    ok 4 - respects limit option
+      ---
+      duration_ms: 10.030573
+      type: 'test'
+      ...
+    # Subtest: returns empty when nothing to prune
+    ok 5 - returns empty when nothing to prune
+      ---
+      duration_ms: 2.034955
+      type: 'test'
+      ...
+    1..5
+ok 13 - pruneLowWeight()
+  ---
+  duration_ms: 27.61646
+  type: 'suite'
+  ...
+# Subtest: expiresAt + purgeExpired
+    # Subtest: stores expiresAt when provided
+    ok 1 - stores expiresAt when provided
+      ---
+      duration_ms: 13.156431
+      type: 'test'
+      ...
+    # Subtest: omits expiresAt when not provided
+    ok 2 - omits expiresAt when not provided
+      ---
+      duration_ms: 8.111311
+      type: 'test'
+      ...
+    # Subtest: purgeExpired removes expired memories
+    not ok 3 - purgeExpired removes expired memories
+      ---
+      duration_ms: 14.325812
+      type: 'test'
+      location: '/root/.openclaw/workspace/projects/agent-memory-service/tests/expire.test.js:24:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        
+        2 !== 1
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 1
+      actual: 2
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (file:///root/.openclaw/workspace/projects/agent-memory-service/tests/expire.test.js:31:12)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:744:7)
+      ...
+    # Subtest: purgeExpired returns empty when nothing expired
+    ok 4 - purgeExpired returns empty when nothing expired
+      ---
+      duration_ms: 7.20961
+      type: 'test'
+      ...
+    # Subtest: expired memory not found via get after purge
+    ok 5 - expired memory not found via get after purge
+      ---
+      duration_ms: 14.495888
+      type: 'test'
+      ...
+    1..5
+not ok 14 - expiresAt + purgeExpired
+  ---
+  duration_ms: 58.592961
+  type: 'suite'
+  location: '/root/.openclaw/workspace/projects/agent-memory-service/tests/expire.test.js:5:1'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: Tokenizer
+    # Subtest: splits English text
+    ok 1 - splits English text
+      ---
+      duration_ms: 1.241847
+      type: 'test'
+      ...
+    # Subtest: handles Chinese characters
+    ok 2 - handles Chinese characters
+      ---
+      duration_ms: 0.225865
+      type: 'test'
+      ...
+    # Subtest: filters single characters
+    ok 3 - filters single characters
+      ---
+      duration_ms: 0.18352
+      type: 'test'
+      ...
+    1..3
+ok 15 - Tokenizer
+  ---
+  duration_ms: 2.482699
+  type: 'suite'
+  ...
+# Subtest: N-gram Similarity
+    # Subtest: returns 1 for identical strings
+    ok 1 - returns 1 for identical strings
+      ---
+      duration_ms: 0.44765
+      type: 'test'
+      ...
+    # Subtest: returns 0 for completely different strings
+    ok 2 - returns 0 for completely different strings
+      ---
+      duration_ms: 0.158402
+      type: 'test'
+      ...
+    # Subtest: returns partial match for similar strings
+    ok 3 - returns partial match for similar strings
+      ---
+      duration_ms: 0.123991
+      type: 'test'
+      ...
+    1..3
+ok 16 - N-gram Similarity
+  ---
+  duration_ms: 1.073813
+  type: 'suite'
+  ...
+# Subtest: Keyword Score
+    # Subtest: returns 1 for perfect match
+    ok 1 - returns 1 for perfect match
+      ---
+      duration_ms: 0.259758
+      type: 'test'
+      ...
+    # Subtest: returns 0 for no match
+    ok 2 - returns 0 for no match
+      ---
+      duration_ms: 0.162985
+      type: 'test'
+      ...
+    # Subtest: returns partial score
+    ok 3 - returns partial score
+      ---
+      duration_ms: 0.162763
+      type: 'test'
+      ...
+    1..3
+ok 17 - Keyword Score
+  ---
+  duration_ms: 0.937679
+  type: 'suite'
+  ...
+# Subtest: MemoryExtractor
+    # Subtest: extracts preferences (Chinese)
+    ok 1 - extracts preferences (Chinese)
+      ---
+      duration_ms: 0.976985
+      type: 'test'
+      ...
+    # Subtest: extracts preferences (English)
+    ok 2 - extracts preferences (English)
+      ---
+      duration_ms: 0.285738
+      type: 'test'
+      ...
+    # Subtest: extracts decisions
+    ok 3 - extracts decisions
+      ---
+      duration_ms: 0.273477
+      type: 'test'
+      ...
+    # Subtest: extracts facts
+    ok 4 - extracts facts
+      ---
+      duration_ms: 0.102832
+      type: 'test'
+      ...
+    # Subtest: returns context or fact for user messages with no pattern match
+    ok 5 - returns context or fact for user messages with no pattern match
+      ---
+      duration_ms: 0.092632
+      type: 'test'
+      ...
+    # Subtest: extracts from full conversation
+    ok 6 - extracts from full conversation
+      ---
+      duration_ms: 0.263336
+      type: 'test'
+      ...
+    # Subtest: classifies preferences as core layer
+    ok 7 - classifies preferences as core layer
+      ---
+      duration_ms: 0.112894
+      type: 'test'
+      ...
+    1..7
+ok 18 - MemoryExtractor
+  ---
+  duration_ms: 2.33891
+  type: 'suite'
+  ...
+# Subtest: MemoryService
+    # Subtest: initializes and adds a memory
+    ok 1 - initializes and adds a memory
+      ---
+      duration_ms: 47.22299
+      type: 'test'
+      ...
+    # Subtest: retrieves a memory by id
+    ok 2 - retrieves a memory by id
+      ---
+      duration_ms: 2.300232
+      type: 'test'
+      ...
+    # Subtest: searches memories
+    ok 3 - searches memories
+      ---
+      duration_ms: 4.227567
+      type: 'test'
+      ...
+    # Subtest: filters search by layer
+    ok 4 - filters search by layer
+      ---
+      duration_ms: 2.833293
+      type: 'test'
+      ...
+    # Subtest: respects limit in search
+    ok 5 - respects limit in search
+      ---
+      duration_ms: 11.063536
+      type: 'test'
+      ...
+    # Subtest: extracts from conversation and deduplicates
+    ok 6 - extracts from conversation and deduplicates
+      ---
+      duration_ms: 2.039814
+      type: 'test'
+      ...
+    # Subtest: decays long and short memories but not core
+    ok 7 - decays long and short memories but not core
+      ---
+      duration_ms: 2.553943
+      type: 'test'
+      ...
+    # Subtest: returns stats
+    ok 8 - returns stats
+      ---
+      duration_ms: 3.311389
+      type: 'test'
+      ...
+    # Subtest: persists and reloads memories
+    ok 9 - persists and reloads memories
+      ---
+      duration_ms: 5.73556
+      type: 'test'
+      ...
+    # Subtest: clears all memories
+    ok 10 - clears all memories
+      ---
+      duration_ms: 3.838271
+      type: 'test'
+      ...
+    # Subtest: exports all memories
+    ok 11 - exports all memories
+      ---
+      duration_ms: 3.328289
+      type: 'test'
+      ...
+    # Subtest: search boosts accessed memories
+    ok 12 - search boosts accessed memories
+      ---
+      duration_ms: 1.862196
+      type: 'test'
+      ...
+    1..12
+ok 19 - MemoryService
+  ---
+  duration_ms: 91.069406
+  type: 'suite'
+  ...
+# Subtest: Edge Cases
+    # Subtest: ngramSimilarity handles empty strings
+    ok 1 - ngramSimilarity handles empty strings
+      ---
+      duration_ms: 0.202018
+      type: 'test'
+      ...
+    # Subtest: ngramSimilarity handles single char strings
+    ok 2 - ngramSimilarity handles single char strings
+      ---
+      duration_ms: 0.068226
+      type: 'test'
+      ...
+    # Subtest: keywordScore handles empty query tokens
+    ok 3 - keywordScore handles empty query tokens
+      ---
+      duration_ms: 0.047967
+      type: 'test'
+      ...
+    # Subtest: tokenize handles empty and whitespace
+    ok 4 - tokenize handles empty and whitespace
+      ---
+      duration_ms: 0.055975
+      type: 'test'
+      ...
+    # Subtest: add with default layer is short
+    ok 5 - add with default layer is short
+      ---
+      duration_ms: 6.91067
+      type: 'test'
+      ...
+    # Subtest: add generates unique IDs
+    ok 6 - add generates unique IDs
+      ---
+      duration_ms: 2.585232
+      type: 'test'
+      ...
+    # Subtest: get returns undefined for non-existent ID
+    ok 7 - get returns undefined for non-existent ID
+      ---
+      duration_ms: 0.97791
+      type: 'test'
+      ...
+    # Subtest: search with empty query returns results
+    ok 8 - search with empty query returns results
+      ---
+      duration_ms: 1.712452
+      type: 'test'
+      ...
+    # Subtest: decay removes low-weight short memories
+    ok 9 - decay removes low-weight short memories
+      ---
+      duration_ms: 2.070624
+      type: 'test'
+      ...
+    # Subtest: extractFromConversation with empty messages returns empty
+    ok 10 - extractFromConversation with empty messages returns empty
+      ---
+      duration_ms: 1.0699
+      type: 'test'
+      ...
+    # Subtest: dislike patterns are extracted
+    ok 11 - dislike patterns are extracted
+      ---
+      duration_ms: 0.207273
+      type: 'test'
+      ...
+    # Subtest: tech mentions are extracted
+    ok 12 - tech mentions are extracted
+      ---
+      duration_ms: 0.143356
+      type: 'test'
+      ...
+    # Subtest: search strategy keyword works
+    ok 13 - search strategy keyword works
+      ---
+      duration_ms: 2.27941
+      type: 'test'
+      ...
+    # Subtest: search strategy semantic works
+    ok 14 - search strategy semantic works
+      ---
+      duration_ms: 1.689576
+      type: 'test'
+      ...
+    # Subtest: contentHash is deterministic
+    ok 15 - contentHash is deterministic
+      ---
+      duration_ms: 0.108162
+      type: 'test'
+      ...
+    # Subtest: stats on empty store
+    ok 16 - stats on empty store
+      ---
+      duration_ms: 1.078548
+      type: 'test'
+      ...
+    1..16
+ok 20 - Edge Cases
+  ---
+  duration_ms: 22.069249
+  type: 'suite'
+  ...
+# Subtest: Memory Consolidation
+    # Subtest: merges similar short memories into long layer
+    ok 1 - merges similar short memories into long layer
+      ---
+      duration_ms: 5.090879
+      type: 'test'
+      ...
+    # Subtest: promotes to core when long memories merge
+    ok 2 - promotes to core when long memories merge
+      ---
+      duration_ms: 3.519479
+      type: 'test'
+      ...
+    # Subtest: preserves earliest creation time and total access count
+    ok 3 - preserves earliest creation time and total access count
+      ---
+      duration_ms: 3.558243
+      type: 'test'
+      ...
+    # Subtest: dry run does not modify store
+    ok 4 - dry run does not modify store
+      ---
+      duration_ms: 3.051243
+      type: 'test'
+      ...
+    # Subtest: does not merge unrelated memories
+    ok 5 - does not merge unrelated memories
+      ---
+      duration_ms: 5.083462
+      type: 'test'
+      ...
+    # Subtest: consolidation source tracks original ids
+    ok 6 - consolidation source tracks original ids
+      ---
+      duration_ms: 3.30303
+      type: 'test'
+      ...
+    # Subtest: respects custom similarity threshold
+    ok 7 - respects custom similarity threshold
+      ---
+      duration_ms: 3.303014
+      type: 'test'
+      ...
+    1..7
+ok 21 - Memory Consolidation
+  ---
+  duration_ms: 27.39651
+  type: 'suite'
+  ...
+# Subtest: Layer Configuration
+    # Subtest: core has zero decay rate
+    ok 1 - core has zero decay rate
+      ---
+      duration_ms: 0.100644
+      type: 'test'
+      ...
+    # Subtest: long has slower decay than short
+    ok 2 - long has slower decay than short
+      ---
+      duration_ms: 0.0494
+      type: 'test'
+      ...
+    # Subtest: all layers have minWeight defined
+    ok 3 - all layers have minWeight defined
+      ---
+      duration_ms: 0.059546
+      type: 'test'
+      ...
+    1..3
+ok 22 - Layer Configuration
+  ---
+  duration_ms: 0.291489
+  type: 'suite'
+  ...
+# Subtest: Memory Associations (Links)
+    # Subtest: links two memories
+    ok 1 - links two memories
+      ---
+      duration_ms: 5.464327
+      type: 'test'
+      ...
+    # Subtest: throws if source memory does not exist
+    ok 2 - throws if source memory does not exist
+      ---
+      duration_ms: 1.901611
+      type: 'test'
+      ...
+    # Subtest: throws if target memory does not exist
+    ok 3 - throws if target memory does not exist
+      ---
+      duration_ms: 1.594571
+      type: 'test'
+      ...
+    # Subtest: getLinks returns links for a memory
+    ok 4 - getLinks returns links for a memory
+      ---
+      duration_ms: 3.747169
+      type: 'test'
+      ...
+    # Subtest: unlink removes a link
+    ok 5 - unlink removes a link
+      ---
+      duration_ms: 3.042493
+      type: 'test'
+      ...
+    # Subtest: links persist across reload
+    ok 6 - links persist across reload
+      ---
+      duration_ms: 3.05908
+      type: 'test'
+      ...
+    # Subtest: traverse follows links up to specified depth
+    ok 7 - traverse follows links up to specified depth
+      ---
+      duration_ms: 5.800721
+      type: 'test'
+      ...
+    # Subtest: traverse filters by link type
+    ok 8 - traverse filters by link type
+      ---
+      duration_ms: 3.822529
+      type: 'test'
+      ...
+    # Subtest: autoLink creates links for memories with shared entities
+    ok 9 - autoLink creates links for memories with shared entities
+      ---
+      duration_ms: 3.981442
+      type: 'test'
+      ...
+    # Subtest: autoLink skips already-linked pairs
+    ok 10 - autoLink skips already-linked pairs
+      ---
+      duration_ms: 2.541223
+      type: 'test'
+      ...
+    # Subtest: clear removes all links too
+    ok 11 - clear removes all links too
+      ---
+      duration_ms: 5.453228
+      type: 'test'
+      ...
+    # Subtest: Batch Operations
+        # Subtest: batchAdd creates multiple memories
+        ok 1 - batchAdd creates multiple memories
+          ---
+          duration_ms: 4.183264
+          type: 'test'
+          ...
+        # Subtest: batchAdd with empty array returns empty
+        ok 2 - batchAdd with empty array returns empty
+          ---
+          duration_ms: 0.965984
+          type: 'test'
+          ...
+        # Subtest: batchDelete removes multiple memories
+        ok 3 - batchDelete removes multiple memories
+          ---
+          duration_ms: 4.489276
+          type: 'test'
+          ...
+        # Subtest: batchDelete reports notFound for missing IDs
+        ok 4 - batchDelete reports notFound for missing IDs
+          ---
+          duration_ms: 1.057356
+          type: 'test'
+          ...
+        # Subtest: batchDelete cleans up associated links
+        ok 5 - batchDelete cleans up associated links
+          ---
+          duration_ms: 4.55277
+          type: 'test'
+          ...
+        1..5
+    ok 12 - Batch Operations
+      ---
+      duration_ms: 15.598501
+      type: 'suite'
+      ...
+    # Subtest: Search and Link
+        # Subtest: searchAndLink connects query results to a memory
+        ok 1 - searchAndLink connects query results to a memory
+          ---
+          duration_ms: 5.133988
+          type: 'test'
+          ...
+        # Subtest: searchAndLink skips self
+        ok 2 - searchAndLink skips self
+          ---
+          duration_ms: 1.607338
+          type: 'test'
+          ...
+        # Subtest: searchAndLink respects limit
+        ok 3 - searchAndLink respects limit
+          ---
+          duration_ms: 6.207301
+          type: 'test'
+          ...
+        1..3
+    ok 13 - Search and Link
+      ---
+      duration_ms: 13.185073
+      type: 'suite'
+      ...
+    # Subtest: Timeline
+        # Subtest: returns memories sorted by creation date descending
+        ok 1 - returns memories sorted by creation date descending
+          ---
+          duration_ms: 4.185671
+          type: 'test'
+          ...
+        # Subtest: filters by time range
+        ok 2 - filters by time range
+          ---
+          duration_ms: 4.087877
+          type: 'test'
+          ...
+        # Subtest: filters by layer
+        ok 3 - filters by layer
+          ---
+          duration_ms: 5.071923
+          type: 'test'
+          ...
+        # Subtest: respects limit
+        ok 4 - respects limit
+          ---
+          duration_ms: 7.801095
+          type: 'test'
+          ...
+        # Subtest: returns empty for range with no memories
+        ok 5 - returns empty for range with no memories
+          ---
+          duration_ms: 1.396644
+          type: 'test'
+          ...
+        1..5
+    ok 14 - Timeline
+      ---
+      duration_ms: 22.915784
+      type: 'suite'
+      ...
+    # Subtest: all link types are supported
+    ok 15 - all link types are supported
+      ---
+      duration_ms: 9.41948
+      type: 'test'
+      ...
+    # Subtest: changes() — incremental change tracking
+        # Subtest: returns empty for timestamp before any changes
+        ok 1 - returns empty for timestamp before any changes
+          ---
+          duration_ms: 2.494368
+          type: 'test'
+          ...
+        # Subtest: tracks added memories
+        ok 2 - tracks added memories
+          ---
+          duration_ms: 2.630245
+          type: 'test'
+          ...
+        # Subtest: tracks deleted memories
+        ok 3 - tracks deleted memories
+          ---
+          duration_ms: 7.638137
+          type: 'test'
+          ...
+        # Subtest: includes snapshot with total and byLayer
+        ok 4 - includes snapshot with total and byLayer
+          ---
+          duration_ms: 3.583142
+          type: 'test'
+          ...
+        # Subtest: clear() records all deletions in changelog
+        ok 5 - clear() records all deletions in changelog
+          ---
+          duration_ms: 3.160018
+          type: 'test'
+          ...
+        # Subtest: update() modifies content and records in changelog
+        ok 6 - update() modifies content and records in changelog
+          ---
+          duration_ms: 23.051117
+          type: 'test'
+          ...
+        # Subtest: update() changes layer
+        ok 7 - update() changes layer
+          ---
+          duration_ms: 2.581838
+          type: 'test'
+          ...
+        # Subtest: update() returns null for nonexistent memory
+        ok 8 - update() returns null for nonexistent memory
+          ---
+          duration_ms: 1.037925
+          type: 'test'
+          ...
+        # Subtest: update() preserves unmodified fields
+        ok 9 - update() preserves unmodified fields
+          ---
+          duration_ms: 2.365852
+          type: 'test'
+          ...
+        # Subtest: compactChangelog removes old entries
+        ok 10 - compactChangelog removes old entries
+          ---
+          duration_ms: 5.118926
+          type: 'test'
+          ...
+        # Subtest: compactChangelog keeps recent entries
+        ok 11 - compactChangelog keeps recent entries
+          ---
+          duration_ms: 9.326306
+          type: 'test'
+          ...
+        1..11
+    ok 16 - changes() — incremental change tracking
+      ---
+      duration_ms: 63.680418
+      type: 'suite'
+      ...
+    # Subtest: searchAdvanced()
+        # Subtest: returns results with BM25 scoring
+        ok 1 - returns results with BM25 scoring
+          ---
+          duration_ms: 4.139522
+          type: 'test'
+          ...
+        # Subtest: includes explanation when explain=true
+        ok 2 - includes explanation when explain=true
+          ---
+          duration_ms: 4.323304
+          type: 'test'
+          ...
+        # Subtest: omits explanation when explain=false
+        ok 3 - omits explanation when explain=false
+          ---
+          duration_ms: 2.428632
+          type: 'test'
+          ...
+        # Subtest: respects layer filter
+        ok 4 - respects layer filter
+          ---
+          duration_ms: 2.820498
+          type: 'test'
+          ...
+        # Subtest: respects limit option
+        ok 5 - respects limit option
+          ---
+          duration_ms: 11.837746
+          type: 'test'
+          ...
+        # Subtest: boosts accessed memories
+        ok 6 - boosts accessed memories
+          ---
+          duration_ms: 1.510923
+          type: 'test'
+          ...
+        1..6
+    ok 17 - searchAdvanced()
+      ---
+      duration_ms: 27.453842
+      type: 'suite'
+      ...
+    # Subtest: merge()
+        # Subtest: merges two memories into one
+        ok 1 - merges two memories into one
+          ---
+          duration_ms: 3.366438
+          type: 'test'
+          ...
+        # Subtest: promotes to stronger layer
+        ok 2 - promotes to stronger layer
+          ---
+          duration_ms: 2.799362
+          type: 'test'
+          ...
+        # Subtest: returns null for non-existent ids
+        ok 3 - returns null for non-existent ids
+          ---
+          duration_ms: 0.809614
+          type: 'test'
+          ...
+        # Subtest: handles self-merge gracefully
+        ok 4 - handles self-merge gracefully
+          ---
+          duration_ms: 1.547791
+          type: 'test'
+          ...
+        # Subtest: accepts content override
+        ok 5 - accepts content override
+          ---
+          duration_ms: 4.527744
+          type: 'test'
+          ...
+        1..5
+    ok 18 - merge()
+      ---
+      duration_ms: 13.327312
+      type: 'suite'
+      ...
+    # Subtest: exportAll() / importAll()
+        # Subtest: exports and imports all data
+        ok 1 - exports and imports all data
+          ---
+          duration_ms: 5.180704
+          type: 'test'
+          ...
+        # Subtest: import clears existing data
+        ok 2 - import clears existing data
+          ---
+          duration_ms: 3.092566
+          type: 'test'
+          ...
+        # Subtest: throws error on invalid import data
+        ok 3 - throws error on invalid import data
+          ---
+          duration_ms: 0.819357
+          type: 'test'
+          ...
+        1..3
+    ok 19 - exportAll() / importAll()
+      ---
+      duration_ms: 9.293448
+      type: 'suite'
+      ...
+    # Subtest: delete()
+        # Subtest: deletes a single memory and returns true
+        ok 1 - deletes a single memory and returns true
+          ---
+          duration_ms: 2.562116
+          type: 'test'
+          ...
+        # Subtest: returns false for non-existent id
+        ok 2 - returns false for non-existent id
+          ---
+          duration_ms: 0.861811
+          type: 'test'
+          ...
+        # Subtest: cleans up associated links
+        ok 3 - cleans up associated links
+          ---
+          duration_ms: 5.544354
+          type: 'test'
+          ...
+        # Subtest: records deletion in changelog
+        ok 4 - records deletion in changelog
+          ---
+          duration_ms: 7.49454
+          type: 'test'
+          ...
+        1..4
+    ok 20 - delete()
+      ---
+      duration_ms: 16.688846
+      type: 'suite'
+      ...
+    # Subtest: scheduledMaintenance()
+        # Subtest: runs all three maintenance steps
+        ok 1 - runs all three maintenance steps
+          ---
+          duration_ms: 4.133911
+          type: 'test'
+          ...
+        # Subtest: passes options to consolidate and compactChangelog
+        ok 2 - passes options to consolidate and compactChangelog
+          ---
+          duration_ms: 2.071049
+          type: 'test'
+          ...
+        # Subtest: returns usable result for agent decision-making
+        ok 3 - returns usable result for agent decision-making
+          ---
+          duration_ms: 1.239332
+          type: 'test'
+          ...
+        1..3
+    ok 21 - scheduledMaintenance()
+      ---
+      duration_ms: 7.635818
+      type: 'suite'
+      ...
+    # Subtest: findRelated()
+        # Subtest: finds memories by entity overlap
+        ok 1 - finds memories by entity overlap
+          ---
+          duration_ms: 5.505443
+          type: 'test'
+          ...
+        # Subtest: finds memories by tag overlap
+        ok 2 - finds memories by tag overlap
+          ---
+          duration_ms: 3.043733
+          type: 'test'
+          ...
+        # Subtest: finds memories by semantic similarity
+        ok 3 - finds memories by semantic similarity
+          ---
+          duration_ms: 3.034285
+          type: 'test'
+          ...
+        # Subtest: respects minScore threshold
+        ok 4 - respects minScore threshold
+          ---
+          duration_ms: 3.341261
+          type: 'test'
+          ...
+        # Subtest: respects limit
+        ok 5 - respects limit
+          ---
+          duration_ms: 8.627217
+          type: 'test'
+          ...
+        # Subtest: handles non-existent id
+        ok 6 - handles non-existent id
+          ---
+          duration_ms: 0.793972
+          type: 'test'
+          ...
+        # Subtest: excludes self by default
+        ok 7 - excludes self by default
+          ---
+          duration_ms: 2.358144
+          type: 'test'
+          ...
+        1..7
+    ok 22 - findRelated()
+      ---
+      duration_ms: 27.089174
+      type: 'suite'
+      ...
+    # Subtest: reindex
+        # Subtest: rebuilds tag and entity indices from scratch
+        ok 1 - rebuilds tag and entity indices from scratch
+          ---
+          duration_ms: 2.65146
+          type: 'test'
+          ...
+        # Subtest: fixes stale indices after tag change via update
+        ok 2 - fixes stale indices after tag change via update
+          ---
+          duration_ms: 2.452006
+          type: 'test'
+          ...
+        # Subtest: is included in scheduledMaintenance results
+        ok 3 - is included in scheduledMaintenance results
+          ---
+          duration_ms: 10.958166
+          type: 'test'
+          ...
+        1..3
+    ok 23 - reindex
+      ---
+      duration_ms: 16.298073
+      type: 'suite'
+      ...
+    1..23
+ok 23 - Memory Associations (Links)
+  ---
+  duration_ms: 284.059385
+  type: 'suite'
+  ...
+# Subtest: findDuplicates
+    # Subtest: finds near-duplicate memories
+    ok 1 - finds near-duplicate memories
+      ---
+      duration_ms: 3.571391
+      type: 'test'
+      ...
+    # Subtest: respects threshold option
+    ok 2 - respects threshold option
+      ---
+      duration_ms: 2.410223
+      type: 'test'
+      ...
+    # Subtest: filters by layer
+    ok 3 - filters by layer
+      ---
+      duration_ms: 3.159755
+      type: 'test'
+      ...
+    # Subtest: returns empty for no duplicates
+    ok 4 - returns empty for no duplicates
+      ---
+      duration_ms: 3.394144
+      type: 'test'
+      ...
+    1..4
+ok 24 - findDuplicates
+  ---
+  duration_ms: 12.764915
+  type: 'suite'
+  ...
+# Subtest: archive and restore
+    # Subtest: archives memories older than threshold
+    ok 1 - archives memories older than threshold
+      ---
+      duration_ms: 2.743788
+      type: 'test'
+      ...
+    # Subtest: archives by specific IDs
+    ok 2 - archives by specific IDs
+      ---
+      duration_ms: 2.326997
+      type: 'test'
+      ...
+    # Subtest: archives by layer
+    ok 3 - archives by layer
+      ---
+      duration_ms: 2.375225
+      type: 'test'
+      ...
+    # Subtest: restores archived memories
+    ok 4 - restores archived memories
+      ---
+      duration_ms: 2.551078
+      type: 'test'
+      ...
+    # Subtest: restore with limit
+    ok 5 - restore with limit
+      ---
+      duration_ms: 3.579933
+      type: 'test'
+      ...
+    # Subtest: restore all when no filter
+    ok 6 - restore all when no filter
+      ---
+      duration_ms: 2.934126
+      type: 'test'
+      ...
+    1..6
+ok 25 - archive and restore
+  ---
+  duration_ms: 16.824779
+  type: 'suite'
+  ...
+# Subtest: validate
+    # Subtest: reports valid store with no issues
+    ok 1 - reports valid store with no issues
+      ---
+      duration_ms: 2.252212
+      type: 'test'
+      ...
+    # Subtest: detects empty content
+    ok 2 - detects empty content
+      ---
+      duration_ms: 3.290591
+      type: 'test'
+      ...
+    # Subtest: repair mode reindexes stale indices
+    ok 3 - repair mode reindexes stale indices
+      ---
+      duration_ms: 1.421393
+      type: 'test'
+      ...
+    # Subtest: non-repair mode reports issues without fixing
+    ok 4 - non-repair mode reports issues without fixing
+      ---
+      duration_ms: 3.048438
+      type: 'test'
+      ...
+    1..4
+ok 26 - validate
+  ---
+  duration_ms: 10.239333
+  type: 'suite'
+  ...
+# Subtest: tagCloud
+    # Subtest: returns tag frequencies sorted by count
+    ok 1 - returns tag frequencies sorted by count
+      ---
+      duration_ms: 3.323935
+      type: 'test'
+      ...
+    # Subtest: respects top limit
+    ok 2 - respects top limit
+      ---
+      duration_ms: 1.451629
+      type: 'test'
+      ...
+    # Subtest: returns empty for no tags
+    ok 3 - returns empty for no tags
+      ---
+      duration_ms: 1.538355
+      type: 'test'
+      ...
+    1..3
+ok 27 - tagCloud
+  ---
+  duration_ms: 6.492065
+  type: 'suite'
+  ...
+# Subtest: aggregate
+    # Subtest: groups by layer
+    ok 1 - groups by layer
+      ---
+      duration_ms: 7.009242
+      type: 'test'
+      ...
+    # Subtest: groups by tag
+    ok 2 - groups by tag
+      ---
+      duration_ms: 2.66775
+      type: 'test'
+      ...
+    # Subtest: groups by entity
+    ok 3 - groups by entity
+      ---
+      duration_ms: 2.647255
+      type: 'test'
+      ...
+    # Subtest: returns empty for empty store
+    ok 4 - returns empty for empty store
+      ---
+      duration_ms: 0.827984
+      type: 'test'
+      ...
+    1..4
+ok 28 - aggregate
+  ---
+  duration_ms: 13.426871
+  type: 'suite'
+  ...
+# Subtest: searchByTime
+    # Subtest: finds memories in time range
+    ok 1 - finds memories in time range
+      ---
+      duration_ms: 23.55821
+      type: 'test'
+      ...
+    # Subtest: filters by layer
+    ok 2 - filters by layer
+      ---
+      duration_ms: 2.410019
+      type: 'test'
+      ...
+    # Subtest: respects limit
+    ok 3 - respects limit
+      ---
+      duration_ms: 3.105319
+      type: 'test'
+      ...
+    # Subtest: returns newest first
+    ok 4 - returns newest first
+      ---
+      duration_ms: 8.58741
+      type: 'test'
+      ...
+    1..4
+ok 29 - searchByTime
+  ---
+  duration_ms: 37.891041
+  type: 'suite'
+  ...
+# Subtest: deduplicate
+    # Subtest: merges duplicate memories
+    ok 1 - merges duplicate memories
+      ---
+      duration_ms: 5.404001
+      type: 'test'
+      ...
+    # Subtest: dryRun does not modify store
+    ok 2 - dryRun does not modify store
+      ---
+      duration_ms: 2.679686
+      type: 'test'
+      ...
+    # Subtest: returns empty for no duplicates
+    ok 3 - returns empty for no duplicates
+      ---
+      duration_ms: 3.211686
+      type: 'test'
+      ...
+    1..3
+ok 30 - deduplicate
+  ---
+  duration_ms: 11.497322
+  type: 'suite'
+  ...
+# Subtest: memoryGraph
+    # Subtest: returns nodes and edges for linked memories
+    ok 1 - returns nodes and edges for linked memories
+      ---
+      duration_ms: 3.021872
+      type: 'test'
+      ...
+    # Subtest: filters by layer
+    ok 2 - filters by layer
+      ---
+      duration_ms: 2.399842
+      type: 'test'
+      ...
+    # Subtest: truncates long content
+    ok 3 - truncates long content
+      ---
+      duration_ms: 1.44581
+      type: 'test'
+      ...
+    # Subtest: excludes edges to filtered-out nodes
+    ok 4 - excludes edges to filtered-out nodes
+      ---
+      duration_ms: 2.487564
+      type: 'test'
+      ...
+    1..4
+ok 31 - memoryGraph
+  ---
+  duration_ms: 9.58041
+  type: 'suite'
+  ...
+# Subtest: compact
+    # Subtest: removes low-weight memories
+    ok 1 - removes low-weight memories
+      ---
+      duration_ms: 2.693805
+      type: 'test'
+      ...
+    # Subtest: dryRun does not remove anything
+    ok 2 - dryRun does not remove anything
+      ---
+      duration_ms: 1.477393
+      type: 'test'
+      ...
+    # Subtest: respects layer filter
+    ok 3 - respects layer filter
+      ---
+      duration_ms: 2.559114
+      type: 'test'
+      ...
+    1..3
+ok 32 - compact
+  ---
+  duration_ms: 6.940635
+  type: 'suite'
+  ...
+# Subtest: searchByEmbedding
+    # Subtest: returns results sorted by similarity (ngram fallback)
+    ok 1 - returns results sorted by similarity (ngram fallback)
+      ---
+      duration_ms: 5.171888
+      type: 'test'
+      ...
+    # Subtest: uses vector similarity when embedFn provided
+    ok 2 - uses vector similarity when embedFn provided
+      ---
+      duration_ms: 2.693138
+      type: 'test'
+      ...
+    # Subtest: respects threshold option
+    ok 3 - respects threshold option
+      ---
+      duration_ms: 2.376229
+      type: 'test'
+      ...
+    # Subtest: respects layer filter
+    ok 4 - respects layer filter
+      ---
+      duration_ms: 2.285298
+      type: 'test'
+      ...
+    # Subtest: respects limit option
+    ok 5 - respects limit option
+      ---
+      duration_ms: 12.113607
+      type: 'test'
+      ...
+    1..5
+ok 33 - searchByEmbedding
+  ---
+  duration_ms: 25.01438
+  type: 'suite'
+  ...
+# Subtest: EmbeddingProvider.stats
+    # Subtest: returns stats without embedFn
+    ok 1 - returns stats without embedFn
+      ---
+      duration_ms: 0.420057
+      type: 'test'
+      ...
+    # Subtest: returns stats with embedFn
+    ok 2 - returns stats with embedFn
+      ---
+      duration_ms: 0.319412
+      type: 'test'
+      ...
+    1..2
+ok 34 - EmbeddingProvider.stats
+  ---
+  duration_ms: 0.849576
+  type: 'suite'
+  ...
+# Subtest: MemoryExtractor with LLM
+    # Subtest: extractWithLLM returns empty when llmFn is null
+    ok 1 - extractWithLLM returns empty when llmFn is null
+      ---
+      duration_ms: 0.249828
+      type: 'test'
+      ...
+    # Subtest: extractWithLLM uses LLM function and parses JSON response
+    ok 2 - extractWithLLM uses LLM function and parses JSON response
+      ---
+      duration_ms: 0.227403
+      type: 'test'
+      ...
+    # Subtest: extractWithLLM handles object response directly
+    ok 3 - extractWithLLM handles object response directly
+      ---
+      duration_ms: 0.118507
+      type: 'test'
+      ...
+    # Subtest: extractWithLLM filters invalid results (too short/long)
+    ok 4 - extractWithLLM filters invalid results (too short/long)
+      ---
+      duration_ms: 0.128821
+      type: 'test'
+      ...
+    # Subtest: extractWithLLM normalizes type and confidence
+    ok 5 - extractWithLLM normalizes type and confidence
+      ---
+      duration_ms: 0.118891
+      type: 'test'
+      ...
+    # Subtest: extractWithLLM returns empty on parse error
+    ok 6 - extractWithLLM returns empty on parse error
+      ---
+      duration_ms: 0.107543
+      type: 'test'
+      ...
+    # Subtest: extractHybrid without LLM returns rule-based only
+    ok 7 - extractHybrid without LLM returns rule-based only
+      ---
+      duration_ms: 3.966851
+      type: 'test'
+      ...
+    # Subtest: extractHybrid combines and deduplicates rule-based and LLM results
+    ok 8 - extractHybrid combines and deduplicates rule-based and LLM results
+      ---
+      duration_ms: 0.316874
+      type: 'test'
+      ...
+    # Subtest: extractHybrid deduplicates similar content
+    ok 9 - extractHybrid deduplicates similar content
+      ---
+      duration_ms: 0.152731
+      type: 'test'
+      ...
+    1..9
+ok 35 - MemoryExtractor with LLM
+  ---
+  duration_ms: 5.67246
+  type: 'suite'
+  ...
+# Subtest: touch(id)
+    # Subtest: updates accessedAt and increments accessCount
+    ok 1 - updates accessedAt and increments accessCount
+      ---
+      duration_ms: 10.00445
+      type: 'test'
+      ...
+    # Subtest: applies optional weight boost on decayed memory
+    ok 2 - applies optional weight boost on decayed memory
+      ---
+      duration_ms: 3.566261
+      type: 'test'
+      ...
+    # Subtest: returns null for non-existent id
+    ok 3 - returns null for non-existent id
+      ---
+      duration_ms: 0.767308
+      type: 'test'
+      ...
+    # Subtest: does not create changelog entries
+    ok 4 - does not create changelog entries
+      ---
+      duration_ms: 2.207759
+      type: 'test'
+      ...
+    1..4
+ok 36 - touch(id)
+  ---
+  duration_ms: 16.750453
+  type: 'suite'
+  ...
+# Subtest: count()
+    # Subtest: counts all memories with no filter
+    ok 1 - counts all memories with no filter
+      ---
+      duration_ms: 5.942464
+      type: 'test'
+      ...
+    # Subtest: counts by layer
+    ok 2 - counts by layer
+      ---
+      duration_ms: 3.083867
+      type: 'test'
+      ...
+    # Subtest: counts by tag
+    ok 3 - counts by tag
+      ---
+      duration_ms: 3.509039
+      type: 'test'
+      ...
+    # Subtest: counts by combined filter
+    ok 4 - counts by combined filter
+      ---
+      duration_ms: 3.155354
+      type: 'test'
+      ...
+    1..4
+ok 37 - count()
+  ---
+  duration_ms: 15.928445
+  type: 'suite'
+  ...
+# Subtest: random()
+    # Subtest: returns up to count memories
+    ok 1 - returns up to count memories
+      ---
+      duration_ms: 10.405328
+      type: 'test'
+      ...
+    # Subtest: respects layer filter
+    ok 2 - respects layer filter
+      ---
+      duration_ms: 2.971719
+      type: 'test'
+      ...
+    # Subtest: returns empty for empty store
+    ok 3 - returns empty for empty store
+      ---
+      duration_ms: 0.816272
+      type: 'test'
+      ...
+    # Subtest: defaults to count=1
+    ok 4 - defaults to count=1
+      ---
+      duration_ms: 1.431808
+      type: 'test'
+      ...
+    # Subtest: respects tag filter
+    ok 5 - respects tag filter
+      ---
+      duration_ms: 2.581236
+      type: 'test'
+      ...
+    1..5
+ok 38 - random()
+  ---
+  duration_ms: 18.45912
+  type: 'suite'
+  ...
+# Subtest: recent()
+    # Subtest: returns most recent memories by createdAt
+    ok 1 - returns most recent memories by createdAt
+      ---
+      duration_ms: 7.376292
+      type: 'test'
+      ...
+    # Subtest: sorts by accessedAt
+    ok 2 - sorts by accessedAt
+      ---
+      duration_ms: 2.837379
+      type: 'test'
+      ...
+    # Subtest: respects layer filter
+    ok 3 - respects layer filter
+      ---
+      duration_ms: 2.454685
+      type: 'test'
+      ...
+    # Subtest: defaults to count=10
+    ok 4 - defaults to count=10
+      ---
+      duration_ms: 11.415783
+      type: 'test'
+      ...
+    1..4
+ok 39 - recent()
+  ---
+  duration_ms: 24.324771
+  type: 'suite'
+  ...
+# Subtest: mergeMemories()
+    # Subtest: merges two memories into one
+    ok 1 - merges two memories into one
+      ---
+      duration_ms: 4.448508
+      type: 'test'
+      ...
+    # Subtest: merges tags and entities
+    ok 2 - merges tags and entities
+      ---
+      duration_ms: 3.29432
+      type: 'test'
+      ...
+    # Subtest: throws for fewer than 2 ids
+    ok 3 - throws for fewer than 2 ids
+      ---
+      duration_ms: 0.833163
+      type: 'test'
+      ...
+    # Subtest: accepts custom content override
+    ok 4 - accepts custom content override
+      ---
+      duration_ms: 3.316531
+      type: 'test'
+      ...
+    # Subtest: transfers access counts
+    ok 5 - transfers access counts
+      ---
+      duration_ms: 6.323377
+      type: 'test'
+      ...
+    1..5
+ok 40 - mergeMemories()
+  ---
+  duration_ms: 18.484461
+  type: 'suite'
+  ...
+# Subtest: query()
+    # Subtest: returns paginated results with total
+    ok 1 - returns paginated results with total
+      ---
+      duration_ms: 5.368953
+      type: 'test'
+      ...
+    # Subtest: filters by tags with AND logic
+    ok 2 - filters by tags with AND logic
+      ---
+      duration_ms: 3.501015
+      type: 'test'
+      ...
+    # Subtest: filters by entities
+    ok 3 - filters by entities
+      ---
+      duration_ms: 2.346165
+      type: 'test'
+      ...
+    # Subtest: filters by weight range
+    ok 4 - filters by weight range
+      ---
+      duration_ms: 2.427879
+      type: 'test'
+      ...
+    # Subtest: sorts ascending
+    ok 5 - sorts ascending
+      ---
+      duration_ms: 2.412703
+      type: 'test'
+      ...
+    # Subtest: paginates with offset
+    ok 6 - paginates with offset
+      ---
+      duration_ms: 5.066075
+      type: 'test'
+      ...
+    # Subtest: filters by source
+    ok 7 - filters by source
+      ---
+      duration_ms: 2.391591
+      type: 'test'
+      ...
+    1..7
+ok 41 - query()
+  ---
+  duration_ms: 23.842753
+  type: 'suite'
+  ...
+# Subtest: findByEntity()
+    # Subtest: finds memories by entity
+    ok 1 - finds memories by entity
+      ---
+      duration_ms: 2.586572
+      type: 'test'
+      ...
+    # Subtest: returns empty for unknown entity
+    ok 2 - returns empty for unknown entity
+      ---
+      duration_ms: 1.47868
+      type: 'test'
+      ...
+    # Subtest: filters by layer
+    ok 3 - filters by layer
+      ---
+      duration_ms: 2.22193
+      type: 'test'
+      ...
+    1..3
+ok 42 - findByEntity()
+  ---
+  duration_ms: 6.461047
+  type: 'suite'
+  ...
+# Subtest: batchUpdate()
+    # Subtest: updates multiple memories
+    ok 1 - updates multiple memories
+      ---
+      duration_ms: 2.595918
+      type: 'test'
+      ...
+    # Subtest: reports not found ids
+    ok 2 - reports not found ids
+      ---
+      duration_ms: 1.176187
+      type: 'test'
+      ...
+    # Subtest: clamps weight to valid range
+    ok 3 - clamps weight to valid range
+      ---
+      duration_ms: 1.577783
+      type: 'test'
+      ...
+    1..3
+ok 43 - batchUpdate()
+  ---
+  duration_ms: 5.521749
+  type: 'suite'
+  ...
+# Subtest: snapshot()
+    # Subtest: captures current state
+    ok 1 - captures current state
+      ---
+      duration_ms: 2.54996
+      type: 'test'
+      ...
+    1..1
+ok 44 - snapshot()
+  ---
+  duration_ms: 2.647859
+  type: 'suite'
+  ...
+# Subtest: diff()
+    # Subtest: detects added and removed
+    ok 1 - detects added and removed
+      ---
+      duration_ms: 1.779754
+      type: 'test'
+      ...
+    # Subtest: detects changes and unchanged
+    ok 2 - detects changes and unchanged
+      ---
+      duration_ms: 3.229395
+      type: 'test'
+      ...
+    1..2
+ok 45 - diff()
+  ---
+  duration_ms: 5.143113
+  type: 'suite'
+  ...
+# Subtest: tagStats()
+    # Subtest: returns per-tag aggregation
+    ok 1 - returns per-tag aggregation
+      ---
+      duration_ms: 3.244256
+      type: 'test'
+      ...
+    # Subtest: filters by minCount
+    ok 2 - filters by minCount
+      ---
+      duration_ms: 3.206816
+      type: 'test'
+      ...
+    1..2
+ok 46 - tagStats()
+  ---
+  duration_ms: 6.58763
+  type: 'suite'
+  ...
+# Subtest: listArchived()
+    # Subtest: lists archived memories
+    ok 1 - lists archived memories
+      ---
+      duration_ms: 5.441699
+      type: 'test'
+      ...
+    # Subtest: respects limit in listArchived
+    ok 2 - respects limit in listArchived
+      ---
+      duration_ms: 3.138978
+      type: 'test'
+      ...
+    # Subtest: returns empty array when no archived memories
+    ok 3 - returns empty array when no archived memories
+      ---
+      duration_ms: 1.670814
+      type: 'test'
+      ...
+    # Subtest: excludes archivedAt field from results
+    ok 4 - excludes archivedAt field from results
+      ---
+      duration_ms: 2.242278
+      type: 'test'
+      ...
+    1..4
+ok 47 - listArchived()
+  ---
+  duration_ms: 12.741397
+  type: 'suite'
+  ...
+# Subtest: renameTag
+    # Subtest: renames a tag across all memories
+    ok 1 - renames a tag across all memories
+      ---
+      duration_ms: 2.653674
+      type: 'test'
+      ...
+    # Subtest: skips duplicate when target already exists
+    ok 2 - skips duplicate when target already exists
+      ---
+      duration_ms: 1.577244
+      type: 'test'
+      ...
+    # Subtest: returns zero for no-op rename
+    ok 3 - returns zero for no-op rename
+      ---
+      duration_ms: 1.419753
+      type: 'test'
+      ...
+    # Subtest: handles non-existent tag gracefully
+    ok 4 - handles non-existent tag gracefully
+      ---
+      duration_ms: 0.783685
+      type: 'test'
+      ...
+    # Subtest: updates tag index after rename
+    ok 5 - updates tag index after rename
+      ---
+      duration_ms: 1.483984
+      type: 'test'
+      ...
+    1..5
+ok 48 - renameTag
+  ---
+  duration_ms: 8.160532
+  type: 'suite'
+  ...
+# Subtest: mergeTags
+    # Subtest: merges multiple tags into one
+    ok 1 - merges multiple tags into one
+      ---
+      duration_ms: 3.752098
+      type: 'test'
+      ...
+    # Subtest: handles duplicate target in merge
+    ok 2 - handles duplicate target in merge
+      ---
+      duration_ms: 1.581083
+      type: 'test'
+      ...
+    # Subtest: handles empty source tags
+    ok 3 - handles empty source tags
+      ---
+      duration_ms: 0.772018
+      type: 'test'
+      ...
+    1..3
+ok 49 - mergeTags
+  ---
+  duration_ms: 6.299527
+  type: 'suite'
+  ...
+# Subtest: bulkTag
+    # Subtest: adds and removes tags on multiple memories
+    ok 1 - adds and removes tags on multiple memories
+      ---
+      duration_ms: 11.353743
+      type: 'test'
+      ...
+    # Subtest: skips not-found IDs and reports them
+    ok 2 - skips not-found IDs and reports them
+      ---
+      duration_ms: 1.760221
+      type: 'test'
+      ...
+    # Subtest: does not add duplicate tags
+    ok 3 - does not add duplicate tags
+      ---
+      duration_ms: 1.589194
+      type: 'test'
+      ...
+    # Subtest: handles add-only and remove-only
+    ok 4 - handles add-only and remove-only
+      ---
+      duration_ms: 1.540711
+      type: 'test'
+      ...
+    # Subtest: reindexes tag index after modification
+    ok 5 - reindexes tag index after modification
+      ---
+      duration_ms: 1.528696
+      type: 'test'
+      ...
+    1..5
+ok 50 - bulkTag
+  ---
+  duration_ms: 18.017892
+  type: 'suite'
+  ...
+# Subtest: suggestTags()
+    # Subtest: suggests tags based on content keyword overlap
+    ok 1 - suggests tags based on content keyword overlap
+      ---
+      duration_ms: 2.949675
+      type: 'test'
+      ...
+    # Subtest: returns empty when no tagged memories exist
+    ok 2 - returns empty when no tagged memories exist
+      ---
+      duration_ms: 1.396635
+      type: 'test'
+      ...
+    # Subtest: matches tag name found in content
+    ok 3 - matches tag name found in content
+      ---
+      duration_ms: 1.455098
+      type: 'test'
+      ...
+    # Subtest: respects limit option
+    ok 4 - respects limit option
+      ---
+      duration_ms: 1.597512
+      type: 'test'
+      ...
+    # Subtest: respects minScore option
+    ok 5 - respects minScore option
+      ---
+      duration_ms: 1.558332
+      type: 'test'
+      ...
+    # Subtest: filters by layer when specified
+    ok 6 - filters by layer when specified
+      ---
+      duration_ms: 2.383762
+      type: 'test'
+      ...
+    # Subtest: returns perfect score for empty memory store
+    ok 7 - returns perfect score for empty memory store
+      ---
+      duration_ms: 3.127655
+      type: 'test'
+      ...
+    # Subtest: detects expired and expiring memories
+    ok 8 - detects expired and expiring memories
+      ---
+      duration_ms: 3.489506
+      type: 'test'
+      ...
+    # Subtest: detects stale memories (low access activity)
+    ok 9 - detects stale memories (low access activity)
+      ---
+      duration_ms: 2.66967
+      type: 'test'
+      ...
+    # Subtest: detects low-weight memories
+    ok 10 - detects low-weight memories
+      ---
+      duration_ms: 2.344277
+      type: 'test'
+      ...
+    # Subtest: detects changelog bloat
+    ok 11 - detects changelog bloat
+      ---
+      duration_ms: 3554.647336
+      type: 'test'
+      ...
+    # Subtest: respects custom weight configuration
+    ok 12 - respects custom weight configuration
+      ---
+      duration_ms: 1.541217
+      type: 'test'
+      ...
+    # Subtest: returns actionable recommendations
+    ok 13 - returns actionable recommendations
+      ---
+      duration_ms: 1.840124
+      type: 'test'
+      ...
+    1..13
+ok 51 - suggestTags()
+  ---
+  duration_ms: 3581.591262
+  type: 'suite'
+  ...
+# Subtest: MemoryService — memoryTimeline
+    # Subtest: returns empty events for unknown memory
+    ok 1 - returns empty events for unknown memory
+      ---
+      duration_ms: 7.798743
+      type: 'test'
+      ...
+    # Subtest: returns timeline with add event for a new memory
+    ok 2 - returns timeline with add event for a new memory
+      ---
+      duration_ms: 1.557497
+      type: 'test'
+      ...
+    # Subtest: tracks multiple events for the same memory
+    ok 3 - tracks multiple events for the same memory
+      ---
+      duration_ms: 1.756082
+      type: 'test'
+      ...
+    # Subtest: events are sorted chronologically
+    ok 4 - events are sorted chronologically
+      ---
+      duration_ms: 1.894053
+      type: 'test'
+      ...
+    1..4
+ok 52 - MemoryService — memoryTimeline
+  ---
+  duration_ms: 13.215006
+  type: 'suite'
+  ...
+# Subtest: MemoryService — searchByTags
+    # Subtest: returns empty for empty tags array
+    ok 1 - returns empty for empty tags array
+      ---
+      duration_ms: 1.312275
+      type: 'test'
+      ...
+    # Subtest: OR mode returns memories matching any tag
+    ok 2 - OR mode returns memories matching any tag
+      ---
+      duration_ms: 2.820819
+      type: 'test'
+      ...
+    # Subtest: AND mode returns memories matching all tags
+    ok 3 - AND mode returns memories matching all tags
+      ---
+      duration_ms: 1.826536
+      type: 'test'
+      ...
+    # Subtest: respects layer filter
+    ok 4 - respects layer filter
+      ---
+      duration_ms: 2.119944
+      type: 'test'
+      ...
+    # Subtest: respects limit
+    ok 5 - respects limit
+      ---
+      duration_ms: 3.967995
+      type: 'test'
+      ...
+    # Subtest: sorts by weight descending
+    ok 6 - sorts by weight descending
+      ---
+      duration_ms: 2.11136
+      type: 'test'
+      ...
+    1..6
+ok 53 - MemoryService — searchByTags
+  ---
+  duration_ms: 14.442451
+  type: 'suite'
+  ...
+# Subtest: MemoryService — exportCompact
+    # Subtest: exports only key fields by default
+    ok 1 - exports only key fields by default
+      ---
+      duration_ms: 1.793254
+      type: 'test'
+      ...
+    # Subtest: includes tags when option is set
+    ok 2 - includes tags when option is set
+      ---
+      duration_ms: 1.30129
+      type: 'test'
+      ...
+    # Subtest: filters by layer
+    ok 3 - filters by layer
+      ---
+      duration_ms: 1.951999
+      type: 'test'
+      ...
+    # Subtest: returns empty array when no memories
+    ok 4 - returns empty array when no memories
+      ---
+      duration_ms: 0.818991
+      type: 'test'
+      ...
+    # Subtest: handles multiple memories
+    ok 5 - handles multiple memories
+      ---
+      duration_ms: 3.314947
+      type: 'test'
+      ...
+    1..5
+ok 54 - MemoryService — exportCompact
+  ---
+  duration_ms: 9.428889
+  type: 'suite'
+  ...
+# Subtest: MemoryService — autoMaintain
+    # Subtest: no maintenance when score above threshold
+    ok 1 - no maintenance when score above threshold
+      ---
+      duration_ms: 1.30116
+      type: 'test'
+      ...
+    # Subtest: triggers maintenance when score below threshold
+    ok 2 - triggers maintenance when score below threshold
+      ---
+      duration_ms: 1.82256
+      type: 'test'
+      ...
+    # Subtest: dryRun reports recommendations without executing
+    ok 3 - dryRun reports recommendations without executing
+      ---
+      duration_ms: 1.519929
+      type: 'test'
+      ...
+    # Subtest: respects tasks whitelist
+    ok 4 - respects tasks whitelist
+      ---
+      duration_ms: 3.861586
+      type: 'test'
+      ...
+    # Subtest: skips task when dimension score is healthy
+    ok 5 - skips task when dimension score is healthy
+      ---
+      duration_ms: 1.534096
+      type: 'test'
+      ...
+    1..5
+ok 55 - MemoryService — autoMaintain
+  ---
+  duration_ms: 10.264757
+  type: 'suite'
+  ...
+# Subtest: MemoryService — searchSimilar
+    # Subtest: returns similar memories excluding source
+    ok 1 - returns similar memories excluding source
+      ---
+      duration_ms: 3.628405
+      type: 'test'
+      ...
+    # Subtest: returns empty for unknown id
+    ok 2 - returns empty for unknown id
+      ---
+      duration_ms: 1.094372
+      type: 'test'
+      ...
+    # Subtest: respects limit option
+    ok 3 - respects limit option
+      ---
+      duration_ms: 4.168674
+      type: 'test'
+      ...
+    # Subtest: filters by layer
+    ok 4 - filters by layer
+      ---
+      duration_ms: 2.971803
+      type: 'test'
+      ...
+    # Subtest: applies minScore filter
+    ok 5 - applies minScore filter
+      ---
+      duration_ms: 1.964389
+      type: 'test'
+      ...
+    1..5
+ok 56 - MemoryService — searchSimilar
+  ---
+  duration_ms: 14.1569
+  type: 'suite'
+  ...
+# Subtest: MemoryService — inspect
+    # Subtest: returns null for nonexistent memory
+    ok 1 - returns null for nonexistent memory
+      ---
+      duration_ms: 1.585492
+      type: 'test'
+      ...
+    # Subtest: returns comprehensive inspection for a memory
+    ok 2 - returns comprehensive inspection for a memory
+      ---
+      duration_ms: 2.978967
+      type: 'test'
+      ...
+    # Subtest: includes health score details
+    ok 3 - includes health score details
+      ---
+      duration_ms: 1.40014
+      type: 'test'
+      ...
+    # Subtest: returns empty arrays for isolated memory
+    ok 4 - returns empty arrays for isolated memory
+      ---
+      duration_ms: 1.428721
+      type: 'test'
+      ...
+    # Subtest: tracks multiple links
+    ok 5 - tracks multiple links
+      ---
+      duration_ms: 4.150732
+      type: 'test'
+      ...
+    1..5
+ok 57 - MemoryService — inspect
+  ---
+  duration_ms: 11.80783
+  type: 'suite'
+  ...
+# Error: A resource generated asynchronous activity after the test ended. This activity created the error "ReferenceError: test is not defined" which triggered an uncaughtException event, caught by the test runner.
+# Subtest: tests/memory.test.js
+not ok 6 - tests/memory.test.js
+  ---
+  duration_ms: 4494.236745
+  type: 'test'
+  location: '/root/.openclaw/workspace/projects/agent-memory-service/tests/memory.test.js:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: SkillStore
+    # Subtest: put() creates a skill with defaults
+    ok 1 - put() creates a skill with defaults
+      ---
+      duration_ms: 1.50416
+      type: 'test'
+      ...
+    # Subtest: match() finds skills by trigger keywords
+    ok 2 - match() finds skills by trigger keywords
+      ---
+      duration_ms: 0.553214
+      type: 'test'
+      ...
+    # Subtest: match() returns empty for no match
+    ok 3 - match() returns empty for no match
+      ---
+      duration_ms: 0.347808
+      type: 'test'
+      ...
+    # Subtest: recordUsage() updates successRate
+    ok 4 - recordUsage() updates successRate
+      ---
+      duration_ms: 0.331951
+      type: 'test'
+      ...
+    # Subtest: match() sorts by successRate then usageCount
+    ok 5 - match() sorts by successRate then usageCount
+      ---
+      duration_ms: 0.441705
+      type: 'test'
+      ...
+    # Subtest: delete() removes a skill
+    ok 6 - delete() removes a skill
+      ---
+      duration_ms: 0.266354
+      type: 'test'
+      ...
+    # Subtest: persists to disk via save/load
+    ok 7 - persists to disk via save/load
+      ---
+      duration_ms: 8.009723
+      type: 'test'
+      ...
+    1..7
+ok 59 - SkillStore
+  ---
+  duration_ms: 13.556293
+  type: 'suite'
+  ...
+# Subtest: MemoryService — Skill API
+    # Subtest: learnSkill() creates a skill
+    ok 1 - learnSkill() creates a skill
+      ---
+      duration_ms: 3.81126
+      type: 'test'
+      ...
+    # Subtest: getSkill() matches by trigger
+    ok 2 - getSkill() matches by trigger
+      ---
+      duration_ms: 1.468772
+      type: 'test'
+      ...
+    # Subtest: listSkills() returns all skills
+    ok 3 - listSkills() returns all skills
+      ---
+      duration_ms: 0.248081
+      type: 'test'
+      ...
+    # Subtest: deleteSkill() removes a skill
+    ok 4 - deleteSkill() removes a skill
+      ---
+      duration_ms: 3.1201
+      type: 'test'
+      ...
+    # Subtest: recordSkillUsage() updates stats
+    ok 5 - recordSkillUsage() updates stats
+      ---
+      duration_ms: 3.115071
+      type: 'test'
+      ...
+    # Subtest: recordSkillUsage() returns false for unknown id
+    ok 6 - recordSkillUsage() returns false for unknown id
+      ---
+      duration_ms: 0.284663
+      type: 'test'
+      ...
+    1..6
+ok 60 - MemoryService — Skill API
+  ---
+  duration_ms: 13.553547
+  type: 'suite'
+  ...
+1..60
+# tests 360
+# suites 70
+# pass 358
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5113.554974

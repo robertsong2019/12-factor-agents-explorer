@@ -3350,6 +3350,75 @@ export class MemoryService {
 
     return { clusters, unclustered, total: memories.length };
   }
+
+  /**
+   * Generate a summary of all memories in a topic cluster
+   * @param {string} topic - Topic tag to summarize
+   * @param {{layer?: string, limit?: number, maxContentLength?: number}} opts
+   * @returns {Promise<{topic: string, memoryCount: number, totalWeight: number, layers: Record<string, number>, tags: Record<string, number>, oldest: string, newest: string, contentPreview: string[]}>}
+   */
+  async summarizeCluster(topic, opts = {}) {
+    await this.#ensureLoaded();
+    const maxContentLength = opts.maxContentLength || 120;
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+
+    // Find all memories that have this topic tag
+    const cluster = memories.filter(m =>
+      (m.tags || []).some(t => t.toLowerCase() === topic.toLowerCase())
+    );
+    const limit = opts.limit ?? cluster.length;
+    const limited = cluster.slice(0, limit);
+
+    if (limited.length === 0) {
+      return {
+        topic, memoryCount: 0, totalWeight: 0, layers: {},
+        tags: {}, oldest: null, newest: null, contentPreview: []
+      };
+    }
+
+    // Aggregate stats
+    let totalWeight = 0;
+    let oldest = limited[0].createdAt;
+    let newest = limited[0].createdAt;
+    const layers = {};
+    const tagCounts = {};
+
+    for (const m of limited) {
+      totalWeight += (m.weight || 1);
+      if (m.createdAt < oldest) oldest = m.createdAt;
+      if (m.createdAt > newest) newest = m.createdAt;
+      layers[m.layer] = (layers[m.layer] || 0) + 1;
+      for (const t of (m.tags || [])) {
+        tagCounts[t] = (tagCounts[t] || 0) + 1;
+      }
+    }
+
+    // Sort tags by frequency descending, exclude the topic itself
+    const tags = {};
+    for (const [t, c] of Object.entries(tagCounts)
+      .sort((a, b) => b[1] - a[1])) {
+      if (t.toLowerCase() !== topic.toLowerCase()) tags[t] = c;
+    }
+
+    const contentPreview = limited.map(m => {
+      const c = (m.content || '').trim();
+      return c.length > maxContentLength
+        ? c.slice(0, maxContentLength) + '...'
+        : c;
+    });
+
+    return {
+      topic,
+      memoryCount: limited.length,
+      totalWeight: Math.round(totalWeight * 100) / 100,
+      layers,
+      tags,
+      oldest: new Date(oldest).toISOString(),
+      newest: new Date(newest).toISOString(),
+      contentPreview
+    };
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────

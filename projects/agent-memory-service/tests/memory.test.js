@@ -3523,3 +3523,79 @@ describe('MemoryService — clusterByTopic', () => {
     } finally { cleanup(); }
   });
 });
+
+describe('MemoryService — summarizeCluster', () => {
+  it('summarizes a topic cluster with stats', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'alpha one', tags: ['go'], layer: 'core' });
+      await svc.add({ content: 'alpha two', tags: ['go', 'backend'], layer: 'long' });
+      await svc.add({ content: 'beta', tags: ['rust'] });
+      const s = await svc.summarizeCluster('go');
+      assert.equal(s.topic, 'go');
+      assert.equal(s.memoryCount, 2);
+      assert.ok(s.totalWeight > 0);
+      assert.equal(s.layers.core, 1);
+      assert.equal(s.layers.long, 1);
+      assert.equal(s.tags.backend, 1);
+      assert.ok(!s.tags.go);
+      assert.equal(s.contentPreview.length, 2);
+    } finally { cleanup(); }
+  });
+
+  it('returns empty for unknown topic', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      const s = await svc.summarizeCluster('nonexistent');
+      assert.equal(s.memoryCount, 0);
+      assert.equal(s.contentPreview.length, 0);
+    } finally { cleanup(); }
+  });
+
+  it('respects limit', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      for (let i = 0; i < 5; i++) await svc.add({ content: `m${i}`, tags: ['x'] });
+      const s = await svc.summarizeCluster('x', { limit: 2 });
+      assert.equal(s.memoryCount, 2);
+    } finally { cleanup(); }
+  });
+
+  it('respects layer filter', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'a', tags: ['py'], layer: 'core' });
+      await svc.add({ content: 'b', tags: ['py'], layer: 'short' });
+      const s = await svc.summarizeCluster('py', { layer: 'core' });
+      assert.equal(s.memoryCount, 1);
+    } finally { cleanup(); }
+  });
+
+  it('truncates long content previews', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'x'.repeat(200), tags: ['long'] });
+      const s = await svc.summarizeCluster('long', { maxContentLength: 50 });
+      assert.ok(s.contentPreview[0].endsWith('...'));
+      assert.ok(s.contentPreview[0].length <= 53);
+    } finally { cleanup(); }
+  });
+
+  it('provides oldest and newest timestamps', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'old', tags: ['ts'] });
+      await svc.add({ content: 'new', tags: ['ts'] });
+      const s = await svc.summarizeCluster('ts');
+      assert.ok(s.oldest);
+      assert.ok(s.newest);
+      assert.ok(s.newest >= s.oldest);
+    } finally { cleanup(); }
+  });
+});

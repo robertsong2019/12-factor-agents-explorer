@@ -34,3 +34,4 @@ timestamp	commit	metric	value	status	description
 2026-04-22T01:00	key-dev-3-loopC	test_count	334/334	keep	searchSimilar(id, opts) — find similar memories by ID using searchUnified. Supports limit, layer, minScore. Excludes source. 5 new tests (329→334), ~16 lines src.
 2026-04-22T19:10	f711914	test_count	338/339	keep	inspect(id) — deep memory diagnostics. 5 new tests (334→339). ~13 lines src.
 2026-04-22T13:21	code-lab-evening-3c	test_count	353/353	keep	3 new APIs: findDuplicatePairs(minSimilarity/layer/limit), exportJSON/importJSON(backup+restore+merge), pruneLowWeight(minWeight/layer/dryRun/limit). 14 new tests (339→353), ~108 lines src, 3334→3442 total. Key fix: dbPath vs dir constructor param.
+2026-04-23T00:16:01+08:00	c268858	test_count	365/365	keep	clusterByTopic(opts) — group memories by tag co-occurrence. Supports minClusterSize, layer, limit. Greedy no-double-assign. 6 new tests (359→365), ~40 lines src.
