@@ -167,6 +167,60 @@ researcher = Agent(
 
 欢迎提交 Issue 和 Pull Request！
 
+## 📖 API 参考
+
+### `Agent`
+
+```python
+Agent(
+    name: str,                    # 代理名称
+    instructions: str,            # 系统指令
+    llm: Optional[LLMBackend],    # LLM 后端，默认 MockBackend
+    tools: Optional[List[Tool]],  # 可用工具列表
+    memory: Optional[Memory],     # 记忆管理器
+    max_iterations: int = 10,     # 最大迭代轮数
+    verbose: bool = True          # 是否打印执行过程
+)
+```
+
+**核心方法：**
+- `run(user_input, context=None)` → `str` — 运行代理，返回最终响应
+
+### `@tool` 装饰器
+
+```python
+@tool                                    # 自动从函数名和 docstring 推断
+@tool(name="...", description="...")      # 自定义名称和描述
+def my_function(param: str) -> str:
+    """工具描述（给 LLM 看）"""
+    return result
+```
+
+### `Memory`
+
+```python
+Memory(max_entries=100, persistence_path=None)
+```
+- `add(content, metadata)` — 添加记忆
+- `search(query, limit=5)` — 关键词搜索
+- `get_recent(n=5)` — 最近 n 条
+- `clear()` — 清空
+
+### `LLMBackend`
+
+```python
+OpenAIBackend(api_key, base_url="...", model="gpt-3.5-turbo")
+```
+继承 `LLMBackend` 实现自定义后端，只需实现 `complete(messages, tools)` 方法。
+
+---
+
+## 📚 更多文档
+
+- [教程 — 5 分钟上手](TUTORIAL.md) — 从 Hello Agent 到实战研究助理
+
+---
+
 ## 📄 许可证
 
 MIT License
