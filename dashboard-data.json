@@ -1,33 +1,30 @@
 {
-  "lastUpdated": "2026-04-20T22:00:00Z",
-  "generatedAt": "2026-04-21 06:00 CST",
-  "actionRequired": [],
-  "activeNow": [],
-  "crons": [
-    { "name": "dashboard-update-morning", "schedule": "6:00 AM daily", "lastRun": "2026-04-20T22:00:00Z", "status": "ok", "duration": "0.9min", "summary": "Updated dashboard" },
-    { "name": "essay-generation-morning", "schedule": "5:00 AM daily", "lastRun": "2026-04-20T21:00:00Z", "status": "ok", "duration": "2.6min", "summary": "Autoresearch healthScore() essay published" },
-    { "name": "documentation-morning", "schedule": "4:00 AM daily", "lastRun": "2026-04-20T20:00:00Z", "status": "ok", "duration": "3.1min", "summary": "github-creative-project README rewrite + TUTORIAL.md" },
-    { "name": "project-testing-morning", "schedule": "3:00 AM daily", "lastRun": "2026-04-20T19:00:00Z", "status": "ok", "duration": "4.6min", "summary": "ai-iot-orchestrator 66→115 tests, 2 bugs fixed" },
-    { "name": "knowledge-organization-morning", "schedule": "2:00 AM daily", "lastRun": "2026-04-20T18:00:00Z", "status": "ok", "duration": "1.0min", "summary": "Memory updated" },
-    { "name": "key-development-3", "schedule": "1:00 AM daily", "lastRun": "2026-04-20T17:00:00Z", "status": "ok", "duration": "18.4min", "summary": "Continued dev cycle C" },
-    { "name": "key-development-2", "schedule": "12:00 AM daily", "lastRun": "2026-04-20T16:00:00Z", "status": "ok", "duration": "6.7min", "summary": "Continued dev cycle B" },
-    { "name": "key-development-1", "schedule": "11:00 PM daily", "lastRun": "2026-04-20T15:00:00Z", "status": "ok", "duration": "1.6min", "summary": "Dev cycle A completed" },
-    { "name": "tool-development-evening", "schedule": "10:00 PM daily", "lastRun": "2026-04-20T14:00:00Z", "status": "ok", "duration": "3.0min", "summary": "Tool improvements" },
-    { "name": "code-lab-evening", "schedule": "9:00 PM daily", "lastRun": "2026-04-20T13:00:00Z", "status": "ok", "duration": "1.8min", "summary": "Code lab experiments" },
-    { "name": "deep-exploration-evening", "schedule": "8:00 PM daily (×2)", "lastRun": "2026-04-20T12:00:00Z", "status": "ok", "duration": "1.3min", "summary": "Deep research" },
-    { "name": "github-creative-evening", "schedule": "7:00 PM daily", "lastRun": "2026-04-20T11:00:00Z", "status": "ok", "duration": "18.3min", "summary": "Autoresearch cycle on agent-memory-service" },
-    { "name": "github-trending-daily", "schedule": "7:00 AM daily", "lastRun": "2026-04-19T23:00:00Z", "status": "ok", "duration": "0.3min", "summary": "GitHub trending fetched" }
-  ],
+  "updated": "2026-04-22T13:48:00+08:00",
+  "updatedUTC": "2026-04-22T05:48:00Z",
   "summary": {
     "totalCronJobs": 14,
-    "enabledJobs": 14,
-    "allHealthy": true,
-    "consecutiveErrors": 0,
-    "issues": [],
-    "highlights": [
-      "ai-iot-orchestrator: 66→115 tests, 2 bugs fixed (project-testing)",
-      "Autoresearch healthScore() essay published to GitHub Pages",
-      "github-creative-project: README 12→172 lines + new TUTORIAL.md"
-    ]
+    "running": 5,
+    "ok": 8,
+    "error": 1
+  },
+  "cronJobs": [
+    {"id": "f7510f1f", "name": "project-testing-morning", "schedule": "0 3 * * *", "status": "running", "nextIn": "11h ago"},
+    {"id": "77a5bcc6", "name": "documentation-morning", "schedule": "0 4 * * *", "status": "running", "nextIn": "10h ago"},
+    {"id": "686ec55c", "name": "essay-generation-morning", "schedule": "0 5 * * *", "status": "running", "nextIn": "9h ago"},
+    {"id": "f38e0365", "name": "dashboard-update-morning", "schedule": "0 6 * * *", "status": "running", "nextIn": "8h ago"},
+    {"id": "9b2a8701", "name": "github-trending-daily", "schedule": "0 7 * * * Asia/Shanghai", "status": "running", "nextIn": "7h ago"},
+    {"id": "610a8d6d", "name": "github-creative-evening", "schedule": "0 19 * * *", "status": "ok", "nextIn": "in 5h"},
+    {"id": "265091b6", "name": "deep-exploration-evening", "schedule": "0 20 * * *", "status": "ok", "nextIn": "in 6h"},
+    {"id": "bb46cb70", "name": "deep-exploration-evening (noon)", "schedule": "0 12 * * * UTC", "status": "ok", "nextIn": "in 6h"},
+    {"id": "13a2f284", "name": "code-lab-evening", "schedule": "0 21 * * *", "status": "error", "nextIn": "in 7h"},
+    {"id": "ce2fb615", "name": "tool-development-evening", "schedule": "0 22 * * *", "status": "ok", "nextIn": "in 8h"},
+    {"id": "78eac6fc", "name": "key-development-1", "schedule": "0 23 * * *", "status": "ok", "nextIn": "in 9h"},
+    {"id": "88679f9e", "name": "key-development-2", "schedule": "0 0 * * *", "status": "ok", "nextIn": "in 10h"},
+    {"id": "b0fd7e8d", "name": "key-development-3", "schedule": "0 1 * * *", "status": "ok", "nextIn": "in 11h"},
+    {"id": "fd0515b0", "name": "knowledge-organization", "schedule": "0 2 * * *", "status": "ok", "nextIn": "in 12h"}
+  ],
+  "sessions": {
+    "active": 1,
+    "current": "Cron: dashboard-update-morning"
   }
 }
