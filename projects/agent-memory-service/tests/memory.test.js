@@ -3599,3 +3599,76 @@ describe('MemoryService — summarizeCluster', () => {
     } finally { cleanup(); }
   });
 });
+
+// autoTag tests
+describe('autoTag', () => {
+  it('tags untagged memories based on suggestTags', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'python flask web server', tags: ['python', 'web'], layer: 'L1' });
+      await svc.add({ content: 'python django rest api', tags: ['python', 'api'], layer: 'L1' });
+      const mem = await svc.add({ content: 'python web api development', layer: 'L1' });
+
+      const result = await svc.autoTag({ minScore: 0.05 });
+      assert.strictEqual(result.tagged, 1);
+      assert.ok(result.tags[0].addedTags.length > 0);
+
+      const m = await svc.get(mem.id);
+      assert.ok(m.tags.length > 0);
+    } finally { cleanup(); }
+  });
+
+  it('dryRun does not modify memories', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'javascript node server', tags: ['js', 'backend'], layer: 'L1' });
+      const mem = await svc.add({ content: 'javascript frontend react', layer: 'L1' });
+
+      const result = await svc.autoTag({ dryRun: true, minScore: 0.05 });
+      assert.ok(result.tagged >= 0);
+
+      const m = await svc.get(mem.id);
+      assert.ok(!m.tags || m.tags.length === 0, 'dryRun should not modify tags');
+    } finally { cleanup(); }
+  });
+
+  it('skips memories that already have tags', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'python web', tags: ['python'], layer: 'L1' });
+      await svc.add({ content: 'java spring', tags: ['java'], layer: 'L1' });
+
+      const result = await svc.autoTag();
+      assert.strictEqual(result.tagged, 0);
+      assert.strictEqual(result.skipped, 0);
+    } finally { cleanup(); }
+  });
+
+  it('respects maxTags option', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'python web api server', tags: ['python', 'web', 'api', 'server'], layer: 'L1' });
+      await svc.add({ content: 'python web api server client', layer: 'L1' });
+
+      const result = await svc.autoTag({ maxTags: 2, minScore: 0.05 });
+      if (result.tagged > 0) {
+        assert.ok(result.tags[0].addedTags.length <= 2);
+      }
+    } finally { cleanup(); }
+  });
+
+  it('returns empty result when no tagged memories exist', async () => {
+    const { svc, cleanup } = createService();
+    await svc.init();
+    try {
+      await svc.add({ content: 'hello world', layer: 'L1' });
+      const result = await svc.autoTag();
+      assert.strictEqual(result.tagged, 0);
+      assert.strictEqual(result.skipped, 1);
+    } finally { cleanup(); }
+  });
+});

@@ -3545,6 +3545,44 @@ export class MemoryService {
 
     return { updated: changes.length, changes };
   }
+
+  /**
+   * Automatically tag untagged memories using suggestTags.
+   * @param {{minScore?: number, maxTags?: number, layer?: string, dryRun?: boolean}} opts
+   * @returns {Promise<{tagged: number, skipped: number, tags: {id: string, addedTags: string[], scores: object[]}[]}>}
+   */
+  async autoTag(opts = {}) {
+    await this.#ensureLoaded();
+    const minScore = opts.minScore || 0.15;
+    const maxTags = opts.maxTags || 3;
+    const dryRun = opts.dryRun || false;
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+
+    const untagged = memories.filter(m => !m.tags || m.tags.length === 0);
+    const result = { tagged: 0, skipped: 0, tags: [] };
+
+    for (const m of untagged) {
+      const suggestions = await this.suggestTags(m.content, { limit: maxTags, minScore, layer: opts.layer });
+      if (suggestions.length === 0) {
+        result.skipped++;
+        continue;
+      }
+
+      const addedTags = suggestions.map(s => s.tag);
+      result.tags.push({ id: m.id, addedTags, scores: suggestions });
+
+      if (!dryRun) {
+        if (!m.tags) m.tags = [];
+        for (const tag of addedTags) {
+          if (!m.tags.includes(tag)) m.tags.push(tag);
+        }
+      }
+      result.tagged++;
+    }
+
+    return result;
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────
