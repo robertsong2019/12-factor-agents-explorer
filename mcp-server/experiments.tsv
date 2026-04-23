@@ -6,3 +6,4 @@ timestamp	commit	metric	value	status	description
 2026-04-21T19:10	c9d4931	tests	67	keep	add search_files tool (grep-like regex search, 7 new tests)
 2026-04-21T19:25	b9202a7	tests	73	keep	add append tool (file append with newline handling, 6 new tests)
 2026-04-21T23:10	40a2953	tests	78	keep	add delete tool (file/empty-dir deletion with safety checks, 5 new tests)
+2026-04-23T23:08:44+08:00	652f7b7	tests	85	keep	add move tool (rename/move with path safety, 7 new tests)
