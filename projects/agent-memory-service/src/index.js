@@ -3455,6 +3455,65 @@ export class MemoryService {
       mergeRecommendation,
     };
   }
+
+  /**
+   * Build a tag hierarchy based on co-occurrence patterns
+   * Tags that frequently co-occur become parent->child relationships
+   * @param {{minCoOccurrence?: number, layer?: string}} opts
+   * @returns {Promise<{hierarchy: Map<string, string[]>, roots: string[], stats: {totalTags: number, totalPairs: number, depth: number}}>}
+   */
+  async tagHierarchy(opts = {}) {
+    await this.#ensureLoaded();
+    const minCo = opts.minCoOccurrence || 2;
+    let memories = this.#store.all();
+    if (opts.layer) memories = memories.filter(m => m.layer === opts.layer);
+
+    // Count co-occurrences
+    const pairCounts = new Map(); // "tag1|tag2" -> count
+    const tagCounts = new Map();
+    for (const m of memories) {
+      const tags = (m.tags || []).sort();
+      for (const t of tags) tagCounts.set(t, (tagCounts.get(t) || 0) + 1);
+      for (let i = 0; i < tags.length; i++)
+        for (let j = i + 1; j < tags.length; j++) {
+          const key = `${tags[i]}|${tags[j]}`;
+          pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+        }
+    }
+
+    // Build hierarchy: more frequent tag is parent
+    const hierarchy = new Map();
+    const children = new Set();
+    for (const [key, count] of pairCounts) {
+      if (count < minCo) continue;
+      const [a, b] = key.split('|');
+      const countA = tagCounts.get(a) || 0;
+      const countB = tagCounts.get(b) || 0;
+      const [parent, child] = countA >= countB ? [a, b] : [b, a];
+      if (!hierarchy.has(parent)) hierarchy.set(parent, []);
+      hierarchy.get(parent).push(child);
+      children.add(child);
+    }
+
+    // Deduplicate children
+    for (const [k, v] of hierarchy) hierarchy.set(k, [...new Set(v)]);
+
+    const roots = [...hierarchy.keys()].filter(t => !children.has(t));
+    const totalTags = tagCounts.size;
+    const totalPairs = pairCounts.size;
+
+    // Compute depth
+    const depth = (tag, visited = new Set()) => {
+      if (visited.has(tag)) return 0;
+      visited.add(tag);
+      const kids = hierarchy.get(tag);
+      if (!kids || kids.length === 0) return 1;
+      return 1 + Math.max(...kids.map(c => depth(c, visited)));
+    };
+    const maxDepth = roots.length > 0 ? Math.max(...roots.map(r => depth(r))) : 0;
+
+    return { hierarchy: Object.fromEntries(hierarchy), roots, stats: { totalTags, totalPairs, depth: maxDepth } };
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────

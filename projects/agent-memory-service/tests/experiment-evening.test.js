@@ -147,7 +147,7 @@ describe('pruneLowWeight()', () => {
 describe('compareMemories()', () => {
 it('compareMemories — detailed comparison', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ams-cmp-'));
-  const svc = new MemoryService(tmp);
+  const svc = new MemoryService({ dbPath: tmp });
   await svc.init();
 
   const m1 = await svc.add({ content: 'Agent memory architecture patterns', tags: ['agent', 'memory'], layer: 'core', weight: 0.9 });
@@ -171,7 +171,7 @@ it('compareMemories — detailed comparison', async () => {
 
 it('compareMemories — identical content suggests merge', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ams-cmp2-'));
-  const svc = new MemoryService(tmp);
+  const svc = new MemoryService({ dbPath: tmp });
   await svc.init();
 
   const m1 = await svc.add({ content: 'exact same content here', layer: 'long' });
@@ -186,7 +186,7 @@ it('compareMemories — identical content suggests merge', async () => {
 
 it('compareMemories — different content keep both', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ams-cmp3-'));
-  const svc = new MemoryService(tmp);
+  const svc = new MemoryService({ dbPath: tmp });
   await svc.init();
 
   const m1 = await svc.add({ content: 'Python web framework comparison' });
@@ -200,7 +200,7 @@ it('compareMemories — different content keep both', async () => {
 
 it('compareMemories — throws for missing id', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ams-cmp4-'));
-  const svc = new MemoryService(tmp);
+  const svc = new MemoryService({ dbPath: tmp });
   await svc.init();
 
   const m = await svc.add({ content: 'test' });
@@ -211,7 +211,7 @@ it('compareMemories — throws for missing id', async () => {
 
 it('compareMemories — respects different layers', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ams-cmp5-'));
-  const svc = new MemoryService(tmp);
+  const svc = new MemoryService({ dbPath: tmp });
   await svc.init();
 
   const m1 = await svc.add({ content: 'same content here', layer: 'core' });
@@ -221,6 +221,80 @@ it('compareMemories — respects different layers', async () => {
   assert.equal(result.sameLayer, false);
   // Identical content but different layers → not 'merge' (merge requires sameLayer)
   assert.notEqual(result.mergeRecommendation, 'merge');
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+});
+
+// ─── tagHierarchy(opts) ────────────────────────
+describe('tagHierarchy()', () => {
+it('builds hierarchy from co-occurring tags', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ams-th-'));
+  const svc = new MemoryService({ dbPath: tmp });
+  await svc.init();
+
+  // agent appears 3x with memory, design, architecture
+  await svc.add({ content: 'c1', tags: ['agent', 'memory'] });
+  await svc.add({ content: 'c2', tags: ['agent', 'design'] });
+  await svc.add({ content: 'c3', tags: ['agent', 'architecture'] });
+  // standalone
+  await svc.add({ content: 'c4', tags: ['unrelated'] });
+
+  const result = await svc.tagHierarchy({ minCoOccurrence: 1 });
+  assert.ok(result.hierarchy.agent, 'agent should be a parent');
+  assert.ok(result.hierarchy.agent.includes('memory'));
+  assert.ok(result.hierarchy.agent.includes('design'));
+  assert.ok(result.roots.includes('agent'));
+  assert.equal(result.stats.totalTags, 5);
+  assert.ok(result.stats.depth >= 1);
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+it('respects minCoOccurrence threshold', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ams-th2-'));
+  const svc = new MemoryService({ dbPath: tmp });
+  await svc.init();
+
+  await svc.add({ content: 'c1', tags: ['a', 'b'] }); // co-occur once
+  await svc.add({ content: 'c2', tags: ['a', 'c'] }); // co-occur once
+  await svc.add({ content: 'c3', tags: ['a', 'b'] }); // a+b now co-occur twice
+
+  const result = await svc.tagHierarchy({ minCoOccurrence: 2 });
+  assert.ok(result.hierarchy.a, 'a should be parent at threshold 2');
+  assert.ok(result.hierarchy.a.includes('b'));
+  assert.ok(!result.hierarchy.a.includes('c'), 'c should not appear (only co-occurs once)');
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+it('returns empty for no tags', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ams-th3-'));
+  const svc = new MemoryService({ dbPath: tmp });
+  await svc.init();
+
+  await svc.add({ content: 'no tags here' });
+
+  const result = await svc.tagHierarchy();
+  assert.deepEqual(result.hierarchy, {});
+  assert.deepEqual(result.roots, []);
+  assert.equal(result.stats.totalTags, 0);
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+it('respects layer filter', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ams-th4-'));
+  const svc = new MemoryService({ dbPath: tmp });
+  await svc.init();
+
+  await svc.add({ content: 'c1', tags: ['a', 'b'], layer: 'core' });
+  await svc.add({ content: 'c2', tags: ['a', 'b'], layer: 'core' });
+  await svc.add({ content: 'c3', tags: ['x', 'y'], layer: 'short' });
+
+  const result = await svc.tagHierarchy({ layer: 'core' });
+  assert.ok(result.hierarchy.a);
+  assert.ok(!result.hierarchy.x, 'short layer tags should be excluded');
 
   rmSync(tmp, { recursive: true, force: true });
 });
