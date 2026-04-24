@@ -3,7 +3,7 @@
  */
 
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { readFile, writeFile, mkdir, readdir, stat, unlink, rmdir, rename } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, stat, unlink, rmdir, rename, cp } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
@@ -199,6 +199,18 @@ export const OPENCLAW_TOOLS: Tool[] = [
     },
   },
   {
+    name: "copy",
+    description: "Copy a file or directory within the workspace.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source: { type: "string", description: "Source path relative to workspace root" },
+        destination: { type: "string", description: "Destination path relative to workspace root" },
+      },
+      required: ["source", "destination"],
+    },
+  },
+  {
     name: "system_status",
     description: "Get system status information: platform, Node.js version, uptime, memory usage, workspace info.",
     inputSchema: {
@@ -221,6 +233,7 @@ export const toolHandlers: Record<string, (args: any) => Promise<any>> = {
   search_files: executeSearchFiles,
   delete: executeDelete,
   move: executeMove,
+  copy: executeCopy,
   system_status: executeSystemStatus,
 };
 
@@ -461,6 +474,29 @@ async function executeMove(args: any): Promise<any> {
   }
 
   return { tool: "move", source, destination, success: true };
+}
+
+async function executeCopy(args: any): Promise<any> {
+  const { source, destination } = args;
+  const srcResolved = safePath(source);
+  const dstResolved = safePath(destination);
+
+  try {
+    await stat(srcResolved);
+  } catch {
+    return { tool: "copy", success: false, error: "Source not found" };
+  }
+
+  await mkdir(dirname(dstResolved), { recursive: true });
+
+  try {
+    // Node 18.7+ cp supports recursive directory copy
+    await cp(srcResolved, dstResolved, { recursive: true });
+  } catch (err: any) {
+    return { tool: "copy", success: false, error: err.message };
+  }
+
+  return { tool: "copy", source, destination, success: true };
 }
 
 async function executeSystemStatus(): Promise<any> {
