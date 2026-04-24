@@ -42,3 +42,4 @@ timestamp	commit	metric	value	status	description
 2026-04-24T21:03:49+08:00	1cd711f	test_pass_rate	395/395(100%)	keep	fix mergeClusters skip-already-tagged bug
 2026-04-24T21:10:23+08:00	ab4f19c	test_pass_rate	400/400(100%)	keep	add memoryReport() diagnostic API +5 tests
 2026-04-24T21:12:20+08:00	af0f307	test_pass_rate	404/404(100%)	keep	add batchGet()+memoryReport() APIs +9 tests
+2026-04-25T00:09:44+08:00	4751755	test_count	409/409	keep	clusterHealth(opts) — cluster quality metrics (orphaned detection, avgWeight, uniqueLayers, minClusterSize filter). 5 new tests (404→409), ~35 lines src.

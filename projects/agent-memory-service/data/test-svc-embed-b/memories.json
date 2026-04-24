@@ -1,13 +1,13 @@
 [
   {
-    "id": "c4444a55-0dc5-4df7-bafc-828ef7f5c622",
+    "id": "4c05c08f-dc79-429f-b7ea-444c1b7f48d0",
     "content": "test memory",
     "layer": "core",
     "tags": [],
     "entities": [],
     "weight": 1,
-    "createdAt": 1777046955167,
-    "accessedAt": 1777046955167,
+    "createdAt": 1777050380130,
+    "accessedAt": 1777050380130,
     "accessCount": 0,
     "hash": "43af5ddd0c37ac7f"
   }

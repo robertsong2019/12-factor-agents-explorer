@@ -3752,6 +3752,35 @@ export class MemoryService {
     };
   }
 
+  async searchByEntity(entity, opts = {}) {
+    await this.#ensureLoaded();
+    if (!entity || typeof entity !== 'string') throw new Error('searchByEntity requires an entity string');
+    const { layer, limit = 20, offset = 0, fuzzy = false } = opts;
+    let matches;
+    if (fuzzy) {
+      const lower = entity.toLowerCase();
+      const allMemories = this.#store.all();
+      matches = allMemories.filter(m => {
+        if (layer && m.layer !== layer) return false;
+        return (m.entities || []).some(e => e.toLowerCase().includes(lower));
+      });
+    } else {
+      matches = this.#store.byEntity(entity);
+      if (layer) matches = matches.filter(m => m.layer === layer);
+    }
+    matches.sort((a, b) => (b.weight || 0) - (a.weight || 0));
+    const total = matches.length;
+    const paged = matches.slice(offset, offset + limit);
+    return {
+      entity,
+      fuzzy,
+      total,
+      offset,
+      limit,
+      results: paged.map(m => ({ id: m.id, content: m.content, layer: m.layer, weight: m.weight, entities: m.entities, tags: m.tags }))
+    };
+  }
+
   async batchGet(ids) {
     await this.#ensureLoaded();
     if (!Array.isArray(ids)) throw new Error('batchGet requires an array of ids');

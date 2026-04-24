@@ -840,19 +840,6 @@
     "hash": "dd848d4323a22313"
   },
   {
-    "id": "ac551efb-ce2b-4bb2-a909-a56928e6ec94",
-    "content": "temp note",
-    "layer": "short",
-    "tags": [],
-    "entities": [],
-    "weight": 1,
-    "createdAt": 1777046546216,
-    "accessedAt": 1777046546216,
-    "accessCount": 0,
-    "hash": "c55c0e28971aef8c",
-    "expiresAt": 1777050146216
-  },
-  {
     "id": "72f51558-f61b-4d13-94a2-988de28963f4",
     "content": "permanent note",
     "layer": "short",
@@ -863,19 +850,6 @@
     "accessedAt": 1777046546222,
     "accessCount": 0,
     "hash": "fc4288bf0b5295e9"
-  },
-  {
-    "id": "1e5723c2-2e27-42d3-af29-0fc832a04fa5",
-    "content": "valid",
-    "layer": "short",
-    "tags": [],
-    "entities": [],
-    "weight": 1,
-    "createdAt": 1777046546226,
-    "accessedAt": 1777046546226,
-    "accessCount": 0,
-    "hash": "ec654fac9599f62e",
-    "expiresAt": 1777050146226
   },
   {
     "id": "4f24fcca-cad3-4ca6-bc7e-644235a589a4",
@@ -903,19 +877,6 @@
     "expiresAt": 1777056545234
   },
   {
-    "id": "aabc27c2-cbb2-4502-8ae7-c6920e4b6cd7",
-    "content": "temp note",
-    "layer": "short",
-    "tags": [],
-    "entities": [],
-    "weight": 1,
-    "createdAt": 1777046565244,
-    "accessedAt": 1777046565244,
-    "accessCount": 0,
-    "hash": "c55c0e28971aef8c",
-    "expiresAt": 1777050165244
-  },
-  {
     "id": "45750296-8286-49a7-a92d-528a35c644a8",
     "content": "permanent note",
     "layer": "short",
@@ -926,19 +887,6 @@
     "accessedAt": 1777046565250,
     "accessCount": 0,
     "hash": "fc4288bf0b5295e9"
-  },
-  {
-    "id": "5b722f9a-f4be-46d2-8b9a-fb529fde966e",
-    "content": "valid",
-    "layer": "short",
-    "tags": [],
-    "entities": [],
-    "weight": 1,
-    "createdAt": 1777046565255,
-    "accessedAt": 1777046565255,
-    "accessCount": 0,
-    "hash": "ec654fac9599f62e",
-    "expiresAt": 1777050165255
   },
   {
     "id": "475f0fe9-5764-4bd7-a4da-419352e7c229",
@@ -966,19 +914,6 @@
     "expiresAt": 1777056564261
   },
   {
-    "id": "504338a6-0e06-4d17-a68f-9f63a68a5641",
-    "content": "temp note",
-    "layer": "short",
-    "tags": [],
-    "entities": [],
-    "weight": 1,
-    "createdAt": 1777046764966,
-    "accessedAt": 1777046764966,
-    "accessCount": 0,
-    "hash": "c55c0e28971aef8c",
-    "expiresAt": 1777050364966
-  },
-  {
     "id": "d3807eed-0c87-4c3a-9e04-72ca06096d41",
     "content": "permanent note",
     "layer": "short",
@@ -989,19 +924,6 @@
     "accessedAt": 1777046764972,
     "accessCount": 0,
     "hash": "fc4288bf0b5295e9"
-  },
-  {
-    "id": "b52ab7ab-d44b-4e8a-a8b2-848ff1735a98",
-    "content": "valid",
-    "layer": "short",
-    "tags": [],
-    "entities": [],
-    "weight": 1,
-    "createdAt": 1777046764977,
-    "accessedAt": 1777046764977,
-    "accessCount": 0,
-    "hash": "ec654fac9599f62e",
-    "expiresAt": 1777050364977
   },
   {
     "id": "0a4ee92c-5d62-45c4-a442-c6b960cefc6f",
@@ -1216,5 +1138,1324 @@
     "accessCount": 0,
     "hash": "ebb3de8a3d9a4036",
     "expiresAt": 1777056954482
+  },
+  {
+    "id": "1c7b2687-d46e-488a-8199-1c7a803fd4de",
+    "content": "temp note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050051304,
+    "accessedAt": 1777050051304,
+    "accessCount": 0,
+    "hash": "c55c0e28971aef8c",
+    "expiresAt": 1777053651303
+  },
+  {
+    "id": "c6d406f5-c5ce-4fff-9d8f-e112b7ab003b",
+    "content": "permanent note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050051309,
+    "accessedAt": 1777050051309,
+    "accessCount": 0,
+    "hash": "fc4288bf0b5295e9"
+  },
+  {
+    "id": "6bd830d9-00b7-4e65-85d0-99e886f3f8d9",
+    "content": "valid",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050051315,
+    "accessedAt": 1777050051315,
+    "accessCount": 0,
+    "hash": "ec654fac9599f62e",
+    "expiresAt": 1777053651315
+  },
+  {
+    "id": "dd5348e8-0cee-4817-93ce-2139a8b5a44e",
+    "content": "no expiry",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050051317,
+    "accessedAt": 1777050051317,
+    "accessCount": 0,
+    "hash": "dd848d4323a22313"
+  },
+  {
+    "id": "4610c633-7c6e-498d-a4e0-be88a443caab",
+    "content": "future",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050051322,
+    "accessedAt": 1777050051322,
+    "accessCount": 0,
+    "hash": "ebb3de8a3d9a4036",
+    "expiresAt": 1777060050322
+  },
+  {
+    "id": "9e1c8783-6a71-4e94-a513-130c47ad8c00",
+    "content": "temp note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050191987,
+    "accessedAt": 1777050191987,
+    "accessCount": 0,
+    "hash": "c55c0e28971aef8c",
+    "expiresAt": 1777053791987
+  },
+  {
+    "id": "9665d5ef-662d-4aa1-bd5b-86d8fc5c65fc",
+    "content": "permanent note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050191993,
+    "accessedAt": 1777050191993,
+    "accessCount": 0,
+    "hash": "fc4288bf0b5295e9"
+  },
+  {
+    "id": "e2db650a-92e4-44d8-a60a-41a748e4a446",
+    "content": "valid",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050191999,
+    "accessedAt": 1777050191999,
+    "accessCount": 0,
+    "hash": "ec654fac9599f62e",
+    "expiresAt": 1777053791999
+  },
+  {
+    "id": "8ef6a83d-2ac5-4e3b-a1a1-f8dfadb79010",
+    "content": "no expiry",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050192000,
+    "accessedAt": 1777050192000,
+    "accessCount": 0,
+    "hash": "dd848d4323a22313"
+  },
+  {
+    "id": "18933402-24d7-4bca-8e1b-85d2e2d45bbb",
+    "content": "future",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050192007,
+    "accessedAt": 1777050192007,
+    "accessCount": 0,
+    "hash": "ebb3de8a3d9a4036",
+    "expiresAt": 1777060191007
+  },
+  {
+    "id": "817eedfb-500f-4503-a1ee-17c5e1c82032",
+    "content": "Met Alice at conference",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Alice",
+      "conference"
+    ],
+    "weight": 1,
+    "createdAt": 1777050196645,
+    "accessedAt": 1777050196645,
+    "accessCount": 0,
+    "hash": "adeba7840e4bac0d"
+  },
+  {
+    "id": "4ffba017-a560-4b15-a592-b41e230a3b4c",
+    "content": "Had lunch with Bob",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Bob"
+    ],
+    "weight": 1,
+    "createdAt": 1777050196648,
+    "accessedAt": 1777050196648,
+    "accessCount": 0,
+    "hash": "f0b87acdf6e7f5ed"
+  },
+  {
+    "id": "17869e9d-0eaf-4b93-bfe1-ee1c8eba1531",
+    "content": "No entities here",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050196649,
+    "accessedAt": 1777050196649,
+    "accessCount": 0,
+    "hash": "44072ea6eee752c8"
+  },
+  {
+    "id": "1f8633e1-eeb4-4c28-b59b-0e8758aa2b5c",
+    "content": "Project alpha",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "ProjectAlpha"
+    ],
+    "weight": 1,
+    "createdAt": 1777050196654,
+    "accessedAt": 1777050196654,
+    "accessCount": 0,
+    "hash": "a5007c9d52784f1a"
+  },
+  {
+    "id": "6454bd15-7837-4243-b856-59e9b301fa29",
+    "content": "Project beta",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "ProjectBeta"
+    ],
+    "weight": 1,
+    "createdAt": 1777050196655,
+    "accessedAt": 1777050196655,
+    "accessCount": 0,
+    "hash": "64af62e7506bc52a"
+  },
+  {
+    "id": "3d738cf7-5bdc-4dfd-8d29-a9cefd40477a",
+    "content": "Alice core",
+    "layer": "core",
+    "tags": [],
+    "entities": [
+      "Alice"
+    ],
+    "weight": 1,
+    "createdAt": 1777050196660,
+    "accessedAt": 1777050196660,
+    "accessCount": 0,
+    "hash": "56699cfdaaae4f29"
+  },
+  {
+    "id": "c3c04554-4109-468e-b574-ae13489d2674",
+    "content": "Alice long",
+    "layer": "long",
+    "tags": [],
+    "entities": [
+      "Alice"
+    ],
+    "weight": 1,
+    "createdAt": 1777050196661,
+    "accessedAt": 1777050196661,
+    "accessCount": 0,
+    "hash": "c1f990b26c69df1c"
+  },
+  {
+    "id": "a55a0ac9-c217-4cf3-bacb-7d78f719f5df",
+    "content": "item 0",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 1,
+    "createdAt": 1777050196666,
+    "accessedAt": 1777050196666,
+    "accessCount": 0,
+    "hash": "f5201cf555e7b13e"
+  },
+  {
+    "id": "547763e4-961c-4e7e-a46a-7182f74d29fc",
+    "content": "item 1",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.9,
+    "createdAt": 1777050196668,
+    "accessedAt": 1777050196668,
+    "accessCount": 0,
+    "hash": "acadda60a86d56e8"
+  },
+  {
+    "id": "44ada0f8-9ee8-4bd9-86bf-3c5077275be4",
+    "content": "item 2",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.8,
+    "createdAt": 1777050196669,
+    "accessedAt": 1777050196669,
+    "accessCount": 0,
+    "hash": "7f5f00f1199c4532"
+  },
+  {
+    "id": "17f71b6c-9b79-47c8-80f0-4010c738c14a",
+    "content": "item 3",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.7,
+    "createdAt": 1777050196670,
+    "accessedAt": 1777050196670,
+    "accessCount": 0,
+    "hash": "b312f0af7ea65f88"
+  },
+  {
+    "id": "bcce0317-3687-44bf-87c9-a8028a0f3332",
+    "content": "item 4",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.6,
+    "createdAt": 1777050196671,
+    "accessedAt": 1777050196671,
+    "accessCount": 0,
+    "hash": "608b5cfa8e3731f1"
+  },
+  {
+    "id": "c187b184-4366-4754-9bcd-bac15b9a4295",
+    "content": "hello",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Bob"
+    ],
+    "weight": 1,
+    "createdAt": 1777050196679,
+    "accessedAt": 1777050196679,
+    "accessCount": 0,
+    "hash": "2cf24dba5fb0a30e"
+  },
+  {
+    "id": "e76c322e-c4cf-4981-9f95-9b0dee9c76f6",
+    "content": "temp note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050203159,
+    "accessedAt": 1777050203159,
+    "accessCount": 0,
+    "hash": "c55c0e28971aef8c",
+    "expiresAt": 1777053803159
+  },
+  {
+    "id": "787e61c5-4369-4c7e-9760-9726c9c69212",
+    "content": "permanent note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050203165,
+    "accessedAt": 1777050203165,
+    "accessCount": 0,
+    "hash": "fc4288bf0b5295e9"
+  },
+  {
+    "id": "52f66b6d-4ff1-4453-9e54-34273f74319b",
+    "content": "valid",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050203171,
+    "accessedAt": 1777050203171,
+    "accessCount": 0,
+    "hash": "ec654fac9599f62e",
+    "expiresAt": 1777053803171
+  },
+  {
+    "id": "da7e4685-4705-4320-9500-795b4f46715f",
+    "content": "no expiry",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050203172,
+    "accessedAt": 1777050203172,
+    "accessCount": 0,
+    "hash": "dd848d4323a22313"
+  },
+  {
+    "id": "f20b6918-6e86-41d0-a8ee-3dc1734e563a",
+    "content": "future",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050203178,
+    "accessedAt": 1777050203178,
+    "accessCount": 0,
+    "hash": "ebb3de8a3d9a4036",
+    "expiresAt": 1777060202178
+  },
+  {
+    "id": "3c353c5d-20e6-4ba7-ad9c-42b9d8148111",
+    "content": "Met Alice at conference",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Alice",
+      "conference"
+    ],
+    "weight": 1,
+    "createdAt": 1777050207958,
+    "accessedAt": 1777050207958,
+    "accessCount": 0,
+    "hash": "adeba7840e4bac0d"
+  },
+  {
+    "id": "a781011d-aea5-4304-a1ed-6d04cf2d3401",
+    "content": "Had lunch with Bob",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Bob"
+    ],
+    "weight": 1,
+    "createdAt": 1777050207961,
+    "accessedAt": 1777050207961,
+    "accessCount": 0,
+    "hash": "f0b87acdf6e7f5ed"
+  },
+  {
+    "id": "962b5bf1-5a06-4ec3-b35e-293540320804",
+    "content": "No entities here",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050207962,
+    "accessedAt": 1777050207962,
+    "accessCount": 0,
+    "hash": "44072ea6eee752c8"
+  },
+  {
+    "id": "64ced46b-31e5-4f93-9760-dcbe13e8790e",
+    "content": "Project alpha",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "ProjectAlpha"
+    ],
+    "weight": 1,
+    "createdAt": 1777050207968,
+    "accessedAt": 1777050207968,
+    "accessCount": 0,
+    "hash": "a5007c9d52784f1a"
+  },
+  {
+    "id": "708ad260-fdc3-4dbf-9dcb-44c17f9e1892",
+    "content": "Project beta",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "ProjectBeta"
+    ],
+    "weight": 1,
+    "createdAt": 1777050207970,
+    "accessedAt": 1777050207970,
+    "accessCount": 0,
+    "hash": "64af62e7506bc52a"
+  },
+  {
+    "id": "64d77205-6380-4a52-9388-23df5f97e50d",
+    "content": "Alice core",
+    "layer": "core",
+    "tags": [],
+    "entities": [
+      "Alice"
+    ],
+    "weight": 1,
+    "createdAt": 1777050207975,
+    "accessedAt": 1777050207975,
+    "accessCount": 0,
+    "hash": "56699cfdaaae4f29"
+  },
+  {
+    "id": "653bbb11-048d-404b-9f50-efa555961a83",
+    "content": "Alice long",
+    "layer": "long",
+    "tags": [],
+    "entities": [
+      "Alice"
+    ],
+    "weight": 1,
+    "createdAt": 1777050207976,
+    "accessedAt": 1777050207976,
+    "accessCount": 0,
+    "hash": "c1f990b26c69df1c"
+  },
+  {
+    "id": "6882d5ea-c0a7-4ea9-962f-98ed06fc0468",
+    "content": "item 0",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 1,
+    "createdAt": 1777050207981,
+    "accessedAt": 1777050207981,
+    "accessCount": 0,
+    "hash": "f5201cf555e7b13e"
+  },
+  {
+    "id": "a48b4748-c747-4d80-b2ba-e8e248088790",
+    "content": "item 1",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.9,
+    "createdAt": 1777050207982,
+    "accessedAt": 1777050207982,
+    "accessCount": 0,
+    "hash": "acadda60a86d56e8"
+  },
+  {
+    "id": "eae1daf3-e483-42f7-9f4e-a30b850e8eb0",
+    "content": "item 2",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.8,
+    "createdAt": 1777050207984,
+    "accessedAt": 1777050207984,
+    "accessCount": 0,
+    "hash": "7f5f00f1199c4532"
+  },
+  {
+    "id": "0fbfba5b-e655-4022-8590-8f2151bdfa55",
+    "content": "item 3",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.7,
+    "createdAt": 1777050207985,
+    "accessedAt": 1777050207985,
+    "accessCount": 0,
+    "hash": "b312f0af7ea65f88"
+  },
+  {
+    "id": "344cee5b-b4ee-4a93-89b5-65451fbd68a0",
+    "content": "item 4",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.6,
+    "createdAt": 1777050207986,
+    "accessedAt": 1777050207986,
+    "accessCount": 0,
+    "hash": "608b5cfa8e3731f1"
+  },
+  {
+    "id": "e020819f-7642-4949-957e-a5951aa38a20",
+    "content": "hello",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Bob"
+    ],
+    "weight": 1,
+    "createdAt": 1777050207994,
+    "accessedAt": 1777050207994,
+    "accessCount": 0,
+    "hash": "2cf24dba5fb0a30e"
+  },
+  {
+    "id": "94844c4b-03df-4031-a2e8-c1c6b017eefc",
+    "content": "Met Alice",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Alice"
+    ],
+    "weight": 1,
+    "createdAt": 1777050216512,
+    "accessedAt": 1777050216512,
+    "accessCount": 0,
+    "hash": "1fb950a509587984"
+  },
+  {
+    "id": "129053bd-c209-4e4e-bf3f-04f23d81a3b2",
+    "content": "temp note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050229238,
+    "accessedAt": 1777050229238,
+    "accessCount": 0,
+    "hash": "c55c0e28971aef8c",
+    "expiresAt": 1777053829238
+  },
+  {
+    "id": "7a24fac4-c158-4d67-bf8c-4dd625749970",
+    "content": "permanent note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050229244,
+    "accessedAt": 1777050229244,
+    "accessCount": 0,
+    "hash": "fc4288bf0b5295e9"
+  },
+  {
+    "id": "077bef4f-5819-4412-a0f1-d500e0889236",
+    "content": "valid",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050229250,
+    "accessedAt": 1777050229250,
+    "accessCount": 0,
+    "hash": "ec654fac9599f62e",
+    "expiresAt": 1777053829250
+  },
+  {
+    "id": "ec3dcb77-25a1-4f82-9317-553e293ac9d7",
+    "content": "no expiry",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050229252,
+    "accessedAt": 1777050229252,
+    "accessCount": 0,
+    "hash": "dd848d4323a22313"
+  },
+  {
+    "id": "fe2a333b-d1a5-4cad-8e40-30394ab62da6",
+    "content": "future",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050229258,
+    "accessedAt": 1777050229258,
+    "accessCount": 0,
+    "hash": "ebb3de8a3d9a4036",
+    "expiresAt": 1777060228258
+  },
+  {
+    "id": "74fd65ad-4763-4264-b812-6895bd648b61",
+    "content": "Met Alice at conference",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Alice",
+      "conference"
+    ],
+    "weight": 1,
+    "createdAt": 1777050233816,
+    "accessedAt": 1777050233816,
+    "accessCount": 0,
+    "hash": "adeba7840e4bac0d"
+  },
+  {
+    "id": "e94ae0c1-e9fb-4e0b-9091-209db026bdc7",
+    "content": "Had lunch with Bob",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Bob"
+    ],
+    "weight": 1,
+    "createdAt": 1777050233818,
+    "accessedAt": 1777050233818,
+    "accessCount": 0,
+    "hash": "f0b87acdf6e7f5ed"
+  },
+  {
+    "id": "1b335425-04db-4510-b2a3-e8c56efe0c55",
+    "content": "No entities here",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050233820,
+    "accessedAt": 1777050233820,
+    "accessCount": 0,
+    "hash": "44072ea6eee752c8"
+  },
+  {
+    "id": "94c280d5-67b2-4b9c-b162-76ffd8e407da",
+    "content": "Project alpha",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "ProjectAlpha"
+    ],
+    "weight": 1,
+    "createdAt": 1777050233827,
+    "accessedAt": 1777050233827,
+    "accessCount": 0,
+    "hash": "a5007c9d52784f1a"
+  },
+  {
+    "id": "0f59a222-35a8-41bb-94aa-9f46c0b918d2",
+    "content": "Project beta",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "ProjectBeta"
+    ],
+    "weight": 1,
+    "createdAt": 1777050233828,
+    "accessedAt": 1777050233828,
+    "accessCount": 0,
+    "hash": "64af62e7506bc52a"
+  },
+  {
+    "id": "a00bc631-97aa-4c7e-bfd0-ce9892244140",
+    "content": "Alice core",
+    "layer": "core",
+    "tags": [],
+    "entities": [
+      "Alice"
+    ],
+    "weight": 1,
+    "createdAt": 1777050233835,
+    "accessedAt": 1777050233835,
+    "accessCount": 0,
+    "hash": "56699cfdaaae4f29"
+  },
+  {
+    "id": "f597998b-62ff-4c85-89ee-71feb090edba",
+    "content": "Alice long",
+    "layer": "long",
+    "tags": [],
+    "entities": [
+      "Alice"
+    ],
+    "weight": 1,
+    "createdAt": 1777050233836,
+    "accessedAt": 1777050233836,
+    "accessCount": 0,
+    "hash": "c1f990b26c69df1c"
+  },
+  {
+    "id": "e3ee59e0-83ff-4422-9e1b-cce947ca598b",
+    "content": "item 0",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 1,
+    "createdAt": 1777050233841,
+    "accessedAt": 1777050233841,
+    "accessCount": 0,
+    "hash": "f5201cf555e7b13e"
+  },
+  {
+    "id": "4e63b427-a8ac-477c-a8a9-c16f272b256f",
+    "content": "item 1",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.9,
+    "createdAt": 1777050233842,
+    "accessedAt": 1777050233842,
+    "accessCount": 0,
+    "hash": "acadda60a86d56e8"
+  },
+  {
+    "id": "90e35a29-b73b-4976-917c-b22722ae3d5f",
+    "content": "item 2",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.8,
+    "createdAt": 1777050233843,
+    "accessedAt": 1777050233843,
+    "accessCount": 0,
+    "hash": "7f5f00f1199c4532"
+  },
+  {
+    "id": "e40e177f-c219-4de7-8a83-be880a7ab489",
+    "content": "item 3",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.7,
+    "createdAt": 1777050233845,
+    "accessedAt": 1777050233845,
+    "accessCount": 0,
+    "hash": "b312f0af7ea65f88"
+  },
+  {
+    "id": "ee361dc0-e5e7-48ae-b43e-f05188a4f561",
+    "content": "item 4",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.6,
+    "createdAt": 1777050233846,
+    "accessedAt": 1777050233846,
+    "accessCount": 0,
+    "hash": "608b5cfa8e3731f1"
+  },
+  {
+    "id": "49d273f0-5591-4733-92fa-e431e43dd7fc",
+    "content": "hello",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Bob"
+    ],
+    "weight": 1,
+    "createdAt": 1777050233855,
+    "accessedAt": 1777050233855,
+    "accessCount": 0,
+    "hash": "2cf24dba5fb0a30e"
+  },
+  {
+    "id": "8305e328-4dae-4de6-9177-b7ac204cb653",
+    "content": "Met Alice at conference",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Alice",
+      "conference"
+    ],
+    "weight": 1,
+    "createdAt": 1777050273064,
+    "accessedAt": 1777050273064,
+    "accessCount": 0,
+    "hash": "adeba7840e4bac0d"
+  },
+  {
+    "id": "2dd3410b-c8f5-4b13-879a-7543617207bb",
+    "content": "Had lunch with Bob",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Bob"
+    ],
+    "weight": 1,
+    "createdAt": 1777050273067,
+    "accessedAt": 1777050273067,
+    "accessCount": 0,
+    "hash": "f0b87acdf6e7f5ed"
+  },
+  {
+    "id": "ff97e2b1-981d-4b72-8ec3-28bd905f03ca",
+    "content": "No entities here",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050273068,
+    "accessedAt": 1777050273068,
+    "accessCount": 0,
+    "hash": "44072ea6eee752c8"
+  },
+  {
+    "id": "dfe7baf4-bcb5-43e4-a1ce-8eb6bb554b21",
+    "content": "Project alpha",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "ProjectAlpha"
+    ],
+    "weight": 1,
+    "createdAt": 1777050273076,
+    "accessedAt": 1777050273076,
+    "accessCount": 0,
+    "hash": "a5007c9d52784f1a"
+  },
+  {
+    "id": "d5ecdd6e-9bf8-4f1d-9af0-637f2221db1b",
+    "content": "Project beta",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "ProjectBeta"
+    ],
+    "weight": 1,
+    "createdAt": 1777050273078,
+    "accessedAt": 1777050273078,
+    "accessCount": 0,
+    "hash": "64af62e7506bc52a"
+  },
+  {
+    "id": "e9445ff1-93f6-466b-8da5-a0b5c8f704e6",
+    "content": "Alice core",
+    "layer": "core",
+    "tags": [],
+    "entities": [
+      "Alice"
+    ],
+    "weight": 1,
+    "createdAt": 1777050273084,
+    "accessedAt": 1777050273084,
+    "accessCount": 0,
+    "hash": "56699cfdaaae4f29"
+  },
+  {
+    "id": "e5b4d83f-8d2a-4370-a54b-c3734aa37a27",
+    "content": "Alice long",
+    "layer": "long",
+    "tags": [],
+    "entities": [
+      "Alice"
+    ],
+    "weight": 1,
+    "createdAt": 1777050273086,
+    "accessedAt": 1777050273086,
+    "accessCount": 0,
+    "hash": "c1f990b26c69df1c"
+  },
+  {
+    "id": "fb509e6d-7bc6-4669-b630-ba839efad171",
+    "content": "item 0",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 1,
+    "createdAt": 1777050273090,
+    "accessedAt": 1777050273090,
+    "accessCount": 0,
+    "hash": "f5201cf555e7b13e"
+  },
+  {
+    "id": "36cfacfe-b349-47d8-b4a3-be8898f34934",
+    "content": "item 1",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.9,
+    "createdAt": 1777050273091,
+    "accessedAt": 1777050273091,
+    "accessCount": 0,
+    "hash": "acadda60a86d56e8"
+  },
+  {
+    "id": "3f3b14f4-cfac-45a5-99ce-234c6cd706eb",
+    "content": "item 2",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.8,
+    "createdAt": 1777050273093,
+    "accessedAt": 1777050273093,
+    "accessCount": 0,
+    "hash": "7f5f00f1199c4532"
+  },
+  {
+    "id": "08621b81-1480-487d-87e3-887b783ee3b7",
+    "content": "item 3",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.7,
+    "createdAt": 1777050273094,
+    "accessedAt": 1777050273094,
+    "accessCount": 0,
+    "hash": "b312f0af7ea65f88"
+  },
+  {
+    "id": "9b257610-9e15-44eb-b20c-a6dfea54eb62",
+    "content": "item 4",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "shared"
+    ],
+    "weight": 0.6,
+    "createdAt": 1777050273095,
+    "accessedAt": 1777050273095,
+    "accessCount": 0,
+    "hash": "608b5cfa8e3731f1"
+  },
+  {
+    "id": "fa9e3291-c8b8-4b37-a6c7-cd12db61a120",
+    "content": "hello",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Bob"
+    ],
+    "weight": 1,
+    "createdAt": 1777050273105,
+    "accessedAt": 1777050273105,
+    "accessCount": 0,
+    "hash": "2cf24dba5fb0a30e"
+  },
+  {
+    "id": "375b50d2-14ab-488a-87ab-0c02425177e5",
+    "content": "test",
+    "layer": "short",
+    "tags": [],
+    "entities": [
+      "Alice"
+    ],
+    "weight": 1,
+    "createdAt": 1777050289550,
+    "accessedAt": 1777050289550,
+    "accessCount": 0,
+    "hash": "9f86d081884c7d65"
+  },
+  {
+    "id": "e43b6021-f76d-49e5-8790-ceb3fcfe7ee6",
+    "content": "temp note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050328465,
+    "accessedAt": 1777050328465,
+    "accessCount": 0,
+    "hash": "c55c0e28971aef8c",
+    "expiresAt": 1777053928464
+  },
+  {
+    "id": "52db935e-ed78-4be4-9a57-a8cc00a36893",
+    "content": "permanent note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050328471,
+    "accessedAt": 1777050328471,
+    "accessCount": 0,
+    "hash": "fc4288bf0b5295e9"
+  },
+  {
+    "id": "b55fa490-5832-4ed5-a091-4690d864dbb2",
+    "content": "valid",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050328477,
+    "accessedAt": 1777050328477,
+    "accessCount": 0,
+    "hash": "ec654fac9599f62e",
+    "expiresAt": 1777053928477
+  },
+  {
+    "id": "0dad966c-94aa-4823-817b-2eed2c9517eb",
+    "content": "no expiry",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050328479,
+    "accessedAt": 1777050328479,
+    "accessCount": 0,
+    "hash": "dd848d4323a22313"
+  },
+  {
+    "id": "7d44d893-cfd0-4122-9a42-073ddad28862",
+    "content": "future",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050328485,
+    "accessedAt": 1777050328485,
+    "accessCount": 0,
+    "hash": "ebb3de8a3d9a4036",
+    "expiresAt": 1777060327485
+  },
+  {
+    "id": "d7971fc4-0ada-4b4f-bb53-f846ecf541e9",
+    "content": "temp note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050341335,
+    "accessedAt": 1777050341335,
+    "accessCount": 0,
+    "hash": "c55c0e28971aef8c",
+    "expiresAt": 1777053941335
+  },
+  {
+    "id": "68845316-f27f-4f18-8fc5-bc89254e58bd",
+    "content": "permanent note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050341342,
+    "accessedAt": 1777050341342,
+    "accessCount": 0,
+    "hash": "fc4288bf0b5295e9"
+  },
+  {
+    "id": "6141ca19-7ab8-4a88-a901-d45ff4ea750a",
+    "content": "valid",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050341348,
+    "accessedAt": 1777050341348,
+    "accessCount": 0,
+    "hash": "ec654fac9599f62e",
+    "expiresAt": 1777053941348
+  },
+  {
+    "id": "fb29ac62-32bd-467d-9b7e-47ebca600b28",
+    "content": "no expiry",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050341349,
+    "accessedAt": 1777050341349,
+    "accessCount": 0,
+    "hash": "dd848d4323a22313"
+  },
+  {
+    "id": "96c68d2b-80de-4726-9a88-137dd2d38ab9",
+    "content": "future",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050341356,
+    "accessedAt": 1777050341356,
+    "accessCount": 0,
+    "hash": "ebb3de8a3d9a4036",
+    "expiresAt": 1777060340355
+  },
+  {
+    "id": "bb90f302-f9e0-4487-aec2-6685b5a80248",
+    "content": "temp note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050354194,
+    "accessedAt": 1777050354194,
+    "accessCount": 0,
+    "hash": "c55c0e28971aef8c",
+    "expiresAt": 1777053954193
+  },
+  {
+    "id": "63119b9d-9cbd-47de-9a62-e3756f677033",
+    "content": "permanent note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050354200,
+    "accessedAt": 1777050354200,
+    "accessCount": 0,
+    "hash": "fc4288bf0b5295e9"
+  },
+  {
+    "id": "59fccbd1-2dec-4bc4-a41e-6d21c272a0a3",
+    "content": "valid",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050354206,
+    "accessedAt": 1777050354206,
+    "accessCount": 0,
+    "hash": "ec654fac9599f62e",
+    "expiresAt": 1777053954206
+  },
+  {
+    "id": "d147650a-d82c-40c8-bebd-74ce544792f0",
+    "content": "no expiry",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050354207,
+    "accessedAt": 1777050354207,
+    "accessCount": 0,
+    "hash": "dd848d4323a22313"
+  },
+  {
+    "id": "78113761-96c3-4d70-92df-48006972d0b7",
+    "content": "future",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050354213,
+    "accessedAt": 1777050354213,
+    "accessCount": 0,
+    "hash": "ebb3de8a3d9a4036",
+    "expiresAt": 1777060353213
+  },
+  {
+    "id": "56c6d89e-1fbd-4a17-8e8e-8f67dd9feec2",
+    "content": "temp note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050365665,
+    "accessedAt": 1777050365665,
+    "accessCount": 0,
+    "hash": "c55c0e28971aef8c",
+    "expiresAt": 1777053965665
+  },
+  {
+    "id": "919d0eff-83db-4095-a789-16370f9a04b1",
+    "content": "permanent note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050365671,
+    "accessedAt": 1777050365671,
+    "accessCount": 0,
+    "hash": "fc4288bf0b5295e9"
+  },
+  {
+    "id": "d441c35d-3e7c-40e5-93a9-3a25c63fa067",
+    "content": "valid",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050365677,
+    "accessedAt": 1777050365677,
+    "accessCount": 0,
+    "hash": "ec654fac9599f62e",
+    "expiresAt": 1777053965677
+  },
+  {
+    "id": "e768c76c-3946-4bf4-a007-d1de7faaa40a",
+    "content": "no expiry",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050365679,
+    "accessedAt": 1777050365679,
+    "accessCount": 0,
+    "hash": "dd848d4323a22313"
+  },
+  {
+    "id": "69fe51cc-bb78-4b61-abd8-46966a587765",
+    "content": "future",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050365687,
+    "accessedAt": 1777050365687,
+    "accessCount": 0,
+    "hash": "ebb3de8a3d9a4036",
+    "expiresAt": 1777060364686
+  },
+  {
+    "id": "79274295-f3ba-4976-95a8-af08d1bd4316",
+    "content": "temp note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050380438,
+    "accessedAt": 1777050380438,
+    "accessCount": 0,
+    "hash": "c55c0e28971aef8c",
+    "expiresAt": 1777053980438
+  },
+  {
+    "id": "6e973e99-6549-451e-b49c-20e4908d7540",
+    "content": "permanent note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050380444,
+    "accessedAt": 1777050380444,
+    "accessCount": 0,
+    "hash": "fc4288bf0b5295e9"
+  },
+  {
+    "id": "47290991-ebeb-429c-b07d-955415e2ec28",
+    "content": "valid",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050380451,
+    "accessedAt": 1777050380451,
+    "accessCount": 0,
+    "hash": "ec654fac9599f62e",
+    "expiresAt": 1777053980451
+  },
+  {
+    "id": "543129f8-b736-459b-867d-7c117124217c",
+    "content": "no expiry",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050380453,
+    "accessedAt": 1777050380453,
+    "accessCount": 0,
+    "hash": "dd848d4323a22313"
+  },
+  {
+    "id": "cdc3531e-cb93-4f8b-a2b4-874f5af18351",
+    "content": "future",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777050380459,
+    "accessedAt": 1777050380459,
+    "accessCount": 0,
+    "hash": "ebb3de8a3d9a4036",
+    "expiresAt": 1777060379459
   }
 ]
