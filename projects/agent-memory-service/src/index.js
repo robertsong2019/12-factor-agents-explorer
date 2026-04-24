@@ -3441,13 +3441,13 @@ export class MemoryService {
       const hasSource = m.tags.some(t => sourceSet.has(t.toLowerCase()));
       if (!hasSource) continue;
       const hasTarget = m.tags.some(t => t.toLowerCase() === targetTag.toLowerCase());
-      if (hasTarget && removeSourceTags) {
-        // Just remove source tags
-        m.tags = m.tags.filter(t => !sourceSet.has(t.toLowerCase()));
-        mergedCount++;
+      if (hasTarget) {
+        // Already has target tag - just remove source tags if requested
+        if (removeSourceTags) {
+          m.tags = m.tags.filter(t => !sourceSet.has(t.toLowerCase()));
+        }
         continue;
       }
-      if (hasTarget) { mergedCount++; continue; }
 
       if (removeSourceTags) {
         m.tags = m.tags.filter(t => !sourceSet.has(t.toLowerCase()));

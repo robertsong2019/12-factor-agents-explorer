@@ -17,3 +17,4 @@ date	project	baseline_tests	baseline_pass	baseline_fail	after_tests	after_pass	a
 2026-04-22T13:32	catalyst-agent-mesh	171->182	+11 tests (7 health_monitor edge cases, 5 pipeline_executor)	all pass	autoresearch cron
 2026-04-23T03:21	better-ralph-core	44->58	+14 tests (7 Config, 7 PerformanceMonitor)	all pass	autoresearch cron
 2026-04-23T22:00	agent-task-cli	271	271	0	282	282	0	+11 tests	F15: Cache.touch() (5 tests) + F16: EventBus.emitBatch() (6 tests)
+2026-04-24T03:04	edge-agent-dashboard	5 pass + 5 errors	38	38	0	+33 unit tests (23 manager + 15 monitor), fixed fixture bug	renamed integration test script, created proper unit tests

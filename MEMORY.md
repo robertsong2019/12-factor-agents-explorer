@@ -15,16 +15,17 @@
 
 ---
 
-## Current Focus (2026-04-23)
+## Current Focus (2026-04-24)
 
 ### Active Theme
-Autoresearch 方法论实践 — Agent Memory Service v1.0-dev 持续迭代 (371 tests)。4/22-4/23 新增：findDuplicatePairs/exportJSON/importJSON/pruneLowWeight/inspect/clusterByTopic/summarizeCluster。下一步：MCP Server 实现。⚠️ 关键教训：key-dev sessions 必须在每次实验成功后 git commit，否则代码会在 session 重置时丢失
+Autoresearch 方法论实践 — Agent Memory Service v1.0-dev 持续迭代 (395 tests)。4/23-4/24 新增：compareMemories/tagHierarchy/rebalance/autoTag/mergeClusters。autoresearch 零回滚率持续保持（连续12天）。**4/24 深度研究**: LangGraph Supervisor + MCP 桥接 OpenClaw — TypeScript `@langchain/langgraph-supervisor` + Streamable HTTP 完整方案，含可运行代码（见 exploration-notes/2026-04-24-langgraph-supervisor-bridge-openclaw.md）。下一步：创建 bridge 项目目录，实现 MCP Server 3 tools MVP。
 
 ### Next Actions
-- [ ] 初始化 openclaw-mcp-server 项目（TypeScript SDK + Streamable HTTP，3 tools MVP）— 详见 [研究笔记](catalyst-research/exploration-notes/2026-04-23-mcp-server-streamable-http.md) ✅ 2026-04-23 晚间：完整 Streamable HTTP 研究笔记 + 可运行 3-tool MVP 代码（echo/get_time/format_json）
+- [ ] 初始化 openclaw-mcp-server 项目（TypeScript SDK + Streamable HTTP，3 tools MVP）— 研究笔记已就绪
 - [ ] 实现 3 tools: search_memory(对接AMS), run_command(OpenClaw exec), system_status
 - [ ] MCP Server Express/Hono 包装 + Docker 化部署
-- [ ] AMS: searchByEntity(), autoTag(), contentVersioning() — 下一步 API 候选
+- [ ] AMS: searchByEntity(), contentVersioning(), clusterHealth() — 下一步 API 候选
+- [ ] AMS 生产化：EmbeddingProvider真实接入(ONNX/远程API), Docker化
 
 ### Core Projects
 1. **Agent Task CLI** - 多 Agent 任务编排 (109 tests, 80%+ coverage, ✅ 已完成)
@@ -36,7 +37,7 @@ Autoresearch 方法论实践 — Agent Memory Service v1.0-dev 持续迭代 (371
 7. **agent-log** - OpenClaw 日志搜索/汇总 CLI (✅ 单文件 Bash，零依赖)
 8. **ctxgen** - AI 上下文文件生成器 (✅ v1.0, 纯Node.js零依赖, 支持4种目标格式)
 9. **tiny-agent-workshop** - 单文件 Agent 模式教学集 (✅ 7个模式: ReAct/ToolCall/Memory/Router/Guardrail/Chain/EdgeAgent)
-10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 371/371 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+自监控+搜索三阶段(BM25+Embedding+Unified RRF)+suggestTags()+healthScore()+autoMaintain()+searchSimilar()+findDuplicatePairs()+exportJSON/importJSON()+pruneLowWeight()+inspect()+clusterByTopic()+summarizeCluster())
+10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 395/395 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+自监控+搜索三阶段(BM25+Embedding+Unified RRF)+suggestTags()+healthScore()+autoMaintain()+searchSimilar()+findDuplicatePairs()+exportJSON/importJSON()+pruneLowWeight()+inspect()+clusterByTopic()+summarizeCluster()+compareMemories()+tagHierarchy()+rebalance()+autoTag()+mergeClusters())
 11. **A2A Protocol Lab** - Agent-to-Agent通信协议实验 (✅ 零依赖Python实现, Server+Client+Federation Demo)
 
 ---
@@ -157,6 +158,18 @@ curl -X POST "https://api.tavily.com/search" \
 ---
 
 ## Recent Achievements
+
+### 2026-04-24
+- ✅ **Agent Memory Service v1.0-dev 续升** — 371→395 tests (+24)
+  - **compareMemories(id1, id2)**: 内容相似度(ngram)+共享标签+层级对比+权重差异+合并建议, 5 tests
+  - **tagHierarchy(opts)**: 标签共现层级构建, 贪心父-子关系, 4 tests
+  - **rebalance(opts)**: 年龄衰减+访问频率+层级加权的权重重计算, 4 tests
+  - **autoTag(opts)**: 自动给未标记记忆打标签(基于suggestTags), 支持dryRun, 5 tests
+  - **mergeClusters(topics, opts)**: 合并多个主题聚类为统一标签, 支持targetTag/removeSourceTags, 6 tests
+  - 零回滚率持续保持
+- ✅ **agent-task-cli 续升** — 271→282 tests (+11)
+  - **Cache.touch()**: 缓存TTL刷新, 5 tests
+  - **EventBus.emitBatch()**: 批量事件发射, 6 tests
 
 ### 2026-04-23
 - ✅ **Agent Memory Service v1.0-dev 续升** — 334→371 tests (+37)
@@ -342,5 +355,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-04-23 02:00*
-*Next review: 2026-04-24*
+*Last updated: 2026-04-24 02:00*
+*Next review: 2026-04-25*

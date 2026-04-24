@@ -39,3 +39,4 @@ timestamp	commit	metric	value	status	description
 2026-04-23T19:20	c09df60	test_count	380/380	keep	Cycle 2: tagHierarchy(opts) — tag co-occurrence hierarchy with depth stats. 4 new tests (376→380), ~55 lines src.
 2026-04-23T19:30	c673727	test_count	384/384	keep	Cycle 3: rebalance(opts) — weight recalculation based on age/access/layer. 4 new tests (380→384), ~30 lines src.
 2026-04-24T00:00	be8a86a	test_count	389/389	keep	autoTag(opts) — automatically apply suggestTags to untagged memories. Supports dryRun, maxTags, minScore, layer filter. 5 new tests (384→389), ~40 lines src.
+2026-04-24T21:03:49+08:00	1cd711f	test_pass_rate	395/395(100%)	keep	fix mergeClusters skip-already-tagged bug
