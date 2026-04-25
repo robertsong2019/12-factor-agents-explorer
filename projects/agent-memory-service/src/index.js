@@ -818,6 +818,8 @@ export class MemoryService {
   #skills;
   /** @type {BM25Index} */
   #bm25 = new BM25Index();
+  /** @type {Map<string, Array<{content: string, hash: string, ts: number}>>} */
+  #contentVersions = new Map();
   /** @type {boolean} */
   #loaded = false;
 
@@ -2040,6 +2042,11 @@ export class MemoryService {
     if (!m) return null;
 
     if (opts.content !== undefined) {
+      // Store previous content as version snapshot
+      if (m.content !== opts.content) {
+        if (!this.#contentVersions.has(id)) this.#contentVersions.set(id, []);
+        this.#contentVersions.get(id).push({ content: m.content, hash: m.hash, ts: Date.now() });
+      }
       m.content = opts.content;
       m.hash = contentHash(opts.content);
     }
@@ -3931,6 +3938,41 @@ export class MemoryService {
     result.layers = { m1: m1.layer, m2: m2.layer, same: m1.layer === m2.layer };
     result.weights = { m1: m1.weight || 0, m2: m2.weight || 0, diff: Math.abs((m1.weight || 0) - (m2.weight || 0)) };
     return result;
+  }
+
+  /**
+   * Get content version history for a specific memory.
+   * Returns all prior content snapshots + current content, oldest first.
+   * @param {string} id - Memory ID
+   * @returns {Promise<{id: string, found: boolean, versions: Array<{content: string, hash: string, ts: number, current: boolean}>}>}
+   */
+  async contentHistory(id) {
+    await this.#ensureLoaded();
+    const m = this.#store.get(id);
+    if (!m) return { id, found: false, versions: [] };
+    const snapshots = this.#contentVersions.get(id) || [];
+    const versions = snapshots.map(s => ({ ...s, current: false }));
+    versions.push({ content: m.content, hash: m.hash, ts: Date.now(), current: true });
+    return { id, found: true, versions };
+  }
+
+  /**
+   * Diff two content versions of the same memory.
+   * @param {string} id - Memory ID
+   * @param {{from?: number, to?: number}} opts - Version indices (0-based). Defaults: from=first, to=last(current)
+   * @returns {Promise<{id: string, found: boolean, from: object|null, to: object|null, similarity: number}>}
+   */
+  async contentVersionDiff(id, opts = {}) {
+    await this.#ensureLoaded();
+    const m = this.#store.get(id);
+    if (!m) return { id, found: false, from: null, to: null, similarity: 0 };
+    const history = await this.contentHistory(id);
+    const fromIdx = opts.from ?? 0;
+    const toIdx = opts.to ?? history.versions.length - 1;
+    const from = history.versions[fromIdx] || null;
+    const to = history.versions[toIdx] || null;
+    const similarity = (from && to) ? ngramSimilarity(from.content, to.content) : 0;
+    return { id, found: true, from, to, similarity };
   }
 }
 
