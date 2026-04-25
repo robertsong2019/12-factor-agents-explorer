@@ -15,16 +15,16 @@
 
 ---
 
-## Current Focus (2026-04-24)
+## Current Focus (2026-04-25)
 
 ### Active Theme
-Autoresearch 方法论实践 — Agent Memory Service v1.0-dev 持续迭代 (395 tests)。4/23-4/24 新增：compareMemories/tagHierarchy/rebalance/autoTag/mergeClusters。autoresearch 零回滚率持续保持（连续12天）。**4/24 深度研究**: LangGraph Supervisor + MCP 桥接 OpenClaw — TypeScript `@langchain/langgraph-supervisor` + Streamable HTTP 完整方案，含可运行代码（见 exploration-notes/2026-04-24-langgraph-supervisor-bridge-openclaw.md）。下一步：创建 bridge 项目目录，实现 MCP Server 3 tools MVP。
+Autoresearch 方法论实践 — Agent Memory Service v1.0-dev 持续迭代 (**415 tests**)。4/24-4/25 新增：clusterHealth + searchByEntity。autoresearch 零回滚率持续保持（**连续14天**）。**agent-role-orchestrator**: 修复3个broken test suites → 151/151 pass + 23x性能优化(134s→6s)。
 
 ### Next Actions
 - [ ] 初始化 openclaw-mcp-server 项目（TypeScript SDK + Streamable HTTP，3 tools MVP）— 研究笔记已就绪
 - [ ] 实现 3 tools: search_memory(对接AMS), run_command(OpenClaw exec), system_status
 - [ ] MCP Server Express/Hono 包装 + Docker 化部署
-- [ ] AMS: searchByEntity(), contentVersioning(), clusterHealth() — 下一步 API 候选
+- [ ] AMS: contentVersioning(), clusterAutoMerge() — 下一步 API 候选
 - [ ] AMS 生产化：EmbeddingProvider真实接入(ONNX/远程API), Docker化
 
 ### Core Projects
@@ -37,7 +37,7 @@ Autoresearch 方法论实践 — Agent Memory Service v1.0-dev 持续迭代 (395
 7. **agent-log** - OpenClaw 日志搜索/汇总 CLI (✅ 单文件 Bash，零依赖)
 8. **ctxgen** - AI 上下文文件生成器 (✅ v1.0, 纯Node.js零依赖, 支持4种目标格式)
 9. **tiny-agent-workshop** - 单文件 Agent 模式教学集 (✅ 7个模式: ReAct/ToolCall/Memory/Router/Guardrail/Chain/EdgeAgent)
-10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 395/395 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+自监控+搜索三阶段(BM25+Embedding+Unified RRF)+suggestTags()+healthScore()+autoMaintain()+searchSimilar()+findDuplicatePairs()+exportJSON/importJSON()+pruneLowWeight()+inspect()+clusterByTopic()+summarizeCluster()+compareMemories()+tagHierarchy()+rebalance()+autoTag()+mergeClusters())
+10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 415/415 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+自监控+搜索三阶段(BM25+Embedding+Unified RRF)+suggestTags()+healthScore()+autoMaintain()+searchSimilar()+findDuplicatePairs()+exportJSON/importJSON()+pruneLowWeight()+inspect()+clusterByTopic()+summarizeCluster()+compareMemories()+tagHierarchy()+rebalance()+autoTag()+mergeClusters()+clusterHealth()+searchByEntity())
 11. **A2A Protocol Lab** - Agent-to-Agent通信协议实验 (✅ 零依赖Python实现, Server+Client+Federation Demo)
 
 ---
@@ -158,6 +158,15 @@ curl -X POST "https://api.tavily.com/search" \
 ---
 
 ## Recent Achievements
+
+### 2026-04-25
+- ✅ **Agent Memory Service v1.0-dev 续升** — 395→415 tests (+20)
+  - **clusterHealth(opts)**: 集群健康诊断(孤立检测/avgWeight/uniqueLayers/minClusterSize过滤), 5 tests
+  - **searchByEntity(entity, opts)**: 实体级检索(精确+模糊匹配/层级过滤/分页), 6 tests
+  - 零回滚率持续保持（连续14天）
+- ✅ **agent-role-orchestrator 修复+优化** — 0%→100% test pass (151/151)
+  - 修复3个broken suites: EventBus同步throw未catch、TaskQueue mock非确定性、Worker未initialize
+  - **23x性能优化**: 134s→6s (simulateDelay可配置化)
 
 ### 2026-04-24
 - ✅ **Agent Memory Service v1.0-dev 续升** — 371→395 tests (+24)
@@ -355,5 +364,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-04-24 02:00*
-*Next review: 2026-04-25*
+*Last updated: 2026-04-25 02:00*
+*Next review: 2026-04-26*

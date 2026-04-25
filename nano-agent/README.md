@@ -218,6 +218,7 @@ OpenAIBackend(api_key, base_url="...", model="gpt-3.5-turbo")
 ## 📚 更多文档
 
 - [教程 — 5 分钟上手](TUTORIAL.md) — 从 Hello Agent 到实战研究助理
+- [API 参考](API.md) — 完整的类、方法、参数文档
 
 ---
 

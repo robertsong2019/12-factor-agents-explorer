@@ -3786,6 +3786,37 @@ export class MemoryService {
     if (!Array.isArray(ids)) throw new Error('batchGet requires an array of ids');
     return ids.map(id => this.#store.get(id)).filter(Boolean);
   }
+
+  /**
+   * Top entities across all memories, ranked by frequency and weight
+   * @param {{limit?: number, layer?: string, minCount?: number}} opts
+   * @returns {Promise<{entity: string, count: number, avgWeight: number, topTags: string[]}[]>}
+   */
+  async topEntities(opts = {}) {
+    await this.#ensureLoaded();
+    const { limit = 10, layer, minCount = 1 } = opts;
+    const stats = new Map(); // entity -> { count, totalWeight, tags: Map<tag, count> }
+    for (const m of this.#store.all()) {
+      if (layer && m.layer !== layer) continue;
+      for (const e of (m.entities || [])) {
+        const s = stats.get(e) || { count: 0, totalWeight: 0, tags: new Map() };
+        s.count++;
+        s.totalWeight += (m.weight || 0);
+        for (const t of (m.tags || [])) s.tags.set(t, (s.tags.get(t) || 0) + 1);
+        stats.set(e, s);
+      }
+    }
+    return [...stats.entries()]
+      .filter(([, s]) => s.count >= minCount)
+      .map(([entity, s]) => ({
+        entity,
+        count: s.count,
+        avgWeight: Math.round((s.totalWeight / s.count) * 100) / 100,
+        topTags: [...s.tags.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([t]) => t),
+      }))
+      .sort((a, b) => b.count * b.avgWeight - a.count * a.avgWeight)
+      .slice(0, limit);
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────
