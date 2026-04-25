@@ -13,5 +13,5 @@
 - [x] **Tag system** — add/remove tags on archives, filter/search by tag ✅ 2026-04-21
 - [x] **Date-range listing** — filter listArchives by from/to dates ✅ 2026-04-21
 - [x] **Merge archives** — combine multiple sessions into one ✅ 2026-04-25
-- [ ] **Diff** — compare two archived sessions
+- [x] **Diff** — compare two archived sessions ✅ 2026-04-25
 - [ ] **Config file** — default export format, retention policy
