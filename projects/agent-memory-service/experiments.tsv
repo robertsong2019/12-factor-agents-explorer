@@ -43,3 +43,4 @@ timestamp	commit	metric	value	status	description
 2026-04-24T21:10:23+08:00	ab4f19c	test_pass_rate	400/400(100%)	keep	add memoryReport() diagnostic API +5 tests
 2026-04-24T21:12:20+08:00	af0f307	test_pass_rate	404/404(100%)	keep	add batchGet()+memoryReport() APIs +9 tests
 2026-04-25T00:09:44+08:00	4751755	test_count	409/409	keep	clusterHealth(opts) — cluster quality metrics (orphaned detection, avgWeight, uniqueLayers, minClusterSize filter). 5 new tests (404→409), ~35 lines src.
+2026-04-25T19:08:38+08:00	c8ccc9d	test_count	421/421	keep	topEntities() API — entity ranking by frequency*avgWeight. Supports limit, layer, minCount, topTags. 6 new tests (415→421), ~35 lines src.

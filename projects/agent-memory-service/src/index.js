@@ -3817,6 +3817,41 @@ export class MemoryService {
       .sort((a, b) => b.count * b.avgWeight - a.count * a.avgWeight)
       .slice(0, limit);
   }
+
+  /**
+   * Fuzzy tag search — find tags matching a query string
+   * @param {string} query - Search query
+   * @param {{limit?: number, minScore?: number}} opts
+   * @returns {Promise<{tag: string, score: number, memoryCount: number}[]>}
+   */
+  async tagSearch(query, opts = {}) {
+    await this.#ensureLoaded();
+    if (!query || typeof query !== 'string') return [];
+    const { limit = 10, minScore = 0.3 } = opts;
+    const q = query.toLowerCase();
+    const tagStats = new Map(); // tag -> count
+    for (const m of this.#store.all()) {
+      for (const t of (m.tags || [])) tagStats.set(t, (tagStats.get(t) || 0) + 1);
+    }
+    return [...tagStats.entries()]
+      .map(([tag, count]) => {
+        const lower = tag.toLowerCase();
+        let score = 0;
+        if (lower === q) score = 1.0;
+        else if (lower.startsWith(q)) score = 0.9;
+        else if (lower.includes(q)) score = 0.7;
+        else {
+          // character overlap score
+          let matched = 0;
+          for (const ch of q) { if (lower.includes(ch)) matched++; }
+          score = matched / Math.max(q.length, lower.length);
+        }
+        return { tag, score, memoryCount: count };
+      })
+      .filter(r => r.score >= minScore)
+      .sort((a, b) => b.score - a.score || b.memoryCount - a.memoryCount)
+      .slice(0, limit);
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────
