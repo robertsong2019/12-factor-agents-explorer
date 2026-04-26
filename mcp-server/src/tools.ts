@@ -229,6 +229,17 @@ export const OPENCLAW_TOOLS: Tool[] = [
       properties: {},
     },
   },
+  {
+    name: "file_info",
+    description: "Get detailed metadata for a file or directory: size, type, timestamps, permissions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the file or directory" },
+      },
+      required: ["path"],
+    },
+  },
 ];
 
 // Handler map — name → async function
@@ -247,6 +258,7 @@ export const toolHandlers: Record<string, (args: any) => Promise<any>> = {
   copy: executeCopy,
   create_directory: executeCreateDirectory,
   system_status: executeSystemStatus,
+  file_info: executeFileInfo,
 };
 
 // --- Handler implementations ---
@@ -528,6 +540,29 @@ async function executeCreateDirectory(args: any): Promise<any> {
 
   await mkdir(resolved, { recursive: true });
   return { tool: "create_directory", path, success: true, created: !existed };
+}
+
+async function executeFileInfo(args: any): Promise<any> {
+  const { path } = args;
+  const resolved = safePath(path);
+  let s;
+  try {
+    s = await stat(resolved);
+  } catch {
+    return { tool: "file_info", path, success: false, error: "File not found" };
+  }
+  return {
+    tool: "file_info",
+    path,
+    success: true,
+    type: s.isDirectory() ? "directory" : s.isFile() ? "file" : "other",
+    size: s.size,
+    sizeHuman: s.size < 1024 ? `${s.size}B` : s.size < 1024 * 1024 ? `${(s.size / 1024).toFixed(1)}KB` : `${(s.size / 1024 / 1024).toFixed(1)}MB`,
+    created: s.birthtime.toISOString(),
+    modified: s.mtime.toISOString(),
+    accessed: s.atime.toISOString(),
+    permissions: s.mode.toString(8).slice(-3),
+  };
 }
 
 async function executeSystemStatus(): Promise<any> {
