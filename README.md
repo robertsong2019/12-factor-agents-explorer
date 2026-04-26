@@ -327,13 +327,35 @@ npm test
 | mission-control | Node.js | [README](projects/mission-control/README.md) | [TUTORIAL](projects/mission-control/TUTORIAL.md) |
 | prompt-mgr | Python | [README](projects/prompt-mgr/README.md) | [TUTORIAL](projects/prompt-mgr/docs/TUTORIAL.md) |
 
+### 扩展项目文档
+
+| 项目 | 语言 | README | 教程 |
+|------|------|--------|------|
+| edge-agent-dashboard | Node.js | [README](edge-agent-dashboard/README.md) | [TUTORIAL](edge-agent-dashboard/TUTORIAL.md) |
+| edge-agent-micro | C/ESP32 | [README](edge-agent-micro/README.md) | [TUTORIAL](edge-agent-micro/TUTORIAL.md) |
+| agent-framework-integration | Python | [README](agent-framework-integration/README.md) | [TUTORIAL](agent-framework-integration/TUTORIAL.md) |
+| agent-trust-web | Node.js | [README](agent-trust-web/README.md) | [TUTORIAL](agent-trust-web/TUTORIAL.md) |
+| catalyst-agent-mesh | Go | [README](catalyst-agent-mesh/README.md) | [TUTORIAL](catalyst-agent-mesh/TUTORIAL.md) |
+| github-creative-project | Node.js | [README](github-creative-project/README.md) | [TUTORIAL](github-creative-project/TUTORIAL.md) |
+| nano-agent | Python | [README](nano-agent/README.md) | [TUTORIAL](nano-agent/TUTORIAL.md) |
+| better-ralph-core | Node.js | [README](better-ralph-core/README.md) | [TUTORIAL](better-ralph-core/TUTORIAL.md) |
+| mcp-server | Node.js | [README](mcp-server/README.md) | [TUTORIAL](mcp-server/TUTORIAL.md) |
+
 ### 技能文档
 
 | 技能 | 文档 | 功能 |
 |------|------|------|
-| akshare-finance | [SKILL.md](skills/akshare-finance/SKILL.md) | 财经数据 API |
-| finance-news-pro | [README.md](skills/finance-news-pro/README.md) | 新闻聚合 |
+| akshare-finance | [README.md](skills/akshare-finance/README.md) | 财经数据 API |
+| agent-orchestrator | [SKILL.md](skills/agent-orchestrator/SKILL.md) | 多 Agent 编排 (CrewAI/LangGraph) |
+| andrej-karpathy-perspective | [SKILL.md](skills/andrej-karpathy-perspective/SKILL.md) | Karpathy 思维框架 |
+| feifei-li-perspective | [SKILL.md](skills/feifei-li-perspective/SKILL.md) | 李飞飞思维框架 |
+| finance-news-pro | [README.md](skills/finance-news-pro/README.md) | 财经新闻聚合 |
+| hackernews | [README.md](skills/hackernews/README.md) | Hacker News 浏览搜索 |
 | memory-manager | [README.md](skills/memory-manager/README.md) | 记忆管理 |
+| nuwa-skill | [README.md](skills/nuwa-skill/README.md) | 人物 Skill 蒸馏生成 |
+| tech-briefing | [README.md](skills/tech-briefing/README.md) | 每日技术简报 |
+| better-ralph | [SKILL.md](skills/better-ralph/SKILL.md) | PRD 驱动自主编码 |
+| ralph-autonomous-agent-loop | [SKILL.md](skills/ralph-autonomous-agent-loop/SKILL.md) | 自主 Agent 循环 |
 
 ## 💡 使用场景
 

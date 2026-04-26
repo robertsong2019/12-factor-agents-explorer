@@ -48,3 +48,4 @@ timestamp	commit	metric	value	status	description
 2026-04-25T19:14:39+08:00	1b2d111	test_count	433/433	keep	memoryDiff(id1,id2) API — content similarity + tags/entities/layers/weights diff. 6 new tests (427→433), ~25 lines src.
 2026-04-26T00:00	f49296f	test_count	438/438	keep	clusterAutoMerge(opts) — auto-merge orphaned/small clusters by tag co-occurrence. Uses clusterHealth to find candidates, merges into best target. 5 new tests (433→438), ~40 lines src.
 2026-04-27T00:00	6534473	test_count	456/456	keep	searchByTimeRange(opts) — temporal search by createdAt with layer/tag/sort/pagination. 11 new tests (445→456), ~25 lines src. Build on key-development-2/3 (clusterAutoMerge + contentHistory).
+2026-04-27T01:00	b17714f	test_count	463/463	keep	contentRollback(id, versionIndex) — restore previous content version by index. Auto-snapshots current before rollback. 7 new tests (456→463), ~25 lines src. Builds on contentHistory/contentVersionDiff from k-d-3.

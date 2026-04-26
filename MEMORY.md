@@ -15,10 +15,10 @@
 
 ---
 
-## Current Focus (2026-04-26)
+## Current Focus (2026-04-27)
 
 ### Active Theme
-Autoresearch 方法论实践 - 连续18天零回滚率。**agent-role-orchestrator**: MemorySystem.consolidate() + ShortTermMemory.remove() → 154 tests。**prompt-router**: route_with_fallback() → 22 tests。**agent-context-store**: rename()+copy() → 17 tests。
+Autoresearch 方法论实践 - 连续20天零回滚率。AMS 达 463 tests。**04-27**: searchByTimeRange(opts) + contentRollback(id, versionIndex)。内容版本化三部曲完成: contentHistory → contentVersionDiff → contentRollback。
 
 ### Next Actions
 - [ ] **AMS 升级: Hindsight 风格四网络 + 图遍历检索** — 基于 [研究笔记](catalyst-research/exploration-notes/2026-04-26-hindsight-multi-strategy-memory.md)
@@ -165,6 +165,15 @@ curl -X POST "https://api.tavily.com/search" \
 ---
 
 ## Recent Achievements
+
+### 2026-04-27
+- ✅ **Agent Memory Service v1.0-dev 续升** - 445→463 tests (+18)
+  - **searchByTimeRange(opts)**: 时间范围查询，支持任意数值字段、layer/tag过滤、排序、分页，11 tests
+  - **contentRollback(id, versionIndex)**: 内容版本回滚，复用 update() 的自动快照机制，7 tests
+  - 内容版本化三部曲完成: view(contentHistory) → compare(contentVersionDiff) → restore(contentRollback)
+  - 零回滚率持续保持(连续20天)
+- ✅ **Autoresearch 实验循环 x2** — 连续20天零回滚率
+  - **AMS**: searchByTimeRange + contentRollback → 445→463 tests (+18)
 
 ### 2026-04-26
 - ✅ **Hindsight 多策略记忆架构深度研究** - SOTA Agent Memory (LongMemEval 91.4%)([笔记](catalyst-research/exploration-notes/2026-04-26-hindsight-multi-strategy-memory.md))
@@ -399,5 +408,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-04-26 19:25*
-*Next review: 2026-04-27*
+*Last updated: 2026-04-27 02:00*
+*Next review: 2026-04-28*
