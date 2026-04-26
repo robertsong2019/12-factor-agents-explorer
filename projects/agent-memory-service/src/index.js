@@ -3974,6 +3974,36 @@ export class MemoryService {
     const similarity = (from && to) ? ngramSimilarity(from.content, to.content) : 0;
     return { id, found: true, from, to, similarity };
   }
+
+  /**
+   * Search memories within a time range (by createdAt or updatedAt)
+   * @param {{start?: number, end?: number, field?: 'createdAt'|'updatedAt', layer?: string, tags?: string[], limit?: number, offset?: number, sort?: 'asc'|'desc'}} opts
+   * @returns {Promise<{total: number, results: object[]}>}
+   */
+  async searchByTimeRange(opts = {}) {
+    await this.#ensureLoaded();
+    const { start, end, field = 'createdAt', layer, tags, limit = 20, offset = 0, sort = 'desc' } = opts;
+    let matches = this.#store.all();
+    if (layer) matches = matches.filter(m => m.layer === layer);
+    if (start != null) matches = matches.filter(m => m[field] >= start);
+    if (end != null) matches = matches.filter(m => m[field] <= end);
+    if (tags && tags.length > 0) {
+      const tagSet = new Set(tags);
+      matches = matches.filter(m => (m.tags || []).some(t => tagSet.has(t)));
+    }
+    matches.sort((a, b) => sort === 'asc' ? a[field] - b[field] : b[field] - a[field]);
+    const total = matches.length;
+    const paged = matches.slice(offset, offset + limit);
+    return {
+      total,
+      offset,
+      limit,
+      field,
+      start: start ?? null,
+      end: end ?? null,
+      results: paged.map(m => ({ id: m.id, content: m.content, layer: m.layer, tags: m.tags, weight: m.weight, createdAt: m.createdAt, updatedAt: m.updatedAt })),
+    };
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────
