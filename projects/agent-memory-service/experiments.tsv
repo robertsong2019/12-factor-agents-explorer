@@ -54,3 +54,4 @@ timestamp	commit	metric	value	status	description
 2026-04-27T21:20	fcc4bad	test_count	477/477	keep	statsByFactType() + reclassifyFact(). 5 new tests (472→477). Hindsight Phase 1 complete.
 2026-04-27T21:30	3eb9b3a	test_count	335/335	keep	agent-task-cli: Cache resetStats() + entries(). 4 new tests (331→335).
 2026-04-27T21:45	c1ae30c	test_count	481/481	keep	AMS: bulkReclassify(opts). 4 new tests (477→481). Batch reclassify by factType/layer/tags.
+2026-04-28T00:00	9ec9af3	test_count	491/491	keep	searchByContent(pattern, opts) — regex/substring content search. Layer/tag filter, caseSensitive, pagination, invalid regex handling. 10 new tests (481→491), ~30 lines src. Builds on k-d-2 searchByTimeRange + k-d-3 contentRollback.
