@@ -186,4 +186,54 @@ describe('factType — Hindsight-inspired classification', () => {
       await assert.rejects(() => svc.reclassifyFact('nonexistent'), /Memory not found/);
     } finally { cleanup(); }
   });
+
+  it('bulkReclassify changes factType for matching memories', async () => {
+    const { svc, cleanup } = createService();
+    try {
+      await svc.init();
+      await svc.add({ content: 'Test A', factType: 'observation' });
+      await svc.add({ content: 'Test B', factType: 'observation' });
+      await svc.add({ content: 'Test C', factType: 'world' });
+
+      const result = await svc.bulkReclassify({ factType: 'observation', newType: 'experience' });
+      assert.equal(result.reclassified, 2);
+      assert.ok(result.results.every(r => r.newType === 'experience'));
+
+      // Verify persistence
+      const obs = await svc.searchByFactType('observation');
+      assert.equal(obs.total, 0);
+      const exp = await svc.searchByFactType('experience');
+      assert.equal(exp.total, 2);
+    } finally { cleanup(); }
+  });
+
+  it('bulkReclassify skips already-correct types', async () => {
+    const { svc, cleanup } = createService();
+    try {
+      await svc.init();
+      await svc.add({ content: 'A', factType: 'world' });
+      await svc.add({ content: 'B', factType: 'world' });
+      const result = await svc.bulkReclassify({ factType: 'world', newType: 'world' });
+      assert.equal(result.reclassified, 0);
+    } finally { cleanup(); }
+  });
+
+  it('bulkReclassify filters by layer', async () => {
+    const { svc, cleanup } = createService();
+    try {
+      await svc.init();
+      await svc.add({ content: 'A', layer: 'short', factType: 'observation' });
+      await svc.add({ content: 'B', layer: 'long', factType: 'observation' });
+      const result = await svc.bulkReclassify({ layer: 'short', newType: 'experience' });
+      assert.equal(result.reclassified, 1);
+    } finally { cleanup(); }
+  });
+
+  it('bulkReclassify requires newType', async () => {
+    const { svc, cleanup } = createService();
+    try {
+      await svc.init();
+      await assert.rejects(() => svc.bulkReclassify({}), /newType is required/);
+    } finally { cleanup(); }
+  });
 });

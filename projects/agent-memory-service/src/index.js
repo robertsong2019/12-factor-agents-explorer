@@ -4111,6 +4111,32 @@ export class MemoryService {
     await this.#store.save();
     return { id, oldType, newType: m.factType };
   }
+
+  /**
+   * Bulk reclassify memories by filter
+   * @param {{factType?: string, layer?: MemoryLayer, tags?: string[], newType: string}} opts
+   * @returns {Promise<{reclassified: number, results: Array<{id: string, oldType: string, newType: string}>}>}
+   */
+  async bulkReclassify(opts) {
+    await this.#ensureLoaded();
+    const { newType } = opts;
+    if (!newType) throw new Error('newType is required');
+    const valid = ['world', 'experience', 'opinion', 'observation'];
+    if (!valid.includes(newType)) throw new Error(`Invalid newType '${newType}'. Must be one of: ${valid.join(', ')}`);
+    let matches = this.#store.all();
+    if (opts.factType) matches = matches.filter(m => m.factType === opts.factType);
+    if (opts.layer) matches = matches.filter(m => m.layer === opts.layer);
+    if (opts.tags) matches = matches.filter(m => opts.tags.some(t => m.tags.includes(t)));
+    const results = [];
+    for (const m of matches) {
+      const oldType = m.factType || null;
+      if (oldType === newType) continue;
+      m.factType = newType;
+      results.push({ id: m.id, oldType, newType });
+    }
+    if (results.length) await this.#store.save();
+    return { reclassified: results.length, results };
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────

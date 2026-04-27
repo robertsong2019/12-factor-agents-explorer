@@ -7407,5 +7407,136 @@
     "accessCount": 0,
     "hash": "378bd617d7a1ff1e",
     "factType": "observation"
+  },
+  {
+    "id": "b3deec0c-40ef-4d6c-9f76-f4a67d578bba",
+    "content": "temp note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777296652957,
+    "accessedAt": 1777296652957,
+    "accessCount": 0,
+    "hash": "c55c0e28971aef8c",
+    "factType": "observation",
+    "expiresAt": 1777300252957
+  },
+  {
+    "id": "363b2106-54ea-41d0-a36a-6117eef86b25",
+    "content": "permanent note",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777296652968,
+    "accessedAt": 1777296652968,
+    "accessCount": 0,
+    "hash": "fc4288bf0b5295e9",
+    "factType": "observation"
+  },
+  {
+    "id": "c4a92eb9-2afc-4d37-8757-0431d1c9105a",
+    "content": "valid",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777296652982,
+    "accessedAt": 1777296652982,
+    "accessCount": 0,
+    "hash": "ec654fac9599f62e",
+    "factType": "observation",
+    "expiresAt": 1777300252982
+  },
+  {
+    "id": "74366e82-7013-471a-898b-669b8f7bf655",
+    "content": "no expiry",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777296652985,
+    "accessedAt": 1777296652985,
+    "accessCount": 0,
+    "hash": "dd848d4323a22313",
+    "factType": "observation"
+  },
+  {
+    "id": "877484ce-e39e-45b9-a57e-3aaf69f7f712",
+    "content": "future",
+    "layer": "short",
+    "tags": [],
+    "entities": [],
+    "weight": 1,
+    "createdAt": 1777296652998,
+    "accessedAt": 1777296652998,
+    "accessCount": 0,
+    "hash": "ebb3de8a3d9a4036",
+    "factType": "observation",
+    "expiresAt": 1777306651998
+  },
+  {
+    "id": "408b465f-5737-4a98-ad5e-20e282dc3a68",
+    "content": "alpha",
+    "layer": "L1",
+    "tags": [
+      "a",
+      "x"
+    ],
+    "entities": [],
+    "weight": 5,
+    "createdAt": 1777296657931,
+    "accessedAt": 1777296657931,
+    "accessCount": 0,
+    "hash": "8ed3f6ad685b959e",
+    "factType": "observation"
+  },
+  {
+    "id": "9c77001f-bc66-4549-893d-f3b32074db3c",
+    "content": "beta",
+    "layer": "L1",
+    "tags": [
+      "b",
+      "x"
+    ],
+    "entities": [],
+    "weight": 3,
+    "createdAt": 1777296657936,
+    "accessedAt": 1777296657936,
+    "accessCount": 0,
+    "hash": "f44e64e75f3948e9",
+    "factType": "observation"
+  },
+  {
+    "id": "c7211da9-b1b4-4e84-b3cc-861f24622cb9",
+    "content": "gamma",
+    "layer": "L2",
+    "tags": [
+      "c"
+    ],
+    "entities": [],
+    "weight": 7,
+    "createdAt": 1777296657938,
+    "accessedAt": 1777296657938,
+    "accessCount": 0,
+    "hash": "be9d587defa1f0c0",
+    "factType": "observation"
+  },
+  {
+    "id": "8ccf1cdb-8ed8-482f-a832-6b6553a1e7d5",
+    "content": "delta updated",
+    "layer": "L2",
+    "tags": [
+      "d",
+      "x"
+    ],
+    "entities": [],
+    "weight": 2,
+    "createdAt": 1777296657941,
+    "accessedAt": 1777296657941,
+    "accessCount": 0,
+    "hash": "378bd617d7a1ff1e",
+    "factType": "observation"
   }
 ]

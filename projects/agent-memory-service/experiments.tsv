@@ -51,3 +51,4 @@ timestamp	commit	metric	value	status	description
 2026-04-27T01:00	b17714f	test_count	463/463	keep	contentRollback(id, versionIndex) — restore previous content version by index. Auto-snapshots current before rollback. 7 new tests (456→463), ~25 lines src. Builds on contentHistory/contentVersionDiff from k-d-3.
 2026-04-27T21:00	01fca9a	test_count	463/463	keep	fix: ChangelogStore.since() >= race — changes() test no longer flaky on same-ms timestamps
 2026-04-27T21:10	272c5f6	test_count	472/472	keep	Hindsight Phase 1: classifyFact() + searchByFactType(). 9 new tests (463→472), auto-classify on add, manual override, pagination.
+2026-04-27T21:20	fcc4bad	test_count	477/477	keep	statsByFactType() + reclassifyFact(). 5 new tests (472→477). Hindsight Phase 1 complete.
