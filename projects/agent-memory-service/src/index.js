@@ -4067,6 +4067,50 @@ export class MemoryService {
     const results = matches.slice(offset, offset + limit);
     return { total, results };
   }
+
+  /**
+   * Get statistics grouped by factType
+   * @returns {Promise<{total: number, byFactType: Record<string, {count: number, avgWeight: number, byLayer: Record<string, number>}>, untyped: number}>}
+   */
+  async statsByFactType() {
+    await this.#ensureLoaded();
+    const all = this.#store.all();
+    const byFactType = {};
+    let untyped = 0;
+    for (const m of all) {
+      const ft = m.factType || '(untyped)';
+      if (!byFactType[ft]) byFactType[ft] = { count: 0, totalWeight: 0, byLayer: {} };
+      const g = byFactType[ft];
+      g.count++;
+      g.totalWeight += m.weight;
+      g.byLayer[m.layer] = (g.byLayer[m.layer] || 0) + 1;
+    }
+    // Compute avgWeight
+    for (const g of Object.values(byFactType)) {
+      g.avgWeight = g.count > 0 ? g.totalWeight / g.count : 0;
+      delete g.totalWeight;
+    }
+    untyped = byFactType['(untyped)']?.count || 0;
+    delete byFactType['(untyped)'];
+    return { total: all.length, byFactType, untyped };
+  }
+
+  /**
+   * Reclassify a memory's factType using current content
+   * @param {string} id
+   * @param {string} [factType] - explicit override, or omit to auto-classify
+   * @returns {Promise<{id: string, oldType: string, newType: string}>}
+   */
+  async reclassifyFact(id, factType) {
+    await this.#ensureLoaded();
+    const m = this.#store.get(id);
+    if (!m) throw new Error(`Memory not found: ${id}`);
+    const oldType = m.factType || null;
+    m.factType = factType || classifyFact(m.content);
+    this.#store.put(m);
+    await this.#store.save();
+    return { id, oldType, newType: m.factType };
+  }
 }
 
 // ─── Embedding Provider Interface ────────────────────────

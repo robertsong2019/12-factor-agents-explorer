@@ -120,4 +120,70 @@ describe('factType — Hindsight-inspired classification', () => {
       assert.equal(result.results.length, 0);
     } finally { cleanup(); }
   });
+
+  it('statsByFactType returns grouped statistics', async () => {
+    const { svc, cleanup } = createService();
+    try {
+      await svc.init();
+      await svc.add({ content: 'I love cats', factType: 'opinion' });
+      await svc.add({ content: 'I hate dogs', factType: 'opinion' });
+      await svc.add({ content: 'Paris is the capital of France', factType: 'world' });
+      await svc.add({ content: 'I built a house', factType: 'experience' });
+
+      const stats = await svc.statsByFactType();
+      assert.equal(stats.total, 4);
+      assert.equal(stats.byFactType.opinion.count, 2);
+      assert.equal(stats.byFactType.world.count, 1);
+      assert.equal(stats.byFactType.experience.count, 1);
+      assert.ok(stats.byFactType.opinion.avgWeight > 0);
+      assert.ok(stats.byFactType.opinion.byLayer.short > 0);
+      assert.equal(stats.untyped, 0);
+    } finally { cleanup(); }
+  });
+
+  it('statsByFactType counts untyped memories', async () => {
+    const { svc, cleanup } = createService();
+    try {
+      await svc.init();
+      // All memories get auto-classified now, so untyped should be 0
+      await svc.add({ content: 'Hello world' });
+      const stats = await svc.statsByFactType();
+      assert.equal(stats.total, 1);
+      assert.equal(stats.untyped, 0);
+      // The memory should be classified as something
+      const types = Object.keys(stats.byFactType);
+      assert.equal(types.length, 1);
+    } finally { cleanup(); }
+  });
+
+  it('reclassifyFact auto-reclassifies based on content', async () => {
+    const { svc, cleanup } = createService();
+    try {
+      await svc.init();
+      const m = await svc.add({ content: 'I think this is great', factType: 'world' });
+      assert.equal(m.factType, 'world');
+
+      const result = await svc.reclassifyFact(m.id);
+      assert.equal(result.oldType, 'world');
+      assert.equal(result.newType, 'opinion'); // 'I think' → opinion
+    } finally { cleanup(); }
+  });
+
+  it('reclassifyFact accepts explicit override', async () => {
+    const { svc, cleanup } = createService();
+    try {
+      await svc.init();
+      const m = await svc.add({ content: 'Hello world' });
+      const result = await svc.reclassifyFact(m.id, 'world');
+      assert.equal(result.newType, 'world');
+    } finally { cleanup(); }
+  });
+
+  it('reclassifyFact throws on missing id', async () => {
+    const { svc, cleanup } = createService();
+    try {
+      await svc.init();
+      await assert.rejects(() => svc.reclassifyFact('nonexistent'), /Memory not found/);
+    } finally { cleanup(); }
+  });
 });
