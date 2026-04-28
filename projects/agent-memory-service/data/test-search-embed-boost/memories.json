@@ -1,6 +1,6 @@
 [
   {
-    "id": "1e3cd668-0a57-495e-a5a0-843155573294",
+    "id": "e24477dc-8d78-4211-af22-816e2cd8a776",
     "content": "boostable memory content",
     "layer": "core",
     "tags": [
@@ -8,8 +8,8 @@
     ],
     "entities": [],
     "weight": 1,
-    "createdAt": 1777374807987,
-    "accessedAt": 1777374807987,
+    "createdAt": 1777376154999,
+    "accessedAt": 1777376154999,
     "accessCount": 0,
     "hash": "b4f1b77db5cb1148",
     "factType": "observation"

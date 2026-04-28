@@ -3892,6 +3892,34 @@ export class MemoryService {
   }
 
   /**
+   * Temporal decay search — rank memories by recency with configurable half-life
+   * Score = weight * decay(age, halfLife). Supports layer/tag filters.
+   * @param {{halfLife?: number, field?: string, referenceTime?: number, layer?: string, tags?: string[], limit?: number, offset?: number, minScore?: number}} opts
+   * @returns {Promise<{halfLife: number, referenceTime: number, total: number, results: {id: string, content: string, layer: string, weight: number, tags: string[], age: number, decayScore: number}[]}>}
+   */
+  async searchTemporal(opts = {}) {
+    await this.#ensureLoaded();
+    const { halfLife = 86400000, field = 'createdAt', referenceTime = Date.now(), layer, tags, limit = 20, offset = 0, minScore = 0 } = opts;
+    let matches = this.#store.all();
+    if (layer) matches = matches.filter(m => m.layer === layer);
+    if (tags && tags.length > 0) {
+      const tagSet = new Set(tags);
+      matches = matches.filter(m => (m.tags || []).some(t => tagSet.has(t)));
+    }
+    const scored = matches.map(m => {
+      const age = referenceTime - (m[field] || m.createdAt);
+      const decay = Math.pow(0.5, age / halfLife);
+      const decayScore = (m.weight || 1) * decay;
+      return { id: m.id, content: m.content, layer: m.layer, weight: m.weight, tags: m.tags, age, decayScore };
+    });
+    scored.sort((a, b) => b.decayScore - a.decayScore);
+    const filtered = scored.filter(r => r.decayScore >= minScore);
+    const total = filtered.length;
+    const paged = filtered.slice(offset, offset + limit);
+    return { halfLife, referenceTime, total, offset, limit, results: paged };
+  }
+
+  /**
    * Fuzzy tag search — find tags matching a query string
    * @param {string} query - Search query
    * @param {{limit?: number, minScore?: number}} opts

@@ -57,3 +57,4 @@ timestamp	commit	metric	value	status	description
 2026-04-28T00:00	9ec9af3	test_count	491/491	keep	searchByContent(pattern, opts) — regex/substring content search. Layer/tag filter, caseSensitive, pagination, invalid regex handling. 10 new tests (481→491), ~30 lines src. Builds on k-d-2 searchByTimeRange + k-d-3 contentRollback.
 timestamp	commit	metric	value	status	description
 2026-04-28T01:00	22e98a3	test_count	499/499	keep	contentBranch(id, opts) — fork memory as independent branch with bidirectional derived_from links. 8 new tests (491→499), ~25 lines src. Builds on k-d-2 searchByContent + k-d-3 contentRollback.
+2026-04-28T19:10	6d96b9a	test_count	509/509	keep	searchGraph(startEntity, opts) — entity-based multi-hop graph traversal via entity_index + LinkStore.traverse(). Supports depth/layer/minWeight/linkTypes/direction/limit. 10 new tests (499→509). Hindsight Phase 2 step 1.
