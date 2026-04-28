@@ -15,14 +15,14 @@
 
 ---
 
-## Current Focus (2026-04-27)
+## Current Focus (2026-04-28)
 
 ### Active Theme
-Autoresearch 方法论实践 - 连续20天零回滚率。AMS 达 463 tests。**04-27**: Hindsight Phase 1 完成 — classifyFact + searchByFactType + statsByFactType + reclassifyFact + bulkReclassify。481 tests。连续21天零回滚率。
+Autoresearch 方法论实践 - **连续22天零回滚率**。AMS 达 **499 tests**。04-27: Hindsight Phase 1 完成(481 tests)。04-28: searchByContent(regex/substring) + contentBranch(记忆分叉) → 499 tests。
 
 ### Next Actions
 - [ ] **AMS 升级: Hindsight 风格四网络 + 图遍历检索** — 基于 [研究笔记](catalyst-research/exploration-notes/2026-04-26-hindsight-multi-strategy-memory.md)
-  - Phase 1: MemoryUnit 增加 factType (world/experience/opinion/observation)，retain 自动分类
+  - Phase 1: ~~classifyFact + searchByFactType + statsByFactType + reclassifyFact + bulkReclassify~~ ✅ 完成
   - Phase 2: searchGraph() 基于 entity_index 多跳遍历，融入 RRF
   - Phase 3: searchTemporal() 时间衰减 + 范围过滤
   - Phase 4: Opinion 网络带 confidence，新证据驱动置信度演化
@@ -37,7 +37,7 @@ Autoresearch 方法论实践 - 连续20天零回滚率。AMS 达 463 tests。**0
   - Step 2: Supervisor router（LLM 驱动的动态路由）
   - Step 3: 文件系统 checkpoint（不需要 Redis）
   - **新发现**: Deep Agents (langchain-ai/deepagents) — 开箱即用 Agent Harness，trust-the-LLM 哲学，MCP 支持
-- [ ] AMS: searchByTimeRange(opts), contentRollback(id, versionIndex) — 下一批 API 候选
+- [x] ~~AMS: searchByTimeRange(opts), contentRollback(id, versionIndex)~~ ✅ 完成 (04-27)
 - [ ] AMS 生产化:EmbeddingProvider真实接入(ONNX/远程API), Docker化
 
 ### Core Projects
@@ -50,7 +50,7 @@ Autoresearch 方法论实践 - 连续20天零回滚率。AMS 达 463 tests。**0
 7. **agent-log** - OpenClaw 日志搜索/汇总 CLI (✅ 单文件 Bash,零依赖)
 8. **ctxgen** - AI 上下文文件生成器 (✅ v1.0, 纯Node.js零依赖, 支持4种目标格式)
 9. **tiny-agent-workshop** - 单文件 Agent 模式教学集 (✅ 7个模式: ReAct/ToolCall/Memory/Router/Guardrail/Chain/EdgeAgent)
-10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 481/481 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+自监控+搜索三阶段(BM25+Embedding+Unified RRF)+suggestTags()+healthScore()+autoMaintain()+searchSimilar()+findDuplicatePairs()+exportJSON/importJSON()+pruneLowWeight()+inspect()+clusterByTopic()+summarizeCluster()+compareMemories()+tagHierarchy()+rebalance()+autoTag()+mergeClusters()+clusterHealth()+searchByEntity()+topEntities()+tagSearch()+memoryDiff()+clusterAutoMerge()+contentHistory()+contentVersionDiff()+searchByTimeRange()+contentRollback()+classifyFact()+searchByFactType()+statsByFactType()+reclassifyFact()+bulkReclassify())
+10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 499/499 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+自监控+搜索三阶段(BM25+Embedding+Unified RRF)+suggestTags()+healthScore()+autoMaintain()+searchSimilar()+findDuplicatePairs()+exportJSON/importJSON()+pruneLowWeight()+inspect()+clusterByTopic()+summarizeCluster()+compareMemories()+tagHierarchy()+rebalance()+autoTag()+mergeClusters()+clusterHealth()+searchByEntity()+topEntities()+tagSearch()+memoryDiff()+clusterAutoMerge()+contentHistory()+contentVersionDiff()+searchByTimeRange()+contentRollback()+classifyFact()+searchByFactType()+statsByFactType()+reclassifyFact()+bulkReclassify()+searchByContent()+contentBranch())
 11. **A2A Protocol Lab** - Agent-to-Agent通信协议实验 (✅ 零依赖Python实现, Server+Client+Federation Demo)
 
 ---
@@ -177,14 +177,19 @@ curl -X POST "https://api.tavily.com/search" \
 
 ## Recent Achievements
 
+### 2026-04-28
+- ✅ **Agent Memory Service v1.0-dev 续升** - 481→499 tests (+18)
+  - **searchByContent(pattern, opts)**: regex/substring内容模式搜索，支持layer/tag过滤、大小写、分页、无效regex容错，10 tests
+  - **contentBranch(id, opts)**: 记忆分叉，创建独立副本+双向derived_from链接，支持链式分支，8 tests
+  - 搜索API全景: BM25(search)+向量(embedding)+融合(unified)+实体(entity)+时间(temporal)+事实类型(factType)+标签(tagSearch)+内容模式(content) — 8路检索
+  - 零回滚率持续保持(连续22天)
+
 ### 2026-04-27
-- ✅ **Agent Memory Service v1.0-dev 续升** - 445→463 tests (+18)
+- ✅ **Agent Memory Service v1.0-dev 续升** - 445→481 tests (+36)
   - **searchByTimeRange(opts)**: 时间范围查询，支持任意数值字段、layer/tag过滤、排序、分页，11 tests
   - **contentRollback(id, versionIndex)**: 内容版本回滚，复用 update() 的自动快照机制，7 tests
   - 内容版本化三部曲完成: view(contentHistory) → compare(contentVersionDiff) → restore(contentRollback)
-  - 零回滚率持续保持(连续20天)
-- ✅ **Autoresearch 实验循环 x4** — 连续21天零回滚率
-  - **AMS**: Hindsight Phase 1 — classifyFact + searchByFactType + statsByFactType + reclassifyFact + bulkReclassify → 463→481 tests (+18)
+  - **Hindsight Phase 1**: classifyFact + searchByFactType + statsByFactType + reclassifyFact + bulkReclassify → +18 tests
   - **agent-task-cli**: Cache resetStats + entries → 331→335 tests (+4)
   - 修复 ChangelogStore.since() 竞态条件(changes test flaky)
 
@@ -421,5 +426,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-04-27 02:00*
-*Next review: 2026-04-28*
+*Last updated: 2026-04-28 02:00*
+*Next review: 2026-04-29*

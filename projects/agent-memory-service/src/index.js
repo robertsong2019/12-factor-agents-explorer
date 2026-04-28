@@ -3847,6 +3847,51 @@ export class MemoryService {
   }
 
   /**
+   * Graph traversal search — start from an entity, follow links up to N hops
+   * Uses entity_index to find seed memories, then LinkStore.traverse() for multi-hop
+   * @param {string} startEntity - Entity name to start from
+   * @param {{depth?: number, linkTypes?: string[], direction?: 'out'|'in'|'both', limit?: number, layer?: string, minWeight?: number}} opts
+   * @returns {Promise<{startEntity: string, depth: number, seedCount: number, results: {id: string, content: string, layer: string, weight: number, entities: string[], tags: string[], hop: number, viaLink: object|null}[]}>}
+   */
+  async searchGraph(startEntity, opts = {}) {
+    await this.#ensureLoaded();
+    if (!startEntity || typeof startEntity !== 'string') throw new Error('searchGraph requires a startEntity string');
+    const { depth = 2, linkTypes, direction = 'both', limit = 20, layer, minWeight } = opts;
+    // Find seed memories by entity
+    const seeds = this.#store.byEntity(startEntity);
+    if (seeds.length === 0) return { startEntity, depth, seedCount: 0, results: [] };
+    // BFS from each seed, collect reachable memories
+    const seen = new Map(); // id -> { hop, viaLink }
+    for (const seed of seeds) {
+      seen.set(seed.id, { hop: 0, viaLink: null });
+      const traverseOpts = { depth, direction };
+      if (linkTypes) traverseOpts.types = linkTypes;
+      const reached = this.#links.traverse(seed.id, traverseOpts);
+      for (const [id, info] of reached) {
+        if (!seen.has(id)) seen.set(id, { hop: info.hop, viaLink: info.link });
+      }
+    }
+    // Build results
+    let results = [];
+    for (const [id, meta] of seen) {
+      const m = this.#store.get(id);
+      if (!m) continue;
+      if (layer && m.layer !== layer) continue;
+      if (minWeight !== undefined && (m.weight || 0) < minWeight) continue;
+      results.push({
+        id: m.id, content: m.content, layer: m.layer, weight: m.weight,
+        entities: m.entities, tags: m.tags, hop: meta.hop,
+        viaLink: meta.viaLink ? { id: meta.viaLink.id, type: meta.viaLink.type, source: meta.viaLink.source, target: meta.viaLink.target } : null,
+      });
+    }
+    // Sort: hop asc (closer first), then weight desc
+    results.sort((a, b) => a.hop - b.hop || (b.weight || 0) - (a.weight || 0));
+    const total = results.length;
+    results = results.slice(0, limit);
+    return { startEntity, depth, seedCount: seeds.length, total, limit, results };
+  }
+
+  /**
    * Fuzzy tag search — find tags matching a query string
    * @param {string} query - Search query
    * @param {{limit?: number, minScore?: number}} opts

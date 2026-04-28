@@ -1,4 +1,4 @@
-# HEARTBEAT.md - April 25, 2026 (Saturday)
+# HEARTBEAT.md - April 28, 2026 (Monday)
 
 ## 待办任务
 
@@ -9,7 +9,8 @@
 - [ ] **集成多Agent框架** - LangGraph Supervisor桥接OpenClaw原型
 
 ### 中优先级（本月）
-- [ ] AMS: searchByTimeRange(opts), contentRollback(id, versionIndex) — 下一批API
+- [x] ~~AMS: searchByTimeRange, contentRollback~~ ✅ (04-27)
+- [ ] AMS: memoryMerge(id1,id2) 冲突合并, contentVersion 持久化, searchByBranch(id)
 - [ ] Hindsight 多策略检索原型
 - [ ] Agent Trust Network Web UI
 - [ ] Edge Agent Runtime Dashboard
@@ -19,16 +20,15 @@
 - [ ] Agent Mesh Network P2P通信协议
 
 ## 系统状态
-- **AMS v1.0-dev**: 445/445 tests, 50个API已实现（clusterAutoMerge+contentHistory+contentVersionDiff已完成）
-- **agent-task-cli**: 282/282 tests
-- **agent-role-orchestrator**: 151/151 tests (已修复+23x优化)
-- **本周重点**: MCP Server 实现 + AMS 生产化
-- **cron**: 全部任务正常运行
-- **autoresearch**: 零回滚率持续保持（连续15天），445 tests
+- **AMS v1.0-dev**: 499/499 tests, 56个API (8路检索+内容版本化+Hindsight Phase 1+contentBranch)
+- **agent-task-cli**: 335/335 tests
+- **agent-role-orchestrator**: 151/151 tests
+- **本周重点**: MCP Server 实现 + AMS Phase 2 (searchGraph) + LangGraph bridge
+- **autoresearch**: 零回滚率持续保持（连续22天）
 
 ## 近期发现
-- AMS 集群管理流水线完整: clusterByTopic→summarize→health→autoMerge (闭环)
-- AMS 版本追踪已实现: contentHistory + contentVersionDiff（in-memory, v1）
-- MCP Server v2 研究完备: SDK v2 registerTool + Zod v4 + structuredContent，代码已就绪
-- 下一步突破点: MCP Server 实现 or AMS searchByTimeRange + contentRollback
+- AMS 8路检索完成: BM25+向量+RRF融合+实体+时间+事实类型+标签+内容模式
+- AMS 内容版本化完成: history→diff→rollback→branch (四部曲)
+- Hindsight Phase 1 完成: 四网络事实分类 (world/experience/opinion/observation)
+- 下一步突破点: MCP Server 实现 + AMS searchGraph (图遍历) + LangGraph bridge
 - Bug教训: `opts.x || default` → `?? default`（0是falsy值会误判）

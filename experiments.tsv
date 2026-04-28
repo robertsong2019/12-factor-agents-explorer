@@ -22,3 +22,4 @@ date	project	baseline_tests	baseline_pass	baseline_fail	after_tests	after_pass	a
 2026-04-25T03:00	catalyst-agent-mesh	182	207	+25	TaskScheduler reschedule/fail/overdue/stats/clear/next_batch edge cases, select_agents_for_task, ScheduledTask comparison, DesignAgent process	all pass	autoresearch cron
 2026-04-26T03:00	ai-dev-tools	22 pass + 2 broken	44/44 pass	fixed ESM mock (jest.unstable_mockModule + Proxy chalk), fixed async dir creation race condition	autoresearch cron
 2026-04-27T03:01:28+08:00	-	test_pass_rate	65/65 (was 58/58)	improve	better-ralph-core: added 7 tests for MemoryManager (to_dict, save_session_summary, persistence roundtrip, edge cases)
+2026-04-28T03:00	better-ralph-core	65	65	0	91	91	0	+26 tests	Added test_prd_manager_extended.py: add_story, remove_story, update_story, mark_story_incomplete, _check_dependencies_met, dependency chain, save_prd edge cases. Found bug: save_prd doesn't set file_path.
