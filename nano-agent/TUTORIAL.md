@@ -110,11 +110,22 @@ response = agent.run("我叫什么名字？我喜欢什么？")
 
 | 方法 | 说明 |
 |------|------|
-| `add(content, metadata)` | 添加一条记忆 |
-| `search(query, limit)` | 关键词搜索记忆 |
+| `add(content, metadata, tags)` | 添加一条记忆，可带标签 |
+| `search(query, limit, tags)` | 关键词 + 标签搜索记忆 |
 | `get_recent(n)` | 获取最近 n 条记忆 |
 | `get_all()` | 获取所有记忆 |
+| `count()` | 记忆条目数 |
+| `remove(index)` | 按索引删除 |
+| `update(index, content, metadata)` | 按索引更新 |
 | `clear()` | 清空记忆 |
+
+**标签过滤示例：**
+
+```python
+memory.add("用户偏好中文", tags=["preference"])
+memory.add("项目使用Python", tags=["project"])
+results = memory.search("用户", tags=["preference"])
+```
 
 ---
 

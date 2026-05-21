@@ -202,8 +202,12 @@ def my_function(param: str) -> str:
 Memory(max_entries=100, persistence_path=None)
 ```
 - `add(content, metadata)` — 添加记忆
-- `search(query, limit=5)` — 关键词搜索
+- `search(query, limit=5, tags=None)` — 关键词 + 标签搜索
 - `get_recent(n=5)` — 最近 n 条
+- `get_all()` — 全部记忆副本
+- `count()` — 记忆条目数
+- `remove(index)` — 按索引删除
+- `update(index, content, metadata)` — 按索引更新
 - `clear()` — 清空
 
 ### `LLMBackend`

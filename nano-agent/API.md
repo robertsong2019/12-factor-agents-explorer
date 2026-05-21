@@ -88,6 +88,37 @@ agent.reset()  # 清空本次会话的对话记录
 
 > 注意：`reset()` 只清空对话历史，不清空 Memory 中的长期记忆。
 
+#### `history(limit=10)`
+
+获取对话历史，返回最近 `limit` 条消息（包含 user 和 assistant）。
+
+```python
+msgs = agent.history(limit=5)
+for m in msgs:
+    print(f"{m['role']}: {m['content'][:50]}")
+```
+
+#### `turn_count` (property)
+
+返回当前对话的用户轮次数（即用户发言次数）。
+
+```python
+print(f"已对话 {agent.turn_count} 轮")
+```
+
+#### `on_step` (callback)
+
+可选的回调函数，每轮迭代结束时调用。接收一个字典参数：
+
+```python
+def on_step_callback(info):
+    print(f"第{info['iteration']}轮，工具: {info['tool_calls']}")
+
+agent.on_step = on_step_callback
+agent.run("搜索AI新闻")
+# 输出: 第1轮，工具: ['search']
+```
+
 ### 内部行为
 
 **系统提示构建顺序：**
@@ -188,6 +219,16 @@ schema = my_tool.to_dict()
 # {"name": "search", "description": "...", "parameters": {...}}
 ```
 
+#### `validate_args(**kwargs)`
+
+验证参数是否满足必填要求，返回错误列表（空列表=验证通过）。
+
+```python
+errors = my_tool.validate_args(query="test")
+if errors:
+    print(errors)  # ["缺少必要参数: query"]
+```
+
 ### 全局函数
 
 ```python
@@ -200,6 +241,7 @@ from nano_agent.tools import get_tool, list_tools, clear_tools
 | `list_tools()` | 列出所有已注册工具 |
 | `clear_tools()` | 清除所有已注册工具 |
 | `get_tool_from_func(func)` | 从函数获取其关联的 Tool 对象 |
+| `unregister_tool(name)` | 注销指定工具，返回是否成功 |
 
 ---
 
@@ -222,7 +264,7 @@ Memory(
 
 ### 方法
 
-#### `add(content, metadata=None)`
+#### `add(content, metadata=None, tags=None)`
 
 添加一条记忆。
 
@@ -230,7 +272,7 @@ Memory(
 memory.add("用户偏好中文回复", metadata={"type": "preference"})
 ```
 
-#### `search(query, limit=5)`
+#### `search(query, limit=5, tags=None)`
 
 关键词搜索记忆（不区分大小写）。
 
@@ -250,6 +292,30 @@ recent = memory.get_recent(10)
 #### `get_all()`
 
 获取所有记忆的副本。
+
+#### `count()`
+
+返回当前记忆条目数。
+
+```python
+print(f"共 {memory.count()} 条记忆")
+```
+
+#### `remove(index)`
+
+按索引删除一条记忆，返回是否成功。
+
+```python
+ok = memory.remove(0)  # 删除第一条
+```
+
+#### `update(index, content, metadata=None)`
+
+按索引更新记忆内容和元数据（时间戳自动更新），返回是否成功。
+
+```python
+memory.update(0, "新内容", metadata={"edited": True})
+```
 
 #### `clear()`
 
