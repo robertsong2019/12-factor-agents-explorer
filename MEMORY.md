@@ -18,12 +18,14 @@
 ## Current Focus (2026-05-19)
 
 ### Active Theme
-Autoresearch 方法论实践 - **连续63天零回滚率** 🏆。05-18 晚间: agent-observability 81→91 tests (+10, 3 cycles, 3 keep)。**三层响应性体系完成**: middleware(写入前变换) → storage → hooks(全局通知) → watchers(键级观察)。**lab/agent-observability 已进入实现阶段** (91 tests)。优先级: Agent Observability Lab > Hindsight Mini > A2A Trust > LangGraph Bridge。
+Autoresearch 方法论实践 - **连续67天零回滚率** 🏆。05-20/05-21 凌晨: agent-context-store 246→278 tests (+32, 4 cycles, 4 keep)。**agent-context-store API 趋于完备**: snapshot/restore + version-CAS + touch + incr/decr + expire_at + copy/swap。**工具链升级**: codegraph MCP 集成(省36.5% tokens) + Rust 工具链(rustc 1.95.0)。**多Agent路线图确定**: Phase1 LangGraph Bridge → Phase2 A2A Trust → Phase3 端到端。优先级: LangGraph Bridge > A2A Trust > Agent Observability。
 
 ### ⚠️ 关键发现
 - **agent-context-store 代码未持久化问题**: 05-08→05-11 的代码到97 tests但未持久化到 workspace，05-12 重建基线为69 tests。**教训: 每次实验完成后必须确认代码已持久化到 lab/ 目录并 git commit。**
 
 ### Next Actions
+- [ ] **创建 lab/openclaw-langgraph-bridge/** — Executor + createTask + StateSchema → 目标 5+ tests
+- [ ] **创建 lab/a2a-trust-prototype/** — ES256签名中间件 + Trust Score + Express middleware — [研究笔记](catalyst-research/exploration-notes/2026-05-20-a2a-trust-protocol.md) ✅ A2A签名规范+Trust Score多维模型+可运行原型代码
 - [ ] **Agent Observability Lab** — lab/agent-observability/ (Tracer + PolicyEngine + Evaluator) — **60/60 tests, 实现阶段**
   - 因果链接追踪 + 回归检测 + 批量策略评估 + 同步观察器
   - [研究笔记 Day 1](catalyst-research/exploration-notes/2026-05-15-agent-observability.md) ✅ OTel语义约定+三层评估模型
@@ -168,6 +170,10 @@ Autoresearch 方法论实践 - **连续63天零回滚率** 🏆。05-18 晚间: 
 ## Next Actions (Updated 2026-04-20)
 
 ### High Priority (本周完成)
+- [ ] **Context Engineering 应用到 agent-context-store** — 增加 `fold(key, summary)` context folding 原语 + `ToolClearingMiddleware`
+  - [研究笔记](catalyst-research/exploration-notes/2026-05-20-context-engineering-agents.md) ✅ 5核心概念+可运行ContextEngine(8/8 tests)+5关键洞察+项目关联
+  - **核心发现**: Context Drift 是生产 Agent 头号杀手(65%失败率); Context Folding(ICLR 2026)可10×压缩; Write/Select/Compress/Isolate 四策略框架
+  - **下一步**: agent-context-store 增加 `fold()` + ToolClearingMiddleware, 目标 8+ tests
 - [ ] **Agent Memory Service v1.0** - ✅ 334/334 tests。搜索三阶段+healthScore()+autoMaintain()+searchSimilar()完成。下一步: EmbeddingProvider真实接入(ONNX/远程API), 生产化
 - [ ] **实现 OpenClaw MCP Server** - ✅ 研究完成(2026-04-19 + 2026-04-20 深度研究)。完整实现模式已就绪:
   - 研究笔记: [技术选型](catalyst-research/exploration-notes/2026-04-18-mcp-server-typescript-streamable-http.md) + [实现模式](catalyst-research/exploration-notes/2026-04-19-mcp-server-implementation-patterns.md) + [深度研究(含可运行代码)](catalyst-research/exploration-notes/2026-04-20-mcp-server-streamable-http.md)
@@ -330,14 +336,39 @@ curl -X POST "https://api.tavily.com/search" \
 - ✅ **better-ralph-core story_digest** — 299→307 tests (+8)。单调用PRD状态快照 (commit fdb9e3a)
 - 连续59天零回滚率
 
+### 2026-05-20
+- ✅ **Context Engineering 深度研究** — Write/Select/Compress/Isolate 四策略 + Context Folding(ICLR 2026) + Context Drift 分析 + 可运行 ContextEngine (8/8 tests)
+  - [研究笔记](catalyst-research/exploration-notes/2026-05-20-context-engineering-agents.md) ✅
+  - 核心发现: Context Drift 65% 失败率(Forrester); Context Folding 10× 压缩(ICLR 2026); Memory Blocks(Letta)是最佳抽象
+- ✅ **工具链升级** — codegraph v0.7.11 MCP 集成(省36.5% tokens) + Rust 1.95.0 + coding-agent-launcher skill
+- ✅ **Rust mini-wget 原型** — Codex (gpt-5.5) 80K tokens 从零实现, 4/4 tests, cargo 全通过
+- ✅ **wget2 源码架构分析** — Codex + codegraph, 飞书文档发布
+- ✅ **多Agent编排路线图** — Phase1(LangGraph Bridge) → Phase2(A2A Trust) → Phase3(端到端流水线)
+- ✅ **agent-context-store 246→278** — snapshot/restore + version-CAS + incr/decr + expire_at + copy/swap (+32, 4 cycles)
+- 连续66天零回滚率
+
+### 2026-05-21
+- ✅ **agent-context-store 246→278** (+32, 4 cycles, 4 keep, 零回滚)
+  - snapshot/restore/from_snapshot 全状态序列化 +12
+  - version-based CAS + touch with changelog +11
+  - incr/decr (counter pair) + expire_at (absolute TTL) +10
+  - copy/swap (atomic clone + exchange) +12
+- ✅ **agent-context-store 278→309** (+31, 3 cycles, 3 keep, 零回滚)
+  - keys_matching + get_set + union/difference +10
+  - put_unique + rename_key + clear +11
+  - put_all + entries_by_tag + rekey +10
+- 连续68天零回滚率
+
+### 2026-05-19
+- ✅ **agent-context-store 6-cycle 深夜马拉松** — 202→246 tests (+44, 6 cycles, 6 keep, 零回滚)
+  - batch ops + CAS + TTL + 三层响应性(middleware→storage→hooks→watchers)
+- ✅ **A2A Trust ES256 补充研究** — jose ES256 + TrustEngine衰减 + Express中间件
+- 连续65天零回滚率
+
 ### 2026-05-18
-- ✅ **agent-context-store middleware pipeline** — 186→194 tests (+8)。use()注册有序变换，put()前执行 (commit df236dd)
-- ✅ **agent-context-store key watchers** — 194→202 tests (+8)。watch/unwatch键级观察者 (commit 334f9ae)
-- ✅ **agent-observability 3-cycle evening** — 81→91 tests (+10, 3 cycles, 3 keep, 零回滚)
-  - Cycle 1: Tracer.filter+groupByOperation, PolicyEngine.importRules, AgentObserver.getErrorRate (+4)
-  - Cycle 2: Tracer.spanCountByStatus, Evaluator.topFailures, AgentObserver.observeAsync (+3)
-  - Cycle 3: Tracer.clear, PolicyEngine.ruleNames, Evaluator.dimensionNames (+3)
-  - 773→861 lines (commits d556e3a/5023827/46fa728)
+- ✅ **agent-context-store middleware pipeline** — 186→194 tests (+8) (commit df236dd)
+- ✅ **agent-context-store key watchers** — 194→202 tests (+8) (commit 334f9ae)
+- ✅ **agent-observability 3-cycle evening** — 81→91 tests (+10, 3 cycles, 3 keep)
 - 连续61天零回滚率
 
 ### 2026-05-16 (凌晨)
@@ -771,5 +802,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-05-19 02:00*
-*Next review: 2026-05-20*
+*Last updated: 2026-05-21 02:00*
+*Next review: 2026-05-22*
