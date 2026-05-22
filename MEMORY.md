@@ -18,14 +18,14 @@
 ## Current Focus (2026-05-19)
 
 ### Active Theme
-Autoresearch 方法论实践 - **连续67天零回滚率** 🏆。05-20/05-21 凌晨: agent-context-store 246→278 tests (+32, 4 cycles, 4 keep)。**agent-context-store API 趋于完备**: snapshot/restore + version-CAS + touch + incr/decr + expire_at + copy/swap。**工具链升级**: codegraph MCP 集成(省36.5% tokens) + Rust 工具链(rustc 1.95.0)。**多Agent路线图确定**: Phase1 LangGraph Bridge → Phase2 A2A Trust → Phase3 端到端。优先级: LangGraph Bridge > A2A Trust > Agent Observability。
+Autoresearch 方法论实践 - **连续69天零回滚率** 🏆。05-21/05-22 凌晨: agent-context-store 309→370 tests (+61, overnight marathon)。**agent-context-store API 趋于完备**: merge_content + get_or_create + touch_many + incr/decr + expire_at + copy/swap + keys_matching + union/difference + put_unique + rename_key + clear + put_all + entries_by_tag + rekey。**工具链升级**: codegraph MCP 集成(省36.5% tokens) + Rust 工具链(rustc 1.95.0)。**多Agent路线图确定**: Phase1 LangGraph Bridge → Phase2 A2A Trust → Phase3 端到端。优先级: LangGraph Bridge > A2A Trust > Agent Observability。
 
 ### ⚠️ 关键发现
 - **agent-context-store 代码未持久化问题**: 05-08→05-11 的代码到97 tests但未持久化到 workspace，05-12 重建基线为69 tests。**教训: 每次实验完成后必须确认代码已持久化到 lab/ 目录并 git commit。**
 
 ### Next Actions
 - [ ] **创建 lab/openclaw-langgraph-bridge/** — Executor + createTask + StateSchema → 目标 5+ tests
-- [ ] **创建 lab/a2a-trust-prototype/** — ES256签名中间件 + Trust Score + Express middleware — [研究笔记](catalyst-research/exploration-notes/2026-05-20-a2a-trust-protocol.md) ✅ A2A签名规范+Trust Score多维模型+可运行原型代码
+- [ ] **创建 lab/a2a-trust-prototype/** — ES256签名中间件 + Trust Score + Express middleware — [研究笔记v2](catalyst-research/exploration-notes/2026-05-22-a2a-protocol-trust.md) ✅ 完整 A2A spec 分析 + AgentGraph 签名证明模式 + DID/JWKS 认证 + 可运行中间件代码模板
 - [ ] **Agent Observability Lab** — lab/agent-observability/ (Tracer + PolicyEngine + Evaluator) — **60/60 tests, 实现阶段**
   - 因果链接追踪 + 回归检测 + 批量策略评估 + 同步观察器
   - [研究笔记 Day 1](catalyst-research/exploration-notes/2026-05-15-agent-observability.md) ✅ OTel语义约定+三层评估模型
@@ -40,6 +40,8 @@ Autoresearch 方法论实践 - **连续67天零回滚率** 🏆。05-20/05-21 �
   - **[05-18 更新]** 2026 Q2 深度研究 → [笔记](catalyst-research/exploration-notes/2026-05-18-structured-output-toolkit.md) ✅ 四代演进+三层可靠性架构+Provider对比+可运行SchemaCache+StructuredLLMClient
   - **关键发现**: Validation Sandwich(三层验证不可省略); Schema TTL ~120s 需预热; Schema Complexity Tax(20+字段降50% tok/s); Multi-Provider fallback 是生产必需品
   - **05-18 新洞察**: 多步Agent中结构化失败指数放大(12步×5%=46%失败率); Provider差异正在收敛; SchemaCache应追踪质量指标做优化反馈循环
+  - **[05-21 更新]** 2026 深度研究 v3 → [笔记](catalyst-research/exploration-notes/2026-05-21-structured-output-toolkit.md) ✅ 2026现状+Provider抽象+完整可运行TypeScript原型(StructuredLLMClient+SchemaCache)
+  - **05-21 新洞察**: 2026年structured output已成标配(OpenAI/Anthropic/Gemini原生支持); SchemaCache是关键差异化组件(其他框架缺失); Validation+Retry > Pure Constrained Decoding; Provider抽象层应尽量薄
   - **下一步**: 创建 lab/structured-output-toolkit/ — 集成真实 OpenAI/Anthropic SDK, 目标 50+ tests
 - [ ] **A2A Trust Prototype** — lab/a2a-trust-prototype/
   - [研究笔记 v4 (2026-05-19 六层信任模型)](catalyst-research/exploration-notes/2026-05-19-a2a-trust-protocol.md) ✅ **原生crypto ES256** + TrustScorer五维加权 + Express中间件 + **全部断言通过**
@@ -80,8 +82,9 @@ Autoresearch 方法论实践 - **连续67天零回滚率** 🏆。05-20/05-21 �
   - CLI-Hub 社区模式与 ClawHub 互补
 - [ ] **Hindsight Mini** — lab/hindsight-mini/ 轻量级 agent 自反思引擎
   - [研究笔记](catalyst-research/exploration-notes/2026-05-13-hindsight-mini.md) ✅ AgentHER + Reflexion + SE-Agent 综合 → 可运行 TypeScript HindsightMini 类(失败检测+反思生成+HER重标+教训提取)
-  - **关键发现**: HER 本质是数据增强(prompt-level HER 可不微调); thought-action misalignment 是头号杀手; 跨轨迹模式识别>单次反思; 天然集成 agent-context-store + agent-memory-graph
-  - **下一步**: 创建 lab/hindsight-mini/ — 接入 agent-context-store 持久化 + OpenClaw agent 循环集成
+  - [深度研究 2026-05-22](catalyst-research/exploration-notes/2026-05-22-hindsight-replay-llm-agents.md) ✅ AgentHER 四阶段管线详解 + 可运行 Python HindsightReplayStore + ERL heuristic extraction
+  - **关键发现**: HER 本质是数据增强(prompt-level HER 可不微调); thought-action misalignment 是头号杀手; 跨轨迹模式识别>单次反思; 天然集成 agent-context-store + agent-memory-graph; AgentHER 报告 3.7x 数据增长; severity weighting 是质量守门员
+  - **下一步**: 创建 lab/hindsight-mini/ — 基于 HindsightReplayStore Python 原型，接入 agent-context-store 持久化 + OpenClaw agent 循环集成
 - [ ] **Gossip Discovery Prototype** — 基于研究笔记，加入DID验证+A2A Trust评分
   - [研究笔记](catalyst-research/exploration-notes/2026-05-05-agent-federation-discovery.md) ✅ DUADP+GEACL+双层Churn+可运行Gossip代码
   - **核心发现**: DUADP(DNS for AI)+Gossip是A2A的发现层补丁;双层Churn(node+agent)是Agent特有挑战
@@ -357,7 +360,30 @@ curl -X POST "https://api.tavily.com/search" \
   - keys_matching + get_set + union/difference +10
   - put_unique + rename_key + clear +11
   - put_all + entries_by_tag + rekey +10
+- ✅ **Structured Output Toolkit v3 深度研究** — 2026现状+Provider抽象+完整TypeScript原型(10/10 tests)
 - 连续68天零回滚率
+
+### 2026-05-22
+- ✅ **agent-context-store evening experiment cycles** — 370→398 tests (+28, 3 cycles, 3 keep, 零回滚)
+  - content_equals + find_keys + batch_touch (+9)
+  - content_replace + keys_starting_with + map_values (+11)
+  - content_len + sort_by (+8)
+- ✅ **agent-context-store 2nd evening cycles** — 398→419 tests (+21, 3 cycles, 3 keep, 零回滚)
+  - for_each + first_by_tag + content_stats (+9)
+  - rename_key + ensure + shuffle (+8)
+  - content_matches + batch_content_replace + tag_count (+9)
+- 连续71天零回滚率
+
+### 2026-05-22 (凌晨)
+- ✅ **agent-context-store overnight marathon** — 309→370 tests (+61, 零回滚)
+  - incr/decr + expire_at + get_numeric (计数器三件套) +12
+  - merge_content + get_or_create + touch_many (累积+懒初始化+批量刷新) +13
+  - 其他 overnight cycles +36 (详情见 key-development logs)
+- ✅ **agent-context-store overnight marathon** — 309→370 tests (+61, 零回滚)
+  - incr/decr + expire_at + get_numeric (计数器三件套) +12
+  - merge_content + get_or_create + touch_many (累积+懒初始化+批量刷新) +13
+  - 其他 overnight cycles +36 (详情见 key-development logs)
+- 连续69天零回滚率
 
 ### 2026-05-19
 - ✅ **agent-context-store 6-cycle 深夜马拉松** — 202→246 tests (+44, 6 cycles, 6 keep, 零回滚)
@@ -802,5 +828,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-05-21 02:00*
-*Next review: 2026-05-22*
+*Last updated: 2026-05-22 02:00*
+*Next review: 2026-05-23*
