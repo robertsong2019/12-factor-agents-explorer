@@ -1,45 +1,129 @@
 {
-  "updatedAt": "2026-05-22T06:00:00+08:00",
+  "updatedAt": "2026-05-23T06:00:00+08:00",
   "generatedBy": "Catalyst",
   "cronJobs": [
-    {"id":"f38e0365","name":"dashboard-update-morning","schedule":"0 6 * * *","next":"~24h","last":"now","status":"running"},
-    {"id":"9b2a8701","name":"github-trending-daily","schedule":"0 7 * * * @ Asia/Shanghai","next":"in 60m","last":"23h ago","status":"ok"},
-    {"id":"2c714952","name":"github-trending-deep","schedule":"0 8 * * * @ Asia/Shanghai","next":"in 2h","last":"22h ago","status":"ok"},
-    {"id":"610a8d6d","name":"github-creative-evening","schedule":"0 19 * * *","next":"in 13h","last":"11h ago","status":"ok"},
-    {"id":"265091b6","name":"deep-exploration-evening","schedule":"0 20 * * *","next":"in 14h","last":"10h ago","status":"ok"},
-    {"id":"bb46cb70","name":"deep-exploration-evening-utc","schedule":"0 12 * * * UTC","next":"in 14h","last":"10h ago","status":"ok"},
-    {"id":"13a2f284","name":"code-lab-evening","schedule":"0 21 * * *","next":"in 15h","last":"9h ago","status":"ok"},
-    {"id":"ce2fb615","name":"tool-development-evening","schedule":"0 22 * * *","next":"in 16h","last":"8h ago","status":"ok"},
-    {"id":"78eac6fc","name":"key-development-1","schedule":"0 23 * * *","next":"in 17h","last":"7h ago","status":"ok"},
-    {"id":"88679f9e","name":"key-development-2","schedule":"0 0 * * *","next":"in 18h","last":"6h ago","status":"ok"},
-    {"id":"b0fd7e8d","name":"key-development-3","schedule":"0 1 * * *","next":"in 19h","last":"5h ago","status":"ok"},
-    {"id":"fd0515b0","name":"knowledge-organization","schedule":"0 2 * * *","next":"in 20h","last":"4h ago","status":"ok"},
-    {"id":"f7510f1f","name":"project-testing-morning","schedule":"0 3 * * *","next":"in 21h","last":"3h ago","status":"ok"},
-    {"id":"77a5bcc6","name":"documentation-morning","schedule":"0 4 * * *","next":"in 22h","last":"2h ago","status":"ok"},
-    {"id":"686ec55c","name":"essay-generation-morning","schedule":"0 5 * * *","next":"in 23h","last":"1h ago","status":"ok"}
+    {
+      "id": "f38e0365",
+      "name": "dashboard-update-morning",
+      "schedule": "0 6 * * *",
+      "next": "~24h",
+      "last": "now",
+      "status": "running"
+    },
+    {
+      "id": "9b2a8701",
+      "name": "github-trending-daily",
+      "schedule": "0 7 * * * @ Asia/Shanghai",
+      "next": "in 60m",
+      "last": "23h ago",
+      "status": "ok"
+    },
+    {
+      "id": "2c714952",
+      "name": "github-trending-deep",
+      "schedule": "0 8 * * * @ Asia/Shanghai",
+      "next": "in 2h",
+      "last": "22h ago",
+      "status": "ok"
+    },
+    {
+      "id": "610a8d6d",
+      "name": "github-creative-evening",
+      "schedule": "0 19 * * *",
+      "next": "in 13h",
+      "last": "11h ago",
+      "status": "ok"
+    },
+    {
+      "id": "265091b6",
+      "name": "deep-exploration-evening",
+      "schedule": "0 20 * * *",
+      "next": "in 14h",
+      "last": "10h ago",
+      "status": "ok"
+    },
+    {
+      "id": "bb46cb70",
+      "name": "deep-exploration-evening-utc",
+      "schedule": "0 12 * * * UTC",
+      "next": "in 14h",
+      "last": "10h ago",
+      "status": "ok"
+    },
+    {
+      "id": "13a2f284",
+      "name": "code-lab-evening",
+      "schedule": "0 21 * * *",
+      "next": "in 15h",
+      "last": "9h ago",
+      "status": "ok"
+    },
+    {
+      "id": "ce2fb615",
+      "name": "tool-development-evening",
+      "schedule": "0 22 * * *",
+      "next": "in 16h",
+      "last": "8h ago",
+      "status": "ok"
+    },
+    {
+      "id": "78eac6fc",
+      "name": "key-development-1",
+      "schedule": "0 23 * * *",
+      "next": "in 17h",
+      "last": "7h ago",
+      "status": "ok"
+    },
+    {
+      "id": "88679f9e",
+      "name": "key-development-2",
+      "schedule": "0 0 * * *",
+      "next": "in 18h",
+      "last": "6h ago",
+      "status": "ok"
+    },
+    {
+      "id": "b0fd7e8d",
+      "name": "key-development-3",
+      "schedule": "0 1 * * *",
+      "next": "in 19h",
+      "last": "5h ago",
+      "status": "ok"
+    },
+    {
+      "id": "fd0515b0",
+      "name": "knowledge-organization",
+      "schedule": "0 2 * * *",
+      "next": "in 20h",
+      "last": "4h ago",
+      "status": "ok"
+    },
+    {
+      "id": "f7510f1f",
+      "name": "project-testing-morning",
+      "schedule": "0 3 * * *",
+      "next": "in 21h",
+      "last": "3h ago",
+      "status": "ok"
+    },
+    {
+      "id": "77a5bcc6",
+      "name": "documentation-morning",
+      "schedule": "0 4 * * *",
+      "next": "in 22h",
+      "last": "2h ago",
+      "status": "ok"
+    },
+    {
+      "id": "686ec55c",
+      "name": "essay-generation-morning",
+      "schedule": "0 5 * * *",
+      "next": "in 23h",
+      "last": "1h ago",
+      "status": "ok"
+    }
   ],
-  "activeSessions": 15,
-  "sessions": [
-    {"key":"cron:dashboard-update-morning","lastActive":"now","model":"glm-5.1","usage":"18%"},
-    {"key":"cron:github-trending-daily","lastActive":"23h ago","model":"glm-5.1","usage":"13%"},
-    {"key":"cron:github-trending-deep","lastActive":"22h ago","model":"glm-5.1","usage":"13%"},
-    {"key":"subag:689a31","lastActive":"4d ago","model":"glm-5","usage":"17%"},
-    {"key":"subag:f83b86","lastActive":"4d ago","model":"glm-5","usage":"16%"},
-    {"key":"wecom:uosong","lastActive":"49d ago","model":"glm-5.1","usage":"9%"},
-    {"key":"cron:617ba5","lastActive":"62d ago","model":"glm-5","usage":"26%"},
-    {"key":"cron:48ca23","lastActive":"62d ago","model":"glm-5","usage":"32%"},
-    {"key":"cron:a813ab","lastActive":"62d ago","model":"glm-5","usage":"27%"},
-    {"key":"cron:693e2c","lastActive":"62d ago","model":"glm-5","usage":"17%"},
-    {"key":"cron:ad56c0","lastActive":"62d ago","model":"glm-5","usage":"14%"},
-    {"key":"cron:ccd6d5","lastActive":"62d ago","model":"glm-5","usage":"12%"},
-    {"key":"cron:14bec3","lastActive":"62d ago","model":"glm-5","usage":"17%"},
-    {"key":"cron:0e2e8c","lastActive":"63d ago","model":"glm-5","usage":"11%"},
-    {"key":"wecom:4yx4aa","lastActive":"64d ago","model":"glm-5","usage":"7%"}
-  ],
-  "systemHealth": {
-    "allCronOk": true,
-    "totalCronJobs": 15,
-    "cronCoverage": "24h round-the-clock",
-    "errors": []
-  }
+  "totalCronJobs": 15,
+  "allCronHealthy": true,
+  "dayOfWeek": "Saturday"
 }
