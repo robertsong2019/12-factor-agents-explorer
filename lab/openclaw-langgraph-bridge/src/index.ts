@@ -41,3 +41,5 @@ export { throttle } from "./throttle.js";
 export type { ThrottleConfig } from "./throttle.js";
 export { seal, isSealed, unseal } from "./seal.js";
 export type { SealConfig } from "./seal.js";
+export { AgentPool, createCodeWorkflow } from "./multi-agent.js";
+export type { AgentRole, Task, OrchestratorResult, AgentPoolConfig, CodeWorkflowConfig } from "./multi-agent.js";
