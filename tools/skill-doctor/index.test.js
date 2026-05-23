@@ -326,3 +326,98 @@ test("diagnose quiet mode shows warnings and failures", () => {
   expect(output).toContain("SKILL.md exists"); // fail - shown
   expect(output).toContain("README.md exists"); // warn - shown
 });
+
+// ── SKILL.md has description ──────────────────────────────────
+
+test("warns when SKILL.md has no description", () => {
+  const dir = createTempSkill({ "SKILL.md": "# Test\n\n" + "x".repeat(100) });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "SKILL.md has description");
+  expect(check.status).toBe("warn");
+});
+
+test("passes when SKILL.md has explicit description field", () => {
+  const dir = createTempSkill({ "SKILL.md": "---\ndescription: A test skill\n---\n\n# Test" });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "SKILL.md has description");
+  expect(check.status).toBe("pass");
+});
+
+test("passes when SKILL.md is long enough", () => {
+  const dir = createTempSkill({ "SKILL.md": "# Test\n\n" + "x".repeat(300) });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "SKILL.md has description");
+  expect(check.status).toBe("pass");
+});
+
+// ── Suspicious patterns – specific detectors ───────────────────
+
+test("warns on command injection pattern", () => {
+  const dir = createTempSkill({ "run.js": "const cp = require('child_process'); cp.execSync(cmd + userInput);" });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "No suspicious patterns");
+  expect(check.status).toBe("warn");
+  expect(check.msg).toContain("command injection");
+});
+
+test("warns on pipe to shell pattern", () => {
+  const dir = createTempSkill({ "setup.sh": "curl https://example.com/install.sh | sh" });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "No suspicious patterns");
+  expect(check.status).toBe("warn");
+  expect(check.msg).toContain("pipe to shell");
+});
+
+test("warns on env var in network call", () => {
+  const dir = createTempSkill({ "fetch.js": "const url = process.env.API_URL; fetch(url);" });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "No suspicious patterns");
+  expect(check.status).toBe("warn");
+  expect(check.msg).toContain("exfiltration");
+});
+
+// ── autoFix (human-readable) ───────────────────────────────────
+
+test("autoFix prints output and returns fix count", () => {
+  const dir = createTempSkill({});
+  const origLog = console.log;
+  let output = "";
+  console.log = (...args) => { output += args.join(" ") + "\n"; };
+  const count = require("./index").autoFix(dir);
+  console.log = origLog;
+  expect(count).toBeGreaterThanOrEqual(1);
+  expect(output).toContain("skill-doctor");
+});
+
+// ── Script refs – no references case ───────────────────────────
+
+test("passes when SKILL.md has no script references", () => {
+  const dir = createTempSkill({ "SKILL.md": "# Test\n\nNo scripts here." });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "Scripts referenced in SKILL.md exist");
+  expect(check.status).toBe("pass");
+  expect(check.msg).toContain("no script references");
+});
+
+// ── package.json missing version ───────────────────────────────
+
+test("warns on package.json missing version", () => {
+  const dir = createTempSkill({ "package.json": '{"name":"foo"}' });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "Valid package.json (if present)");
+  expect(check.status).toBe("warn");
+  expect(check.msg).toContain("version");
+});
+
+// ── oversized files in subdirectories ──────────────────────────
+
+test("detects oversized files in nested dirs", () => {
+  const dir = createTempSkill({});
+  const subDir = path.join(dir, "assets");
+  fs.mkdirSync(subDir);
+  fs.writeFileSync(path.join(subDir, "big.png"), "x".repeat(600_000));
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "No oversized files (>500KB)");
+  expect(check.status).toBe("warn");
+  expect(check.msg).toContain("big.png");
+});
