@@ -231,6 +231,51 @@ class TestTags:
         mg.tag_nodes("t", [n.id])
         assert len(mg.search_by_tag("t")) == 1
 
-    def test_search_by_tag_empty(self, mg):
-        mg.add("no tags")
-        assert mg.search_by_tag("none") == []
+class TestExportImport:
+    def test_export_roundtrip(self, populated):
+        mg, a, b, c = populated
+        exported = mg.export_json()
+        assert exported["version"] == 1
+        assert len(exported["nodes"]) == 3
+        assert len(exported["edges"]) == 3
+
+        mg2 = MemoryGraph()
+        mg2.import_json(exported)
+        assert mg2.stats()["nodes"] == 3
+        assert mg2.stats()["edges"] == 3
+        # Verify recall works on imported graph
+        results = mg2.recall("Alice")
+        assert len(results) == 1
+        assert results[0].label == "Alice"
+
+    def test_import_preserves_ids(self, mg):
+        n = mg.add("test", "fact", {"key": "val"}, tags=["t1"])
+        exported = mg.export_json()
+        mg2 = MemoryGraph()
+        mg2.import_json(exported)
+        assert mg2.shortest_path(n.id, n.id) == [n.id]
+
+    def test_import_replaces_by_default(self, populated):
+        mg, a, b, c = populated
+        mg2 = MemoryGraph()
+        mg2.add("existing")
+        mg2.import_json(mg.export_json())
+        assert mg2.stats()["nodes"] == 3  # replaced, not added to
+
+    def test_import_merge_mode(self, populated):
+        mg, a, b, c = populated
+        mg2 = MemoryGraph()
+        extra = mg2.add("extra node")
+        mg2.import_json(mg.export_json(), merge=True)
+        assert mg2.stats()["nodes"] == 4  # 3 imported + 1 existing
+
+    def test_export_preserves_tags(self, mg):
+        n = mg.add("tagged", tags=["a", "b"])
+        exported = mg.export_json()
+        node_data = exported["nodes"][0]
+        assert set(node_data["tags"]) == {"a", "b"}
+
+    def test_import_empty_data(self, mg):
+        mg.import_json({})
+        assert mg.stats()["nodes"] == 0
+

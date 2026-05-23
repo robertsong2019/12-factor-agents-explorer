@@ -264,6 +264,44 @@ class MemoryGraph:
                 queue.append((nid, new_path))
         return None
 
+    def export_json(self) -> dict:
+        """Export entire graph as a JSON-serializable dict."""
+        nodes = []
+        for r in self.conn.execute("SELECT * FROM nodes").fetchall():
+            nodes.append({
+                "id": r["id"], "label": r["label"], "kind": r["kind"],
+                "data": json.loads(r["data"]), "created": r["created"],
+                "accessed": r["accessed"], "weight": r["weight"],
+                "tags": json.loads(r["tags"])
+            })
+        edges = []
+        for r in self.conn.execute("SELECT * FROM edges").fetchall():
+            edges.append({
+                "source": r["source"], "target": r["target"],
+                "relation": r["relation"], "weight": r["weight"]
+            })
+        return {"version": 1, "nodes": nodes, "edges": edges}
+
+    def import_json(self, data: dict, merge: bool = False):
+        """Import graph from export_json() output.
+        If merge=True, add to existing graph. Otherwise clear first."""
+        if not merge:
+            self.conn.execute("DELETE FROM edges")
+            self.conn.execute("DELETE FROM nodes")
+        for n in data.get("nodes", []):
+            self.conn.execute(
+                "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                (n["id"], n["label"], n["kind"], json.dumps(n.get("data", {})),
+                 n.get("created", time.time()), n.get("accessed", time.time()),
+                 n.get("weight", 1.0), json.dumps(n.get("tags", [])))
+            )
+        for e in data.get("edges", []):
+            self.conn.execute(
+                "INSERT OR REPLACE INTO edges VALUES (?,?,?,?)",
+                (e["source"], e["target"], e["relation"], e.get("weight", 1.0))
+            )
+        self.conn.commit()
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
