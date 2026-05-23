@@ -47,3 +47,12 @@ date	project	tests_before	tests_after	delta	status
 2026-05-18T03:00	agent-trust-web	22	43	+21	43/43	all pass	+trustNetworkExtended.test.ts (21 tests): simulateInteraction edge cases (4), simulate edge cases — 0/1 agents (3), trust history snapshots (2), getAgentMetrics after simulation (3), getMetrics distribution (2), cluster estimation (2), importConfig detailed (3), reset verification (2)
 2026-05-18T22:00	mcp-server	114	114	0	122	122	0	+8 tests (head: 4, tail: 4)	all pass	feat: add head and tail tools for reading first/last N lines of files
 2026-05-19T03:00	ai-iot-orchestrator	172	172	0	192	192	0	+20 tests (AgentMemory eviction/search edge cases, BaseAgent.get_state, message routing, task priority sorting, config defaults, AgentTask defaults)	all pass
+2026-05-20T03:00	agent-context-analyzer	27	39	+12	39/39	all pass	+reporter.test.ts (12 tests): generateReport full/empty/high-usage, overview tokens, efficiency score, breakdown scores, recommendations, optimization suggestions, empty optimizations, zero tokens, verbose detailed items, footer, multiple optimizations
+2026-05-21T03:00	better-ralph-core	329	341	+12	341/341	all pass	+test_config_and_logger.py (12 tests): Config get/set/default/nested/load, Logger singleton/level/handler/uniqueness
+2026-05-21T03:01	agent-self-reflection	0	9	+9	9/9	all pass	+analyzer.test.ts (9 tests): success clusters, growth areas, overconfidence bias, tag patterns, insights generation
+2026-05-22T03:00	catalyst-agent-mesh	248	263	+15	263/263	all pass	+test_config_from_env.py (15 tests): MeshConfig defaults, from_env with monkeypatch for provider/port/debug/log/openai/ollama/host, direct override, independence
+2026-05-23T21:00	prompt-weaver	148	184	+36	184/184	all pass
++36 tests in 4 cycles: weave_batch (10), Context.find_history (9), serialization round-trip (9), weave_validate (8). 3920→4339 lines. All commits: ad3397f 8009c41 f846b66 443f140						
+2026-05-23T22:00	agent-task-cli	574	583	+9	583/583	all pass	Round 17: Cache.swap (F79), EventBus.pipe (F80), Storage.getOrCreate (F81). Fixed f70-f72 test format. commit 21e68f1
+2026-05-24T03:00	skill-doctor	33	43	+10	43/43	all pass	+10 tests: SKILL.md description (3), suspicious patterns specific detectors (3), autoFix human-readable (1), no script refs (1), pkg missing version (1), nested oversized (1). commit a4f5191
+2026-05-24T03:00	a2a-trust-prototype	29	38	+9	38/38	all pass	+9 tests: trust report unknown agent, scoreDecay no-op/clamp, multi-skill report, canDelegate untrusted, alternating pattern, tamper url/signedAt/pubKey. commit 603ddad
