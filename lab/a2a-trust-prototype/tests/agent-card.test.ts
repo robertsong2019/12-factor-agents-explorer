@@ -53,6 +53,31 @@ describe('SignedAgentCard', () => {
     assert.equal(valid, false);
   });
 
+  it('detects tampered url', async () => {
+    const { card, keyPair } = await makeCard();
+    const signed = await signAgentCard(card, keyPair.privateKey);
+    signed.url = 'https://evil.com';
+    const valid = await verifyAgentCard(signed, keyPair.publicKey);
+    assert.equal(valid, false);
+  });
+
+  it('detects tampered signedAt', async () => {
+    const { card, keyPair } = await makeCard();
+    const signed = await signAgentCard(card, keyPair.privateKey);
+    signed.signedAt = Date.now() + 99999;
+    const valid = await verifyAgentCard(signed, keyPair.publicKey);
+    assert.equal(valid, false);
+  });
+
+  it('detects tampered publicKeyJwk', async () => {
+    const { card, keyPair } = await makeCard();
+    const signed = await signAgentCard(card, keyPair.privateKey);
+    const otherKey = await generateKeyPair();
+    signed.publicKeyJwk = await exportJWK(otherKey.publicKey);
+    const valid = await verifyAgentCard(signed, keyPair.publicKey);
+    assert.equal(valid, false);
+  });
+
   it('supports trust extensions', async () => {
     const keyPair = await generateKeyPair();
     const pubJwk = await exportJWK(keyPair.publicKey);

@@ -92,4 +92,56 @@ describe('TrustEngine', () => {
     assert.equal(engine.canDelegate('a1', 'trusted'), true);
     assert.equal(engine.canDelegate('a1', 'neutral'), true);
   });
+
+  it('returns unknown trust report for unregistered agent', () => {
+    const engine = new TrustEngine();
+    const report = engine.getTrustReport('nobody');
+    assert.equal(report.overall.level, 'unknown');
+    assert.equal(report.overall.interactions, 0);
+    assert.equal(report.overall.score, 50);
+    assert.deepEqual(report.skills, {});
+  });
+
+  it('scoreDecay is no-op for unknown agent', () => {
+    const engine = new TrustEngine();
+    engine.scoreDecay('ghost', 1000);
+    assert.equal(engine.getScore('ghost'), 50); // default
+  });
+
+  it('scoreDecay clamps to 0', () => {
+    const engine = new TrustEngine();
+    engine.recordInteraction('a1', true); // 55
+    engine.scoreDecay('a1', 10000); // 10000 * 0.1 = 1000
+    assert.equal(engine.getScore('a1'), 0);
+  });
+
+  it('trust report includes multiple skills', () => {
+    const engine = new TrustEngine();
+    engine.recordSkillInteraction('a1', 'sql', true);
+    engine.recordSkillInteraction('a1', 'http', true);
+    engine.recordSkillInteraction('a1', 'http', true);
+    const report = engine.getTrustReport('a1');
+    assert.ok(report.skills['sql']);
+    assert.ok(report.skills['http']);
+    assert.equal(Object.keys(report.skills).length, 2);
+  });
+
+  it('canDelegate works for untrusted level', () => {
+    const engine = new TrustEngine();
+    engine.recordInteraction('a1', false); // score 35 = untrusted
+    assert.equal(engine.canDelegate('a1', 'untrusted'), true);
+    assert.equal(engine.canDelegate('a1', 'neutral'), false);
+  });
+
+  it('alternating success and failure', () => {
+    const engine = new TrustEngine();
+    for (let i = 0; i < 5; i++) {
+      engine.recordInteraction('a1', true);
+      engine.recordInteraction('a1', false);
+    }
+    // Each failure is -15, each success gains ~5 with diminishing
+    // Net should be negative
+    assert.ok(engine.getScore('a1') < 50);
+    assert.equal(engine.getTrustLevel('a1'), 'untrusted');
+  });
 });
