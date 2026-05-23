@@ -4177,6 +4177,104 @@ export class MemoryService {
     return { merged, skipped: 0, dryRun };
   }
 
+  /**
+   * Extract a connected subgraph starting from a node (BFS).
+   * @param {string} startId
+   * @param {{depth?: number, limit?: number, layer?: MemoryLayer}} opts
+   * @returns {Promise<{root: Memory|null, nodes: Array, edges: Array, depth: number}>}
+   */
+  async subgraph(startId, opts = {}) {
+    await this.#ensureLoaded();
+    const root = this.#store.get(startId);
+    if (!root) return { root: null, nodes: [], edges: [], depth: 0 };
+    const maxDepth = opts.depth ?? 2;
+    const maxNodes = opts.limit ?? 50;
+    const layerFilter = opts.layer ?? null;
+
+    const visited = new Set([startId]);
+    const nodes = [root];
+    const edges = [];
+    const queue = [{ id: startId, hop: 0 }];
+
+    const allLinks = this.#links.all();
+
+    while (queue.length > 0 && nodes.length < maxNodes) {
+      const { id, hop } = queue.shift();
+      if (hop >= maxDepth) continue;
+
+      const adjacent = allLinks.filter(l => l.source === id || l.target === id);
+      for (const link of adjacent) {
+        const neighborId = link.source === id ? link.target : link.source;
+        if (visited.has(neighborId)) {
+          // Still record the edge even if node already visited
+          if (!edges.some(e => e.id === link.id)) edges.push({ id: link.id, source: link.source, target: link.target, type: link.type, strength: link.strength });
+          continue;
+        }
+        visited.add(neighborId);
+        const mem = this.#store.get(neighborId);
+        if (!mem) continue;
+        if (layerFilter && mem.layer !== layerFilter) continue;
+        nodes.push(mem);
+        edges.push({ id: link.id, source: link.source, target: link.target, type: link.type, strength: link.strength });
+        if (nodes.length >= maxNodes) break;
+        queue.push({ id: neighborId, hop: hop + 1 });
+      }
+    }
+
+    return { root, nodes, edges, depth: maxDepth };
+  }
+
+  /**
+   * Find shortest path between two memories via links (BFS).
+   * @param {string} fromId
+   * @param {string} toId
+   * @returns {Promise<{found: boolean, path: Array<{memory: Memory, link?: Link}>, distance: number}>}
+   */
+  async shortestPath(fromId, toId) {
+    await this.#ensureLoaded();
+    if (!this.#store.get(fromId) || !this.#store.get(toId)) {
+      return { found: false, path: [], distance: -1 };
+    }
+    if (fromId === toId) {
+      return { found: true, path: [{ memory: this.#store.get(fromId) }], distance: 0 };
+    }
+
+    const allLinks = this.#links.all();
+    const visited = new Set([fromId]);
+    const prev = new Map(); // memoryId -> { fromId, link }
+    const queue = [fromId];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (current === toId) break;
+
+      const adjacent = allLinks.filter(l => l.source === current || l.target === current);
+      for (const link of adjacent) {
+        const neighborId = link.source === current ? link.target : link.source;
+        if (visited.has(neighborId)) continue;
+        visited.add(neighborId);
+        prev.set(neighborId, { fromId: current, link });
+        queue.push(neighborId);
+      }
+    }
+
+    if (!prev.has(toId)) {
+      return { found: false, path: [], distance: -1 };
+    }
+
+    // Reconstruct path
+    const path = [];
+    let cur = toId;
+    while (cur !== fromId) {
+      const step = prev.get(cur);
+      path.unshift({ memory: this.#store.get(cur), link: step.link });
+      cur = step.fromId;
+    }
+    path.unshift({ memory: this.#store.get(fromId) });
+
+    return { found: true, path, distance: path.length - 1 };
+  }
+
   async memoryDiff(id1, id2) {
     await this.#ensureLoaded();
     const m1 = this.#store.get(id1);
