@@ -513,4 +513,28 @@ describe('Tracer', () => {
     assert.equal(count, 2);
     assert.equal(tracer.spanCount(), 2);
   });
+
+  it('batchEnd ends multiple spans', () => {
+    const tracer = new Tracer();
+    const s1 = tracer.startSpan('agent.run');
+    const s2 = tracer.startSpan('llm.call');
+    const s3 = tracer.startSpan('tool.execute');
+    const ended = tracer.batchEnd([s1.spanId, s2.spanId, s3.spanId]);
+    assert.equal(ended, 3);
+    assert.equal(tracer.getSpanById(s1.spanId)!.status, 'ok');
+    // already ended → 0
+    assert.equal(tracer.batchEnd([s1.spanId]), 0);
+  });
+
+  it('getDepthMap returns span depths', () => {
+    const tracer = new Tracer();
+    const root = tracer.startSpan('agent.run');
+    // root is active, child gets root as parent
+    const child = tracer.startSpan('llm.call');
+    tracer.endSpan(child.spanId);
+    tracer.endSpan(root.spanId);
+    const map = tracer.getDepthMap();
+    assert.equal(map.get(root.spanId), 0);
+    assert.equal(map.get(child.spanId), 1);
+  });
 });

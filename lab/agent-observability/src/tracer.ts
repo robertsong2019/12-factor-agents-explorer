@@ -397,6 +397,24 @@ export class Tracer {
     return otherSpans.length;
   }
 
+  /** End multiple spans at once. Returns count of spans successfully ended. */
+  batchEnd(spanIds: string[], status: SpanStatus = 'ok'): number {
+    let count = 0;
+    for (const id of spanIds) {
+      if (this.endSpan(id, status)) count++;
+    }
+    return count;
+  }
+
+  /** Return a map of spanId → depth (number of ancestors) */
+  getDepthMap(): Map<string, number> {
+    const map = new Map<string, number>();
+    for (const s of this.spans) {
+      map.set(s.spanId, this.getSpanDepth(s.spanId));
+    }
+    return map;
+  }
+
   /** Return spans sorted by startTime as a timeline */
   getOperationTimeline(): Array<{ spanId: string; operation: string; startMs: number; durationMs: number | null; status: SpanStatus }> {
     return [...this.spans]
