@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Evaluator, policyComplianceCheck, latencyCheck, reliabilityCheck, costEfficiencyCheck, compareTraces } from '../src/evaluator.js';
+import { Tracer } from '../src/tracer.js';
 import type { Span } from '../src/tracer.js';
 
 function makeSpan(overrides: Partial<Span> = {}): Span {
@@ -266,5 +267,23 @@ describe('Evaluator', () => {
     assert.ok(md.includes('reliability'));
     assert.ok(md.includes('✅'));
     assert.ok(md.includes('❌'));
+  });
+
+  it('addBuiltinChecks registers all 4 checks', () => {
+    const ev = new Evaluator();
+    ev.addBuiltinChecks();
+    assert.deepEqual(ev.listChecks(), ['policy_compliance', 'latency', 'reliability', 'cost_efficiency']);
+  });
+
+  it('evaluateAndReport returns combined result', () => {
+    const ev = new Evaluator();
+    ev.addBuiltinChecks();
+    const tracer = new Tracer();
+    const s = tracer.startSpan('llm.call');
+    tracer.endSpan(s.spanId);
+    const { results, score, report } = ev.evaluateAndReport(tracer.getSpans());
+    assert.ok(results.length >= 1);
+    assert.ok(score >= 0 && score <= 1);
+    assert.ok(report.includes('Evaluation Report'));
   });
 });

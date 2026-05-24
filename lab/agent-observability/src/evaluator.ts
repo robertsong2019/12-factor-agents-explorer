@@ -137,6 +137,25 @@ export class Evaluator {
   runComparison(baselineSpans: Span[], currentSpans: Span[], threshold = -0.1): TraceComparison[] {
     return compareTraces(baselineSpans, currentSpans, this.checks.map(c => c.fn), threshold);
   }
+  /** Convenience: add all built-in checks (policy_compliance, latency, reliability, cost_efficiency) */
+  addBuiltinChecks(): void {
+    this.addCheck('policy_compliance', policyComplianceCheck, 1.0);
+    this.addCheck('latency', latencyCheck, 1.0);
+    this.addCheck('reliability', reliabilityCheck, 1.0);
+    this.addCheck('cost_efficiency', costEfficiencyCheck, 1.0);
+  }
+
+  /** Evaluate spans and return results + aggregate score + markdown report in one call */
+  evaluateAndReport(spans: Span[], dimensions?: string[]): {
+    results: EvalCheckResult[];
+    score: number;
+    report: string;
+  } {
+    const results = this.evaluate(spans, dimensions);
+    const score = this.aggregateScore(results);
+    const report = this.toMarkdown(results);
+    return { results, score, report };
+  }
 }
 
 // --- Built-in checks ---
