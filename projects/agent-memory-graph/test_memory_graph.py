@@ -231,6 +231,65 @@ class TestTags:
         mg.tag_nodes("t", [n.id])
         assert len(mg.search_by_tag("t")) == 1
 
+class TestCRUD:
+    def test_get_node(self, populated):
+        mg, a, b, c = populated
+        node = mg.get_node(a.id)
+        assert node is not None
+        assert node.label == "Alice"
+        assert node.kind == "person"
+        assert node.data == {"role": "engineer"}
+
+    def test_get_node_not_found(self, mg):
+        assert mg.get_node("nonexistent") is None
+
+    def test_delete_node(self, populated):
+        mg, a, b, c = populated
+        assert mg.delete_node(b.id) is True
+        assert mg.get_node(b.id) is None
+        # edges to/from b should be gone
+        assert mg.stats()["edges"] == 1  # only a->c remains
+        assert mg.stats()["nodes"] == 2
+
+    def test_delete_node_not_found(self, mg):
+        assert mg.delete_node("nope") is False
+
+    def test_delete_node_cleans_edges(self, mg):
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "rel")
+        mg.link(c.id, b.id, "rel")
+        mg.delete_node(b.id)
+        assert len(mg.neighbors(a.id)) == 0
+        assert len(mg.neighbors(c.id)) == 0
+
+    def test_update_node_label(self, populated):
+        mg, a, b, c = populated
+        updated = mg.update_node(a.id, label="Alice Smith")
+        assert updated.label == "Alice Smith"
+        assert updated.kind == "person"  # unchanged
+
+    def test_update_node_data(self, populated):
+        mg, a, b, c = populated
+        updated = mg.update_node(a.id, data={"role": "manager", "level": 5})
+        assert updated.data == {"role": "manager", "level": 5}
+
+    def test_update_node_weight(self, populated):
+        mg, a, b, c = populated
+        updated = mg.update_node(a.id, weight=0.3)
+        assert abs(updated.weight - 0.3) < 0.01
+
+    def test_update_node_not_found(self, mg):
+        assert mg.update_node("nope", label="X") is None
+
+    def test_update_node_partial(self, populated):
+        mg, a, b, c = populated
+        updated = mg.update_node(a.id, kind="entity")
+        assert updated.kind == "entity"
+        assert updated.label == "Alice"  # unchanged
+        assert updated.data == {"role": "engineer"}  # unchanged
+
 class TestExportImport:
     def test_export_roundtrip(self, populated):
         mg, a, b, c = populated

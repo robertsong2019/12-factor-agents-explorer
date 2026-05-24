@@ -91,6 +91,41 @@ class MemoryGraph:
         self.conn.commit()
         return node
 
+    def get_node(self, node_id: str) -> Optional[Node]:
+        """Retrieve a single node by ID. Returns None if not found."""
+        row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if not row:
+            return None
+        return Node(row["id"], row["label"], row["kind"],
+                    json.loads(row["data"]), row["created"], row["accessed"], row["weight"])
+
+    def delete_node(self, node_id: str) -> bool:
+        """Delete a node and all its edges. Returns True if node existed."""
+        row = self.conn.execute("SELECT id FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if not row:
+            return False
+        self.conn.execute("DELETE FROM edges WHERE source=? OR target=?", (node_id, node_id))
+        self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
+        self.conn.commit()
+        return True
+
+    def update_node(self, node_id: str, label: str = None, kind: str = None,
+                    data: dict = None, weight: float = None) -> Optional[Node]:
+        """Update node attributes. Only non-None fields are changed. Returns updated node or None."""
+        row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if not row:
+            return None
+        new_label = label if label is not None else row["label"]
+        new_kind = kind if kind is not None else row["kind"]
+        new_data = json.dumps(data) if data is not None else row["data"]
+        new_weight = weight if weight is not None else row["weight"]
+        self.conn.execute(
+            "UPDATE nodes SET label=?, kind=?, data=?, weight=? WHERE id=?",
+            (new_label, new_kind, new_data, new_weight, node_id)
+        )
+        self.conn.commit()
+        return self.get_node(node_id)
+
     def tag_nodes(self, tag: str, node_ids: list[str]):
         """Add a tag to multiple nodes."""
         for nid in node_ids:
