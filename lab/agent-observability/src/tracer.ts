@@ -361,6 +361,42 @@ export class Tracer {
     };
   }
 
+  /** Change the operation name of an existing span. Returns false if not found. */
+  renameSpan(spanId: string, newOperation: SpanOperation): boolean {
+    const span = this.spans.find(s => s.spanId === spanId);
+    if (!span) return false;
+    span.operation = newOperation;
+    return true;
+  }
+
+  /** Deep clone a span with a new spanId (no parent link). Returns undefined if not found. */
+  cloneSpan(spanId: string): Span | undefined {
+    const span = this.spans.find(s => s.spanId === spanId);
+    if (!span) return undefined;
+    const clone: Span = {
+      traceId: this.traceId,
+      spanId: randomUUID(),
+      parentSpanId: null,
+      operation: span.operation,
+      startTime: span.startTime,
+      endTime: span.endTime,
+      attributes: { ...span.attributes },
+      status: span.status,
+      events: [...span.events],
+    };
+    this.spans.push(clone);
+    return clone;
+  }
+
+  /** Merge all spans from another Tracer into this one. Returns count of merged spans. */
+  mergeTracer(other: Tracer): number {
+    const otherSpans = other.getSpans();
+    for (const s of otherSpans) {
+      this.spans.push(s);
+    }
+    return otherSpans.length;
+  }
+
   /** Return spans sorted by startTime as a timeline */
   getOperationTimeline(): Array<{ spanId: string; operation: string; startMs: number; durationMs: number | null; status: SpanStatus }> {
     return [...this.spans]

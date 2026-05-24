@@ -479,4 +479,38 @@ describe('Tracer', () => {
     assert.ok(tracer.hasSpan(span.spanId));
     assert.ok(!tracer.hasSpan('nope'));
   });
+
+  it('renameSpan changes operation', () => {
+    const tracer = new Tracer();
+    const span = tracer.startSpan('agent.run');
+    tracer.endSpan(span.spanId);
+    assert.ok(tracer.renameSpan(span.spanId, 'tool.execute'));
+    assert.equal(tracer.getSpanById(span.spanId)!.operation, 'tool.execute');
+    assert.ok(!tracer.renameSpan('nope', 'llm.call'));
+  });
+
+  it('cloneSpan creates independent copy', () => {
+    const tracer = new Tracer();
+    const span = tracer.startSpan('agent.run', { key: 'val' });
+    tracer.endSpan(span.spanId);
+    const clone = tracer.cloneSpan(span.spanId)!;
+    assert.notEqual(clone.spanId, span.spanId);
+    assert.equal(clone.operation, 'agent.run');
+    assert.equal(clone.attributes.key, 'val');
+    assert.equal(clone.parentSpanId, null);
+    assert.equal(tracer.spanCount(), 2);
+    assert.equal(tracer.cloneSpan('nope'), undefined);
+  });
+
+  it('mergeTracer combines spans from two tracers', () => {
+    const tracer = new Tracer();
+    const other = new Tracer();
+    const s1 = other.startSpan('llm.call');
+    other.endSpan(s1.spanId);
+    const s2 = other.startSpan('tool.execute');
+    other.endSpan(s2.spanId);
+    const count = tracer.mergeTracer(other);
+    assert.equal(count, 2);
+    assert.equal(tracer.spanCount(), 2);
+  });
 });
