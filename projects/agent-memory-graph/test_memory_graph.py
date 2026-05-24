@@ -290,6 +290,75 @@ class TestCRUD:
         assert updated.label == "Alice"  # unchanged
         assert updated.data == {"role": "engineer"}  # unchanged
 
+class TestBatchOperations:
+    def test_add_many_basic(self, mg):
+        nodes = mg.add_many([
+            {"label": "A", "kind": "person"},
+            {"label": "B", "kind": "skill", "data": {"level": 3}},
+            {"label": "C"},
+        ])
+        assert len(nodes) == 3
+        assert nodes[0].label == "A"
+        assert nodes[1].kind == "skill"
+        assert nodes[1].data == {"level": 3}
+        assert nodes[2].kind == "fact"  # default
+        assert mg.stats()["nodes"] == 3
+
+    def test_add_many_empty_list(self, mg):
+        assert mg.add_many([]) == []
+
+    def test_add_many_with_tags(self, mg):
+        nodes = mg.add_many([
+            {"label": "X", "tags": ["important"]},
+            {"label": "Y", "tags": ["important"]},
+        ])
+        found = mg.search_by_tag("important")
+        assert len(found) == 2
+
+    def test_link_many(self, mg):
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        count = mg.link_many([
+            {"source": a.id, "target": b.id, "relation": "knows"},
+            {"source": b.id, "target": c.id, "relation": "mentor", "weight": 0.8},
+        ])
+        assert count == 2
+        assert len(mg.neighbors(a.id)) == 1
+        assert len(mg.neighbors(b.id)) == 1
+
+    def test_link_many_empty(self, mg):
+        assert mg.link_many([]) == 0
+
+    def test_delete_many(self, mg):
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "rel")
+        mg.link(c.id, b.id, "rel")
+        count = mg.delete_many([a.id, b.id])
+        assert count == 2
+        assert mg.stats()["nodes"] == 1
+        assert len(mg.neighbors(c.id)) == 0  # edge to b cleaned
+
+    def test_delete_many_skips_nonexistent(self, mg):
+        a = mg.add("A")
+        count = mg.delete_many([a.id, "nonexistent"])
+        assert count == 1
+
+    def test_add_many_then_export_import(self, mg):
+        nodes = mg.add_many([
+            {"label": "N1"}, {"label": "N2"}, {"label": "N3"}
+        ])
+        mg.link_many([
+            {"source": nodes[0].id, "target": nodes[1].id, "relation": "r"},
+            {"source": nodes[1].id, "target": nodes[2].id, "relation": "r"},
+        ])
+        exported = mg.export_json()
+        mg2 = MemoryGraph()
+        mg2.import_json(exported)
+        assert mg2.stats()["nodes"] == 3
+        assert mg2.stats()["edges"] == 2
+        path = mg2.shortest_path(nodes[0].id, nodes[2].id)
+        assert path is not None
+        assert len(path) == 3
+
 class TestExportImport:
     def test_export_roundtrip(self, populated):
         mg, a, b, c = populated

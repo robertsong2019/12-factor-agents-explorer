@@ -126,6 +126,54 @@ class MemoryGraph:
         self.conn.commit()
         return self.get_node(node_id)
 
+    def add_many(self, items: list[dict]) -> list[Node]:
+        """Batch-add nodes. Each item is a dict with keys: label, kind?, data?, tags?.
+        Uses a single transaction for efficiency."""
+        now = time.time()
+        nodes = []
+        for item in items:
+            node = Node(
+                id=uuid.uuid4().hex[:12],
+                label=item["label"],
+                kind=item.get("kind", "fact"),
+                data=item.get("data", {}),
+                created=now, accessed=now, weight=1.0
+            )
+            tags = item.get("tags", [])
+            self.conn.execute(
+                "INSERT INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                (node.id, node.label, node.kind, json.dumps(node.data),
+                 node.created, node.accessed, node.weight, json.dumps(tags))
+            )
+            nodes.append(node)
+        self.conn.commit()
+        return nodes
+
+    def link_many(self, pairs: list[dict]) -> int:
+        """Batch-link nodes. Each dict: {source, target, relation, weight?}.
+        Returns count of edges created."""
+        count = 0
+        for p in pairs:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO edges VALUES (?,?,?,?)",
+                (p["source"], p["target"], p["relation"], p.get("weight", 1.0))
+            )
+            count += 1
+        self.conn.commit()
+        return count
+
+    def delete_many(self, node_ids: list[str]) -> int:
+        """Batch-delete nodes with edge cleanup. Returns count of nodes deleted."""
+        count = 0
+        for nid in node_ids:
+            row = self.conn.execute("SELECT id FROM nodes WHERE id=?", (nid,)).fetchone()
+            if row:
+                self.conn.execute("DELETE FROM edges WHERE source=? OR target=?", (nid, nid))
+                self.conn.execute("DELETE FROM nodes WHERE id=?", (nid,))
+                count += 1
+        self.conn.commit()
+        return count
+
     def tag_nodes(self, tag: str, node_ids: list[str]):
         """Add a tag to multiple nodes."""
         for nid in node_ids:
