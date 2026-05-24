@@ -269,4 +269,26 @@ describe('PolicyEngine', () => {
     engine.disableRule('cat', 'r1');
     assert.equal(engine.enabledCount(), 1);
   });
+
+  it('evaluateBatch runs multiple inputs', () => {
+    const engine = new PolicyEngine();
+    engine.addPolicy('security', {
+      name: 'block', description: '', category: 'security',
+      evaluate: (input) => input.danger ? { allow: false, reason: 'no' } : { allow: true },
+    });
+    const results = engine.evaluateBatch('security', [{ danger: false }, { danger: true }]);
+    assert.equal(results.length, 2);
+    assert.equal(results[0].allowed, true);
+    assert.equal(results[1].allowed, false);
+  });
+
+  it('getCategories returns category info', () => {
+    const engine = new PolicyEngine();
+    engine.addPolicy('sec', { name: 'r1', description: '', category: 'sec', evaluate: () => ({ allow: true }) });
+    engine.addPolicy('sec', { name: 'r2', description: '', category: 'sec', evaluate: () => ({ allow: true }) });
+    engine.addPolicy('perf', { name: 'r3', description: '', category: 'perf', evaluate: () => ({ allow: true }) });
+    const cats = engine.getCategories();
+    assert.equal(cats.length, 2);
+    assert.deepEqual(cats.find(c => c.category === 'sec'), { category: 'sec', ruleCount: 2 });
+  });
 });

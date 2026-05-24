@@ -242,6 +242,16 @@ export class PolicyEngine {
     return { allowed: details.every(d => d.allowed), details };
   }
 
+  /** Evaluate a batch of inputs against one category */
+  evaluateBatch(category: string, inputs: Record<string, unknown>[]): EvalResult[] {
+    return inputs.map(input => this.evaluate(category, input));
+  }
+
+  /** Get all categories with rule counts */
+  getCategories(): Array<{ category: string; ruleCount: number }> {
+    return this.listCategories().map(c => ({ category: c, ruleCount: this.ruleCount(c) }));
+  }
+
   /** Count rules per category */
   countByCategory(): Record<string, number> {
     const result: Record<string, number> = {};
