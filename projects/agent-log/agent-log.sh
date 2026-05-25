@@ -130,11 +130,12 @@ cmd_date() {
 }
 
 cmd_summary() {
-  local days="7" keyword="" csv_output=0
+  local days="7" keyword="" csv_output=0 md_output=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -j|--json) JSON_OUTPUT=1 ;;
       --csv) csv_output=1 ;;
+      --md) md_output=1 ;;
       -d|--days) shift; days="${1:-7}" ;;
       -k|--keyword) shift; keyword="${1:-}" ;;
       [0-9]*) days="$1" ;;
@@ -179,6 +180,26 @@ cmd_summary() {
       local mem_lines; mem_lines=$(wc -l < "$WORKSPACE/MEMORY.md")
       echo -e "  ${YELLOW}MEMORY.md:${RESET} $mem_lines lines"
     fi
+  fi
+
+  if [[ $md_output -eq 1 ]]; then
+    echo "# Activity Summary"
+    echo ""
+    echo "Period: last $days days"
+    [[ -n "$keyword" ]] && echo "Filter: $keyword"
+    echo ""
+    echo "| Date | Day | Lines |"
+    echo "|------|-----|-------|"
+    for (( idx=0; idx<${#json_entries[@]}; idx++ )); do
+      local e="${json_entries[$idx]}"
+      local ed ewd el
+      ed=$(echo "$e" | sed 's/.*"date":"\([^"]*\)".*/\1/')
+      ewd=$(echo "$e" | sed 's/.*"weekday":"\([^"]*\)".*/\1/')
+      el=$(echo "$e" | sed 's/.*"lines":\([0-9]*\).*/\1/')
+      echo "| $ed | $ewd | $el |"
+    done
+    echo ""
+    echo "**Total:** $total_files files, $total_lines lines"
   fi
 }
 
@@ -274,7 +295,14 @@ cmd_clean() {
 }
 
 cmd_stats() {
-  while [[ $# -gt 0 ]]; do case "$1" in -j|--json) JSON_OUTPUT=1 ;; esac; shift; done
+  local md_output=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -j|--json) JSON_OUTPUT=1 ;;
+      --md) md_output=1 ;;
+    esac
+    shift
+  done
 
   local mem_count=0 sess_count=0
   [[ -d "$MEMORY_DIR" ]] && mem_count=$(find "$MEMORY_DIR" -name '*.md' | wc -l)
@@ -300,6 +328,161 @@ cmd_stats() {
     echo -e "  Workspace size: ${GREEN}$ws_size${RESET}"
     [[ -n "$latest_file" ]] && echo -e "  Latest note:    ${BLUE}$(basename "$latest_file")${RESET}"
   fi
+
+  if [[ $md_output -eq 1 ]]; then
+    echo "# Workspace Stats"
+    echo ""
+    echo "Generated: $(date -Iseconds)"
+    echo ""
+    echo "| Metric | Value |"
+    echo "|--------|-------|"
+    echo "| Memory files | $mem_count |"
+    echo "| Session files | $sess_count |"
+    echo "| Workspace size | $ws_size |"
+    echo "| Latest note | ${latest_name:-N/A} |"
+  fi
+}
+
+cmd_find() {
+  local pattern="" date_after="" date_before="" json_out=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -j|--json) json_out=1 ;;
+      -a|--after) shift; date_after="${1:-}" ;;
+      -b|--before) shift; date_before="${1:-}" ;;
+      *) pattern="$1" ;;
+    esac
+    shift
+  done
+
+  [[ -d "$SESSIONS_DIR" ]] || die "No sessions directory"
+  [[ -z "$pattern" && -z "$date_after" && -z "$date_before" ]] && die "Usage: agent-log find <pattern> [-a DATE] [-b DATE] [-j|--json]"
+
+  local count=0 json_items=()
+  [[ $json_out -eq 0 ]] && echo -e "${CYAN}🔍 Find sessions${RESET}"
+  [[ -n "$pattern" ]] && [[ $json_out -eq 0 ]] && echo -e "  pattern: $pattern"
+  [[ -n "$date_after" ]] && [[ $json_out -eq 0 ]] && echo -e "  after: $date_after"
+  [[ -n "$date_before" ]] && [[ $json_out -eq 0 ]] && echo -e "  before: $date_before"
+  [[ $json_out -eq 0 ]] && echo
+
+  while IFS= read -r -d '' f; do
+    [[ -f "$f" ]] || continue
+    local mod; mod=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+    local mod_date; mod_date=$(date -d "@$mod" +%Y-%m-%d 2>/dev/null || echo "")
+
+    # Date filtering
+    [[ -n "$date_after" && "$mod_date" < "$date_after" ]] && continue
+    [[ -n "$date_before" && "$mod_date" > "$date_before" ]] && continue
+
+    # Pattern filtering (search in filename + content)
+    if [[ -n "$pattern" ]]; then
+      local basename_f; basename_f=$(basename "$f")
+      grep -qi "$pattern" "$f" 2>/dev/null || [[ "$basename_f" == *"$pattern"* ]] || continue
+    fi
+
+    local lines; lines=$(wc -l < "$f" 2>/dev/null || echo 0)
+    local rel="${f#$HOME/}"
+    count=$((count + 1))
+
+    if [[ $json_out -eq 1 ]]; then
+      json_items+="{\"file\":\"$rel\",\"lines\":$lines,\"modified\":\"$mod_date\"}"
+    else
+      printf "  ${GREEN}%s${RESET} %5d lines  %s\n" "$mod_date" "$lines" "$(basename "$f")"
+    fi
+  done < <(find "$SESSIONS_DIR" -name '*.md' -print0 2>/dev/null | sort -z)
+
+  if [[ $json_out -eq 1 ]]; then
+    printf '{"command":"find","pattern":"%s","after":"%s","before":"%s","count":%d,"results":[%s]}\n' \
+      "$pattern" "$date_after" "$date_before" "$count" "${json_items[*]+${json_items[*]}}"
+  else
+    echo -e "  ${YELLOW}Found:${RESET} $count sessions"
+  fi
+}
+
+cmd_grep() {
+  local pattern="" json_out=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -j|--json) json_out=1 ;;
+      *) pattern="$1" ;;
+    esac
+    shift
+  done
+  [[ -z "$pattern" ]] && die "Usage: agent-log grep <pattern> [-j|--json]"
+
+  [[ -d "$SESSIONS_DIR" ]] || die "No sessions directory"
+  grep -r --include='*.md' --color=always -n "$pattern" "$SESSIONS_DIR" 2>/dev/null \
+    | head -50 || echo -e "${GRAY}(no matches)${RESET}"
+}
+
+cmd_tail() {
+  local n="20" follow=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -n) shift; n="${1:-20}" ;;
+      -f|--follow) follow=1 ;;
+      *) n="$1" ;;
+    esac
+    shift
+  done
+
+  [[ -d "$SESSIONS_DIR" ]] || die "No sessions directory"
+
+  # Find most recent session file
+  local latest; latest=$(find "$SESSIONS_DIR" -name '*.md' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+  [[ -z "$latest" ]] && die "No session files found"
+
+  echo -e "${CYAN}📋 Tailing: $(basename "$latest")${RESET}"
+  echo
+
+  if [[ $follow -eq 1 ]]; then
+    tail -n "$n" -f "$latest"
+  else
+    tail -n "$n" "$latest"
+  fi
+}
+
+cmd_session() {
+  local id="" json_out=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -j|--json) json_out=1 ;;
+      *) id="$1" ;;
+    esac
+    shift
+  done
+
+  [[ -z "$id" ]] && die "Usage: agent-log session <file-or-pattern> [-j|--json]"
+  [[ -d "$SESSIONS_DIR" ]] || die "No sessions directory"
+
+  # Try exact match first, then partial match
+  local target=""
+  if [[ -f "$SESSIONS_DIR/$id" ]]; then
+    target="$SESSIONS_DIR/$id"
+  elif [[ -f "$SESSIONS_DIR/$id.md" ]]; then
+    target="$SESSIONS_DIR/$id.md"
+  else
+    # Search by partial name
+    local found; found=$(find "$SESSIONS_DIR" -name "*${id}*.md" -print -quit 2>/dev/null)
+    [[ -n "$found" ]] && target="$found"
+  fi
+
+  [[ -z "$target" ]] && die "Session not found: $id"
+
+  local lines; lines=$(wc -l < "$target" 2>/dev/null || echo 0)
+  local size; size=$(stat -c %s "$target" 2>/dev/null || echo 0)
+  local mod; mod=$(stat -c %y "$target" 2>/dev/null | cut -d. -f1)
+
+  if [[ $json_out -eq 1 ]]; then
+    local content; content=$(cat "$target" | head -100)
+    printf '{"command":"session","file":"%s","lines":%d,"size":%d,"modified":"%s","content":"%s"}\n' \
+      "${target#$HOME/}" "$lines" "$size" "$mod" "${content//\"/\\\"}"
+  else
+    echo -e "${CYAN}📋 Session: $(basename "$target")${RESET}"
+    echo -e "  ${GRAY}Modified: $mod | $lines lines | $size bytes${RESET}"
+    echo
+    cat "$target"
+  fi
 }
 
 # ── Main ──
@@ -317,5 +500,9 @@ case "${1:-help}" in
   stats)   shift; cmd_stats "$@" ;;
   clean)   shift; cmd_clean "$@" ;;
   sessions) shift; cmd_sessions "$@" ;;
+  session) shift; cmd_session "$@" ;;
+  find)    shift; cmd_find "$@" ;;
+  grep)    shift; cmd_grep "$@" ;;
+  tail)    shift; cmd_tail "$@" ;;
   help|*)  usage ;;
 esac
