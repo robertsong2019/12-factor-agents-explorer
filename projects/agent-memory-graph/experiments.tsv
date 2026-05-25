@@ -2,3 +2,9 @@ timestamp	commit	metric	value	status	description
 2026-05-12T19:00	be74e8a	test_count	18/18	keep	Cycle 1: test suite from scratch (18 tests) + unlink() method. Covers add/link/recall/neighbors/decay/stats.
 2026-05-12T19:10	708a4de	test_count	26/26	keep	Cycle 2: merge_nodes() (data+edge rewire+self-loop cleanup) + shortest_path() (BFS). 8 new tests.
 2026-05-12T19:20	3c78134	test_count	30/30	keep	Cycle 3: tag_nodes() + search_by_tag() + add(tags=). Tags column in SQLite. 4 new tests.
+2026-05-24T00:08:37+08:00	c523735	test_count	35/35	keep	export_json/import_json — full graph serialization. export_json() returns versioned dict of nodes+edges. import_json(data, merge=False) restores or merges. Preserves IDs, tags, data, weights. +5 tests (30→35).
+2026-05-25T01:00	5c9d2f6	test_count	53/53	keep	batch ops: add_many+link_many+delete_many — bulk node/edge operations. +8 tests (45→53). Single-transaction batch add, batch link, batch delete with edge cleanup. Zero regressions.
+2026-05-25T21:00	8070a76	test_count	64/64	keep	find_by_kind+search_by_data+edges_of — kind filtering, data key/value lookup, edge inspection (+11 tests, 53→64)
+2026-05-25T21:05	3c3f7c7	test_count	72/72	keep	touch+top_nodes+count_by_kind — access tracking, top-N ranking, kind stats (+8 tests, 64→72)
+2026-05-25T21:10	96e601b	test_count	79/79	keep	has_node+rename_tag+clear_tags — existence check, tag rename, tag clearing (+7 tests, 72→79)
+2026-05-25T21:15	e3c8455	test_count	91/91	keep	reweight+is_linked+all_tags — weight delta, edge check, tag listing (+12 tests, 79→91)
