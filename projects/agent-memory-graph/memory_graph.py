@@ -476,6 +476,37 @@ class MemoryGraph:
         self.conn.commit()
         return True
 
+    def reweight(self, node_id: str, delta: float) -> Optional[Node]:
+        """Adjust a node's weight by delta (can be negative). Clamps to [0, 1]. Returns updated node."""
+        row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if not row:
+            return None
+        new_w = max(0.0, min(1.0, row["weight"] + delta))
+        self.conn.execute("UPDATE nodes SET weight=? WHERE id=?", (new_w, node_id))
+        self.conn.commit()
+        return self.get_node(node_id)
+
+    def is_linked(self, source_id: str, target_id: str, relation: str = None) -> bool:
+        """Check if an edge exists. If relation is None, checks any edge between the two."""
+        if relation is not None:
+            row = self.conn.execute(
+                "SELECT 1 FROM edges WHERE source=? AND target=? AND relation=?",
+                (source_id, target_id, relation)
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT 1 FROM edges WHERE source=? AND target=?",
+                (source_id, target_id)
+            ).fetchone()
+        return row is not None
+
+    def all_tags(self) -> list[str]:
+        """Return sorted list of unique tags across all nodes."""
+        tags_set = set()
+        for r in self.conn.execute("SELECT tags FROM nodes").fetchall():
+            tags_set.update(json.loads(r["tags"]))
+        return sorted(tags_set)
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

@@ -566,3 +566,61 @@ class TestClearTags:
 
     def test_nonexistent(self, mg):
         assert mg.clear_tags("nope") is False
+
+
+class TestReweight:
+    def test_positive_delta(self, mg):
+        n = mg.add("A", "fact")
+        mg.update_node(n.id, weight=0.5)
+        result = mg.reweight(n.id, 0.3)
+        assert result.weight == pytest.approx(0.8)
+
+    def test_negative_delta(self, mg):
+        n = mg.add("A", "fact")
+        result = mg.reweight(n.id, -0.5)
+        assert result.weight == pytest.approx(0.5)
+
+    def test_clamp_at_zero(self, mg):
+        n = mg.add("A", "fact")
+        result = mg.reweight(n.id, -2.0)
+        assert result.weight == 0.0
+
+    def test_clamp_at_one(self, mg):
+        n = mg.add("A", "fact")
+        result = mg.reweight(n.id, 5.0)
+        assert result.weight == 1.0
+
+    def test_nonexistent(self, mg):
+        assert mg.reweight("nope", 0.5) is None
+
+
+class TestIsLinked:
+    def test_linked_with_relation(self, populated):
+        mg, a, b, c = populated
+        assert mg.is_linked(a.id, b.id, "works_with") is True
+
+    def test_not_linked(self, populated):
+        mg, a, b, c = populated
+        assert mg.is_linked(b.id, a.id, "works_with") is False
+
+    def test_any_relation(self, populated):
+        mg, a, b, c = populated
+        assert mg.is_linked(a.id, b.id) is True
+
+    def test_no_match_any(self, populated):
+        mg, a, b, c = populated
+        assert mg.is_linked(b.id, a.id) is False
+
+
+class TestAllTags:
+    def test_returns_unique_sorted(self, mg):
+        mg.add("A", "fact", tags=["beta", "alpha"])
+        mg.add("B", "fact", tags=["alpha", "gamma"])
+        assert mg.all_tags() == ["alpha", "beta", "gamma"]
+
+    def test_empty(self, mg):
+        assert mg.all_tags() == []
+
+    def test_no_tags_on_nodes(self, mg):
+        mg.add("A", "fact")
+        assert mg.all_tags() == []
