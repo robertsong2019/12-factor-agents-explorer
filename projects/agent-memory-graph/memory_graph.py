@@ -451,6 +451,31 @@ class MemoryGraph:
         self.conn.commit()
         return self.get_node(node_id)
 
+    def has_node(self, node_id: str) -> bool:
+        """Check if a node exists without fetching it."""
+        row = self.conn.execute("SELECT 1 FROM nodes WHERE id=?", (node_id,)).fetchone()
+        return row is not None
+
+    def rename_tag(self, old_tag: str, new_tag: str) -> int:
+        """Rename a tag across all nodes. Returns count of nodes updated."""
+        count = 0
+        for r in self.conn.execute("SELECT id, tags FROM nodes").fetchall():
+            tags = json.loads(r["tags"])
+            if old_tag in tags:
+                tags[tags.index(old_tag)] = new_tag
+                self.conn.execute("UPDATE nodes SET tags=? WHERE id=?", (json.dumps(tags), r["id"]))
+                count += 1
+        self.conn.commit()
+        return count
+
+    def clear_tags(self, node_id: str) -> bool:
+        """Remove all tags from a node. Returns True if node existed."""
+        if not self.has_node(node_id):
+            return False
+        self.conn.execute("UPDATE nodes SET tags='[]' WHERE id=?", (node_id,))
+        self.conn.commit()
+        return True
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

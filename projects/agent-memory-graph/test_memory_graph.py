@@ -529,3 +529,40 @@ class TestTouch:
 
     def test_touch_nonexistent(self, mg):
         assert mg.touch("nope") is None
+
+
+class TestHasNode:
+    def test_exists(self, mg):
+        n = mg.add("A", "fact")
+        assert mg.has_node(n.id) is True
+
+    def test_not_exists(self, mg):
+        assert mg.has_node("nope") is False
+
+    def test_after_delete(self, mg):
+        n = mg.add("A", "fact")
+        mg.delete_node(n.id)
+        assert mg.has_node(n.id) is False
+
+
+class TestRenameTag:
+    def test_rename_across_nodes(self, mg):
+        n1 = mg.add("A", "fact", tags=["old"])
+        n2 = mg.add("B", "fact", tags=["old", "other"])
+        count = mg.rename_tag("old", "new")
+        assert count == 2
+        assert len(mg.search_by_tag("new")) == 2
+        assert mg.search_by_tag("old") == []
+
+    def test_no_match(self, mg):
+        assert mg.rename_tag("x", "y") == 0
+
+
+class TestClearTags:
+    def test_clear(self, mg):
+        n = mg.add("A", "fact", tags=["t1", "t2"])
+        assert mg.clear_tags(n.id) is True
+        assert mg.search_by_tag("t1") == []
+
+    def test_nonexistent(self, mg):
+        assert mg.clear_tags("nope") is False
