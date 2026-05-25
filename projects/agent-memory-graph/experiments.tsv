@@ -9,3 +9,4 @@ timestamp	commit	metric	value	status	description
 2026-05-25T21:10	96e601b	test_count	79/79	keep	has_node+rename_tag+clear_tags — existence check, tag rename, tag clearing (+7 tests, 72→79)
 2026-05-25T21:15	e3c8455	test_count	91/91	keep	reweight+is_linked+all_tags — weight delta, edge check, tag listing (+12 tests, 79→91)
 2026-05-26T00:00	fa70a66	test_count	99/99	keep	subgraph(depth)+unlink_many — neighborhood extraction for agent context, batch edge removal. subgraph traverses up to N hops returning export-compatible dict. unlink_many batch-deletes edges. +8 tests (91→99).
+2026-05-26T01:00	879048b	test_count	110/110	keep	prune(min_weight)+aggregate(kind,field,fn) — memory cleanup removes low-weight nodes+orphaned edges; aggregation supports sum/avg/min/max/count by kind. +11 tests (99→110). Zero regressions.
