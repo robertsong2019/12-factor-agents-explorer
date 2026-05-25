@@ -559,6 +559,66 @@ class MemoryGraph:
 
         return {"center": node_id, "nodes": nodes, "edges": edges}
 
+    def prune(self, min_weight: float = 0.1) -> dict:
+        """Remove nodes below min_weight and their orphaned edges.
+
+        Returns dict with 'nodes_removed', 'edges_removed' counts.
+        Useful for periodic memory cleanup — keeps the graph lean.
+        """
+        # Find low-weight nodes
+        rows = self.conn.execute(
+            "SELECT id FROM nodes WHERE weight < ?", (min_weight,)
+        ).fetchall()
+        node_ids = [r["id"] for r in rows]
+        if not node_ids:
+            return {"nodes_removed": 0, "edges_removed": 0}
+
+        # Count edges that will be removed
+        placeholders = ",".join("?" for _ in node_ids)
+        edge_count = self.conn.execute(
+            f"SELECT COUNT(*) c FROM edges WHERE source IN ({placeholders}) OR target IN ({placeholders})",
+            node_ids + node_ids
+        ).fetchone()["c"]
+
+        # Delete edges then nodes
+        self.conn.execute(
+            f"DELETE FROM edges WHERE source IN ({placeholders}) OR target IN ({placeholders})",
+            node_ids + node_ids
+        )
+        self.conn.execute(
+            f"DELETE FROM nodes WHERE id IN ({placeholders})",
+            node_ids
+        )
+        self.conn.commit()
+        return {"nodes_removed": len(node_ids), "edges_removed": edge_count}
+
+    def aggregate(self, kind: str, field: str = "weight", fn: str = "sum") -> float:
+        """Aggregate a numeric field across all nodes of a given kind.
+
+        fn can be 'sum', 'avg', 'min', 'max', 'count'.
+        Useful for answering questions like 'average weight of all events',
+        'total weight of skills', etc.
+        """
+        valid_fns = {"sum", "avg", "min", "max", "count"}
+        if fn not in valid_fns:
+            raise ValueError(f"fn must be one of {valid_fns}, got '{fn}'")
+
+        if fn == "count":
+            row = self.conn.execute(
+                "SELECT COUNT(*) c FROM nodes WHERE kind=?", (kind,)
+            ).fetchone()
+            return float(row["c"])
+
+        sql_fn = {"sum": "SUM", "avg": "AVG", "min": "MIN", "max": "MAX"}[fn]
+        # Map field to column
+        col_map = {"weight": "weight", "created": "created", "accessed": "accessed"}
+        col = col_map.get(field, field)
+        row = self.conn.execute(
+            f"SELECT {sql_fn}({col}) v FROM nodes WHERE kind=?", (kind,)
+        ).fetchone()
+        val = row["v"]
+        return float(val) if val is not None else 0.0
+
     def unlink_many(self, pairs: list[dict]) -> int:
         """Batch unlink edges. Each dict: {source, target, relation?}.
         If relation is omitted, removes all edges between source and target.

@@ -697,3 +697,83 @@ class TestUnlinkMany:
     def test_no_match_returns_zero(self, mg):
         removed = mg.unlink_many([{"source": "no", "target": "no", "relation": "z"}])
         assert removed == 0
+
+
+class TestPrune:
+    def test_removes_low_weight_nodes(self, mg):
+        a = mg.add("keep", "fact")
+        b = mg.add("gone", "fact")
+        mg.update_node(b.id, weight=0.05)
+        result = mg.prune(min_weight=0.1)
+        assert result["nodes_removed"] == 1
+        assert mg.has_node(a.id) is True
+        assert mg.has_node(b.id) is False
+
+    def test_removes_orphaned_edges(self, mg):
+        a = mg.add("keep", "fact")
+        b = mg.add("gone", "fact")
+        mg.link(a.id, b.id, "rel")
+        mg.update_node(b.id, weight=0.05)
+        result = mg.prune(min_weight=0.1)
+        assert result["nodes_removed"] == 1
+        assert result["edges_removed"] == 1
+        assert len(mg.edges_of(a.id)) == 0
+
+    def test_nothing_below_threshold(self, mg):
+        mg.add("strong", "fact")
+        result = mg.prune(min_weight=0.1)
+        assert result["nodes_removed"] == 0
+        assert result["edges_removed"] == 0
+
+    def test_keeps_nodes_at_threshold(self, mg):
+        n = mg.add("exact", "fact")
+        mg.update_node(n.id, weight=0.1)
+        result = mg.prune(min_weight=0.1)
+        assert result["nodes_removed"] == 0
+        assert mg.has_node(n.id) is True
+
+    def test_batch_prune(self, mg):
+        for i in range(5):
+            n = mg.add(f"node{i}", "fact")
+            mg.update_node(n.id, weight=0.01 * i)  # 0, 0.01, 0.02, 0.03, 0.04
+        result = mg.prune(min_weight=0.03)
+        assert result["nodes_removed"] == 3  # weight 0, 0.01, 0.02
+        assert mg.stats()["nodes"] == 2
+
+
+class TestAggregate:
+    def test_sum_weight_by_kind(self, mg):
+        mg.add("A", "event")
+        mg.add("B", "event")
+        n = mg.add("C", "event")
+        mg.update_node(n.id, weight=0.5)
+        result = mg.aggregate("event", "weight", "sum")
+        assert result == pytest.approx(2.5)  # 1.0 + 1.0 + 0.5
+
+    def test_avg_weight_by_kind(self, mg):
+        mg.add("A", "skill")
+        n = mg.add("B", "skill")
+        mg.update_node(n.id, weight=0.4)
+        result = mg.aggregate("skill", "weight", "avg")
+        assert result == pytest.approx(0.7)  # (1.0 + 0.4) / 2
+
+    def test_count_by_kind(self, mg):
+        mg.add("A", "person")
+        mg.add("B", "person")
+        mg.add("C", "skill")
+        assert mg.aggregate("person", fn="count") == 2.0
+
+    def test_min_max_weight(self, mg):
+        mg.add("A", "fact")
+        n = mg.add("B", "fact")
+        mg.update_node(n.id, weight=0.3)
+        assert mg.aggregate("fact", "weight", "min") == pytest.approx(0.3)
+        assert mg.aggregate("fact", "weight", "max") == pytest.approx(1.0)
+
+    def test_empty_kind_returns_zero(self, mg):
+        assert mg.aggregate("nonexistent", "weight", "sum") == 0.0
+        assert mg.aggregate("nonexistent", fn="count") == 0.0
+
+    def test_invalid_fn_raises(self, mg):
+        with pytest.raises(ValueError):
+            mg.aggregate("fact", fn="median")
