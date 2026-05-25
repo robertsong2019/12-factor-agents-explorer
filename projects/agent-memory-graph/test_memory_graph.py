@@ -624,3 +624,76 @@ class TestAllTags:
     def test_no_tags_on_nodes(self, mg):
         mg.add("A", "fact")
         assert mg.all_tags() == []
+
+
+class TestSubgraph:
+    def test_single_node_depth0(self, mg):
+        n = mg.add("root", "entity")
+        sg = mg.subgraph(n.id, depth=0)
+        assert sg["center"] == n.id
+        assert len(sg["nodes"]) == 1
+        assert len(sg["edges"]) == 0
+
+    def test_depth1_picks_up_neighbors(self, mg):
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")  # disconnected
+        mg.link(a.id, b.id, "knows")
+        sg = mg.subgraph(a.id, depth=1)
+        ids = {n["id"] for n in sg["nodes"]}
+        assert a.id in ids
+        assert b.id in ids
+        assert c.id not in ids
+        assert len(sg["edges"]) == 1
+
+    def test_depth2_traverses(self, mg):
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "knows")
+        mg.link(b.id, c.id, "knows")
+        sg = mg.subgraph(a.id, depth=2)
+        ids = {n["id"] for n in sg["nodes"]}
+        assert ids == {a.id, b.id, c.id}
+        assert len(sg["edges"]) == 2
+
+    def test_nonexistent_center(self, mg):
+        sg = mg.subgraph("nope", depth=1)
+        assert len(sg["nodes"]) == 0
+        assert len(sg["edges"]) == 0
+
+    def test_export_format_compatible(self, mg):
+        a = mg.add("A", tags=["x"])
+        b = mg.add("B", data={"k": 1})
+        mg.link(a.id, b.id, "rel")
+        sg = mg.subgraph(a.id, depth=1)
+        # nodes should have same keys as export_json
+        assert set(sg["nodes"][0].keys()) == {"id", "label", "kind", "data", "created", "accessed", "weight", "tags"}
+
+
+class TestUnlinkMany:
+    def test_batch_unlink_with_relation(self, mg):
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "x")
+        mg.link(a.id, c.id, "y")
+        removed = mg.unlink_many([
+            {"source": a.id, "target": b.id, "relation": "x"},
+            {"source": a.id, "target": c.id, "relation": "y"},
+        ])
+        assert removed == 2
+        assert mg.is_linked(a.id, b.id) is False
+        assert mg.is_linked(a.id, c.id) is False
+
+    def test_unlink_without_relation_removes_all(self, mg):
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "x")
+        mg.link(a.id, b.id, "y")
+        removed = mg.unlink_many([{"source": a.id, "target": b.id}])
+        assert removed == 2
+
+    def test_no_match_returns_zero(self, mg):
+        removed = mg.unlink_many([{"source": "no", "target": "no", "relation": "z"}])
+        assert removed == 0

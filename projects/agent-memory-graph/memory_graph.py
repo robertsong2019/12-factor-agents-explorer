@@ -507,6 +507,80 @@ class MemoryGraph:
             tags_set.update(json.loads(r["tags"]))
         return sorted(tags_set)
 
+    def subgraph(self, node_id: str, depth: int = 1) -> dict:
+        """Extract a subgraph around node_id up to `depth` hops.
+
+        Returns a dict with 'center', 'nodes', 'edges' suitable for JSON serialization
+        or passing to import_json(). Useful for pulling relevant context into an agent's
+        working memory.
+        """
+        visited_nodes = set()
+        visited_edges = set()
+        frontier = {node_id}
+
+        for _ in range(depth + 1):
+            next_frontier = set()
+            for nid in frontier:
+                if nid in visited_nodes:
+                    continue
+                visited_nodes.add(nid)
+                # collect edges
+                for r in self.conn.execute(
+                    "SELECT source, target, relation, weight FROM edges WHERE source=? OR target=?",
+                    (nid, nid)
+                ).fetchall():
+                    edge_key = (r["source"], r["target"], r["relation"])
+                    if edge_key not in visited_edges:
+                        visited_edges.add(edge_key)
+                        next_frontier.add(r["source"])
+                        next_frontier.add(r["target"])
+            frontier = next_frontier - visited_nodes
+
+        # Build node/edge lists (reuse export_json format)
+        nodes = []
+        placeholders = ",".join("?" for _ in visited_nodes)
+        for r in self.conn.execute(
+            f"SELECT * FROM nodes WHERE id IN ({placeholders})",
+            list(visited_nodes)
+        ).fetchall():
+            nodes.append({
+                "id": r["id"], "label": r["label"], "kind": r["kind"],
+                "data": json.loads(r["data"]), "created": r["created"],
+                "accessed": r["accessed"], "weight": r["weight"],
+                "tags": json.loads(r["tags"])
+            })
+        edges = []
+        for sk, tk, rel in visited_edges:
+            row = self.conn.execute(
+                "SELECT weight FROM edges WHERE source=? AND target=? AND relation=?",
+                (sk, tk, rel)
+            ).fetchone()
+            edges.append({"source": sk, "target": tk, "relation": rel, "weight": row["weight"]})
+
+        return {"center": node_id, "nodes": nodes, "edges": edges}
+
+    def unlink_many(self, pairs: list[dict]) -> int:
+        """Batch unlink edges. Each dict: {source, target, relation?}.
+        If relation is omitted, removes all edges between source and target.
+        Returns count of removed edges.
+        """
+        removed = 0
+        for p in pairs:
+            rel = p.get("relation")
+            if rel is not None:
+                cur = self.conn.execute(
+                    "DELETE FROM edges WHERE source=? AND target=? AND relation=?",
+                    (p["source"], p["target"], rel)
+                )
+            else:
+                cur = self.conn.execute(
+                    "DELETE FROM edges WHERE source=? AND target=?",
+                    (p["source"], p["target"])
+                )
+            removed += cur.rowcount
+        self.conn.commit()
+        return removed
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
