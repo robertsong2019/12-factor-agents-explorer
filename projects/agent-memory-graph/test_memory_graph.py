@@ -407,3 +407,75 @@ class TestExportImport:
         mg.import_json({})
         assert mg.stats()["nodes"] == 0
 
+
+
+# ── Cycle 2026-05-25: find_by_kind, search_by_data, edges_of ──
+
+class TestFindByKind:
+    def test_returns_nodes_of_given_kind(self, mg):
+        mg.add("A", "person")
+        mg.add("B", "person")
+        mg.add("C", "skill")
+        result = mg.find_by_kind("person")
+        assert len(result) == 2
+        assert all(n.kind == "person" for n in result)
+
+    def test_empty_for_nonexistent_kind(self, mg):
+        mg.add("A", "person")
+        assert mg.find_by_kind("concept") == []
+
+    def test_ordered_by_weight_desc(self, mg):
+        n1 = mg.add("low", "fact", data={}, tags=[], )
+        n2 = mg.add("high", "fact")
+        mg.update_node(n2.id, weight=0.9)
+        mg.update_node(n1.id, weight=0.3)
+        result = mg.find_by_kind("fact")
+        assert result[0].weight >= result[1].weight
+
+
+class TestSearchByData:
+    def test_find_by_key_only(self, mg):
+        mg.add("A", "fact", {"x": 1})
+        mg.add("B", "fact", {"y": 2})
+        result = mg.search_by_data("x")
+        assert len(result) == 1
+        assert result[0].label == "A"
+
+    def test_find_by_key_and_value(self, mg):
+        mg.add("A", "fact", {"role": "engineer"})
+        mg.add("B", "fact", {"role": "designer"})
+        result = mg.search_by_data("role", "engineer")
+        assert len(result) == 1
+        assert result[0].label == "A"
+
+    def test_no_match_returns_empty(self, mg):
+        mg.add("A", "fact", {"x": 1})
+        assert mg.search_by_data("z") == []
+
+    def test_empty_data_nodes_skipped(self, mg):
+        mg.add("A", "fact")
+        mg.add("B", "fact", {"x": 1})
+        assert len(mg.search_by_data("x")) == 1
+
+
+class TestEdgesOf:
+    def test_outgoing_edges(self, populated):
+        mg, a, b, c = populated
+        edges = mg.edges_of(a.id, "outgoing")
+        assert len(edges) == 2
+        assert all(e.source == a.id for e in edges)
+
+    def test_incoming_edges(self, populated):
+        mg, a, b, c = populated
+        edges = mg.edges_of(b.id, "incoming")
+        assert len(edges) == 1
+        assert edges[0].source != b.id
+
+    def test_both_directions(self, populated):
+        mg, a, b, c = populated
+        assert len(mg.edges_of(a.id, "both")) == 2
+        assert len(mg.edges_of(c.id, "both")) == 2
+
+    def test_no_edges(self, mg):
+        n = mg.add("lonely", "fact")
+        assert mg.edges_of(n.id) == []

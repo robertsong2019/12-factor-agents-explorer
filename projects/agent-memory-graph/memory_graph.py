@@ -385,6 +385,42 @@ class MemoryGraph:
             )
         self.conn.commit()
 
+    def find_by_kind(self, kind: str) -> list[Node]:
+        """Return all nodes of a given kind."""
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE kind=? ORDER BY weight DESC", (kind,)
+        ).fetchall()
+        return [Node(r["id"], r["label"], r["kind"],
+                     json.loads(r["data"]), r["created"], r["accessed"], r["weight"])
+                for r in rows]
+
+    def search_by_data(self, key: str, value=None) -> list[Node]:
+        """Find nodes whose data dict contains key (and optionally matches value)."""
+        results = []
+        for r in self.conn.execute("SELECT * FROM nodes").fetchall():
+            d = json.loads(r["data"])
+            if key in d and (value is None or d[key] == value):
+                results.append(Node(
+                    r["id"], r["label"], r["kind"],
+                    d, r["created"], r["accessed"], r["weight"]
+                ))
+        return results
+
+    def edges_of(self, node_id: str, direction: str = "both") -> list[Edge]:
+        """Get edges connected to a node. direction: 'outgoing', 'incoming', or 'both'."""
+        edges = []
+        if direction in ("outgoing", "both"):
+            for r in self.conn.execute(
+                "SELECT * FROM edges WHERE source=?", (node_id,)
+            ).fetchall():
+                edges.append(Edge(r["source"], r["target"], r["relation"], r["weight"]))
+        if direction in ("incoming", "both"):
+            for r in self.conn.execute(
+                "SELECT * FROM edges WHERE target=?", (node_id,)
+            ).fetchall():
+                edges.append(Edge(r["source"], r["target"], r["relation"], r["weight"]))
+        return edges
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
