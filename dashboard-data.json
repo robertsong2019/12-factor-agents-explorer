@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-05-25T06:00:00+08:00",
+  "updatedAt": "2026-05-26T06:00:00+08:00",
   "generatedBy": "Catalyst",
   "cronJobs": [
     { "id": "f38e0365", "name": "dashboard-update-morning", "schedule": "0 6 * * *", "next": "~24h", "last": "now", "status": "running" },
@@ -19,19 +19,15 @@
     { "id": "686ec55c", "name": "essay-generation-morning", "schedule": "0 5 * * *", "next": "in 23h", "last": "1h ago", "status": "ok" }
   ],
   "sessions": {
-    "total": 45,
-    "active24h": 33,
+    "activeNow": 1,
     "recentHighlights": [
-      { "key": "agent:main:main", "age": "13m ago", "tokens": "97k/205k (47%)", "kind": "direct" },
-      { "key": "agent:main:feishu...4b2769", "age": "19h ago", "tokens": "53k/205k (26%)", "kind": "direct" }
+      { "label": "Cron: dashboard-update-morning", "status": "running", "model": "glm-5.1" }
     ]
   },
   "summary": {
     "cronJobsTotal": 15,
-    "cronOk": 14,
-    "cronRunning": 1,
-    "cronFailed": 0,
-    "sessionsTotal": 45,
-    "sessionsActive24h": 33
+    "cronJobsHealthy": 14,
+    "cronJobsRunning": 1,
+    "cronJobsFailed": 0
   }
 }
