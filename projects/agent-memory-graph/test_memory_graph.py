@@ -479,3 +479,53 @@ class TestEdgesOf:
     def test_no_edges(self, mg):
         n = mg.add("lonely", "fact")
         assert mg.edges_of(n.id) == []
+
+
+class TestCountByKind:
+    def test_counts(self, mg):
+        mg.add("A", "person")
+        mg.add("B", "person")
+        mg.add("C", "skill")
+        result = mg.count_by_kind()
+        assert result == {"person": 2, "skill": 1}
+
+    def test_empty_graph(self, mg):
+        assert mg.count_by_kind() == {}
+
+
+class TestTopNodes:
+    def test_top_n(self, mg):
+        for i in range(5):
+            n = mg.add(f"node{i}", "fact")
+            mg.update_node(n.id, weight=0.1 * (i + 1))
+        top = mg.top_nodes(3)
+        assert len(top) == 3
+        assert top[0].weight >= top[1].weight >= top[2].weight
+
+    def test_top_more_than_count(self, mg):
+        mg.add("A", "fact")
+        assert len(mg.top_nodes(10)) == 1
+
+
+class TestTouch:
+    def test_touch_boosts_weight(self, mg):
+        n = mg.add("A", "fact")
+        mg.update_node(n.id, weight=0.3)
+        touched = mg.touch(n.id)
+        assert touched.weight == pytest.approx(0.7, abs=0.01)
+
+    def test_touch_caps_at_1(self, mg):
+        n = mg.add("A", "fact")
+        touched = mg.touch(n.id)
+        assert touched.weight <= 1.0
+
+    def test_touch_updates_accessed(self, mg):
+        n = mg.add("A", "fact")
+        import time
+        before = n.accessed
+        time.sleep(0.01)
+        touched = mg.touch(n.id)
+        assert touched.accessed > before
+
+    def test_touch_nonexistent(self, mg):
+        assert mg.touch("nope") is None

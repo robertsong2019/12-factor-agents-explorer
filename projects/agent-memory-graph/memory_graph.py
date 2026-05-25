@@ -421,6 +421,36 @@ class MemoryGraph:
                 edges.append(Edge(r["source"], r["target"], r["relation"], r["weight"]))
         return edges
 
+    def count_by_kind(self) -> dict[str, int]:
+        """Return {kind: count} for all node kinds."""
+        rows = self.conn.execute(
+            "SELECT kind, COUNT(*) c FROM nodes GROUP BY kind"
+        ).fetchall()
+        return {r["kind"]: r["c"] for r in rows}
+
+    def top_nodes(self, n: int = 5) -> list[Node]:
+        """Return top-n nodes by weight."""
+        rows = self.conn.execute(
+            "SELECT * FROM nodes ORDER BY weight DESC LIMIT ?", (n,)
+        ).fetchall()
+        return [Node(r["id"], r["label"], r["kind"],
+                     json.loads(r["data"]), r["created"], r["accessed"], r["weight"])
+                for r in rows]
+
+    def touch(self, node_id: str) -> Optional[Node]:
+        """Update a node's accessed timestamp and boost weight. Returns updated node or None."""
+        row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if not row:
+            return None
+        new_weight = min(1.0, row["weight"] + self.ACCESS_BOOST)
+        now = time.time()
+        self.conn.execute(
+            "UPDATE nodes SET accessed=?, weight=? WHERE id=?",
+            (now, new_weight, node_id)
+        )
+        self.conn.commit()
+        return self.get_node(node_id)
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
