@@ -995,3 +995,126 @@ class TestPathExists:
         assert mg.path_exists(nodes[0].id, nodes[4].id, max_depth=3) is False
         # 4 hops, limit 5 should succeed
         assert mg.path_exists(nodes[0].id, nodes[4].id, max_depth=5) is True
+
+
+class TestFindRootsLeaves:
+    """find_roots() and find_leaves() — source/sink node detection."""
+
+    def test_find_roots_empty(self, mg):
+        assert mg.find_roots() == []
+
+    def test_find_roots_single(self, mg):
+        n = mg.add("root", "fact")
+        roots = mg.find_roots()
+        assert len(roots) == 1
+        assert roots[0].id == n.id
+
+    def test_find_roots_chain(self, mg):
+        a, b, c = [mg.add(f"N{i}", "fact") for i in range(3)]
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        roots = mg.find_roots()
+        assert len(roots) == 1
+        assert roots[0].id == a.id
+
+    def test_find_leaves_chain(self, mg):
+        a, b, c = [mg.add(f"N{i}", "fact") for i in range(3)]
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        leaves = mg.find_leaves()
+        assert len(roots := mg.find_leaves()) == 1
+        assert roots[0].id == c.id
+
+    def test_find_leaves_isolated(self, mg):
+        a = mg.add("isolated", "fact")
+        b = mg.add("connected", "fact")
+        mg.link(a.id, b.id, "to")
+        # a has outgoing, b has incoming but no outgoing
+        leaves = mg.find_leaves()
+        assert len(leaves) == 1
+        assert leaves[0].id == b.id
+
+    def test_multiple_roots(self, mg):
+        a, b, c = [mg.add(f"N{i}", "fact") for i in range(3)]
+        mg.link(a.id, c.id, "to")
+        mg.link(b.id, c.id, "to")
+        roots = mg.find_roots()
+        assert len(roots) == 2
+        root_ids = {r.id for r in roots}
+        assert a.id in root_ids
+        assert b.id in root_ids
+
+
+class TestDegree:
+    """degree() and degree_centrality() — node connectivity analysis."""
+
+    def test_degree_missing(self, mg):
+        assert mg.degree("nonexistent") == 0
+
+    def test_degree_isolated(self, mg):
+        n = mg.add("solo", "fact")
+        assert mg.degree(n.id) == 0
+
+    def test_degree_in_out_both(self, mg):
+        a, b, c = [mg.add(f"N{i}", "fact") for i in range(3)]
+        mg.link(a.id, b.id, "to")
+        mg.link(c.id, b.id, "from")
+        assert mg.degree(b.id, "in") == 2
+        assert mg.degree(b.id, "out") == 0
+        assert mg.degree(b.id, "both") == 2
+        assert mg.degree(a.id, "out") == 1
+        assert mg.degree(a.id, "in") == 0
+
+    def test_degree_centrality_single(self, mg):
+        n = mg.add("only", "fact")
+        assert mg.degree_centrality(n.id) == 0.0
+
+    def test_degree_centrality_star(self, mg):
+        center = mg.add("hub", "fact")
+        spokes = [mg.add(f"s{i}", "fact") for i in range(4)]
+        for s in spokes:
+            mg.link(center.id, s.id, "to")
+        # center has 4 out of 4 possible connections (5 nodes, n-1=4)
+        assert mg.degree_centrality(center.id) == 1.0
+        # spoke has 1 out of 4
+        assert mg.degree_centrality(spokes[0].id) == 0.25
+
+    def test_degree_centrality_missing(self, mg):
+        assert mg.degree_centrality("nonexistent") == 0.0
+
+
+class TestShortestPath:
+    """shortest_path() — BFS path reconstruction."""
+
+    def test_shortest_path_same_node(self, mg):
+        n = mg.add("self", "fact")
+        assert mg.shortest_path(n.id, n.id) == [n.id]
+
+    def test_shortest_path_missing(self, mg):
+        a = mg.add("a", "fact")
+        assert mg.shortest_path(a.id, "nonexistent") is None
+
+    def test_shortest_path_direct(self, mg):
+        a, b = mg.add("a", "fact"), mg.add("b", "fact")
+        mg.link(a.id, b.id, "to")
+        assert mg.shortest_path(a.id, b.id) == [a.id, b.id]
+
+    def test_shortest_path_chain(self, mg):
+        nodes = [mg.add(f"N{i}", "fact") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i+1].id, "to")
+        path = mg.shortest_path(nodes[0].id, nodes[3].id)
+        assert path == [n.id for n in nodes]
+
+    def test_shortest_path_no_path(self, mg):
+        a, b = mg.add("a", "fact"), mg.add("b", "fact")
+        assert mg.shortest_path(a.id, b.id) is None
+
+    def test_shortest_path_shortcut(self, mg):
+        nodes = [mg.add(f"N{i}", "fact") for i in range(4)]
+        mg.link(nodes[0].id, nodes[1].id, "to")
+        mg.link(nodes[1].id, nodes[2].id, "to")
+        mg.link(nodes[2].id, nodes[3].id, "to")
+        mg.link(nodes[0].id, nodes[3].id, "shortcut")
+        path = mg.shortest_path(nodes[0].id, nodes[3].id)
+        assert path == [nodes[0].id, nodes[3].id]

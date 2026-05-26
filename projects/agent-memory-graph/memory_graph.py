@@ -813,6 +813,76 @@ class MemoryGraph:
             frontier = next_frontier
         return False
 
+    def find_roots(self) -> list:
+        """Find nodes with no incoming edges (root/source nodes)."""
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE id NOT IN (SELECT target FROM edges)"
+        ).fetchall()
+        return [Node(r["id"], r["label"], r["kind"],
+                     json.loads(r["data"]) if r["data"] else {},
+                     r["created"], r["accessed"], r["weight"]) for r in rows]
+
+    def find_leaves(self) -> list:
+        """Find nodes with no outgoing edges (leaf/sink nodes)."""
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE id NOT IN (SELECT source FROM edges)"
+        ).fetchall()
+        return [Node(r["id"], r["label"], r["kind"],
+                     json.loads(r["data"]) if r["data"] else {},
+                     r["created"], r["accessed"], r["weight"]) for r in rows]
+
+    def degree(self, node_id: str, direction: str = "both") -> int:
+        """Get degree of a node. direction: 'in', 'out', or 'both'."""
+        if not self.has_node(node_id):
+            return 0
+        if direction == "in":
+            return self.conn.execute(
+                "SELECT COUNT(*) as c FROM edges WHERE target=?", (node_id,)
+            ).fetchone()["c"]
+        elif direction == "out":
+            return self.conn.execute(
+                "SELECT COUNT(*) as c FROM edges WHERE source=?", (node_id,)
+            ).fetchone()["c"]
+        else:
+            return self.conn.execute(
+                "SELECT COUNT(*) as c FROM edges WHERE source=? OR target=?",
+                (node_id, node_id)
+            ).fetchone()["c"]
+
+    def degree_centrality(self, node_id: str) -> float:
+        """Normalized degree centrality (0.0-1.0). Returns 0.0 for isolated/missing nodes."""
+        total_nodes = self.conn.execute("SELECT COUNT(*) as c FROM nodes").fetchone()["c"]
+        if total_nodes <= 1:
+            return 0.0
+        deg = self.degree(node_id, "both")
+        return deg / (total_nodes - 1)
+
+    def shortest_path(self, start_id: str, end_id: str) -> Optional[list]:
+        """BFS shortest path returning list of node IDs, or None if no path."""
+        if start_id == end_id:
+            return [start_id] if self.has_node(start_id) else None
+        visited = {start_id: None}
+        frontier = [start_id]
+        while frontier:
+            next_frontier = []
+            for nid in frontier:
+                for r in self.conn.execute(
+                    "SELECT target FROM edges WHERE source=?", (nid,)
+                ).fetchall():
+                    tid = r["target"]
+                    if tid == end_id:
+                        path = [end_id]
+                        cur = nid
+                        while cur is not None:
+                            path.append(cur)
+                            cur = visited[cur]
+                        return list(reversed(path))
+                    if tid not in visited:
+                        visited[tid] = nid
+                        next_frontier.append(tid)
+            frontier = next_frontier
+        return None
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
