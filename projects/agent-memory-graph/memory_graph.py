@@ -955,6 +955,74 @@ class MemoryGraph:
             scores = {k: v / max_s for k, v in new_scores.items()}
         return scores
 
+    def pagerank(self, iterations: int = 20, damping: float = 0.85) -> dict:
+        """PageRank algorithm. Returns {node_id: score}."""
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not nodes:
+            return {}
+        n = len(nodes)
+        scores = {r["id"]: 1.0 / n for r in nodes}
+        for _ in range(iterations):
+            new_scores = {}
+            for r in nodes:
+                nid = r["id"]
+                s = 0.0
+                for src in self.conn.execute(
+                    "SELECT source FROM edges WHERE target=?", (nid,)
+                ).fetchall():
+                    out_deg = self.degree(src[0], "out")
+                    if out_deg > 0:
+                        s += scores.get(src[0], 0) / out_deg
+                new_scores[nid] = (1 - damping) / n + damping * s
+            total = sum(new_scores.values()) or 1.0
+            scores = {k: v / total for k, v in new_scores.items()}
+        return scores
+
+    def k_core(self, k: int) -> list:
+        """Find k-core: nodes with degree >= k after iterative pruning."""
+        nodes = {r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()}
+        changed = True
+        while changed:
+            changed = False
+            to_remove = set()
+            for nid in nodes:
+                deg = 0
+                for r in self.conn.execute(
+                    "SELECT source FROM edges WHERE target=? UNION ALL SELECT target FROM edges WHERE source=?",
+                    (nid, nid)
+                ).fetchall():
+                    if r[0] in nodes:
+                        deg += 1
+                if deg < k:
+                    to_remove.add(nid)
+            if to_remove:
+                nodes -= to_remove
+                changed = True
+        return list(nodes)
+
+    def triangles(self, node_id: str) -> int:
+        """Count triangles involving this node."""
+        if not self.has_node(node_id):
+            return 0
+        neighbors = set()
+        for r in self.conn.execute(
+            "SELECT target FROM edges WHERE source=? UNION ALL SELECT source FROM edges WHERE target=?",
+            (node_id, node_id)
+        ).fetchall():
+            neighbors.add(r[0])
+        count = 0
+        for n1 in neighbors:
+            n1_neighbors = set()
+            for r in self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION ALL SELECT source FROM edges WHERE target=?",
+                (n1, n1)
+            ).fetchall():
+                n1_neighbors.add(r[0])
+            if n1_neighbors & neighbors:
+                count += len(n1_neighbors & neighbors)
+        # Each triangle counted twice (once per neighbor pair)
+        return count // 2
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

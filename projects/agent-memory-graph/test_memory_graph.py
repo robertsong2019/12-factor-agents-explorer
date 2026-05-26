@@ -1210,3 +1210,98 @@ class TestEigenvectorCentrality:
         ec = mg.eigenvector_centrality()
         # Isolated node should have lowest score
         assert ec[b.id] <= ec[a.id]
+
+
+class TestPageRank:
+    """pagerank() — classic PageRank."""
+
+    def test_empty(self, mg):
+        assert mg.pagerank() == {}
+
+    def test_single(self, mg):
+        n = mg.add("only", "fact")
+        pr = mg.pagerank()
+        assert abs(pr[n.id] - 1.0) < 0.01
+
+    def test_hub_highest(self, mg):
+        hub = mg.add("hub", "fact")
+        spokes = [mg.add(f"s{i}", "fact") for i in range(3)]
+        for s in spokes:
+            mg.link(s.id, hub.id, "to")  # spokes cite hub
+        pr = mg.pagerank()
+        assert pr[hub.id] > pr[spokes[0].id]
+
+    def test_scores_sum_to_one(self, mg):
+        nodes = [mg.add(f"N{i}", "fact") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i+1].id, "to")
+        pr = mg.pagerank()
+        assert abs(sum(pr.values()) - 1.0) < 0.01
+
+
+class TestKCore:
+    """k_core() — k-core decomposition."""
+
+    def test_empty(self, mg):
+        assert mg.k_core(1) == []
+
+    def test_isolated_pruned(self, mg):
+        a = mg.add("solo", "fact")
+        b, c = mg.add("b", "fact"), mg.add("c", "fact")
+        mg.link(b.id, c.id, "to")
+        core = mg.k_core(1)
+        assert a.id not in core
+        assert b.id in core
+        assert c.id in core
+
+    def test_high_k_empty(self, mg):
+        nodes = [mg.add(f"N{i}", "fact") for i in range(3)]
+        mg.link(nodes[0].id, nodes[1].id, "to")
+        mg.link(nodes[1].id, nodes[2].id, "to")
+        # k=3 needs each node to have 3+ neighbors, impossible with 3 nodes
+        assert mg.k_core(3) == []
+
+    def test_triangle_2core(self, mg):
+        nodes = [mg.add(f"N{i}", "fact") for i in range(3)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[(i+1)%3].id, "to")
+        core = mg.k_core(2)
+        assert len(core) == 3
+
+
+class TestTriangles:
+    """triangles() — triangle counting per node."""
+
+    def test_missing(self, mg):
+        assert mg.triangles("nonexistent") == 0
+
+    def test_no_triangle(self, mg):
+        a, b, c = mg.add("a","fact"), mg.add("b","fact"), mg.add("c","fact")
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        assert mg.triangles(a.id) == 0
+
+    def test_one_triangle(self, mg):
+        a, b, c = mg.add("a","fact"), mg.add("b","fact"), mg.add("c","fact")
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        mg.link(c.id, a.id, "to")
+        assert mg.triangles(a.id) == 1
+        assert mg.triangles(b.id) == 1
+
+    def test_two_triangles(self, mg):
+        # Two triangles sharing an edge (undirected via bidirectional links)
+        nodes = [mg.add(f"N{i}", "fact") for i in range(4)]
+        # Triangle 1: 0-1-2 (bidirectional)
+        mg.link(nodes[0].id, nodes[1].id, "to")
+        mg.link(nodes[1].id, nodes[0].id, "to")
+        mg.link(nodes[1].id, nodes[2].id, "to")
+        mg.link(nodes[2].id, nodes[1].id, "to")
+        mg.link(nodes[2].id, nodes[0].id, "to")
+        mg.link(nodes[0].id, nodes[2].id, "to")
+        # Triangle 2: 0-1-3
+        mg.link(nodes[0].id, nodes[3].id, "to")
+        mg.link(nodes[3].id, nodes[0].id, "to")
+        mg.link(nodes[3].id, nodes[1].id, "to")
+        mg.link(nodes[1].id, nodes[3].id, "to")
+        assert mg.triangles(nodes[0].id) == 2
