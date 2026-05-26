@@ -1118,3 +1118,95 @@ class TestShortestPath:
         mg.link(nodes[0].id, nodes[3].id, "shortcut")
         path = mg.shortest_path(nodes[0].id, nodes[3].id)
         assert path == [nodes[0].id, nodes[3].id]
+
+
+class TestBetweennessCentrality:
+    """betweenness_centrality() — approximate via path sampling."""
+
+    def test_missing_node(self, mg):
+        assert mg.betweenness_centrality("nonexistent") == 0.0
+
+    def test_bridge_node(self, mg):
+        # Two clusters connected by a single bridge
+        # Cluster A: a1-a2-a3
+        a1, a2, a3 = [mg.add(f"A{i}", "fact") for i in range(3)]
+        mg.link(a1.id, a2.id, "to"); mg.link(a2.id, a3.id, "to")
+        # Cluster B: b1-b2-b3
+        b1, b2, b3 = [mg.add(f"B{i}", "fact") for i in range(3)]
+        mg.link(b1.id, b2.id, "to"); mg.link(b2.id, b3.id, "to")
+        # Bridge
+        bridge = mg.add("bridge", "fact")
+        mg.link(a3.id, bridge.id, "to"); mg.link(bridge.id, b1.id, "to")
+        # Bridge should have high betweenness
+        bc = mg.betweenness_centrality(bridge.id, samples=200)
+        assert bc > 0.0
+
+    def test_leaf_node(self, mg):
+        a = mg.add("hub", "fact")
+        b = mg.add("leaf", "fact")
+        mg.link(a.id, b.id, "to")
+        # leaf is never intermediate on a path
+        bc = mg.betweenness_centrality(b.id, samples=20)
+        assert bc == 0.0
+
+
+class TestCommunityDetect:
+    """community_detect() — label propagation."""
+
+    def test_empty(self, mg):
+        assert mg.community_detect() == {}
+
+    def test_two_clusters(self, mg):
+        # Cluster 1: a-b-c connected
+        a, b, c = [mg.add(f"c1_{i}", "fact") for i in range(3)]
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        # Cluster 2: d-e-f connected
+        d, e, f = [mg.add(f"c2_{i}", "fact") for i in range(3)]
+        mg.link(d.id, e.id, "to")
+        mg.link(e.id, f.id, "to")
+        # Single bridge
+        mg.link(c.id, d.id, "bridge")
+        communities = mg.community_detect(max_iter=20)
+        # Should detect at most 2-3 communities
+        assert len(communities) >= 1
+        assert len(communities) <= 3
+
+    def test_fully_connected(self, mg):
+        nodes = [mg.add(f"N{i}", "fact") for i in range(4)]
+        for i in range(4):
+            for j in range(4):
+                if i != j:
+                    mg.link(nodes[i].id, nodes[j].id, "to")
+        communities = mg.community_detect()
+        # Fully connected graph should collapse to 1 community
+        assert len(communities) == 1
+
+
+class TestEigenvectorCentrality:
+    """eigenvector_centrality() — iterative power method."""
+
+    def test_empty(self, mg):
+        assert mg.eigenvector_centrality() == {}
+
+    def test_hub_highest(self, mg):
+        # Hub receives from many: spokes point TO hub
+        hub = mg.add("hub", "fact")
+        spokes = [mg.add(f"s{i}", "fact") for i in range(3)]
+        for s in spokes:
+            mg.link(s.id, hub.id, "to")  # spokes → hub
+        ec = mg.eigenvector_centrality()
+        # Hub should have highest eigenvector centrality
+        hub_score = ec[hub.id]
+        for s in spokes:
+            assert hub_score >= ec[s.id]
+
+    def test_isolated_lowest(self, mg):
+        a = mg.add("connected", "fact")
+        b = mg.add("isolated", "fact")
+        c = mg.add("other", "fact")
+        mg.link(a.id, c.id, "to")
+        mg.link(c.id, a.id, "to")
+        ec = mg.eigenvector_centrality()
+        # Isolated node should have lowest score
+        assert ec[b.id] <= ec[a.id]

@@ -883,6 +883,78 @@ class MemoryGraph:
             frontier = next_frontier
         return None
 
+    def betweenness_centrality(self, node_id: str, samples: int = 50) -> float:
+        """Approximate betweenness centrality via random sampling of shortest paths."""
+        if not self.has_node(node_id):
+            return 0.0
+        all_ids = [r[0] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if len(all_ids) < 3:
+            return 0.0
+        import random
+        count = 0
+        for _ in range(min(samples, len(all_ids) * (len(all_ids) - 1) // 2)):
+            s, t = random.sample(all_ids, 2)
+            path = self.shortest_path(s, t)
+            if path and node_id in path[1:-1]:  # exclude endpoints
+                count += 1
+        return count / max(samples, 1)
+
+    def community_detect(self, max_iter: int = 10) -> dict:
+        """Label-propagation community detection. Returns {community_label: [node_ids]}."""
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not nodes:
+            return {}
+        import random
+        labels = {r["id"]: i for i, r in enumerate(nodes)}
+        ids = list(labels.keys())
+        for _ in range(max_iter):
+            random.shuffle(ids)
+            changed = False
+            for nid in ids:
+                neighbor_labels = {}
+                for r in self.conn.execute(
+                    "SELECT source FROM edges WHERE target=? UNION SELECT target FROM edges WHERE source=?",
+                    (nid, nid)
+                ).fetchall():
+                    lbl = labels.get(r[0])
+                    if lbl is not None:
+                        neighbor_labels[lbl] = neighbor_labels.get(lbl, 0) + 1
+                if neighbor_labels:
+                    best = max(neighbor_labels, key=neighbor_labels.get)
+                    if labels[nid] != best:
+                        labels[nid] = best
+                        changed = True
+            if not changed:
+                break
+        communities = {}
+        for nid, lbl in labels.items():
+            communities.setdefault(lbl, []).append(nid)
+        return communities
+
+    def eigenvector_centrality(self, iterations: int = 20, damping: float = 0.85) -> dict:
+        """Iterative eigenvector centrality. Returns {node_id: score}."""
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not nodes:
+            return {}
+        n = len(nodes)
+        scores = {r["id"]: 1.0 / n for r in nodes}
+        for _ in range(iterations):
+            new_scores = {}
+            for r in nodes:
+                nid = r["id"]
+                s = 0.0
+                for src in self.conn.execute(
+                    "SELECT source FROM edges WHERE target=?", (nid,)
+                ).fetchall():
+                    out_deg = self.degree(src[0], "out")
+                    if out_deg > 0:
+                        s += scores.get(src[0], 0) / out_deg
+                new_scores[nid] = (1 - damping) / n + damping * s
+            # Normalize
+            max_s = max(new_scores.values()) or 1.0
+            scores = {k: v / max_s for k, v in new_scores.items()}
+        return scores
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
