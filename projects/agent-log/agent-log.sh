@@ -129,13 +129,36 @@ cmd_date() {
   fi
 }
 
+classify_activity() {
+  local file="$1"
+  local content; content=$(cat "$file" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+  local code_score=0 research_score=0 planning_score=0
+  # Coding signals
+  for kw in git commit code function class test bug fix refactor npm pip install error exception; do
+    echo "$content" | grep -q "$kw" && ((code_score++))
+  done
+  # Research signals
+  for kw in search read article paper study analysis research found discovered; do
+    echo "$content" | grep -q "$kw" && ((research_score++))
+  done
+  # Planning signals
+  for kw in plan todo task schedule meeting goal roadmap milestone agenda decision; do
+    echo "$content" | grep -q "$kw" && ((planning_score++))
+  done
+  local max=$code_score type="coding"
+  (( research_score > max )) && { max=$research_score; type="research"; }
+  (( planning_score > max )) && { max=$planning_score; type="planning"; }
+  echo "$type"
+}
+
 cmd_summary() {
-  local days="7" keyword="" csv_output=0 md_output=0
+  local days="7" keyword="" csv_output=0 md_output=0 show_types=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -j|--json) JSON_OUTPUT=1 ;;
       --csv) csv_output=1 ;;
       --md) md_output=1 ;;
+      -t|--types) show_types=1 ;;
       -d|--days) shift; days="${1:-7}" ;;
       -k|--keyword) shift; keyword="${1:-}" ;;
       [0-9]*) days="$1" ;;
@@ -157,10 +180,12 @@ cmd_summary() {
     local lines; lines=$(wc -l < "$file")
     total_lines=$((total_lines + lines)); total_files=$((total_files + 1))
     local weekday; weekday=$(date -d "$d" +%a 2>/dev/null || date -j -f "%Y-%m-%d" "$d" +%a 2>/dev/null)
+    local activity_type=""
+    [[ $show_types -eq 1 ]] && activity_type=" ($(classify_activity "$file"))"
     json_entries+=("{\"date\":\"$d\",\"weekday\":\"$weekday\",\"lines\":$lines}")
-    [[ $JSON_OUTPUT -eq 0 ]] && [[ $csv_output -eq 0 ]] && printf "  ${GREEN}%s %-3s${RESET} %4d lines\n" "$d" "$weekday" "$lines"
-  done
+    [[ $JSON_OUTPUT -eq 0 ]] && [[ $csv_output -eq 0 ]] && printf "  ${GREEN}%s %-3s${RESET} %4d lines%s\n" "$d" "$weekday" "$lines" "$activity_type"
 
+  done
   if [[ $csv_output -eq 1 ]]; then
     echo "date,weekday,lines"
     for (( idx=0; idx<${#json_entries[@]}; idx++ )); do
@@ -485,6 +510,58 @@ cmd_session() {
   fi
 }
 
+cmd_trend() {
+  local days="14"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -d|--days) shift; days="${1:-14}" ;;
+      -j|--json) JSON_OUTPUT=1 ;;
+      [0-9]*) days="$1" ;;
+    esac
+    shift
+  done
+
+  [[ $JSON_OUTPUT -eq 0 ]] && echo -e "${CYAN}📈 Activity trend (last $days days)${RESET}"
+
+  local entries=() labels=() values=()
+  for ((i=days-1; i>=0; i--)); do
+    local d
+    d=$(date -d "$i days ago" +%Y-%m-%d 2>/dev/null || date -v-${i}d +%Y-%m-%d 2>/dev/null)
+    local file="$MEMORY_DIR/${d}.md"
+    local lines=0
+    [[ -f "$file" ]] && lines=$(wc -l < "$file")
+    local short_d=$(date -d "$d" +%m/%d 2>/dev/null || echo "$d")
+    labels+=("$short_d")
+    values+=("$lines")
+    [[ $JSON_OUTPUT -eq 1 ]] && entries+=("{\"date\":\"$d\",\"lines\":$lines}")
+  done
+
+  if [[ $JSON_OUTPUT -eq 1 ]]; then
+    printf '{"command":"trend","days":%d,"data":[%s]}\n' "$days" "$(IFS=,; echo "${entries[*]}")"
+    return
+  fi
+
+  # Find max for scaling
+  local max=1
+  for v in "${values[@]}"; do (( v > max )) && max=$v; done
+
+  local bar_chars='▁▂▃▄▅▆▇█'
+  local num_bars=${#bar_chars}
+
+  for ((i=0; i<${#values[@]}; i++)); do
+    local v=${values[$i]}
+    local idx=0
+    if [[ $v -gt 0 ]]; then
+      idx=$(( v * (num_bars - 1) / max ))
+    fi
+    local bar=${bar_chars:$idx:1}
+    printf "  %s %4d  %s\n" "${labels[$i]}" "$v" "$bar"
+  done
+
+  echo
+  echo -e "  ${GRAY}Max: $max lines | Scale: ▁(0) → █($max)${RESET}"
+}
+
 # ── Main ──
 
 usage() {
@@ -504,5 +581,6 @@ case "${1:-help}" in
   find)    shift; cmd_find "$@" ;;
   grep)    shift; cmd_grep "$@" ;;
   tail)    shift; cmd_tail "$@" ;;
+  trend)   shift; cmd_trend "$@" ;;
   help|*)  usage ;;
 esac

@@ -4,3 +4,7 @@ timestamp	commit	metric	value	status	description
 2026-04-30T22:15	7f1a3cf	test_pass_rate	22/22 (100%)	keep	F10: JSON output (-j/--json for search/summary/stats) + F3: search export (-o file). 10 new tests. Fixed SIGPIPE from grep|head pipe under pipefail.
 2026-05-19T22:30	3a2bf23	test_pass_rate	8/8 (100%)	keep	F11: CSV export (--csv flag for summary) + F15: clean command (--dry-run, --age). 8 test cases, all passing.
 2026-05-19T22:45	3a2bf23	test_pass_rate	manual/pass	keep	F7: sessions command — list session files with metadata, JSON support. Manual verification passed.
+2026-05-24T22:10	local	test_pass_rate	15/15 (100%)	keep	F12: Markdown export (--md flag for summary/stats) + F8: session detail command (partial match, JSON). 15 tests all passing.
+2026-05-25T22:03:51+08:00	8ebf2e6	test_pass_rate	14/14 (100%)	keep	F9 (find sessions by pattern/date) + F13 (grep wrapper) + F14 (tail wrapper). 14 tests all passing.
+2026-05-26T22:05	draft	F6_trend_tests	6/6	pass	trend command with sparkline + JSON output
+2026-05-26T22:10	draft	F5_summary_types_tests	4/4	pass	summary --types activity classification

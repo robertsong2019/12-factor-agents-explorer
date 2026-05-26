@@ -84,7 +84,7 @@ run_test "Summary with keyword filter" \
 # Test 3: Keyword filter shows filtered results
 run_test "Keyword filter shows matching files" \
   "$AGENT_LOG summary 7 'test'" \
-  "2026-04-28"
+  "2026-05-2"
 
 # Test 4: Non-matching keyword shows zero files
 run_test "Non-matching keyword shows zero files" \

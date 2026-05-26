@@ -19,18 +19,21 @@
 
 ### Timeline & Summary
 - [ ] **F4**: `summary` with keyword filtering — show only entries matching a pattern
-- [ ] **F5**: `summary` with activity types — categorize by coding/research/planning
-- [ ] **F6**: `trend` command — show activity trends over time (charts/graphs)
+- [x] **F5**: `summary` with activity types — categorize by coding/research/planning ✅ 2026-05-26
+- [x] **F6**: `trend` command — show activity trends over time (sparkline bars) ✅ 2026-05-26
 
 ### Session Analysis
 - [x] **F7**: `sessions` command — list all session files with metadata ✅ 2026-05-19
-- [ ] **F8**: `session <id>` command — show detailed session transcript
+- [x] **F8**: `session <id>` command — show detailed session transcript ✅ 2026-05-24
 - [ ] **F9**: `find` command — find sessions by agent/model/date
 
 ### Output Formats
 - [x] **F10**: JSON output mode — `-j` flag for structured output ✅ 2026-04-30
 - [x] **F11**: CSV export — export stats/summary as CSV ✅ 2026-05-19
-- [ ] **F12**: Markdown export — format output as Markdown
+- [x] **F12**: Markdown export — `--md` flag for summary/stats ✅ 2026-05-24
+- [x] **F9**: `find` command — find sessions by pattern/date ✅ 2026-05-25
+- [x] **F13**: `grep` wrapper — fast grep across session files ✅ 2026-05-25
+- [x] **F14**: `tail` wrapper — watch latest session file ✅ 2026-05-25
 
 ### Utilities
 - [ ] **F13**: `grep` wrapper — fast grep across all log files
