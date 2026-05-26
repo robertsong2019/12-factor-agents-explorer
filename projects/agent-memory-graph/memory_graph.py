@@ -1023,6 +1023,64 @@ class MemoryGraph:
         # Each triangle counted twice (once per neighbor pair)
         return count // 2
 
+    def timeline(self, kind: str = None, since: float = None, until: float = None, limit: int = 50) -> list[Node]:
+        """Return nodes sorted by creation time (newest first). Optional filters: kind, time range."""
+        sql = "SELECT * FROM nodes WHERE 1=1"
+        params = []
+        if kind:
+            sql += " AND kind=?"
+            params.append(kind)
+        if since is not None:
+            sql += " AND created>=?"
+            params.append(since)
+        if until is not None:
+            sql += " AND created<=?"
+            params.append(until)
+        sql += " ORDER BY created DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [Node(r["id"], r["label"], r["kind"],
+                    json.loads(r["data"]), r["created"], r["accessed"], r["weight"]) for r in rows]
+
+    def recommend(self, node_id: str, limit: int = 5) -> list[dict]:
+        """Recommend related nodes via Jaccard similarity of shared neighbors."""
+        # Get neighbors of target node
+        my_neighbors = set()
+        for row in self.conn.execute(
+            "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+            (node_id, node_id)
+        ):
+            my_neighbors.add(row[0])
+        my_neighbors.discard(node_id)
+        if not my_neighbors:
+            return []
+        # Score all other nodes by Jaccard similarity of their neighbor sets
+        candidates = []
+        all_ids = [r[0] for r in self.conn.execute("SELECT id FROM nodes WHERE id != ?", (node_id,))]
+        for nid in all_ids:
+            their_neighbors = set()
+            for row in self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+                (nid, nid)
+            ):
+                their_neighbors.add(row[0])
+            their_neighbors.discard(nid)
+            if not their_neighbors:
+                continue
+            intersection = my_neighbors & their_neighbors
+            union = my_neighbors | their_neighbors
+            if intersection:
+                jaccard = len(intersection) / len(union)
+                candidates.append({"node_id": nid, "score": round(jaccard, 4)})
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        # Enrich with node info
+        results = []
+        for c in candidates[:limit]:
+            node = self.get_node(c["node_id"])
+            if node:
+                results.append({"node": node, "score": c["score"]})
+        return results
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

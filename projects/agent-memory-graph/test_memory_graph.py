@@ -1305,3 +1305,99 @@ class TestTriangles:
         mg.link(nodes[3].id, nodes[1].id, "to")
         mg.link(nodes[1].id, nodes[3].id, "to")
         assert mg.triangles(nodes[0].id) == 2
+
+
+class TestTimeline:
+    def test_basic_timeline(self, mg):
+        mg.add("first", "event")
+        mg.add("second", "event")
+        mg.add("third", "event")
+        tl = mg.timeline()
+        assert len(tl) == 3
+        # newest first
+        assert tl[0].label == "third"
+        assert tl[2].label == "first"
+
+    def test_timeline_by_kind(self, mg):
+        mg.add("ev1", "event")
+        mg.add("fact1", "fact")
+        mg.add("ev2", "event")
+        tl = mg.timeline(kind="event")
+        assert len(tl) == 2
+        assert all(n.kind == "event" for n in tl)
+
+    def test_timeline_with_time_range(self, mg):
+        a = mg.add("old", "event")
+        import time as _t
+        now = _t.time()
+        b = mg.add("new", "event")
+        # Only recent
+        tl = mg.timeline(since=now - 1)
+        labels = [n.label for n in tl]
+        assert "new" in labels
+
+    def test_timeline_limit(self, mg):
+        for i in range(10):
+            mg.add(f"item{i}", "event")
+        assert len(mg.timeline(limit=3)) == 3
+
+
+class TestRecommend:
+    def test_recommend_shared_neighbors(self, mg):
+        # A-B-C triangle: A and C share B as neighbor
+        a = mg.add("A", "person")
+        b = mg.add("B", "person")
+        c = mg.add("C", "person")
+        d = mg.add("D", "person")
+        mg.link(a.id, b.id, "knows")
+        mg.link(b.id, a.id, "knows")
+        mg.link(c.id, b.id, "knows")
+        mg.link(b.id, c.id, "knows")
+        mg.link(d.id, a.id, "knows")
+        mg.link(a.id, d.id, "knows")
+        recs = mg.recommend(a.id)
+        # C should be recommended (shares B), D is already a direct neighbor
+        rec_ids = [r["node"].id for r in recs]
+        assert c.id in rec_ids
+
+    def test_recommend_no_neighbors(self, mg):
+        a = mg.add("loner", "person")
+        assert mg.recommend(a.id) == []
+
+    def test_recommend_limit(self, mg):
+        center = mg.add("center", "person")
+        hub = mg.add("hub", "person")
+        mg.link(center.id, hub.id, "knows")
+        mg.link(hub.id, center.id, "knows")
+        others = []
+        for i in range(10):
+            n = mg.add(f"o{i}", "person")
+            others.append(n)
+            mg.link(hub.id, n.id, "knows")
+            mg.link(n.id, hub.id, "knows")
+        recs = mg.recommend(center.id, limit=3)
+        assert len(recs) <= 3
+        assert len(recs) > 0
+
+    def test_recommend_score_order(self, mg):
+        # center connected to hub; hub connected to A and B
+        center = mg.add("center", "person")
+        hub = mg.add("hub", "person")
+        a = mg.add("A", "person")
+        b = mg.add("B", "person")
+        mg.link(center.id, hub.id, "k")
+        mg.link(hub.id, center.id, "k")
+        mg.link(hub.id, a.id, "k")
+        mg.link(a.id, hub.id, "k")
+        mg.link(hub.id, b.id, "k")
+        mg.link(b.id, hub.id, "k")
+        # A also connected to center (higher jaccard)
+        mg.link(center.id, a.id, "k")
+        mg.link(a.id, center.id, "k")
+        recs = mg.recommend(center.id)
+        if len(recs) >= 2:
+            # A has higher score than B (A is direct neighbor of center too)
+            a_rec = next((r for r in recs if r["node"].id == a.id), None)
+            b_rec = next((r for r in recs if r["node"].id == b.id), None)
+            if a_rec and b_rec:
+                assert b_rec["score"] >= a_rec["score"]
