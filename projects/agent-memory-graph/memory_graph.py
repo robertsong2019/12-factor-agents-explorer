@@ -641,6 +641,135 @@ class MemoryGraph:
         self.conn.commit()
         return removed
 
+    def graph_diff(self, other: 'MemoryGraph') -> dict:
+        """Compare this graph with another. Returns dict with:
+        - nodes_only_self: node ids in self but not other
+        - nodes_only_other: node ids in other but not self
+        - nodes_modified: list of {id, field, self_val, other_val} for changed nodes
+        - edges_only_self: edge tuples in self but not other
+        - edges_only_other: edge tuples in other but not self
+        Useful for graph sync — detect what changed between two versions.
+        """
+        self_nodes = {r["id"]: r for r in self.conn.execute("SELECT * FROM nodes").fetchall()}
+        other_nodes = {r["id"]: r for r in other.conn.execute("SELECT * FROM nodes").fetchall()}
+
+        self_ids = set(self_nodes.keys())
+        other_ids = set(other_nodes.keys())
+
+        diff = {
+            "nodes_only_self": sorted(self_ids - other_ids),
+            "nodes_only_other": sorted(other_ids - self_ids),
+            "nodes_modified": [],
+            "edges_only_self": [],
+            "edges_only_other": [],
+        }
+
+        # Check modified nodes (same id, different content)
+        for nid in self_ids & other_ids:
+            s, o = self_nodes[nid], other_nodes[nid]
+            for field in ("label", "kind", "weight"):
+                if s[field] != o[field]:
+                    diff["nodes_modified"].append({
+                        "id": nid, "field": field,
+                        "self_val": s[field], "other_val": o[field]
+                    })
+            # data diff
+            sd, od = json.loads(s["data"]), json.loads(o["data"])
+            if sd != od:
+                diff["nodes_modified"].append({
+                    "id": nid, "field": "data",
+                    "self_val": sd, "other_val": od
+                })
+
+        # Edge diff
+        self_edges = set()
+        for r in self.conn.execute("SELECT source, target, relation FROM edges").fetchall():
+            self_edges.add((r["source"], r["target"], r["relation"]))
+        other_edges = set()
+        for r in other.conn.execute("SELECT source, target, relation FROM edges").fetchall():
+            other_edges.add((r["source"], r["target"], r["relation"]))
+
+        diff["edges_only_self"] = sorted(self_edges - other_edges)
+        diff["edges_only_other"] = sorted(other_edges - self_edges)
+        return diff
+
+    def compact(self, strategy: str = "merge_similar", similarity_threshold: float = 0.8) -> dict:
+        """Compact the graph by merging similar/low-value nodes.
+
+        strategy='merge_similar': merge nodes with identical labels and kind.
+        Returns dict with 'merged_pairs' (list of [survivor_id, absorbed_id]) and 'total_merged'.
+        """
+        if strategy != "merge_similar":
+            raise ValueError(f"Unknown strategy: {strategy}")
+
+        # Group by (label, kind)
+        groups = defaultdict(list)
+        for r in self.conn.execute("SELECT id, label, kind FROM nodes").fetchall():
+            groups[(r["label"], r["kind"])].append(r["id"])
+
+        merged_pairs = []
+        for (label, kind), ids in groups.items():
+            if len(ids) < 2:
+                continue
+            # Keep the first (survivor), merge rest into it
+            survivor = ids[0]
+            for absorb_id in ids[1:]:
+                self.merge_nodes(absorb_id, survivor)
+                merged_pairs.append([survivor, absorb_id])
+
+        return {"merged_pairs": merged_pairs, "total_merged": len(merged_pairs)}
+
+    def search_unified(self, query: str, limit: int = 10) -> list[dict]:
+        """Unified search across label, data values, and tags.
+
+        Returns list of dicts: {node, score, matched_fields}.
+        Score = field_matches * weight_boost. label match scores highest.
+        """
+        query_lower = query.lower()
+        results = []
+
+        for r in self.conn.execute("SELECT * FROM nodes").fetchall():
+            score = 0.0
+            matched = []
+
+            # Label match (highest weight)
+            if query_lower in r["label"].lower():
+                score += 3.0
+                matched.append("label")
+
+            # Data value match
+            data = json.loads(r["data"])
+            for v in data.values():
+                if query_lower in str(v).lower():
+                    score += 2.0
+                    matched.append("data")
+                    break
+
+            # Tag match
+            tags = json.loads(r["tags"])
+            for t in tags:
+                if query_lower in t.lower():
+                    score += 1.5
+                    matched.append("tags")
+                    break
+
+            # Kind match (bonus)
+            if query_lower == r["kind"].lower():
+                score += 1.0
+                matched.append("kind")
+
+            if score > 0:
+                node = Node(r["id"], r["label"], r["kind"],
+                           data, r["created"], r["accessed"], r["weight"])
+                results.append({
+                    "node": node,
+                    "score": score * r["weight"],
+                    "matched_fields": matched
+                })
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:limit]
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

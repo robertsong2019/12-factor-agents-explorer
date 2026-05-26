@@ -777,3 +777,147 @@ class TestAggregate:
     def test_invalid_fn_raises(self, mg):
         with pytest.raises(ValueError):
             mg.aggregate("fact", fn="median")
+
+
+class TestGraphDiff:
+    def test_identical_graphs(self, mg):
+        import copy
+        mg2 = MemoryGraph()
+        a = mg.add("X", "fact")
+        mg2.import_json(mg.export_json())
+        diff = mg.graph_diff(mg2)
+        assert diff["nodes_only_self"] == []
+        assert diff["nodes_only_other"] == []
+        assert diff["nodes_modified"] == []
+
+    def test_added_nodes(self, mg):
+        mg2 = MemoryGraph()
+        mg.add("A", "fact")
+        mg2.add("B", "event")
+        diff = mg.graph_diff(mg2)
+        assert "B" not in [x for x in diff["nodes_only_self"]]  # B is in other
+        assert len(diff["nodes_only_self"]) == 1
+        assert len(diff["nodes_only_other"]) == 1
+
+    def test_modified_node(self, mg):
+        mg2 = MemoryGraph()
+        n = mg.add("Hello", "fact", {"x": 1})
+        mg2.import_json(mg.export_json())
+        mg.update_node(n.id, label="Hello World")
+        diff = mg.graph_diff(mg2)
+        mod_labels = [m for m in diff["nodes_modified"] if m["field"] == "label"]
+        assert len(mod_labels) == 1
+        assert mod_labels[0]["self_val"] == "Hello World"
+
+    def test_edge_diff(self, mg):
+        mg2 = MemoryGraph()
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        mg.link(a.id, b.id, "knows")
+        mg2.import_json(mg.export_json())
+        c = mg.add("C", "fact")
+        mg.link(a.id, c.id, "related")
+        diff = mg.graph_diff(mg2)
+        assert len(diff["edges_only_self"]) == 1
+
+    def test_empty_graphs(self, mg):
+        mg2 = MemoryGraph()
+        diff = mg.graph_diff(mg2)
+        assert diff["nodes_only_self"] == []
+        assert diff["nodes_only_other"] == []
+
+    def test_data_diff(self, mg):
+        mg2 = MemoryGraph()
+        n = mg.add("X", "fact", {"score": 10})
+        mg2.import_json(mg.export_json())
+        mg.update_node(n.id, data={"score": 20})
+        diff = mg.graph_diff(mg2)
+        data_mods = [m for m in diff["nodes_modified"] if m["field"] == "data"]
+        assert len(data_mods) == 1
+
+
+class TestCompact:
+    def test_merge_duplicate_labels(self, mg):
+        a = mg.add("Python", "skill")
+        b = mg.add("Python", "skill")
+        result = mg.compact()
+        assert result["total_merged"] == 1
+        assert mg.has_node(a.id) or mg.has_node(b.id)
+        assert mg.stats()["nodes"] == 1
+
+    def test_no_duplicates(self, mg):
+        mg.add("Python", "skill")
+        mg.add("Rust", "skill")
+        result = mg.compact()
+        assert result["total_merged"] == 0
+
+    def test_merge_preserves_edges(self, mg):
+        a = mg.add("X", "fact")
+        b = mg.add("X", "fact")
+        c = mg.add("Y", "event")
+        mg.link(b.id, c.id, "caused")
+        mg.compact()
+        # Survivor should have the edge
+        assert mg.stats()["edges"] == 1
+
+    def test_different_kinds_not_merged(self, mg):
+        mg.add("test", "fact")
+        mg.add("test", "event")
+        result = mg.compact()
+        assert result["total_merged"] == 0
+
+    def test_invalid_strategy_raises(self, mg):
+        with pytest.raises(ValueError):
+            mg.compact(strategy="unknown")
+
+
+class TestSearchUnified:
+    def test_search_by_label(self, mg):
+        mg.add("Python programming", "skill")
+        mg.add("Rust systems", "skill")
+        results = mg.search_unified("python")
+        assert len(results) == 1
+        assert results[0]["matched_fields"] == ["label"]
+
+    def test_search_by_data(self, mg):
+        mg.add("node1", "fact", {"language": "python"})
+        results = mg.search_unified("python")
+        assert len(results) == 1
+        assert "data" in results[0]["matched_fields"]
+
+    def test_search_by_tag(self, mg):
+        mg.add("node1", "fact", tags=["python", "backend"])
+        results = mg.search_unified("python")
+        assert len(results) == 1
+        assert "tags" in results[0]["matched_fields"]
+
+    def test_search_by_kind(self, mg):
+        mg.add("something", "skill")
+        results = mg.search_unified("skill")
+        assert len(results) >= 1
+        assert any("kind" in r["matched_fields"] for r in results)
+
+    def test_multi_field_match(self, mg):
+        mg.add("Python expert", "skill", {"lang": "python"}, tags=["python"])
+        results = mg.search_unified("python")
+        assert len(results) == 1
+        assert len(results[0]["matched_fields"]) >= 2
+
+    def test_weight_boosts_score(self, mg):
+        a = mg.add("Python A", "skill")
+        b = mg.add("Python B", "skill")
+        mg.update_node(a.id, weight=0.2)
+        mg.update_node(b.id, weight=1.0)
+        results = mg.search_unified("Python")
+        assert results[0]["node"].id == b.id  # higher weight ranks first
+
+    def test_limit(self, mg):
+        for i in range(10):
+            mg.add(f"Python {i}", "skill")
+        results = mg.search_unified("Python", limit=3)
+        assert len(results) == 3
+
+    def test_no_match(self, mg):
+        mg.add("Something", "fact")
+        results = mg.search_unified("nonexistent")
+        assert len(results) == 0
