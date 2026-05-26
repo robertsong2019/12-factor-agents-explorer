@@ -921,3 +921,77 @@ class TestSearchUnified:
         mg.add("Something", "fact")
         results = mg.search_unified("nonexistent")
         assert len(results) == 0
+
+
+class TestRenameNode:
+    def test_rename(self, mg):
+        n = mg.add("old name", "fact")
+        updated = mg.rename_node(n.id, "new name")
+        assert updated.label == "new name"
+        assert mg.get_node(n.id).label == "new name"
+
+    def test_rename_nonexistent(self, mg):
+        assert mg.rename_node("nonexistent", "x") is None
+
+
+class TestCloneNode:
+    def test_clone_basic(self, mg):
+        n = mg.add("original", "skill", {"level": 5}, tags=["tag1"])
+        cloned = mg.clone_node(n.id, "clone")
+        assert cloned is not None
+        assert cloned.id != n.id
+        assert cloned.label == "clone"
+        assert cloned.kind == "skill"
+        assert mg.stats()["nodes"] == 2
+
+    def test_clone_preserves_data(self, mg):
+        n = mg.add("orig", "fact", {"x": 1}, tags=["t1"])
+        cloned = mg.clone_node(n.id)
+        assert cloned.data == {"x": 1}
+
+    def test_clone_no_edges(self, mg):
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        mg.link(a.id, b.id, "knows")
+        cloned = mg.clone_node(a.id, "A clone")
+        assert len(mg.edges_of(cloned.id)) == 0
+
+    def test_clone_nonexistent(self, mg):
+        assert mg.clone_node("nonexistent") is None
+
+
+class TestPathExists:
+    def test_direct_path(self, mg):
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        mg.link(a.id, b.id, "to")
+        assert mg.path_exists(a.id, b.id) is True
+
+    def test_no_path(self, mg):
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        assert mg.path_exists(a.id, b.id) is False
+
+    def test_same_node(self, mg):
+        n = mg.add("X", "fact")
+        assert mg.path_exists(n.id, n.id) is True
+
+    def test_same_node_nonexistent(self, mg):
+        assert mg.path_exists("fake", "fake") is False
+
+    def test_indirect_path(self, mg):
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        c = mg.add("C", "fact")
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        assert mg.path_exists(a.id, c.id) is True
+
+    def test_depth_limit(self, mg):
+        nodes = [mg.add(f"N{i}", "fact") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "to")
+        # 4 hops, limit 3 should fail
+        assert mg.path_exists(nodes[0].id, nodes[4].id, max_depth=3) is False
+        # 4 hops, limit 5 should succeed
+        assert mg.path_exists(nodes[0].id, nodes[4].id, max_depth=5) is True

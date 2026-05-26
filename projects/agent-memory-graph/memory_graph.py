@@ -770,6 +770,49 @@ class MemoryGraph:
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:limit]
 
+    def rename_node(self, node_id: str, new_label: str) -> Optional[Node]:
+        """Rename a node's label. Returns updated node or None."""
+        if not self.has_node(node_id):
+            return None
+        self.conn.execute("UPDATE nodes SET label=? WHERE id=?", (new_label, node_id))
+        self.conn.commit()
+        return self.get_node(node_id)
+
+    def clone_node(self, node_id: str, new_label: str = None) -> Optional[Node]:
+        """Clone a node (with same data/kind/tags) but not its edges.
+        Returns the new node or None if source doesn't exist."""
+        row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if not row:
+            return None
+        new_id = uuid.uuid4().hex[:12]
+        self.conn.execute(
+            "INSERT INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            (new_id, new_label or row["label"], row["kind"], row["data"],
+             time.time(), time.time(), row["weight"], row["tags"])
+        )
+        self.conn.commit()
+        return self.get_node(new_id)
+
+    def path_exists(self, start_id: str, end_id: str, max_depth: int = 10) -> bool:
+        """Check if a path exists between two nodes (BFS with depth limit)."""
+        if start_id == end_id:
+            return self.has_node(start_id)
+        visited = {start_id}
+        frontier = [start_id]
+        for _ in range(max_depth):
+            next_frontier = []
+            for nid in frontier:
+                for r in self.conn.execute(
+                    "SELECT target FROM edges WHERE source=?", (nid,)
+                ).fetchall():
+                    if r["target"] == end_id:
+                        return True
+                    if r["target"] not in visited:
+                        visited.add(r["target"])
+                        next_frontier.append(r["target"])
+            frontier = next_frontier
+        return False
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
