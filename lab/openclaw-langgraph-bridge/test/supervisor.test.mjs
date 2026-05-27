@@ -104,4 +104,66 @@ describe("Supervisor", () => {
     const pool = s.toPool();
     assert.equal(pool.listRoles().length, 1);
   });
+
+  it("broadcast sends to all healthy agents", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a")).register(makeRole("b")).register(makeRole("c"));
+    const results = await s.broadcast("hello");
+    assert.equal(results.length, 3);
+    const ids = results.map(r => r.agentId).sort();
+    assert.deepEqual(ids, ["a", "b", "c"]);
+  });
+
+  it("broadcast skips unhealthy agents", async () => {
+    const s = new Supervisor({ maxFailures: 1, strategy: "least-busy" });
+    // First, make 'bad' unhealthy by executing directly
+    s.register(makeRole("a"));
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async () => { throw new Error("no"); } },
+      capabilities: ["*"],
+    });
+    // Execute with 'a' first so it has more usage
+    await s.execute("t1");
+    // Now 'bad' is least-busy, next execute will pick it
+    await assert.rejects(() => s.execute("t2"));
+    assert.equal(s.isHealthy("bad"), false);
+    const results = await s.broadcast("hello");
+    assert.equal(results.length, 1);
+    assert.equal(results[0].agentId, "a");
+  });
+
+  it("broadcast filters by capability", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a", ["code"])).register(makeRole("b", ["review"]));
+    const results = await s.broadcast("task", "code");
+    assert.equal(results.length, 1);
+    assert.equal(results[0].agentId, "a");
+  });
+
+  it("getHealthSummary returns aggregate stats", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a")).register(makeRole("b"));
+    await s.execute("t1");
+    const summary = s.getHealthSummary();
+    assert.equal(summary.total, 2);
+    assert.equal(summary.healthy, 2);
+    assert.equal(summary.unhealthy, 0);
+    assert.ok(summary.avgResponseTime >= 0);
+  });
+
+  it("getHealthSummary tracks unhealthy agents", async () => {
+    const s = new Supervisor({ maxFailures: 1, strategy: "least-busy" });
+    s.register(makeRole("a"));
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async () => { throw new Error("no"); } },
+      capabilities: ["*"],
+    });
+    await s.execute("t1"); // uses 'a'
+    await assert.rejects(() => s.execute("t2")); // uses 'bad', fails
+    const summary = s.getHealthSummary();
+    assert.equal(summary.unhealthy, 1);
+    assert.equal(summary.healthy, 1);
+  });
 });

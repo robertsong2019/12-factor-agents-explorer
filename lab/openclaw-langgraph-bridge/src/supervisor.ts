@@ -135,6 +135,49 @@ export class Supervisor {
   toPool(): AgentPool {
     return new AgentPool({ roles: [...this.agents.values()] });
   }
+
+  /** Broadcast a task to all healthy agents in parallel */
+  async broadcast(task: string, capability?: string): Promise<Array<{ agentId: string; result: string }>> {
+    const healthy = [...this.agents.values()].filter(a => this.isHealthy(a.id));
+    const candidates = capability
+      ? healthy.filter(a => a.capabilities.includes(capability) || a.capabilities.includes("*"))
+      : healthy;
+    const results = await Promise.allSettled(
+      candidates.map(async (agent) => {
+        const start = Date.now();
+        const h = this.health.get(agent.id)!;
+        try {
+          const result = await agent.config.executor(task);
+          const duration = Date.now() - start;
+          const total = h.successCount + h.failureCount;
+          h.avgDuration = total === 0 ? duration : (h.avgDuration * total + duration) / (total + 1);
+          h.successCount++;
+          h.failureCount = 0;
+          h.lastUsed = Date.now();
+          return { agentId: agent.id, result };
+        } catch (err) {
+          h.failureCount++;
+          h.lastUsed = Date.now();
+          throw err;
+        }
+      })
+    );
+    return results
+      .filter((r): r is PromiseFulfilledResult<{ agentId: string; result: string }> => r.status === "fulfilled")
+      .map(r => r.value);
+  }
+
+  /** Get aggregate health summary */
+  getHealthSummary(): { total: number; healthy: number; unhealthy: number; avgResponseTime: number } {
+    const entries = [...this.health.values()];
+    const healthy = entries.filter(h => h.failureCount < this.maxFailures);
+    return {
+      total: entries.length,
+      healthy: healthy.length,
+      unhealthy: entries.length - healthy.length,
+      avgResponseTime: entries.length === 0 ? 0 : entries.reduce((s, h) => s + h.avgDuration, 0) / entries.length,
+    };
+  }
 }
 
 /**
