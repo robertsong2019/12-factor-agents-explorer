@@ -526,6 +526,66 @@ describe('Tracer', () => {
     assert.equal(tracer.batchEnd([s1.spanId]), 0);
   });
 
+  it('tagSpan adds tags, getSpansByTag retrieves them', () => {
+    const tracer = new Tracer();
+    const s1 = tracer.startSpan('agent.run');
+    const s2 = tracer.startSpan('llm.call');
+    tracer.endSpan(s1.spanId);
+    tracer.endSpan(s2.spanId);
+    assert.ok(tracer.tagSpan(s1.spanId, 'important', 'production'));
+    assert.ok(tracer.tagSpan(s2.spanId, 'important'));
+    const tagged = tracer.getSpansByTag('important');
+    assert.equal(tagged.length, 2);
+    const prod = tracer.getSpansByTag('production');
+    assert.equal(prod.length, 1);
+    assert.equal(prod[0].spanId, s1.spanId);
+    assert.ok(!tracer.tagSpan('nope', 'x'));
+  });
+
+  it('untagSpan removes tags', () => {
+    const tracer = new Tracer();
+    const span = tracer.startSpan('agent.run');
+    tracer.tagSpan(span.spanId, 'test');
+    assert.ok(tracer.untagSpan(span.spanId, 'test'));
+    assert.equal(tracer.getSpansByTag('test').length, 0);
+    assert.ok(!tracer.untagSpan(span.spanId, 'test')); // already removed
+  });
+
+  it('getTagsForSpan returns all tags for a span', () => {
+    const tracer = new Tracer();
+    const span = tracer.startSpan('agent.run');
+    tracer.tagSpan(span.spanId, 'a', 'b', 'c');
+    const tags = tracer.getTagsForSpan(span.spanId);
+    assert.deepEqual(tags.sort(), ['a', 'b', 'c']);
+  });
+
+  it('getAllTags returns tag counts', () => {
+    const tracer = new Tracer();
+    const s1 = tracer.startSpan('agent.run');
+    const s2 = tracer.startSpan('llm.call');
+    tracer.tagSpan(s1.spanId, 'x');
+    tracer.tagSpan(s2.spanId, 'x');
+    tracer.tagSpan(s1.spanId, 'y');
+    const all = tracer.getAllTags();
+    assert.equal(all.get('x'), 2);
+    assert.equal(all.get('y'), 1);
+  });
+
+  it('searchAttributes finds spans by attribute value', () => {
+    const tracer = new Tracer();
+    tracer.startSpan('agent.run', { model: 'GPT-4o' });
+    tracer.startSpan('llm.call', { model: 'claude-3.5' });
+    tracer.startSpan('tool.execute', { tool: 'bash' });
+    const results = tracer.searchAttributes('gpt');
+    assert.equal(results.length, 1);
+    assert.equal(results[0].operation, 'agent.run');
+    // case insensitive
+    const claude = tracer.searchAttributes('CLAUDE');
+    assert.equal(claude.length, 1);
+    // no match
+    assert.equal(tracer.searchAttributes('nonexistent').length, 0);
+  });
+
   it('getDepthMap returns span depths', () => {
     const tracer = new Tracer();
     const root = tracer.startSpan('agent.run');

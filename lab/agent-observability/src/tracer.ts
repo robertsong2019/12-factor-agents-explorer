@@ -415,6 +415,61 @@ export class Tracer {
     return map;
   }
 
+  // --- Tag system ---
+
+  private tags: Map<string, Set<string>> = new Map(); // tag -> Set<spanId>
+
+  /** Tag a span with one or more labels. Returns count of spans successfully tagged. */
+  tagSpan(spanId: string, ...labels: string[]): boolean {
+    if (!this.spans.some(s => s.spanId === spanId)) return false;
+    for (const label of labels) {
+      const set = this.tags.get(label) ?? new Set();
+      set.add(spanId);
+      this.tags.set(label, set);
+    }
+    return true;
+  }
+
+  /** Remove a tag from a span. Returns true if tag was present. */
+  untagSpan(spanId: string, label: string): boolean {
+    const set = this.tags.get(label);
+    if (!set) return false;
+    const had = set.delete(spanId);
+    if (set.size === 0) this.tags.delete(label);
+    return had;
+  }
+
+  /** Get all spans matching a tag. */
+  getSpansByTag(label: string): Span[] {
+    const set = this.tags.get(label);
+    if (!set) return [];
+    return this.spans.filter(s => set.has(s.spanId));
+  }
+
+  /** Get all tags for a specific span. */
+  getTagsForSpan(spanId: string): string[] {
+    const result: string[] = [];
+    for (const [label, set] of this.tags) {
+      if (set.has(spanId)) result.push(label);
+    }
+    return result;
+  }
+
+  /** Get all tags with their span counts. */
+  getAllTags(): Map<string, number> {
+    const result = new Map<string, number>();
+    for (const [label, set] of this.tags) result.set(label, set.size);
+    return result;
+  }
+
+  /** Search spans by matching attribute values (case-insensitive substring). */
+  searchAttributes(query: string): Span[] {
+    const lower = query.toLowerCase();
+    return this.spans.filter(s =>
+      Object.values(s.attributes).some(v => String(v).toLowerCase().includes(lower))
+    );
+  }
+
   /** Return spans sorted by startTime as a timeline */
   getOperationTimeline(): Array<{ spanId: string; operation: string; startMs: number; durationMs: number | null; status: SpanStatus }> {
     return [...this.spans]
