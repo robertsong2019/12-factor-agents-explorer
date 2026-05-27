@@ -3,6 +3,7 @@ import type { Span } from './tracer.js';
 import { PolicyEngine } from './policy-engine.js';
 import { Evaluator, policyComplianceCheck, latencyCheck, reliabilityCheck, costEfficiencyCheck } from './evaluator.js';
 import type { EvalCheckResult } from './evaluator.js';
+export { TrendTracker } from './evaluator.js';
 
 export interface ObservabilityReport {
   traceReport: ReturnType<Tracer['getTraceReport']>;

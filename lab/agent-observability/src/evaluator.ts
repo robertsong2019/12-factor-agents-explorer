@@ -243,3 +243,49 @@ export function costEfficiencyCheck(spans: Span[]): EvalCheckResult[] {
     reason: `Total tokens: ${totalTokens}`,
   }];
 }
+
+/** Track evaluation scores over multiple runs and detect trends */
+export class TrendTracker {
+  private history: Array<{ run: number; timestamp: number; results: EvalCheckResult[]; score: number }> = [];
+  private runCounter = 0;
+
+  /** Record a new evaluation run */
+  record(results: EvalCheckResult[], aggregateScore: number): number {
+    const run = ++this.runCounter;
+    this.history.push({ run, timestamp: Date.now(), results, score: aggregateScore });
+    return run;
+  }
+
+  /** Get trend for a specific dimension: returns array of scores over runs */
+  dimensionTrend(dimension: string): Array<{ run: number; score: number }> {
+    return this.history.map(h => {
+      const match = h.results.find(r => r.dimension === dimension);
+      return { run: h.run, score: match?.score ?? 0 };
+    });
+  }
+
+  /** Detect if aggregate score is trending down over last N runs (potential regression) */
+  isRegressing(windowSize = 3): boolean {
+    if (this.history.length < windowSize) return false;
+    const recent = this.history.slice(-windowSize);
+    const first = recent[0].score;
+    const last = recent[recent.length - 1].score;
+    return last < first;
+  }
+
+  /** Get run count */
+  get runCount(): number {
+    return this.history.length;
+  }
+
+  /** Get aggregate scores for all runs */
+  get scoreHistory(): Array<{ run: number; score: number }> {
+    return this.history.map(h => ({ run: h.run, score: h.score }));
+  }
+
+  /** Reset all history */
+  reset(): void {
+    this.history = [];
+    this.runCounter = 0;
+  }
+}

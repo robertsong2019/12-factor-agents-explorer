@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { Evaluator, policyComplianceCheck, latencyCheck, reliabilityCheck, costEfficiencyCheck, compareTraces } from '../src/evaluator.js';
+import { Evaluator, TrendTracker, policyComplianceCheck, latencyCheck, reliabilityCheck, costEfficiencyCheck, compareTraces } from '../src/evaluator.js';
 import { Tracer } from '../src/tracer.js';
 import type { Span } from '../src/tracer.js';
 
@@ -285,5 +285,47 @@ describe('Evaluator', () => {
     assert.ok(results.length >= 1);
     assert.ok(score >= 0 && score <= 1);
     assert.ok(report.includes('Evaluation Report'));
+  });
+});
+
+describe('TrendTracker', () => {
+  it('records runs and tracks dimension trends', () => {
+    const t = new TrendTracker();
+    t.record([{ dimension: 'latency', score: 0.8, reason: 'ok' }], 0.8);
+    t.record([{ dimension: 'latency', score: 0.9, reason: 'ok' }], 0.9);
+    t.record([{ dimension: 'latency', score: 0.7, reason: 'slow' }], 0.7);
+    assert.equal(t.runCount, 3);
+    const trend = t.dimensionTrend('latency');
+    assert.equal(trend.length, 3);
+    assert.equal(trend[0].score, 0.8);
+    assert.equal(trend[2].score, 0.7);
+  });
+
+  it('isRegressing detects downward trend', () => {
+    const t = new TrendTracker();
+    t.record([], 0.9);
+    t.record([], 0.8);
+    t.record([], 0.6);
+    assert.ok(t.isRegressing(3));
+    // not enough data
+    const t2 = new TrendTracker();
+    t2.record([], 0.5);
+    assert.ok(!t2.isRegressing(3));
+  });
+
+  it('scoreHistory returns all aggregate scores', () => {
+    const t = new TrendTracker();
+    t.record([], 0.5);
+    t.record([], 0.7);
+    const hist = t.scoreHistory;
+    assert.equal(hist.length, 2);
+    assert.equal(hist[1].score, 0.7);
+  });
+
+  it('reset clears history', () => {
+    const t = new TrendTracker();
+    t.record([], 0.5);
+    t.reset();
+    assert.equal(t.runCount, 0);
   });
 });
