@@ -18,6 +18,7 @@ from ctxpack import (
     estimate_tokens,
     extract_exports,
     find_key_files,
+    generate_context,
     get_file_info,
     load_gitignore,
     should_ignore,
@@ -565,3 +566,68 @@ def test_exclude_no_match_no_effect(tmp_path):
     r1 = subprocess.run(["python3", "-m", "ctxpack", str(proj), "--stats"], capture_output=True, text=True)
     r2 = subprocess.run(["python3", "-m", "ctxpack", str(proj), "--exclude", "*.xyz", "--stats"], capture_output=True, text=True)
     assert json.loads(r1.stdout)["totalFiles"] == json.loads(r2.stdout)["totalFiles"]
+
+
+# ── --top flag tests ───────────────────────────────────────────────────
+
+def test_top_flag_limits_key_files(tmp_path):
+    """--top N limits key files per category in output."""
+    # Create many config files
+    for i in range(15):
+        (tmp_path / f"config{i}.json").write_text(json.dumps({"v": i}))
+    (tmp_path / "package.json").write_text(json.dumps({"name": "test"}))
+    files = [str(f.name) for f in tmp_path.iterdir()]
+    key_files = find_key_files(files, tmp_path)
+    context = generate_context(
+        root=tmp_path, files=files, key_files=key_files,
+        languages=["JSON"], frameworks=[], project_name="test",
+        max_tokens=8000, fmt="generic", top=3,
+    )
+    # Count how many config files appear in Key Files section
+    config_count = sum(1 for line in context.splitlines() if line.startswith("- **`config") and ".json`**" in line)
+    assert config_count <= 3
+
+
+def test_top_default_is_10(tmp_path):
+    """Default --top is 10."""
+    import subprocess
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "package.json").write_text(json.dumps({"name": "test"}))
+    for i in range(15):
+        (proj / f"file{i}.py").write_text(f"x{i} = {i}")
+    r = subprocess.run(["python3", "-m", "ctxpack", str(proj), "--top", "5"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+    # Count file entries in Key Files
+    file_entries = [l for l in r.stdout.splitlines() if l.startswith("- **`file") and ".py`**" in l]
+    assert len(file_entries) <= 5
+
+
+def test_top_with_include_source(tmp_path):
+    """--top also limits inline source files."""
+    import subprocess
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "package.json").write_text(json.dumps({"name": "test"}))
+    for i in range(8):
+        (proj / f"file{i}.py").write_text(f"def func{i}(): return {i}")
+    r = subprocess.run(["python3", "-m", "ctxpack", str(proj), "--include-source", "--top", "2"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+    # Count ### headings for source files
+    source_headings = [l for l in r.stdout.splitlines() if l.startswith("### `file") and ".py`" in l]
+    assert len(source_headings) <= 2
+
+
+def test_top_larger_than_available(tmp_path):
+    """--top larger than available files shows all."""
+    import subprocess
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "package.json").write_text(json.dumps({"name": "test"}))
+    (proj / "app.py").write_text("x = 1")
+    r = subprocess.run(["python3", "-m", "ctxpack", str(proj), "--top", "50"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0
+    assert "app.py" in r.stdout

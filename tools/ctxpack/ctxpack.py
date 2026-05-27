@@ -358,6 +358,7 @@ def generate_context(
     max_tokens: int,
     fmt: str,
     include_source: bool = False,
+    top: int = 10,
 ) -> str:
     """Generate the context markdown."""
     sections = []
@@ -421,7 +422,7 @@ def generate_context(
             continue
         label = category.replace("_", " ").title()
         sections.append(f"\n### {label}")
-        for p in paths[:10]:  # cap per category
+        for p in paths[:top]:  # --top per category
             info = get_file_info(root, p)
             line = f"- **`{p}`**"
             details = []
@@ -474,7 +475,7 @@ def generate_context(
         for category, paths in key_files.items():
             if not paths:
                 continue
-            for p in paths[:10]:
+            for p in paths[:top]:
                 fpath = root / p
                 if not fpath.is_file():
                     continue
@@ -577,6 +578,8 @@ def main():
                         help="Output project statistics as JSON instead of context")
     parser.add_argument("--include-source", action="store_true",
                         help="Embed key file contents inline in output")
+    parser.add_argument("--top", type=int, default=10,
+                        help="Max key files per category (default: 10)")
     parser.add_argument("--diff", metavar="FILE",
                         help="Compare generated context with existing file, show changes")
     parser.add_argument("-v", "--version", action="version", version=f"ctxpack {VERSION}")
@@ -644,6 +647,7 @@ def main():
         max_tokens=args.max_tokens,
         fmt=args.format,
         include_source=args.include_source,
+        top=args.top,
     )
 
     if args.diff:
