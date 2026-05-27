@@ -11,11 +11,47 @@ export interface ObservabilityReport {
   aggregateScore: number;
 }
 
+export type AlertCallback = (alert: { type: 'policy_violation' | 'high_error_rate' | 'slow_span'; details: string; timestamp: number }) => void;
+
 export class AgentObserver {
   private tracer: Tracer;
   private policyEngine: PolicyEngine;
   private evaluator: Evaluator;
   private rootSpanId: string | null = null;
+
+  private alerts: AlertCallback[] = [];
+
+  /** Register an alert callback */
+  onAlert(cb: AlertCallback): void {
+    this.alerts.push(cb);
+  }
+
+  private emitAlert(type: 'policy_violation' | 'high_error_rate' | 'slow_span', details: string): void {
+    for (const cb of this.alerts) cb({ type, details, timestamp: Date.now() });
+  }
+
+  /** Run a full audit: evaluate all spans, check regressions, return structured report */
+  quickAudit(): {
+    score: number;
+    errorRate: number;
+    policyViolations: number;
+    slowSpans: number;
+    topIssues: EvalCheckResult[];
+    markdown: string;
+  } {
+    const spans = this.tracer.getSpans();
+    const results = this.evaluator.evaluate(spans);
+    const score = this.evaluator.aggregateScore(results);
+    const errorRate = this.getErrorRate();
+    const policyVios = spans.filter(s => s.attributes.policyDenied === true).length;
+    const slowSpans = this.tracer.getSlowSpans(100).length;
+    const topIssues = this.evaluator.topFailures(results, 3);
+    // Emit alerts
+    if (policyVios > 0) this.emitAlert('policy_violation', `${policyVios} policy violations detected`);
+    if (errorRate > 0.1) this.emitAlert('high_error_rate', `Error rate ${(errorRate * 100).toFixed(1)}% exceeds 10%`);
+    if (slowSpans > 0) this.emitAlert('slow_span', `${slowSpans} spans exceeded 100ms`);
+    return { score, errorRate, policyViolations: policyVios, slowSpans, topIssues, markdown: this.reportMarkdown() };
+  }
 
   constructor() {
     this.tracer = new Tracer();

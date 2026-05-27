@@ -250,4 +250,38 @@ describe('AgentObserver integration', () => {
     assert.ok(obs.hasPolicyCategory('custom'));
     assert.ok(!obs.hasPolicyCategory('nonexistent'));
   });
+
+  it('quickAudit returns structured report', () => {
+    const obs = new AgentObserver();
+    obs.getPolicyEngine().addPolicy('tool_execution', {
+      name: 'block', description: 'block rm', category: 'tool_execution',
+      evaluate: (input) => String(input.command).includes('rm ') ? { allow: false, reason: 'destructive' } : { allow: true },
+    });
+    obs.startRun('a1', 'task');
+    obs.toolExecute('bash', 'ls');
+    obs.toolExecute('bash', 'rm -rf /');
+    obs.endRun();
+    const audit = obs.quickAudit();
+    assert.ok(audit.score >= 0 && audit.score <= 1);
+    assert.ok(audit.errorRate > 0);
+    assert.equal(audit.policyViolations, 1);
+    assert.ok(audit.markdown.includes('Observability Report'));
+    assert.ok(audit.topIssues.length > 0);
+  });
+
+  it('onAlert fires callbacks on quickAudit', () => {
+    const obs = new AgentObserver();
+    obs.getPolicyEngine().addPolicy('tool_execution', {
+      name: 'block', description: '', category: 'tool_execution',
+      evaluate: (input) => String(input.command).includes('rm ') ? { allow: false, reason: 'no' } : { allow: true },
+    });
+    const alerts: Array<{ type: string; details: string }> = [];
+    obs.onAlert(a => alerts.push(a));
+    obs.startRun('a1', 't');
+    obs.toolExecute('bash', 'rm -rf /');
+    obs.endRun();
+    obs.quickAudit();
+    assert.ok(alerts.length >= 1);
+    assert.ok(alerts.some(a => a.type === 'policy_violation'));
+  });
 });
