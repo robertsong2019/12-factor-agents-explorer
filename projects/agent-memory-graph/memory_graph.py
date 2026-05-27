@@ -1081,6 +1081,55 @@ class MemoryGraph:
                 results.append({"node": node, "score": c["score"]})
         return results
 
+    def importance_rank(self, limit: int = 20, decay_hours: float = 168.0) -> list[dict]:
+        """Rank nodes by composite importance: weight + degree + recency.
+
+        Score = normalized_weight * 0.4 + normalized_degree * 0.3 + recency_score * 0.3
+        recency_score = 1.0 if accessed within decay_hours, decays linearly to 0.
+        """
+        now = time.time()
+        cutoff = now - decay_hours * 3600
+
+        rows = self.conn.execute("""
+            SELECT n.id, n.label, n.kind, n.weight, n.accessed,
+                   (SELECT COUNT(*) FROM edges WHERE source=n.id OR target=n.id) AS deg
+            FROM nodes n
+            ORDER BY n.weight DESC
+        """).fetchall()
+
+        if not rows:
+            return []
+
+        max_weight = max(r["weight"] for r in rows) or 1.0
+        max_deg = max(r["deg"] for r in rows) or 1
+
+        results = []
+        for r in rows:
+            w_norm = r["weight"] / max_weight
+            d_norm = r["deg"] / max_deg
+            # Recency: 1.0 if accessed after cutoff, linear decay before
+            if r["accessed"] >= cutoff:
+                recency = 1.0
+            else:
+                elapsed = cutoff - r["accessed"]
+                recency = max(0.0, 1.0 - elapsed / (decay_hours * 3600))
+
+            score = w_norm * 0.4 + d_norm * 0.3 + recency * 0.3
+            results.append({
+                "node_id": r["id"],
+                "label": r["label"],
+                "kind": r["kind"],
+                "importance": round(score, 4),
+                "components": {
+                    "weight": round(w_norm, 3),
+                    "degree": round(d_norm, 3),
+                    "recency": round(recency, 3),
+                },
+            })
+
+        results.sort(key=lambda x: x["importance"], reverse=True)
+        return results[:limit]
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

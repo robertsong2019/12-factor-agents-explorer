@@ -1401,3 +1401,69 @@ class TestRecommend:
             b_rec = next((r for r in recs if r["node"].id == b.id), None)
             if a_rec and b_rec:
                 assert b_rec["score"] >= a_rec["score"]
+
+    # ── importance_rank ──────────────────────────────────
+
+    def test_importance_rank_basic(self, mg):
+        a = mg.add("alpha", "concept", {"w": 1})
+        b = mg.add("beta", "concept", {"w": 2})
+        mg.link(a.id, b.id, "rel")
+        ranked = mg.importance_rank()
+        assert len(ranked) == 2
+        assert all("importance" in r for r in ranked)
+        assert all("components" in r for r in ranked)
+        # beta should have higher degree (connected to alpha)
+        beta = next(r for r in ranked if r["node_id"] == b.id)
+        alpha = next(r for r in ranked if r["node_id"] == a.id)
+        assert beta["importance"] >= alpha["importance"]
+
+    def test_importance_rank_empty(self, mg):
+        assert mg.importance_rank() == []
+
+    def test_importance_rank_limit(self, mg):
+        for i in range(10):
+            mg.add(f"n{i}", "concept")
+        ranked = mg.importance_rank(limit=3)
+        assert len(ranked) == 3
+
+    def test_importance_rank_recency(self, mg):
+        old = mg.add("old", "concept")
+        new = mg.add("new", "concept")
+        # Force old accessed time far in the past
+        mg.conn.execute("UPDATE nodes SET accessed = ? WHERE id = ?", (time.time() - 1e6, old.id))
+        mg.conn.commit()
+        ranked = mg.importance_rank()
+        new_r = next(r for r in ranked if r["node_id"] == new.id)
+        old_r = next(r for r in ranked if r["node_id"] == old.id)
+        assert new_r["components"]["recency"] > old_r["components"]["recency"]
+        assert new_r["importance"] > old_r["importance"]
+
+    def test_importance_rank_components_sum(self, mg):
+        mg.add("x", "concept")
+        ranked = mg.importance_rank()
+        assert len(ranked) == 1
+        c = ranked[0]["components"]
+        # Weighted: 0.4*weight + 0.3*degree + 0.3*recency
+        expected = 0.4 * c["weight"] + 0.3 * c["degree"] + 0.3 * c["recency"]
+        assert abs(ranked[0]["importance"] - round(expected, 4)) < 0.001
+
+    def test_importance_rank_high_degree_wins(self, mg):
+        hub = mg.add("hub", "concept")
+        for i in range(5):
+            n = mg.add(f"leaf{i}", "concept")
+            mg.link(hub.id, n.id, "rel")
+        ranked = mg.importance_rank()
+        assert ranked[0]["node_id"] == hub.id
+        assert ranked[0]["components"]["degree"] == 1.0  # normalized max
+
+    def test_importance_rank_single_node(self, mg):
+        mg.add("solo", "concept")
+        ranked = mg.importance_rank()
+        assert len(ranked) == 1
+        assert ranked[0]["importance"] > 0
+
+    def test_importance_rank_decay_hours(self, mg):
+        n = mg.add("node", "concept")
+        # With very large decay window, recency should be 1.0
+        ranked = mg.importance_rank(decay_hours=999999)
+        assert ranked[0]["components"]["recency"] == 1.0
