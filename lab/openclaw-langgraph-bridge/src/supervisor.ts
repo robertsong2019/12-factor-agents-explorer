@@ -178,6 +178,21 @@ export class Supervisor {
       avgResponseTime: entries.length === 0 ? 0 : entries.reduce((s, h) => s + h.avgDuration, 0) / entries.length,
     };
   }
+
+  /** Execute with automatic fallback to another agent on failure */
+  async retryWithFallback(task: string, capability?: string, maxRetries: number = 3): Promise<{ agentId: string; result: string; attempts: number }> {
+    let attempts = 0;
+    while (attempts < maxRetries) {
+      attempts++;
+      try {
+        return { ...await this.execute(task, capability), attempts };
+      } catch {
+        if (attempts >= maxRetries) break;
+        // Will try a different agent next iteration since the failed one's health degraded
+      }
+    }
+    throw new Error(`All ${attempts} attempts failed for task: ${task}`);
+  }
 }
 
 /**

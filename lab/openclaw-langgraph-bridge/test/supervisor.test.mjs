@@ -166,4 +166,30 @@ describe("Supervisor", () => {
     assert.equal(summary.unhealthy, 1);
     assert.equal(summary.healthy, 1);
   });
+
+  it("retryWithFallback falls back to healthy agent", async () => {
+    let badCalls = 0;
+    const s = new Supervisor({ maxFailures: 1 });
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async () => { badCalls++; throw new Error("no"); } },
+      capabilities: ["*"],
+    });
+    s.register(makeRole("good"));
+    // Round-robin: first call hits 'bad', fails; second call hits 'good', succeeds
+    // But after 1 failure with maxFailures=1, 'bad' is unhealthy, so execute() will skip it
+    const result = await s.retryWithFallback("task");
+    assert.equal(result.agentId, "good");
+    assert.ok(result.attempts >= 2);
+  });
+
+  it("retryWithFallback throws when all retries exhausted", async () => {
+    const s = new Supervisor({ maxFailures: 5 });
+    s.register({
+      id: "bad", description: "always fails",
+      config: { executor: async () => { throw new Error("no"); } },
+      capabilities: ["*"],
+    });
+    await assert.rejects(() => s.retryWithFallback("task", undefined, 2), /All 2 attempts failed/);
+  });
 });
