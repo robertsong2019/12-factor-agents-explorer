@@ -291,4 +291,40 @@ describe('PolicyEngine', () => {
     assert.equal(cats.length, 2);
     assert.deepEqual(cats.find(c => c.category === 'sec'), { category: 'sec', ruleCount: 2 });
   });
+
+  it('diff detects added/removed rules', () => {
+    const base = new PolicyEngine();
+    base.addPolicy('sec', { name: 'r1', description: '', category: 'sec', evaluate: () => ({ allow: true }) });
+    const other = new PolicyEngine();
+    other.addPolicy('sec', { name: 'r1', description: '', category: 'sec', evaluate: () => ({ allow: true }) });
+    other.addPolicy('sec', { name: 'r2', description: '', category: 'sec', evaluate: () => ({ allow: true }) });
+    const d = PolicyEngine.diff(base, other);
+    assert.equal(d.added.length, 1);
+    assert.equal(d.added[0].rule, 'r2');
+    assert.equal(d.removed.length, 0);
+    assert.equal(d.unchanged, 1);
+    // reverse
+    const d2 = PolicyEngine.diff(other, base);
+    assert.equal(d2.removed.length, 1);
+    assert.equal(d2.removed[0].rule, 'r2');
+  });
+
+  it('snapshot and restore round-trip', () => {
+    const engine = new PolicyEngine();
+    engine.loadFromJSON([
+      { name: 'block', description: 'block rm', category: 'tool_execution', type: 'blockDestructiveOps' },
+      { name: 'cost', description: 'cost limit', category: 'cost_control', type: 'costLimit', config: { maxCost: 5 } },
+    ]);
+    engine.disableRule('tool_execution', 'block');
+    const snap = engine.snapshot();
+    assert.deepEqual(snap.disabledRules, ['tool_execution::block']);
+    assert.equal(snap.jsonDefs.length, 2);
+    // mutate then restore
+    engine.removeCategory('tool_execution');
+    assert.equal(engine.countAll(), 1);
+    engine.restore(snap);
+    assert.equal(engine.countAll(), 2);
+    assert.ok(!engine.isRuleEnabled('tool_execution', 'block'));
+    assert.ok(engine.isRuleEnabled('cost_control', 'cost'));
+  });
 });

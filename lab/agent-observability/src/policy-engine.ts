@@ -260,6 +260,67 @@ export class PolicyEngine {
     }
     return result;
   }
+
+  /** Diff two PolicyEngines: returns added/removed/modified rule names */
+  static diff(base: PolicyEngine, other: PolicyEngine): {
+    added: Array<{ category: string; rule: string }>;
+    removed: Array<{ category: string; rule: string }>;
+    unchanged: number;
+  } {
+    const baseEntries = new Map<string, Set<string>>();
+    for (const [cat, rules] of base.rules) {
+      baseEntries.set(cat, new Set(rules.map(r => r.name)));
+    }
+    const added: Array<{ category: string; rule: string }> = [];
+    const removed: Array<{ category: string; rule: string }> = [];
+    let unchanged = 0;
+    // Find added
+    for (const [cat, rules] of other.rules) {
+      const baseSet = baseEntries.get(cat) ?? new Set();
+      for (const r of rules) {
+        if (baseSet.has(r.name)) unchanged++;
+        else added.push({ category: cat, rule: r.name });
+      }
+    }
+    // Find removed
+    const otherEntries = new Map<string, Set<string>>();
+    for (const [cat, rules] of other.rules) {
+      otherEntries.set(cat, new Set(rules.map(r => r.name)));
+    }
+    for (const [cat, rules] of base.rules) {
+      const otherSet = otherEntries.get(cat) ?? new Set();
+      for (const r of rules) {
+        if (!otherSet.has(r.name)) removed.push({ category: cat, rule: r.name });
+      }
+    }
+    return { added, removed, unchanged };
+  }
+
+  /** Snapshot current state (disabled rules + loaded JSON defs) for later restore */
+  snapshot(): { disabledRules: string[]; jsonDefs: object[] } {
+    return {
+      disabledRules: [...this.disabledRules],
+      jsonDefs: [...this._jsonDefs],
+    };
+  }
+
+  /** Restore from a previous snapshot */
+  restore(snap: { disabledRules: string[]; jsonDefs: object[] }): void {
+    // Re-import JSON defs (rebuilds rules)
+    this.rules.clear();
+    this.disabledRules.clear();
+    this._jsonDefs = [];
+    for (const def of snap.jsonDefs as Array<{ name: string; description: string; category: string; type: string; config?: Record<string, unknown> }>) {
+      const rule = this.buildRule(def);
+      if (rule) {
+        this.addPolicy(def.category, rule);
+        this._jsonDefs.push(def);
+      }
+    }
+    for (const key of snap.disabledRules) {
+      this.disabledRules.add(key);
+    }
+  }
 }
 
 // --- Built-in rule helpers ---
