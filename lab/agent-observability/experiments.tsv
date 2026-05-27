@@ -29,3 +29,11 @@ timestamp	commit	metric	value	status	description
 2026-05-20T19:05	f5d12fd	tests	123→129	keep	Tracer.getOperationTimeline, PolicyEngine.merge, Evaluator.runComparison (+6)
 2026-05-20T19:10	0cb7acd	tests	129→135	keep	Tracer.annotate, PolicyEngine.evaluateWithDetails, AgentObserver.traceAgent (+6)
 2026-05-20T19:15	3d4bca2	tests	135→140	keep	Tracer.getStats, PolicyEngine.countByCategory, Evaluator.getWeights (+5)
+2026-05-24T21:08:12+08:00	2654c39	tests	143→143	keep	Tracer: renameSpan+cloneSpan+mergeTracer
+2026-05-24T21:11:08+08:00	efd615b	tests	143→145	keep	Evaluator: addBuiltinChecks+evaluateAndReport
+2026-05-24T21:13:28+08:00	4a884b4	tests	145→147	keep	Tracer: batchEnd+getDepthMap
+2026-05-24T21:18:44+08:00	5d0c82a	tests	147→149	keep	PolicyEngine: evaluateBatch+getCategories
+2026-05-27T21:00:00+08:00	09add38	tests	149→154	keep	Tracer: tag system (tagSpan/untagSpan/getSpansByTag/getTagsForSpan/getAllTags) + searchAttributes (+5)
+2026-05-27T21:05:00+08:00	48a1566	tests	154→156	keep	PolicyEngine: diff() + snapshot()/restore() (+2)
+2026-05-27T21:10:00+08:00	937f279	tests	156→160	keep	Evaluator: TrendTracker class (record/dimensionTrend/isRegressing/scoreHistory) (+4)
+2026-05-27T21:15:00+08:00	e51d26a	tests	160→162	keep	AgentObserver: quickAudit() + alert callbacks (onAlert/emitAlert) (+2)
