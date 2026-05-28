@@ -1130,6 +1130,87 @@ class MemoryGraph:
         results.sort(key=lambda x: x["importance"], reverse=True)
         return results[:limit]
 
+    def patch(self, diff: dict, source: 'MemoryGraph' = None) -> dict:
+        """Apply a graph_diff result to sync this graph.
+
+        Args:
+            diff: output of graph_diff()
+            source: the other graph (needed to fetch new nodes/edges)
+        Returns dict with applied counts.
+        """
+        applied = {"nodes_added": 0, "nodes_removed": 0, "edges_added": 0, "edges_removed": 0, "fields_updated": 0}
+
+        # Add nodes that only exist in other
+        if source:
+            for nid in diff.get("nodes_only_other", []):
+                row = source.conn.execute("SELECT * FROM nodes WHERE id=?", (nid,)).fetchone()
+                if row:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+                        (row["id"], row["label"], row["kind"], row["data"], row["created"], row["accessed"], row["weight"], row["tags"])
+                    )
+                    applied["nodes_added"] += 1
+
+            # Add edges that only exist in other
+            for (src, tgt, rel) in diff.get("edges_only_other", []):
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO edges (source,target,relation,weight) VALUES (?,?,?,1.0)",
+                    (src, tgt, rel)
+                )
+                applied["edges_added"] += 1
+
+        # Remove nodes that only exist in self
+        for nid in diff.get("nodes_only_self", []):
+            self.conn.execute("DELETE FROM edges WHERE source=? OR target=?", (nid, nid))
+            self.conn.execute("DELETE FROM nodes WHERE id=?", (nid,))
+            applied["nodes_removed"] += 1
+
+        # Remove edges that only exist in self
+        for (src, tgt, rel) in diff.get("edges_only_self", []):
+            self.conn.execute("DELETE FROM edges WHERE source=? AND target=? AND relation=?", (src, tgt, rel))
+            applied["edges_removed"] += 1
+
+        # Apply field updates from modified nodes
+        if source:
+            for mod in diff.get("nodes_modified", []):
+                nid = mod["id"]
+                field = mod["field"]
+                val = mod["other_val"]
+                if field == "data":
+                    self.conn.execute("UPDATE nodes SET data=? WHERE id=?", (json.dumps(val), nid))
+                else:
+                    self.conn.execute(f"UPDATE nodes SET {field}=? WHERE id=?", (val, nid))
+                applied["fields_updated"] += 1
+
+        self.conn.commit()
+        return applied
+
+    def stats_summary(self) -> dict:
+        """One-call graph statistics dashboard."""
+        node_count = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        edge_count = self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        kind_dist = dict(self.conn.execute(
+            "SELECT kind, COUNT(*) FROM nodes GROUP BY kind"
+        ).fetchall())
+        rel_dist = dict(self.conn.execute(
+            "SELECT relation, COUNT(*) FROM edges GROUP BY relation"
+        ).fetchall())
+        avg_weight = self.conn.execute("SELECT AVG(weight) FROM nodes").fetchone()[0] or 0.0
+        isolated = self.conn.execute("""
+            SELECT COUNT(*) FROM nodes n
+            WHERE NOT EXISTS (SELECT 1 FROM edges e WHERE e.source=n.id OR e.target=n.id)
+        """).fetchone()[0]
+        density = (2 * edge_count / (node_count * (node_count - 1))) if node_count > 1 else 0.0
+        return {
+            "node_count": node_count,
+            "edge_count": edge_count,
+            "kind_distribution": kind_dist,
+            "relation_distribution": rel_dist,
+            "avg_weight": round(avg_weight, 3),
+            "isolated_nodes": isolated,
+            "density": round(density, 4),
+        }
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

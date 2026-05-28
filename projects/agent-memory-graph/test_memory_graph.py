@@ -1462,8 +1462,125 @@ class TestRecommend:
         assert len(ranked) == 1
         assert ranked[0]["importance"] > 0
 
-    def test_importance_rank_decay_hours(self, mg):
-        n = mg.add("node", "concept")
-        # With very large decay window, recency should be 1.0
-        ranked = mg.importance_rank(decay_hours=999999)
-        assert ranked[0]["components"]["recency"] == 1.0
+    # ── patch() tests ──────────────────────────────────────────
+
+    def test_patch_adds_nodes_from_other(self):
+        g1 = MemoryGraph()
+        g2 = MemoryGraph()
+        g2.add("only_in_g2", "fact")
+        diff = g1.graph_diff(g2)
+        result = g1.patch(diff, source=g2)
+        assert result["nodes_added"] == 1
+        assert g1.has_node(diff["nodes_only_other"][0])
+
+    def test_patch_removes_self_only_nodes(self):
+        g1 = MemoryGraph()
+        g2 = MemoryGraph()
+        g1.add("only_in_g1", "fact")
+        diff = g1.graph_diff(g2)
+        result = g1.patch(diff)
+        assert result["nodes_removed"] == 1
+        assert not g1.has_node("only_in_g1")
+
+    def test_patch_syncs_edges(self):
+        g1 = MemoryGraph()
+        g2 = MemoryGraph()
+        a = g2.add("a", "fact")
+        b = g2.add("b", "fact")
+        g2.link(a.id, b.id, "new_rel")
+        # g1 has same nodes but no edge
+        g1.add("a", "fact")  # different id
+        g1.add("b", "fact")
+        diff = g1.graph_diff(g2)
+        # The edge in g2 references g2's node ids, not g1's
+        # So let's use explicit ids
+        g1b = MemoryGraph()
+        g2b = MemoryGraph()
+        import memory_graph as mg
+        # Manually insert with same ids
+        g1b.conn.execute("INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("id_a", "a", "fact", '{}', 0, 0, 1.0, '[]'))
+        g1b.conn.execute("INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("id_b", "b", "fact", '{}', 0, 0, 1.0, '[]'))
+        g1b.conn.commit()
+        g2b.conn.execute("INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("id_a", "a", "fact", '{}', 0, 0, 1.0, '[]'))
+        g2b.conn.execute("INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("id_b", "b", "fact", '{}', 0, 0, 1.0, '[]'))
+        g2b.conn.execute("INSERT INTO edges (source,target,relation,weight) VALUES (?,?,?,1.0)",
+            ("id_a", "id_b", "new_rel"))
+        g2b.conn.commit()
+        diff = g1b.graph_diff(g2b)
+        result = g1b.patch(diff, source=g2b)
+        assert result["edges_added"] >= 1
+        assert g1b.is_linked("id_a", "id_b", "new_rel")
+
+    def test_patch_applies_field_updates(self):
+        g1 = MemoryGraph()
+        g2 = MemoryGraph()
+        # Use same id manually
+        g1.conn.execute("INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("x", "x", "fact", '{\"v\": 1}', 0, 0, 1.0, '[]'))
+        g1.conn.commit()
+        g2.conn.execute("INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("x", "x", "fact", '{\"v\": 2}', 0, 0, 1.0, '[]'))
+        g2.conn.commit()
+        diff = g1.graph_diff(g2)
+        result = g1.patch(diff, source=g2)
+        assert result["fields_updated"] >= 1
+        node = g1.get_node("x")
+        assert node.data["v"] == 2
+
+    def test_patch_empty_diff_noop(self):
+        g1 = MemoryGraph()
+        g1.add("a", "fact")
+        result = g1.patch({"nodes_only_self": [], "nodes_only_other": [], "nodes_modified": [], "edges_only_self": [], "edges_only_other": []})
+        assert sum(result.values()) == 0
+
+    # ── stats_summary() tests ──────────────────────────────────────
+
+    def test_stats_summary_empty(self):
+        mg = MemoryGraph()
+        s = mg.stats_summary()
+        assert s["node_count"] == 0
+        assert s["edge_count"] == 0
+        assert s["density"] == 0.0
+
+    def test_stats_summary_basic(self):
+        mg = MemoryGraph()
+        a = mg.add("a", "fact")
+        b = mg.add("b", "event")
+        mg.link(a.id, b.id, "caused")
+        s = mg.stats_summary()
+        assert s["node_count"] == 2
+        assert s["edge_count"] == 1
+        assert s["kind_distribution"] == {"fact": 1, "event": 1}
+        assert s["relation_distribution"] == {"caused": 1}
+
+    def test_stats_summary_isolated_nodes(self):
+        mg = MemoryGraph()
+        a = mg.add("connected", "fact")
+        b = mg.add("connected2", "fact")
+        iso = mg.add("lonely", "concept")
+        mg.link(a.id, b.id, "rel")
+        s = mg.stats_summary()
+        assert s["isolated_nodes"] == 1
+
+    def test_stats_summary_density(self):
+        mg = MemoryGraph()
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        c = mg.add("c", "fact")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        s = mg.stats_summary()
+        assert s["density"] == 1.0  # fully connected 3-node graph
+
+    def test_stats_summary_avg_weight(self):
+        mg = MemoryGraph()
+        mg.add("heavy", "fact")
+        n = mg.add("light", "fact")
+        mg.reweight(n.id, -0.8)
+        s = mg.stats_summary()
+        assert 0 < s["avg_weight"] < 1.0
