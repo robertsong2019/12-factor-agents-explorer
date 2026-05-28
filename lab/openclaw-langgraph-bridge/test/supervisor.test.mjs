@@ -192,4 +192,67 @@ describe("Supervisor", () => {
     });
     await assert.rejects(() => s.retryWithFallback("task", undefined, 2), /All 2 attempts failed/);
   });
+
+  // ── Weighted strategy ───────────────────────────────
+  it("weighted strategy selects from candidates", () => {
+    const s = new Supervisor({ strategy: "weighted" });
+    s.register(makeRole("a")).register(makeRole("b"));
+    // Should always return a valid agent
+    const agent = s.selectAgent();
+    assert.ok(agent);
+    assert.ok(["a", "b"].includes(agent.id));
+  });
+
+  // ── History tracking ───────────────────────────────
+  it("records history on execute", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    await s.execute("t1");
+    const hist = s.getHistory("a");
+    assert.equal(hist.length, 1);
+    assert.equal(hist[0].event, "success");
+    assert.ok(hist[0].duration >= 0);
+  });
+
+  it("records failure in history", async () => {
+    const s = new Supervisor();
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async () => { throw new Error("boom"); } },
+      capabilities: ["*"],
+    });
+    await assert.rejects(() => s.execute("t1"));
+    const hist = s.getHistory("bad");
+    assert.equal(hist.length, 1);
+    assert.equal(hist[0].event, "failure");
+  });
+
+  it("getHistory returns empty for unknown agent", () => {
+    const s = new Supervisor();
+    assert.deepEqual(s.getHistory("nope"), []);
+  });
+
+  it("getHistory respects limit", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    for (let i = 0; i < 5; i++) await s.execute(`t${i}`);
+    const limited = s.getHistory("a", 2);
+    assert.equal(limited.length, 2);
+  });
+
+  it("history respects maxHistory config", async () => {
+    const s = new Supervisor({ maxHistory: 3 });
+    s.register(makeRole("a"));
+    for (let i = 0; i < 5; i++) await s.execute(`t${i}`);
+    const hist = s.getHistory("a");
+    assert.equal(hist.length, 3);
+  });
+
+  it("resetHealth clears history", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    await s.execute("t1");
+    s.resetHealth("a");
+    assert.equal(s.getHistory("a").length, 0);
+  });
 });

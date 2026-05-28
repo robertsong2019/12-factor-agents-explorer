@@ -17,13 +17,17 @@ export interface AgentHealth {
   failureCount: number;
   lastUsed: number;
   avgDuration: number;
+  /** History of recent events for observability */
+  history: Array<{ ts: number; event: "success" | "failure"; duration: number }>;
 }
 
 export interface SupervisorConfig {
   /** Maximum consecutive failures before marking agent unhealthy (default: 3) */
   maxFailures?: number;
-  /** Route strategy: "round-robin" | "least-busy" | "random" (default: "round-robin") */
-  strategy?: "round-robin" | "least-busy" | "random";
+  /** Route strategy: "round-robin" | "least-busy" | "random" | "weighted" (default: "round-robin") */
+  strategy?: "round-robin" | "least-busy" | "random" | "weighted";
+  /** Max history entries per agent (default: 100) */
+  maxHistory?: number;
 }
 
 export class Supervisor {
@@ -32,17 +36,19 @@ export class Supervisor {
   private rrIndex = 0;
   private maxFailures: number;
   private strategy: NonNullable<SupervisorConfig["strategy"]>;
+  private maxHistory: number;
 
   constructor(config: SupervisorConfig = {}) {
     this.maxFailures = config.maxFailures ?? 3;
     this.strategy = config.strategy ?? "round-robin";
+    this.maxHistory = config.maxHistory ?? 100;
   }
 
   /** Register a new agent */
   register(role: AgentRole): this {
     this.agents.set(role.id, role);
     this.health.set(role.id, {
-      successCount: 0, failureCount: 0, lastUsed: 0, avgDuration: 0,
+      successCount: 0, failureCount: 0, lastUsed: 0, avgDuration: 0, history: [],
     });
     return this;
   }
@@ -98,6 +104,22 @@ export class Supervisor {
       case "random": {
         return candidates[Math.floor(Math.random() * candidates.length)];
       }
+      case "weighted": {
+        // Weighted random: success rate as weight
+        const weights = candidates.map(a => {
+          const h = this.health.get(a.id)!;
+          const total = h.successCount + h.failureCount;
+          return total === 0 ? 1 : h.successCount / total;
+        });
+        const sum = weights.reduce((a, b) => a + b, 0);
+        if (sum === 0) return candidates[0];
+        let r = Math.random() * sum;
+        for (let i = 0; i < candidates.length; i++) {
+          r -= weights[i];
+          if (r <= 0) return candidates[i];
+        }
+        return candidates[candidates.length - 1];
+      }
     }
   }
 
@@ -116,18 +138,38 @@ export class Supervisor {
       h.successCount++;
       h.failureCount = 0; // reset consecutive failures on success
       h.lastUsed = Date.now();
+      this._recordHistory(agent.id, 'success', duration);
       return { agentId: agent.id, result };
     } catch (err) {
       h.failureCount++;
       h.lastUsed = Date.now();
+      this._recordHistory(agent.id, 'failure', Date.now() - start);
       throw err;
+    }
+  }
+
+  /** Get execution history for an agent */
+  getHistory(agentId: string, limit?: number): AgentHealth["history"] {
+    const h = this.health.get(agentId);
+    if (!h) return [];
+    const hist = [...h.history].reverse(); // newest first
+    return limit ? hist.slice(0, limit) : hist;
+  }
+
+  /** Record a health event */
+  private _recordHistory(agentId: string, event: "success" | "failure", duration: number): void {
+    const h = this.health.get(agentId);
+    if (!h) return;
+    h.history.push({ ts: Date.now(), event, duration });
+    if (h.history.length > this.maxHistory) {
+      h.history = h.history.slice(-this.maxHistory);
     }
   }
 
   /** Reset health for an agent */
   resetHealth(agentId: string): void {
     if (this.health.has(agentId)) {
-      this.health.set(agentId, { successCount: 0, failureCount: 0, lastUsed: 0, avgDuration: 0 });
+      this.health.set(agentId, { successCount: 0, failureCount: 0, lastUsed: 0, avgDuration: 0, history: [] });
     }
   }
 
