@@ -255,4 +255,55 @@ describe("Supervisor", () => {
     s.resetHealth("a");
     assert.equal(s.getHistory("a").length, 0);
   });
+
+  // ── saveState / loadState ──
+  it("saveState serializes agents and health", async () => {
+    const s = new Supervisor({ strategy: "round-robin" });
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    const res = await s.execute("t1");
+    const state = s.saveState();
+    assert.equal(state.agents.length, 2);
+    assert.equal(state.strategy, "round-robin");
+    assert.ok(state.health[res.agentId]);
+    assert.equal(state.health[res.agentId].successCount, 1);
+    assert.ok(state.health[res.agentId].history.length > 0);
+  });
+
+  it("loadState restores agents and health", async () => {
+    const s1 = new Supervisor({ strategy: "round-robin" });
+    s1.register(makeRole("x"));
+    await s1.execute("t1");
+    await s1.execute("t2");
+    const state = s1.saveState();
+
+    const s2 = new Supervisor();
+    s2.loadState(state);
+    assert.deepEqual(s2.listAgents(), ["x"]);
+    assert.equal(s2.getHealth("x").successCount, 2);
+    assert.equal(s2["strategy"], "round-robin");
+  });
+
+  it("loadState handles missing health gracefully", () => {
+    const s = new Supervisor();
+    s.loadState({
+      agents: [{ id: "z", description: "", capabilities: ["test"] }],
+      health: {},
+      strategy: "round-robin",
+    });
+    assert.ok(s.isHealthy("z"));
+    assert.equal(s.getHealth("z").successCount, 0);
+  });
+
+  it("saveState → JSON.stringify → loadState round-trip", async () => {
+    const s1 = new Supervisor();
+    s1.register(makeRole("a"));
+    await s1.execute("t1");
+    const json = JSON.stringify(s1.saveState());
+
+    const s2 = new Supervisor();
+    s2.loadState(JSON.parse(json));
+    assert.equal(s2.listAgents().length, 1);
+    assert.equal(s2.getHealth("a").successCount, 1);
+  });
 });

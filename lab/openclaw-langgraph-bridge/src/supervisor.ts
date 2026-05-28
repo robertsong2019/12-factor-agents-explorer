@@ -173,6 +173,44 @@ export class Supervisor {
     }
   }
 
+  /** Serialize supervisor state (agents + health) to JSON-safe object */
+  saveState(): {
+    agents: Array<{ id: string; description: string; capabilities: string[] }>;
+    health: Record<string, AgentHealth>;
+    strategy: string;
+  } {
+    const agents = [...this.agents.values()].map(a => ({
+      id: a.id, description: a.description, capabilities: a.capabilities,
+    }));
+    const health: Record<string, AgentHealth> = {};
+    for (const [id, h] of this.health) {
+      health[id] = { ...h, history: [...h.history] };
+    }
+    return { agents, health, strategy: this.strategy };
+  }
+
+  /** Restore supervisor state from a previously saved snapshot */
+  loadState(state: ReturnType<Supervisor["saveState"]>): void {
+    this.agents.clear();
+    this.health.clear();
+    for (const a of state.agents) {
+      // Register as minimal stub — executor not serializable
+      this.agents.set(a.id, {
+        id: a.id,
+        description: a.description ?? "",
+        capabilities: a.capabilities,
+        config: { name: a.id, systemPrompt: "", executor: async () => "" },
+      });
+      const h = state.health[a.id];
+      if (h) {
+        this.health.set(a.id, { ...h, history: [...h.history] });
+      } else {
+        this.health.set(a.id, { successCount: 0, failureCount: 0, lastUsed: 0, avgDuration: 0, history: [] });
+      }
+    }
+    this.strategy = state.strategy as NonNullable<SupervisorConfig["strategy"]>;
+  }
+
   /** Convert to AgentPool for compatibility */
   toPool(): AgentPool {
     return new AgentPool({ roles: [...this.agents.values()] });
