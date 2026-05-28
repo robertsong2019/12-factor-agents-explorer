@@ -10,3 +10,13 @@ timestamp	commit	metric	value	status	description
 2026-05-25T21:15	e3c8455	test_count	91/91	keep	reweight+is_linked+all_tags — weight delta, edge check, tag listing (+12 tests, 79→91)
 2026-05-26T00:00	fa70a66	test_count	99/99	keep	subgraph(depth)+unlink_many — neighborhood extraction for agent context, batch edge removal. subgraph traverses up to N hops returning export-compatible dict. unlink_many batch-deletes edges. +8 tests (91→99).
 2026-05-26T01:00	879048b	test_count	110/110	keep	prune(min_weight)+aggregate(kind,field,fn) — memory cleanup removes low-weight nodes+orphaned edges; aggregation supports sum/avg/min/max/count by kind. +11 tests (99→110). Zero regressions.
+2026-05-26T19:10	a90875b	test_count	129/129	keep	graph_diff + compact + search_unified — graph sync diff (node/edge/data diff), duplicate node merge, unified multi-field search (label+data+tags+kind, weight-boosted scoring). +19 tests (110→129). Zero regressions.
+2026-05-26T19:20	49eb755	test_count	141/141	keep	rename_node + clone_node + path_exists — node rename, data-preserving clone, BFS reachability with depth limit. +12 tests (129→141). Zero regressions.
+2026-05-26T21:05:06+08:00	f955b61	test_count	155/155	keep	find_roots+find_leaves+degree+degree_centrality+shortest_path — graph analysis. +14 tests (141→155). Zero regressions.
+2026-05-26T21:09:12+08:00	f217ec7	test_count	164/164	keep	betweenness_centrality+community_detect+eigenvector_centrality — graph analytics. +9 tests (155→164). Zero regressions.
+2026-05-26T21:13:58+08:00	6f23c53	test_count	176/176	keep	pagerank+k_core+triangles — graph algorithms. +12 tests (164→176). Zero regressions.
+2026-05-27T01:00\tff19759\ttest_count\t184/184\tkeep\ttimeline(kind,since,until,limit)+recommend(node_id,limit) — chronological node listing with time-range filters + Jaccard-similarity neighbor recommendations. +8 tests (176→184). Zero regressions.
+2026-05-27T23:03:39+08:00	ba2e51b	readme_coverage	55_methods/184_tests	keep	Complete API reference for all 55+ methods. 0 regressions.
+2026-05-28T01:00	4b1a8d4	test_count	192/192	keep	importance_rank(limit,decay_hours) — composite importance from weight*0.4+degree*0.3+recency*0.3. +8 tests (184→192). Zero regressions.
+2026-05-28T19:15	5b485f4	test_count	201/201	keep	patch()+stats_summary() — graph sync via diff application + one-call stats dashboard. +9 tests (192→201). Zero regressions.
+2026-05-28T19:30	97b998f	test_count	209/209	keep	anonymize()+bfs_order() — privacy-safe graph export + BFS traversal. +8 tests (201→209). Zero regressions.
