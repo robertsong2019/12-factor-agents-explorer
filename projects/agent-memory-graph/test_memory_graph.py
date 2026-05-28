@@ -1584,3 +1584,73 @@ class TestRecommend:
         mg.reweight(n.id, -0.8)
         s = mg.stats_summary()
         assert 0 < s["avg_weight"] < 1.0
+
+    # ── anonymize() tests ──────────────────────────────────────────
+
+    def test_anonymize_strips_labels_and_data(self, mg):
+        a = mg.add("secret", "fact", data={"key": "value"})
+        anon = mg.anonymize()
+        nodes = anon.conn.execute("SELECT * FROM nodes").fetchall()
+        assert len(nodes) == 1
+        assert nodes[0]["label"] == "***"
+        assert nodes[0]["data"] == "{}"
+        assert nodes[0]["kind"] == "fact"
+
+    def test_anonymize_preserves_structure(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        mg.link(a.id, b.id, "rel")
+        anon = mg.anonymize()
+        assert anon.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 2
+        assert anon.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 1
+
+    def test_anonymize_changes_ids(self, mg):
+        a = mg.add("a", "fact")
+        anon = mg.anonymize()
+        assert not anon.has_node(a.id)
+
+    def test_anonymize_empty_graph(self):
+        mg = MemoryGraph()
+        anon = mg.anonymize()
+        assert anon.stats_summary()["node_count"] == 0
+
+    # ── bfs_order() tests ──────────────────────────────────────────
+
+    def test_bfs_order_linear(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        c = mg.add("c", "fact")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        order = mg.bfs_order(a.id)
+        assert order[0] == a.id
+        assert order[1] == b.id
+        assert order[2] == c.id
+
+    def test_bfs_order_missing_start(self, mg):
+        assert mg.bfs_order("nonexistent") == []
+
+    def test_bfs_order_respects_max_depth(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        c = mg.add("c", "fact")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        order = mg.bfs_order(a.id, max_depth=1)
+        assert a.id in order
+        assert b.id in order
+        assert c.id not in order
+
+    def test_bfs_order_diamond(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        c = mg.add("c", "fact")
+        d = mg.add("d", "fact")
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        mg.link(b.id, d.id, "r")
+        mg.link(c.id, d.id, "r")
+        order = mg.bfs_order(a.id)
+        assert order[0] == a.id
+        assert set(order[1:3]) == {b.id, c.id}
+        assert order[3] == d.id

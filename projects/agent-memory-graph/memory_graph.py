@@ -1211,6 +1211,48 @@ class MemoryGraph:
             "density": round(density, 4),
         }
 
+    def anonymize(self) -> 'MemoryGraph':
+        """Create a privacy-safe copy: strip labels and data, keep structure/kind/weights."""
+        anon = MemoryGraph()
+        id_map = {}
+        for r in self.conn.execute("SELECT * FROM nodes").fetchall():
+            new_id = str(uuid.uuid4())[:8]
+            id_map[r["id"]] = new_id
+            anon.conn.execute(
+                "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+                (new_id, "***", r["kind"], "{}", r["created"], r["accessed"], r["weight"], "[]")
+            )
+        for r in self.conn.execute("SELECT * FROM edges").fetchall():
+            anon.conn.execute(
+                "INSERT INTO edges (source,target,relation,weight) VALUES (?,?,?,?)",
+                (id_map.get(r["source"], r["source"]), id_map.get(r["target"], r["target"]), r["relation"], r["weight"])
+            )
+        anon.conn.commit()
+        return anon
+
+    def bfs_order(self, start_id: str, max_depth: int = 10) -> list[str]:
+        """Return node ids in BFS traversal order from start_id."""
+        if not self.has_node(start_id):
+            return []
+        visited = set()
+        queue = [(start_id, 0)]
+        order = []
+        while queue:
+            nid, depth = queue.pop(0)
+            if nid in visited or depth > max_depth:
+                continue
+            visited.add(nid)
+            order.append(nid)
+            neighbors = []
+            for r in self.conn.execute("SELECT target FROM edges WHERE source=?", (nid,)).fetchall():
+                neighbors.append(r["target"])
+            for r in self.conn.execute("SELECT source FROM edges WHERE target=?", (nid,)).fetchall():
+                neighbors.append(r["source"])
+            for nb in neighbors:
+                if nb not in visited:
+                    queue.append((nb, depth + 1))
+        return order
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
