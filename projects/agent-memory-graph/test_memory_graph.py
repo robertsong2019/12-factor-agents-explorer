@@ -1803,3 +1803,54 @@ class TestLinkStrength:
 
     def test_link_strength_missing_node(self, mg):
         assert mg.link_strength("nonexistent") == []
+
+
+class TestRandomNode:
+    def test_random_node_returns_node(self, mg):
+        mg.add("a", "fact")
+        mg.add("b", "fact")
+        n = mg.random_node()
+        assert n is not None
+        assert n.label in ("a", "b")
+
+    def test_random_node_empty(self, mg):
+        assert mg.random_node() is None
+
+
+class TestUnlinkAll:
+    def test_unlink_all_removes_both_directions(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        c = mg.add("c", "fact")
+        mg.link(a.id, b.id, "r1")
+        mg.link(c.id, a.id, "r2")
+        removed = mg.unlink_all(a.id)
+        assert removed == 2
+        assert mg.edge_count() == 0
+
+    def test_unlink_all_isolated(self, mg):
+        n = mg.add("solo", "fact")
+        assert mg.unlink_all(n.id) == 0
+
+    def test_unlink_all_missing(self, mg):
+        assert mg.unlink_all("nonexistent") == 0
+
+
+class TestEdgeCount:
+    def test_edge_count_total(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        mg.link(a.id, b.id, "r")
+        assert mg.edge_count() == 1
+
+    def test_edge_count_by_relation(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        mg.link(a.id, b.id, "friend")
+        mg.link(b.id, a.id, "colleague")
+        assert mg.edge_count("friend") == 1
+        assert mg.edge_count("colleague") == 1
+        assert mg.edge_count("other") == 0
+
+    def test_edge_count_empty(self, mg):
+        assert mg.edge_count() == 0

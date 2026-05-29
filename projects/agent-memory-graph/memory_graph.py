@@ -1377,6 +1377,28 @@ class MemoryGraph:
                     queue.append((nb, depth + 1))
         return order
 
+    def random_node(self) -> Optional[Node]:
+        """Return a random node from the graph, or None if empty."""
+        row = self.conn.execute("SELECT id FROM nodes ORDER BY RANDOM() LIMIT 1").fetchone()
+        return self.get_node(row["id"]) if row else None
+
+    def unlink_all(self, node_id: str) -> int:
+        """Remove all edges connected to node_id. Returns count of removed edges."""
+        if not self.has_node(node_id):
+            return 0
+        count = self.conn.execute("SELECT COUNT(*) as c FROM edges WHERE source=? OR target=?",
+                                   (node_id, node_id)).fetchone()["c"]
+        self.conn.execute("DELETE FROM edges WHERE source=? OR target=?", (node_id, node_id))
+        self.conn.commit()
+        return count
+
+    def edge_count(self, relation: str = None) -> int:
+        """Total edge count, optionally filtered by relation."""
+        if relation:
+            return self.conn.execute("SELECT COUNT(*) as c FROM edges WHERE relation=?",
+                                      (relation,)).fetchone()["c"]
+        return self.conn.execute("SELECT COUNT(*) as c FROM edges").fetchone()["c"]
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
