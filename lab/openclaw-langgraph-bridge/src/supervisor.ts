@@ -327,6 +327,33 @@ export class Supervisor {
     for (const t of failed) queue.enqueue(t);
     return results;
   }
+
+  /** Process queue tasks in parallel, limited concurrency */
+  async processQueueParallel(queue: TaskQueue, concurrency: number = 4): Promise<Array<{ taskId: string; agentId: string; result: string }>> {
+    const all = queue.drain();
+    const results: Array<{ taskId: string; agentId: string; result: string }> = [];
+    const failed: QueueTask[] = [];
+    // Process in batches
+    for (let i = 0; i < all.length; i += concurrency) {
+      const batch = all.slice(i, i + concurrency);
+      const settled = await Promise.allSettled(
+        batch.map(async (task) => {
+          const { agentId, result } = await this.execute(task.payload, task.capability);
+          return { taskId: task.id, agentId, result };
+        })
+      );
+      for (let j = 0; j < settled.length; j++) {
+        const s = settled[j];
+        if (s.status === "fulfilled") {
+          results.push(s.value);
+        } else {
+          failed.push(batch[j]);
+        }
+      }
+    }
+    for (const t of failed) queue.enqueue(t);
+    return results;
+  }
 }
 
 /**

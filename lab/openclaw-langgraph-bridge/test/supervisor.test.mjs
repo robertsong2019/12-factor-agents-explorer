@@ -457,4 +457,40 @@ describe("Supervisor", () => {
     const results = await s.processQueue(q);
     assert.equal(results.length, 0);
   });
+
+  // ── processQueueParallel ────────────────────────────
+  it("processQueueParallel processes tasks concurrently", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    const q = new TaskQueue();
+    for (let i = 0; i < 6; i++) q.enqueue({ id: `t${i}`, payload: `task${i}` });
+    const results = await s.processQueueParallel(q, 3);
+    assert.equal(results.length, 6);
+    assert.equal(q.isEmpty, true);
+  });
+
+  it("processQueueParallel re-enqueues failures", async () => {
+    const s = new Supervisor({ maxFailures: 10 });
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async (task) => { if (task === "fail") throw new Error("boom"); return `ok:${task}`; } },
+      capabilities: ["*"],
+    });
+    const q = new TaskQueue();
+    q.enqueue({ id: "good", payload: "good" });
+    q.enqueue({ id: "bad", payload: "fail" });
+    q.enqueue({ id: "good2", payload: "good2" });
+    const results = await s.processQueueParallel(q, 10);
+    assert.equal(results.length, 2);
+    assert.equal(q.size, 1);
+    assert.equal(q.peek().id, "bad");
+  });
+
+  it("processQueueParallel with empty queue", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    const results = await s.processQueueParallel(new TaskQueue());
+    assert.equal(results.length, 0);
+  });
 });
