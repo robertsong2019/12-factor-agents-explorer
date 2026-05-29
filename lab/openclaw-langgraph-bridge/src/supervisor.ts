@@ -4,6 +4,7 @@
 
 import { END } from "@langchain/langgraph";
 import { type AgentRole, AgentPool } from "./multi-agent.js";
+import { TaskQueue, type QueueTask } from "./task-queue.js";
 
 export interface RouterState {
   completedSteps?: string[];
@@ -306,6 +307,25 @@ export class Supervisor {
       }
     }
     throw new Error(`All ${attempts} attempts failed for task: ${task}`);
+  }
+
+  /** Process all tasks from a TaskQueue, returning results in order */
+  async processQueue(queue: TaskQueue): Promise<Array<{ taskId: string; agentId: string; result: string }>> {
+    const results: Array<{ taskId: string; agentId: string; result: string }> = [];
+    const failed: QueueTask[] = [];
+    while (!queue.isEmpty) {
+      const task = queue.dequeue();
+      if (!task) break;
+      try {
+        const { agentId, result } = await this.execute(task.payload, task.capability);
+        results.push({ taskId: task.id, agentId, result });
+      } catch {
+        failed.push(task);
+      }
+    }
+    // Re-enqueue failed tasks
+    for (const t of failed) queue.enqueue(t);
+    return results;
   }
 }
 

@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Supervisor } from "../dist/supervisor.js";
+import { TaskQueue } from "../dist/task-queue.js";
 
 const makeRole = (id, caps = ["*"]) => ({
   id,
@@ -403,5 +404,57 @@ describe("Supervisor", () => {
   it("getCircuitState returns closed for unknown agent", () => {
     const s = new Supervisor();
     assert.equal(s.getCircuitState("nope"), "closed");
+  });
+
+  // ── processQueue ────────────────────────────────
+  it("processQueue drains tasks and returns results", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    const q = new TaskQueue();
+    q.enqueue({ id: "t1", payload: "hello" });
+    q.enqueue({ id: "t2", payload: "world" });
+    const results = await s.processQueue(q);
+    assert.equal(results.length, 2);
+    assert.equal(results[0].taskId, "t1");
+    assert.equal(results[0].result, "a:hello");
+    assert.equal(results[1].taskId, "t2");
+    assert.equal(q.isEmpty, true);
+  });
+
+  it("processQueue respects task priority", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    const q = new TaskQueue();
+    q.enqueue({ id: "low", payload: "low", priority: 1 });
+    q.enqueue({ id: "high", payload: "high", priority: 10 });
+    const results = await s.processQueue(q);
+    assert.equal(results[0].taskId, "high");
+    assert.equal(results[1].taskId, "low");
+  });
+
+  it("processQueue re-enqueues failed tasks", async () => {
+    const s = new Supervisor({ maxFailures: 5 });
+    let calls = 0;
+    s.register({
+      id: "flaky", description: "flaky",
+      config: { executor: async (task) => { calls++; if (task === "fail") throw new Error("boom"); return `ok:${task}`; } },
+      capabilities: ["*"],
+    });
+    const q = new TaskQueue();
+    q.enqueue({ id: "good", payload: "good" });
+    q.enqueue({ id: "bad", payload: "fail" });
+    const results = await s.processQueue(q);
+    assert.equal(results.length, 1); // only good succeeded
+    assert.equal(results[0].taskId, "good");
+    assert.equal(q.size, 1); // bad re-enqueued
+    assert.equal(q.peek().id, "bad");
+  });
+
+  it("processQueue with empty queue returns empty results", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    const q = new TaskQueue();
+    const results = await s.processQueue(q);
+    assert.equal(results.length, 0);
   });
 });
