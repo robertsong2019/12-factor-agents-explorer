@@ -27,3 +27,7 @@ timestamp	commit	metric	value	status	description
 2026-05-27T19:45	be1137b	test_count	188/188	keep	Supervisor: retryWithFallback() — auto-retry with agent failover on failure. +2 tests (186→188).
 2026-05-28T21:10	03efa1f	test_count	195/195	keep	Supervisor weighted strategy + history tracking + getHistory — +7 tests (188→195)
 2026-05-28T23:10	67da8c4	test_count	199/199	keep	Supervisor saveState()/loadState() — JSON persistence for agent health. +4 tests (195→199)
+2026-05-29T21:05	e0de68f	test_count	214/214	keep	TaskQueue: priority-based task queue with dequeue/peek/drain/filter/remove (+15, 199→214)
+2026-05-29T21:10	bd87d60	test_count	222/222	keep	Circuit breaker: closed→open→half-open state machine with recovery timeout (+8, 214→222)
+2026-05-29T21:15	a368338	test_count	226/226	keep	processQueue: Supervisor drains TaskQueue with priority, re-enqueues failed tasks (+4, 222→226)
+2026-05-29T21:20	ec1389f	test_count	229/229	keep	processQueueParallel: concurrent queue processing with batched concurrency (+3, 226→229)
