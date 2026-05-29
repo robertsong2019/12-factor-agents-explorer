@@ -15,18 +15,35 @@
 
 ---
 
-## Current Focus (2026-05-19)
+## Current Focus (2026-05-28)
 
 ### Active Theme
-Autoresearch 方法论实践 - **连续69天零回滚率** 🏆。05-21/05-22 凌晨: agent-context-store 309→370 tests (+61, overnight marathon)。**agent-context-store API 趋于完备**: merge_content + get_or_create + touch_many + incr/decr + expire_at + copy/swap + keys_matching + union/difference + put_unique + rename_key + clear + put_all + entries_by_tag + rekey。**工具链升级**: codegraph MCP 集成(省36.5% tokens) + Rust 工具链(rustc 1.95.0)。**多Agent路线图确定**: Phase1 LangGraph Bridge → Phase2 A2A Trust → Phase3 端到端。优先级: LangGraph Bridge > A2A Trust > Agent Observability。
+Autoresearch 方法论实践 - **连续87天零回滚率** 🏆。05-29凌晨: **agent-context-store 509→520** (+11, checkpoint+prune)。05-28晚间: **agent-context-store 478→509** (+31, snapshot_diff+batch ops) + **agent-memory-graph 184→192** (+8, importance_rank)。**openclaw-langgraph-bridge**: 195 tests — Supervisor v2(weighted routing+history)。**agent-context-store API 生产就绪**: 520 tests, 55+ API方法(snapshot+checkpoint+prune事务语义完整)。**agent-memory-graph API 生产就绪**: 192 tests(importance_rank复合排序)。**多Agent路线图确定**: Phase1 LangGraph Bridge → Phase2 A2A Trust → Phase3 端到端。
 
 ### ⚠️ 关键发现
 - **agent-context-store 代码未持久化问题**: 05-08→05-11 的代码到97 tests但未持久化到 workspace，05-12 重建基线为69 tests。**教训: 每次实验完成后必须确认代码已持久化到 lab/ 目录并 git commit。**
+- **agent-context-store API 完备度评估 (05-23)**: 50+ API方法，覆盖完整生命周期 — CRUD/batch/CAS/TTL/snapshot/counters/collections/集合运算/JSON convenience/transactions/tag management/content utilities。**已进入可发布状态**，下一步: README + npm publish。
+- **agent-memory-graph 增长模式 (05-25~26)**: 从53到110 tests，57个新tests在4个autoresearch cycle内完成，零回滚。**API已从基础原型进化为生产级graph memory**: CRUD → batch → export/import → graph traversal → prune → aggregate → subgraph。下一个自然方向: diff(图同步)+compact(节点合并)+unified search。
 
 ### Next Actions
-- [ ] **创建 lab/openclaw-langgraph-bridge/** — Executor + createTask + StateSchema → 目标 5+ tests
-- [ ] **创建 lab/a2a-trust-prototype/** — ES256签名中间件 + Trust Score + Express middleware — [研究笔记v2](catalyst-research/exploration-notes/2026-05-22-a2a-protocol-trust.md) ✅ 完整 A2A spec 分析 + AgentGraph 签名证明模式 + DID/JWKS 认证 + 可运行中间件代码模板
-- [ ] **Agent Observability Lab** — lab/agent-observability/ (Tracer + PolicyEngine + Evaluator) — **60/60 tests, 实现阶段**
+- [ ] **openclaw-langgraph-bridge: Supervisor 完善** — 持久化健康状态 + LLM路由策略 + 与真实OpenClaw Gateway集成测试
+- [ ] **a2a-trust-prototype: 升级到 A2A v0.3 兼容** — 增加 Signed Security Card (JWS格式 + kid/jku) + 默认拒绝未签名卡 — [v0.3 深度研究](catalyst-research/exploration-notes/2026-05-28-a2a-trust-protocol-deep-dive.md) ✅ 含可运行签名卡+Trust中间件Demo
+- [ ] **Trust Engine → agent-memory-graph 集成** — 将信任分作为 graph 节点属性，支持跨 Agent 信任传递
+- [ ] **langgraph-bridge: Agent Card 发布** — 在 Supervisor 层增加 A2A 兼容的 `/.well-known/agent.json`
+- [ ] **openclaw-langgraph-bridge: 创建项目 + createOpenClawNode()** — 先用 Functional API（entrypoint+task）实现 MVP，再按需升级 StateGraph — [研究笔记](catalyst-research/exploration-notes/2026-05-26-langgraph-bridge.md) ✅ 含可运行原型+HITL示例
+- [ ] **openclaw-langgraph-bridge: 实现 supervisor() 工厂函数** — 基于 LangGraph.js subgraph + Command API，目标 5+ tests — [研究笔记](catalyst-research/exploration-notes/2026-05-26-langgraph-bridge-patterns.md) ✅ 含可运行路由代码
+- [ ] **openclaw-langgraph-bridge: 添加 Command + interrupt() 支持** — 适配 OpenClaw /approve 审批流
+- [ ] **openclaw-langgraph-bridge: 实现 fanOut() + aggregate()** — 基于 Send 的 Map-Reduce 模式
+- [ ] **创建 lab/structured-output-toolkit/** — SchemaRegistry + StructuredLLMClient + SemanticValidator — [研究笔记](catalyst-research/exploration-notes/2026-05-24-structured-output-toolkit.md) ✅ 含可运行原型代码
+- [ ] **创建 lab/a2a-trust-prototype/** — Node.js 原生 crypto ES256 签名中间件 + Trust Score + JWKS 验证 + OAuth 2.1 PRM + Token Exchange
+  - [研究笔记v4](catalyst-research/exploration-notes/2026-05-25-a2a-trust-middleware.md) ✅
+  - [研究笔记v5](catalyst-research/exploration-notes/2026-05-25-a2a-trust-protocol.md) ✅
+  - [研究笔记v6: MCP Zero-Trust Auth](catalyst-research/exploration-notes/2026-05-27-mcp-zero-trust-auth.md) ✅ OAuth 2.1 + PKCE + PRM + Token Chaining + 可运行中间件
+  - **核心架构**: generateKeyPair → signJWT → verifyJWT → MCPAuthMiddleware (PRM + scope + token exchange)
+  - **v6新洞察**: PKCE ≠ client认证; MCP正经历Gartner炒作周期(从峰值到启蒙); Token Chaining是Agent信任核心原语; Agent Gateway正成为AI基础设施标准组件
+  - **下一步**: 创建 lab 项目, 整合 MCPAuthMiddleware + TrustManager, Express/Fastify 集成, 目标 5+ tests
+- [ ] **Agent Observability Lab** — lab/agent-observability/ (Tracer + PolicyEngine + Evaluator) — **91/91 tests**
+- [ ] **A2A v1.0 alpha breaking changes 评估** — 跟踪 `epic/1.0_breaking_changes` 分支，评估提前适配价值
   - 因果链接追踪 + 回归检测 + 批量策略评估 + 同步观察器
   - [研究笔记 Day 1](catalyst-research/exploration-notes/2026-05-15-agent-observability.md) ✅ OTel语义约定+三层评估模型
   - [研究笔记 Day 2](catalyst-research/exploration-notes/2026-05-16-agent-observability.md) ✅ **零依赖AgentTracer实现** + 内置策略/评估器 + OTLP导出
@@ -45,7 +62,9 @@ Autoresearch 方法论实践 - **连续69天零回滚率** 🏆。05-21/05-22 �
   - **下一步**: 创建 lab/structured-output-toolkit/ — 集成真实 OpenAI/Anthropic SDK, 目标 50+ tests
 - [ ] **A2A Trust Prototype** — lab/a2a-trust-prototype/
   - [研究笔记 v4 (2026-05-19 六层信任模型)](catalyst-research/exploration-notes/2026-05-19-a2a-trust-protocol.md) ✅ **原生crypto ES256** + TrustScorer五维加权 + Express中间件 + **全部断言通过**
+  - [研究笔记 v5 (2026-05-23 A2A+Trust全景)](catalyst-research/exploration-notes/2026-05-23-a2a-protocol-agent-trust.md) ✅ **可运行原型代码**(DID生成+VC签发验证+Trust Score+A2A AgentCard) + IETF trust draft + ERC-8004 + 4层信任模型
   - **[05-19 新洞察]**: arxiv:2511.03434 六层信任模型(Brief/Claim/Proof/Stake/Reputation/Constraint); A2A 原生仅 Claim+Constraint，Proof层是 lab 的核心价值; Trust Score = 5维加权(签名30%+签发者25%+信誉20%+成功率15%+质押10%)
+  - **[05-23 新洞察]**: A2A JS SDK(`a2a-sdk`)已成熟可直用; Agent Trust 4层产业共识(Tokenized/Attestation/VC/DID); IETF draft-sharif-agent-payment-trust 标准化中; 信任链=人类→签名凭证→Agent→验证; LLM不应控制安全层
   - **[05-19 代码]**: Node.js 原生 crypto 实现 ES256 签名/验证(无需 jose 依赖); 可运行原型 → 全部断言通过
   - **技术选型决策**: Node.js crypto 原生 ES256 (vs jose EdDSA) — 更少依赖、更易审计、A2A 生态主流
   - [研究笔记 v3](catalyst-research/exploration-notes/2026-05-19-a2a-trust-protocol.md) ✅ ES256 jose实现 + TrustEngine衰减函数
@@ -66,6 +85,7 @@ Autoresearch 方法论实践 - **连续69天零回滚率** 🏆。05-21/05-22 �
   - [研究笔记 v1](catalyst-research/exploration-notes/2026-05-07-langgraphjs-annotation-command-caching.md) ✅ Annotation API + Command动态路由 + 可运行OpenClaw Node Factory代码
   - [研究笔记 v2](catalyst-research/exploration-notes/2026-05-08-langgraphjs-gateway-http-client.md) ✅ GatewayClient + createTask + ReducedValue taskResults
   - [研究笔记 v3 实战验证](catalyst-research/exploration-notes/2026-05-08-langgraph-bridge-executor-task.md) ✅ **18/18 tests passing** — Executor双模式 + 幂等createTask + checkpoint序列化 + 端到端Bridge Graph
+  - **Supervisor 类 (05-27)**: 188 tests — 动态注册/注销 + 健康追踪 + 负载均衡(3策略) + 能力过滤 + 广播 + 故障转移
   - **关键发现**: Executor接口是核心抽象(非GatewayClient); 确定性TaskID = sha256(name:input); OpenClaw真实API端点 /v1/agent/run; StateSchema替代Annotation更类型安全
   - **下一步**: lab/openclaw-langgraph-bridge/ — executor.ts + create-task.ts + state.ts + create-bridge-graph.ts, 目标5+ tests
 - [ ] **Agent Observability (OTel + AOS)** — lab/agent-observability/ Tracer + PolicyEngine + Evaluator
@@ -166,7 +186,7 @@ Autoresearch 方法论实践 - **连续69天零回滚率** 🏆。05-21/05-22 �
 9. **tiny-agent-workshop** - 单文件 Agent 模式教学集 (✅ 7个模式: ReAct/ToolCall/Memory/Router/Guardrail/Chain/EdgeAgent)
 10. **Agent Memory Service** - Mem0风格Agent记忆管理 (✅ v1.0-dev, 594/594 tests, 三层存储+LLM提取+语义检索+Consolidation+变更追踪+自监控+搜索三阶段(BM25+Embedding+Unified RRF)+suggestTags()+healthScore()+autoMaintain()+searchSimilar()+findDuplicatePairs()+exportJSON/importJSON()+pruneLowWeight()+inspect()+clusterByTopic()+summarizeCluster()+compareMemories()+tagHierarchy()+rebalance()+autoTag()+mergeClusters()+clusterHealth()+searchByEntity()+topEntities()+tagSearch()+memoryDiff()+clusterAutoMerge()+contentHistory()+contentVersionDiff()+searchByTimeRange()+contentRollback()+classifyFact()+searchByFactType()+statsByFactType()+reclassifyFact()+bulkReclassify()+searchByContent()+contentBranch()+searchGraph()+searchTemporal()+memoryMerge()+searchByBranch()+bulkMerge()+addOpinion()+searchOpinions()+evolveConfidence()+opinionConsensus()+opinionDrift()+opinionEvolveFromEvidence()+contentVersions持久化+mergeSuggestions())
 11. **A2A Protocol Lab** - Agent-to-Agent通信协议实验 (✅ 零依赖Python实现, Server+Client+Federation Demo)
-12. **agent-memory-graph** - SQLite知识图谱Agent记忆 (✅ 30/30 tests, unlink+merge_nodes+shortest_path+tag_nodes)
+12. **agent-memory-graph** - SQLite知识图谱Agent记忆 (✅ 91/91 tests, 20 APIs: CRUD/batch/tag/query/weight/ranking/edge/traversal)
 
 ---
 
@@ -363,27 +383,93 @@ curl -X POST "https://api.tavily.com/search" \
 - ✅ **Structured Output Toolkit v3 深度研究** — 2026现状+Provider抽象+完整TypeScript原型(10/10 tests)
 - 连续68天零回滚率
 
+### 2026-05-28
+- ✅ **agent-context-store evening cycle** — 486→509 tests (+23, 3 cycles, 3 keep, 零回滚)
+  - most_observed+observe_ranking+touch_batch+fingerprint (+8)
+  - content_hash_batch+keys_by_prefix+reindex (+7)
+  - content_transform+tag_rename_all+observe_percentile (+8)
+  - 1888→2074 lines source, 3415→3607 lines tests
+- ✅ **openclaw-langgraph-bridge Supervisor v2** — 188→195 tests (+7, 1 cycle, 零回滚)
+  - Weighted strategy (success-rate based random selection)
+  - History tracking per agent (success/failure events with duration)
+  - getHistory(agentId, limit) + maxHistory config
+- 连续85天零回滚率
+
+- ✅ **agent-memory-graph 3-cycle evening** — 209→242 tests (+33, 3 cycles, 3 keep, 零回滚)
+  - merge_graph(union/update)+diff_summary+group_by+link_strength (+17, commit 4fe42f6)
+  - random_node+unlink_all+edge_count (+8, commit 106d2f5)
+  - find_components+distance_matrix (+8, commit 48c7ae8)
+  - **61+ API methods** now covering graph merge/sync/analysis/algorithms
+- 连续88天零回滚率
+
+### 2026-05-29 (晚间)
+  - checkpoint(fn, name): 自动savepoint+异常回滚事务语义 (+6, commit 4301c3e)
+  - prune(min_weight): 低observe条目清理+孤立metadata清理 (+5, commit aa5f71f)
+  - 事务管道: save_snapshot → checkpoint → prune 形成完整的安全操作链
+- ✅ **agent-memory-graph importance_rank** — 184→192 tests (+8, 1 cycle, 零回滚)
+  - importance_rank(limit, decay_hours): weight*0.4+degree*0.3+recency*0.3 复合排序
+  - commit 4b1a8d4
+- 连续87天零回滚率
+
+### 2026-05-27
+- ✅ **openclaw-langgraph-bridge Supervisor** — 170→188 tests (+18, 4 cycles, 零失败)
+  - Supervisor 类: 动态agent注册/注销、健康追踪(isHealthy+连续失败检测)、负载均衡(3策略)、能力过滤、广播、健康摘要、自动故障转移
+  - 4 commits: c9b22b1, 4872be3, e1300a6, be1137b
+- ✅ **agent-memory-graph timeline + recommend** — 176→184 tests (+8, 1 cycle, 零回滚)
+  - timeline(kind, since, until, limit): chronological node listing with time-range SQL filtering (4 tests)
+  - recommend(node_id, limit): Jaccard similarity neighbor-based recommendations (4 tests)
+  - commit ff19759
+- ✅ **agent-context-store named snapshots** — 470→478 tests (+8, 零回滚)
+  - save_snapshot/load_snapshot/list_snapshots/delete_snapshot: named in-store savepoints for undo-safe batch ops
+  - commit fc9c5e9
+- 连续84天零回滚率
+
+### 2026-05-26
+- ✅ **agent-memory-graph 5-cycle marathon** — 91→176 tests (+85, 5 cycles, 零回滚)
+  - subgraph+unlink_many → prune+aggregate → graph_diff+compact+search_unified → rename_node+clone_node+path_exists → 晚间3 cycle (analysis+analytics+algorithms)
+  - commits fa70a66/879048b/a90875b/49eb755/f955b61/f217ec7/6f23c53
+- ✅ **LangGraph Bridge Patterns 研究** — Command API(2026 breaking change) + Supervisor+Subgraph + Send Map-Reduce + Zod三合一
+  - [研究笔记](catalyst-research/exploration-notes/2026-05-26-langgraph-bridge-patterns.md) ✅ 含可运行 TaskRouter 示例
+  - [Bridge 设计](catalyst-research/exploration-notes/2026-05-26-langgraph-bridge.md) ✅ Functional API + HITL 原型
+- 连续82天零回滚率
+
+### 2026-05-25
+- ✅ **agent-memory-graph CRUD + batch ops** — 35→53 tests (+18, 2 cycles, 零回滚)
+  - get_node/delete_node/update_node: 基础CRUD补全 (35→45, commit a830a36)
+  - add_many/link_many/delete_many: 批量操作单事务 (45→53, commit 5c9d2f6)
+- ✅ **prompt-router aliases + coverage** — 244→258 tests (+14, 2 cycles, 零回滚)
+  - add_aliases/get_aliases/remove_aliases: 关键词别名CRUD (244→252, commit 2dca380)
+  - keyword_coverage(): Agent间关键词覆盖分析 (252→258, commit 2faa506)
+- ✅ **agent-memory-graph query+tag+weight APIs** — 53→91 tests (+38, 4 cycles, 4 keep, 零回滚)
+  - find_by_kind+search_by_data+edges_of: kind filtering, data lookup, edge inspection (+11, commit 8070a76)
+  - touch+top_nodes+count_by_kind: access tracking, top-N ranking, kind stats (+8, commit 3c3f7c7)
+  - has_node+rename_tag+clear_tags: existence check, tag rename, tag clearing (+7, commit 96e601b)
+  - reweight+is_linked+all_tags: weight delta, edge check, tag listing (+12, commit e3c8455)
+  - 587 lines source, 626 lines tests
+- 连续79天零回滚率
+
+### 2026-05-24
+- ✅ **agent-memory-graph export/import** — 30→35 tests (+5)。export_json()+import_json(merge=False) 全图序列化 (commit c523735)
+- ✅ **agent-context-store graph traversal** — 98→100 test suites (+13 tests)。subgraph(BFS提取)+shortestPath(BFS最短路径+路径重建) (commit f260e43)
+- 连续76天零回滚率
+
+### 2026-05-23
+- ✅ **agent-context-store JSON+transaction+tags** — 419→447 tests (+28, 2 cycles, 零回滚)
+  - put_json/get_json + pop_many + transaction(atomic rollback) (+16) (commit 359f4f1)
+  - put_many_json/get_many_json + clear_tags/merge_tags (+12) (commit 55677f5)
+- 连续75天零回滚率
+
 ### 2026-05-22
-- ✅ **agent-context-store evening experiment cycles** — 370→398 tests (+28, 3 cycles, 3 keep, 零回滚)
+- ✅ **agent-context-store evening+overnight marathon** — 370→447 tests (+77, 6 cycles, 6 keep, 零回滚)
   - content_equals + find_keys + batch_touch (+9)
   - content_replace + keys_starting_with + map_values (+11)
   - content_len + sort_by (+8)
-- ✅ **agent-context-store 2nd evening cycles** — 398→419 tests (+21, 3 cycles, 3 keep, 零回滚)
   - for_each + first_by_tag + content_stats (+9)
   - rename_key + ensure + shuffle (+8)
   - content_matches + batch_content_replace + tag_count (+9)
-- 连续71天零回滚率
-
-### 2026-05-22 (凌晨)
-- ✅ **agent-context-store overnight marathon** — 309→370 tests (+61, 零回滚)
-  - incr/decr + expire_at + get_numeric (计数器三件套) +12
-  - merge_content + get_or_create + touch_many (累积+懒初始化+批量刷新) +13
-  - 其他 overnight cycles +36 (详情见 key-development logs)
-- ✅ **agent-context-store overnight marathon** — 309→370 tests (+61, 零回滚)
-  - incr/decr + expire_at + get_numeric (计数器三件套) +12
-  - merge_content + get_or_create + touch_many (累积+懒初始化+批量刷新) +13
-  - 其他 overnight cycles +36 (详情见 key-development logs)
-- 连续69天零回滚率
+  - put_json/get_json + pop_many + transaction (atomic rollback) (+16)
+  - put_many_json/get_many_json + clear_tags/merge_tags (+12)
+- 连续73天零回滚率
 
 ### 2026-05-19
 - ✅ **agent-context-store 6-cycle 深夜马拉松** — 202→246 tests (+44, 6 cycles, 6 keep, 零回滚)
@@ -828,5 +914,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-05-22 02:00*
-*Next review: 2026-05-23*
+*Last updated: 2026-05-29 02:00*
+*Next review: 2026-05-30*
