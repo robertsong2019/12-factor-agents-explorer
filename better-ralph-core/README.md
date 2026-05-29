@@ -22,14 +22,13 @@ better-ralph-core/
 │   ├── prd_manager.py     # PRD loading, story parsing, completion tracking
 │   ├── memory_manager.py  # Cross-iteration context & learning persistence
 │   └── agent_registry.py  # Agent discovery and selection
-├── agents/                # Agent implementations (pluggable)
-├── plugins/               # Extensions (version control, etc.)
-├── cli/                   # Command-line interface
+├── data/                  # Sample PRD and task data
+├── plugins/               # Extensions (version control)
 ├── utils/
 │   ├── config.py          # Configuration management
 │   ├── logger.py          # Structured logging
 │   └── monitor.py         # Performance metrics
-└── tests/                 # Unit tests
+└── tests/unit/            # Unit tests (30+ test files)
 ```
 
 ## 🔑 Core Concepts
@@ -100,14 +99,25 @@ Each iteration returns:
 
 ## 🧪 Testing
 
+30+ unit test files covering all core modules:
+
 ```bash
 cd better-ralph-core
-pytest
+pytest                  # run all
+pytest tests/unit/test_orchestrator.py  # specific module
+pytest -k "memory"     # by keyword
 ```
+
+测试覆盖范围：orchestrator（session/status/retry/batch）、PRD（merge/export/validate/priority）、memory manager、monitor、config、checkpoint 等。
 
 ## 📦 Dependencies
 
 Pure Python 3 — no external dependencies required for the core engine.
+
+## 📚 更多文档
+
+- [教程](TUTORIAL.md) — 从准备 PRD 到实战的完整指南
+- [OpenClaw Better Ralph Skill](../skills/better-ralph/SKILL.md) — 通过 OpenClaw skill 运行
 
 ---
 
