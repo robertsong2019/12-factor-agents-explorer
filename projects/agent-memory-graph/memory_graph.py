@@ -1455,6 +1455,106 @@ class MemoryGraph:
                         queue.append((e["source"], d + 1))
         return dist
 
+    def cluster(self, kind: str, threshold: float = 0.4) -> list[dict]:
+        """Cluster nodes of a given kind by label similarity.
+
+        Uses normalized Levenshtein distance to group labels that are similar.
+        Returns list of {representative: str, labels: list[str], node_ids: list[str], size: int}.
+        Nodes with no similar neighbor form singleton clusters.
+        """
+        rows = self.conn.execute("SELECT id, label FROM nodes WHERE kind=?", (kind,)).fetchall()
+        if not rows:
+            return []
+
+        # Simple Levenshtein distance
+        def _levenshtein(a: str, b: str) -> int:
+            if len(a) < len(b):
+                return _levenshtein(b, a)
+            if not b:
+                return len(a)
+            prev = list(range(len(b) + 1))
+            for i, ca in enumerate(a):
+                curr = [i + 1]
+                for j, cb in enumerate(b):
+                    curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (0 if ca == cb else 1)))
+                prev = curr
+            return prev[-1]
+
+        # Normalize: max(len(a), len(b)) to get 0-1 similarity
+        nodes = [(r["id"], r["label"]) for r in rows]
+        parent = list(range(len(nodes)))  # Union-Find
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        # Compare all pairs — O(N^2) but fine for typical memory graphs
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                li, lj = nodes[i][1], nodes[j][1]
+                max_len = max(len(li), len(lj), 1)
+                dist = _levenshtein(li.lower(), lj.lower())
+                similarity = 1.0 - dist / max_len
+                if similarity >= (1.0 - threshold):
+                    union(i, j)
+
+        # Build clusters
+        groups = defaultdict(list)
+        for idx, (nid, label) in enumerate(nodes):
+            groups[find(idx)].append((nid, label))
+
+        result = []
+        for members in groups.values():
+            labels = [m[1] for m in members]
+            # Use longest label as representative
+            rep = max(labels, key=len)
+            result.append({
+                "representative": rep,
+                "labels": sorted(labels),
+                "node_ids": [m[0] for m in members],
+                "size": len(members),
+            })
+        result.sort(key=lambda c: c["size"], reverse=True)
+        return result
+
+    def induced_subgraph(self, node_ids: list[str]) -> 'MemoryGraph':
+        """Extract induced subgraph containing only specified node_ids and edges between them.
+
+        Returns a new MemoryGraph instance with copied nodes and internal edges.
+        Nodes not found in the current graph are skipped.
+        """
+        sub = MemoryGraph()
+        id_set = set(node_ids)
+        for nid in node_ids:
+            node = self.get_node(nid)
+            if not node:
+                continue
+            # Get tags from DB
+            tags_row = self.conn.execute("SELECT tags FROM nodes WHERE id=?", (nid,)).fetchone()
+            tags = json.loads(tags_row["tags"]) if tags_row and tags_row["tags"] else []
+            sub.add(node.label, node.kind, node.data, tags)
+            # Remap to original id
+            found = sub.conn.execute("SELECT id FROM nodes WHERE label=? ORDER BY created DESC LIMIT 1", (node.label,)).fetchone()
+            if found:
+                sub.conn.execute("UPDATE nodes SET id=?, weight=? WHERE id=?", (nid, node.weight, found["id"]))
+                sub.conn.commit()
+        # Add edges between nodes in the set
+        for nid in node_ids:
+            if not self.has_node(nid):
+                continue
+            for e in self.edges_of(nid, "outgoing"):
+                if e.target in id_set:
+                    if sub.has_node(nid) and sub.has_node(e.target):
+                        sub.link(nid, e.target, e.relation, e.weight)
+        return sub
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
@@ -1533,3 +1633,5 @@ def demo():
 
 if __name__ == "__main__":
     demo()
+
+    # (inserted before visualize_ascii — we'll add the method properly)

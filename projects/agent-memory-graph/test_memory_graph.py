@@ -1916,3 +1916,85 @@ class TestDistanceMatrix:
 
     def test_empty_graph(self, mg):
         assert mg.distance_matrix() == {}
+
+
+class TestCluster:
+    """Tests for cluster(kind, threshold) — label-similarity grouping."""
+
+    def test_cluster_empty_kind(self, mg):
+        assert mg.cluster("nonexistent") == []
+
+    def test_cluster_singletons(self, mg):
+        mg.add("Python", "skill")
+        mg.add("Rust", "skill")
+        clusters = mg.cluster("skill")
+        assert len(clusters) == 2
+        assert all(c["size"] == 1 for c in clusters)
+
+    def test_cluster_similar_labels(self, mg):
+        mg.add("machine learning", "topic")
+        mg.add("machine-learning", "topic")
+        mg.add("Machine Learning", "topic")
+        mg.add("deep learning", "topic")
+        clusters = mg.cluster("topic", threshold=0.3)
+        # "machine learning" variants should cluster together
+        ml_cluster = [c for c in clusters if c["size"] > 1]
+        assert len(ml_cluster) >= 1
+        assert ml_cluster[0]["size"] >= 2
+
+    def test_cluster_result_structure(self, mg):
+        mg.add("foo", "tag")
+        clusters = mg.cluster("tag")
+        assert len(clusters) == 1
+        c = clusters[0]
+        assert "representative" in c
+        assert "labels" in c
+        assert "node_ids" in c
+        assert "size" in c
+        assert c["size"] == 1
+        assert len(c["node_ids"]) == 1
+
+    def test_cluster_excludes_other_kinds(self, mg):
+        mg.add("Python", "skill")
+        mg.add("Python", "language")
+        clusters = mg.cluster("skill")
+        assert len(clusters) == 1
+        assert clusters[0]["size"] == 1
+
+
+class TestInducedSubgraph:
+    """Tests for induced_subgraph(node_ids) — extract induced subgraph."""
+
+    def test_subgraph_basic(self, mg):
+        a = mg.add("A", "t")
+        b = mg.add("B", "t")
+        c = mg.add("C", "t")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        sub = mg.induced_subgraph([a.id, b.id])
+        assert sub.stats()["nodes"] == 2
+        # Edge a→b should exist, b→c should not
+        assert sub.edge_count() == 1
+
+    def test_subgraph_isolated_node(self, mg):
+        a = mg.add("A", "t")
+        b = mg.add("B", "t")
+        sub = mg.induced_subgraph([a.id])
+        assert sub.stats()["nodes"] == 1
+        assert sub.edge_count() == 0
+
+    def test_subgraph_empty_ids(self, mg):
+        sub = mg.induced_subgraph([])
+        assert sub.stats()["nodes"] == 0
+
+    def test_subgraph_nonexistent_node(self, mg):
+        sub = mg.induced_subgraph(["nonexistent"])
+        assert sub.stats()["nodes"] == 0
+
+    def test_subgraph_preserves_data(self, mg):
+        a = mg.add("NodeA", "type1", {"key": "val"}, ["t1"])
+        sub = mg.induced_subgraph([a.id])
+        node = sub.get_node(a.id)
+        assert node is not None
+        assert node.label == "NodeA"
+        assert node.kind == "type1"
