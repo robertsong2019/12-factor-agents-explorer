@@ -1654,3 +1654,152 @@ class TestRecommend:
         assert order[0] == a.id
         assert set(order[1:3]) == {b.id, c.id}
         assert order[3] == d.id
+
+
+class TestMergeGraph:
+    def test_merge_union_adds_new_nodes(self, mg):
+        other = MemoryGraph()
+        a = other.add("node_a", "fact")
+        b = other.add("node_b", "event")
+        other.link(a.id, b.id, "rel")
+        result = mg.merge_graph(other)
+        assert result["nodes_added"] == 2
+        assert result["edges_added"] == 1
+        assert mg.has_node(a.id)
+        assert mg.has_node(b.id)
+
+    def test_merge_union_skips_existing(self, mg):
+        n = mg.add("existing", "fact")
+        other = MemoryGraph()
+        other.add("existing", "fact")  # same label, diff graph = diff id, won't conflict
+        result = mg.merge_graph(other)
+        assert result["nodes_added"] == 1  # the other node is new
+
+    def test_merge_update_overwrites(self, mg):
+        n = mg.add("old_label", "fact", {"x": 1})
+        other = MemoryGraph()
+        # Create node with same ID in other graph
+        other.conn.execute(
+            "INSERT INTO nodes (id, label, kind, data, weight, accessed, created) VALUES (?,?,?,?,?,?,?)",
+            (n.id, "new_label", "event", '{"x": 2}', 2.0, time.time(), time.time())
+        )
+        other.conn.commit()
+        result = mg.merge_graph(other, strategy="update")
+        assert result["nodes_updated"] == 1
+        updated = mg.get_node(n.id)
+        assert updated.label == "new_label"
+
+    def test_merge_empty_graph(self, mg):
+        other = MemoryGraph()
+        result = mg.merge_graph(other)
+        assert result["nodes_added"] == 0
+        assert result["edges_added"] == 0
+
+    def test_merge_edges_no_duplicate(self, mg):
+        other = MemoryGraph()
+        a = other.add("a", "fact")
+        b = other.add("b", "fact")
+        other.link(a.id, b.id, "r")
+        mg.merge_graph(other)
+        # Second merge should not duplicate the edge
+        result = mg.merge_graph(other)
+        assert result["edges_added"] == 0
+
+
+class TestDiffSummary:
+    def test_diff_identical_graphs(self, mg):
+        other = MemoryGraph()
+        a = mg.add("shared", "fact")
+        other.conn.execute(
+            "INSERT INTO nodes (id, label, kind, data, weight, accessed, created) VALUES (?,?,?,?,?,?,?)",
+            (a.id, "shared", "fact", "{}", 1.0, time.time(), time.time())
+        )
+        other.conn.commit()
+        diff = mg.diff_summary(other)
+        assert diff["common"] == 1
+        assert diff["only_in_self"] == 0
+        assert diff["only_in_other"] == 0
+
+    def test_diff_disjoint_graphs(self, mg):
+        other = MemoryGraph()
+        mg.add("self_only", "fact")
+        other.add("other_only", "fact")
+        diff = mg.diff_summary(other)
+        assert diff["only_in_self"] == 1
+        assert diff["only_in_other"] == 1
+        assert diff["common"] == 0
+
+    def test_diff_label_mismatch(self, mg):
+        other = MemoryGraph()
+        n = mg.add("label_a", "fact")
+        other.conn.execute(
+            "INSERT INTO nodes (id, label, kind, data, weight, accessed, created) VALUES (?,?,?,?,?,?,?)",
+            (n.id, "label_b", "fact", "{}", 1.0, time.time(), time.time())
+        )
+        other.conn.commit()
+        diff = mg.diff_summary(other)
+        assert len(diff["label_diffs"]) == 1
+        assert diff["label_diffs"][0]["self_label"] == "label_a"
+
+    def test_diff_sample_labels(self, mg):
+        other = MemoryGraph()
+        mg.add("s1", "fact")
+        mg.add("s2", "fact")
+        other.add("o1", "fact")
+        diff = mg.diff_summary(other)
+        assert "s1" in diff["sample_only_self"]
+        assert "o1" in diff["sample_only_other"]
+
+    def test_diff_empty_graphs(self, mg):
+        other = MemoryGraph()
+        diff = mg.diff_summary(other)
+        assert diff["total_self"] == 0
+        assert diff["total_other"] == 0
+
+
+class TestGroupBy:
+    def test_group_by_kind_all(self, mg):
+        mg.add("fact1", "fact")
+        mg.add("fact2", "fact")
+        mg.add("evt1", "event")
+        groups = mg.group_by()
+        assert len(groups["fact"]) == 2
+        assert len(groups["event"]) == 1
+
+    def test_group_by_specific_kind(self, mg):
+        mg.add("fact1", "fact")
+        mg.add("evt1", "event")
+        groups = mg.group_by(kind="fact")
+        assert "fact" in groups
+        assert len(groups["fact"]) == 1
+
+    def test_group_by_tag(self, mg):
+        n = mg.add("tagged", "fact", tags=["ai"])
+        mg.add("untagged", "fact")
+        groups = mg.group_by(tag="ai")
+        assert "ai" in groups
+        assert len(groups["ai"]) == 1
+
+    def test_group_by_empty_graph(self, mg):
+        groups = mg.group_by()
+        assert groups == {}
+
+
+class TestLinkStrength:
+    def test_link_strength_sorted(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        c = mg.add("c", "fact")
+        mg.link(a.id, b.id, "r", 3.0)
+        mg.link(a.id, c.id, "r", 1.0)
+        strengths = mg.link_strength(a.id)
+        assert len(strengths) == 2
+        assert strengths[0]["weight"] == 3.0
+        assert strengths[0]["partner_label"] == "b"
+
+    def test_link_strength_empty(self, mg):
+        n = mg.add("solo", "fact")
+        assert mg.link_strength(n.id) == []
+
+    def test_link_strength_missing_node(self, mg):
+        assert mg.link_strength("nonexistent") == []

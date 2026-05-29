@@ -1230,6 +1230,130 @@ class MemoryGraph:
         anon.conn.commit()
         return anon
 
+    def merge_graph(self, other: 'MemoryGraph', strategy: str = "union") -> dict:
+        """Merge another graph into this one.
+
+        Args:
+            other: Source MemoryGraph to merge from.
+            strategy: 'union' (add missing, skip existing) or 'update' (overwrite data/weight).
+
+        Returns dict with counts: {nodes_added, nodes_updated, edges_added, edges_skipped}.
+        """
+        result = {"nodes_added": 0, "nodes_updated": 0, "edges_added": 0, "edges_skipped": 0}
+        other_data = other.export_json()
+        id_map = {}  # other_id → self_id (for edge remapping)
+
+        for node in other_data["nodes"]:
+            if not self.has_node(node["id"]):
+                self.add(node["label"], node["kind"], node.get("data", {}), node.get("tags", []))
+                # Reassign ID to match source
+                self.conn.execute(
+                    "UPDATE nodes SET id=?, weight=?, accessed=?, created=? WHERE rowid=last_insert_rowid()",
+                    (node["id"], node.get("weight", 1.0), node.get("accessed", time.time()), node.get("created", time.time()))
+                )
+                self.conn.commit()
+                id_map[node["id"]] = node["id"]
+                result["nodes_added"] += 1
+            elif strategy == "update":
+                self.update_node(node["id"], label=node.get("label"), kind=node.get("kind"), data=node.get("data", {}))
+                self.reweight(node["id"], node.get("weight", 1.0) - (self.get_node(node["id"]).weight or 0))
+                id_map[node["id"]] = node["id"]
+                result["nodes_updated"] += 1
+            else:
+                id_map[node["id"]] = node["id"]
+                result["edges_skipped"] += 0  # node exists, not an edge skip
+
+        for edge in other_data["edges"]:
+            if edge["source"] in id_map and edge["target"] in id_map:
+                if not self.is_linked(edge["source"], edge["target"], edge.get("relation")):
+                    self.link(edge["source"], edge["target"], edge["relation"], edge.get("weight", 1.0))
+                    result["edges_added"] += 1
+        return result
+
+    def diff_summary(self, other: 'MemoryGraph') -> dict:
+        """High-level summary of differences between this graph and another.
+
+        Returns dict with counts and sample labels for: only_in_self, only_in_other, common, label_diffs.
+        """
+        self_ids = {r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()}
+        other_ids = {r["id"] for r in other.conn.execute("SELECT id FROM nodes").fetchall()}
+
+        only_self = self_ids - other_ids
+        only_other = other_ids - self_ids
+        common = self_ids & other_ids
+
+        # Check label differences in common nodes
+        label_diffs = []
+        for nid in common:
+            s = self.get_node(nid)
+            o = other.get_node(nid)
+            if s and o and s.label != o.label:
+                label_diffs.append({"id": nid, "self_label": s.label, "other_label": o.label})
+
+        def _sample(ids, graph, limit=5):
+            return [graph.get_node(nid).label for nid in list(ids)[:limit] if graph.get_node(nid)]
+
+        return {
+            "total_self": len(self_ids),
+            "total_other": len(other_ids),
+            "only_in_self": len(only_self),
+            "only_in_other": len(only_other),
+            "common": len(common),
+            "sample_only_self": _sample(only_self, self),
+            "sample_only_other": _sample(only_other, other),
+            "label_diffs": label_diffs
+        }
+
+    def group_by(self, kind: str = None, tag: str = None) -> dict[str, list[Node]]:
+        """Group nodes by kind or tag. Returns {group_key: [Node, ...]}.
+
+        If kind is given, groups all nodes by their kind field.
+        If tag is given, groups all nodes by each tag they have.
+        """
+        groups = defaultdict(list)
+        if kind is not None:
+            rows = self.conn.execute("SELECT id FROM nodes WHERE kind=?", (kind,)).fetchall()
+            for r in rows:
+                node = self.get_node(r["id"])
+                if node:
+                    groups[node.kind].append(node)
+        elif tag is not None:
+            rows = self.conn.execute("SELECT id, tags FROM nodes WHERE tags IS NOT NULL").fetchall()
+            for r in rows:
+                node_tags = json.loads(r["tags"]) if r["tags"] else []
+                if tag in node_tags:
+                    node = self.get_node(r["id"])
+                    if node:
+                        groups[tag].append(node)
+        else:
+            # Group all by kind
+            rows = self.conn.execute("SELECT id, kind FROM nodes").fetchall()
+            for r in rows:
+                node = self.get_node(r["id"])
+                if node:
+                    groups[r["kind"]].append(node)
+        return dict(groups)
+
+    def link_strength(self, node_id: str) -> list[dict]:
+        """Return all edges connected to node_id sorted by weight descending.
+
+        Returns list of {source, target, relation, weight, partner_id, partner_label}.
+        """
+        if not self.has_node(node_id):
+            return []
+        results = []
+        for e in self.edges_of(node_id, "both"):
+            partner_id = e.target if e.source == node_id else e.source
+            partner = self.get_node(partner_id)
+            results.append({
+                "source": e.source, "target": e.target,
+                "relation": e.relation, "weight": e.weight,
+                "partner_id": partner_id,
+                "partner_label": partner.label if partner else "?"
+            })
+        results.sort(key=lambda x: x["weight"], reverse=True)
+        return results
+
     def bfs_order(self, start_id: str, max_depth: int = 10) -> list[str]:
         """Return node ids in BFS traversal order from start_id."""
         if not self.has_node(start_id):
