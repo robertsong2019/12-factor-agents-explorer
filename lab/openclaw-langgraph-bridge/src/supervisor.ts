@@ -12,6 +12,8 @@ export interface RouterState {
 
 // ── Supervisor ─────────────────────────────────────────
 
+export type CircuitState = "closed" | "open" | "half-open";
+
 export interface AgentHealth {
   successCount: number;
   failureCount: number;
@@ -19,6 +21,10 @@ export interface AgentHealth {
   avgDuration: number;
   /** History of recent events for observability */
   history: Array<{ ts: number; event: "success" | "failure"; duration: number }>;
+  /** Circuit breaker state */
+  circuit: CircuitState;
+  /** Timestamp when circuit opened (for recovery timeout) */
+  circuitOpenedAt?: number;
 }
 
 export interface SupervisorConfig {
@@ -28,6 +34,8 @@ export interface SupervisorConfig {
   strategy?: "round-robin" | "least-busy" | "random" | "weighted";
   /** Max history entries per agent (default: 100) */
   maxHistory?: number;
+  /** Circuit breaker recovery timeout in ms (default: 30000) */
+  circuitRecoveryMs?: number;
 }
 
 export class Supervisor {
@@ -37,11 +45,13 @@ export class Supervisor {
   private maxFailures: number;
   private strategy: NonNullable<SupervisorConfig["strategy"]>;
   private maxHistory: number;
+  private circuitRecoveryMs: number;
 
   constructor(config: SupervisorConfig = {}) {
     this.maxFailures = config.maxFailures ?? 3;
     this.strategy = config.strategy ?? "round-robin";
     this.maxHistory = config.maxHistory ?? 100;
+    this.circuitRecoveryMs = config.circuitRecoveryMs ?? 30000;
   }
 
   /** Register a new agent */
@@ -49,6 +59,7 @@ export class Supervisor {
     this.agents.set(role.id, role);
     this.health.set(role.id, {
       successCount: 0, failureCount: 0, lastUsed: 0, avgDuration: 0, history: [],
+      circuit: "closed",
     });
     return this;
   }
@@ -68,11 +79,29 @@ export class Supervisor {
     return this.health.get(agentId);
   }
 
-  /** Check if agent is healthy (consecutive failures < maxFailures) */
+  /** Check if agent is healthy (circuit breaker logic) */
   isHealthy(agentId: string): boolean {
     const h = this.health.get(agentId);
     if (!h) return false;
-    return h.failureCount < this.maxFailures;
+    this._updateCircuit(agentId);
+    return h.circuit !== "open";
+  }
+
+  /** Get circuit breaker state for an agent */
+  getCircuitState(agentId: string): CircuitState {
+    const h = this.health.get(agentId);
+    if (!h) return "closed";
+    this._updateCircuit(agentId);
+    return h.circuit;
+  }
+
+  /** Update circuit state based on recovery timeout */
+  private _updateCircuit(agentId: string): void {
+    const h = this.health.get(agentId);
+    if (!h || h.circuit !== "open") return;
+    if (h.circuitOpenedAt && Date.now() - h.circuitOpenedAt >= this.circuitRecoveryMs) {
+      h.circuit = "half-open";
+    }
   }
 
   /** Select next healthy agent based on strategy */
@@ -137,11 +166,16 @@ export class Supervisor {
       h.avgDuration = total === 0 ? duration : (h.avgDuration * total + duration) / (total + 1);
       h.successCount++;
       h.failureCount = 0; // reset consecutive failures on success
+      if (h.circuit === "half-open") h.circuit = "closed"; // recover on success
       h.lastUsed = Date.now();
       this._recordHistory(agent.id, 'success', duration);
       return { agentId: agent.id, result };
     } catch (err) {
       h.failureCount++;
+      if (h.failureCount >= this.maxFailures) {
+        h.circuit = "open";
+        h.circuitOpenedAt = Date.now();
+      }
       h.lastUsed = Date.now();
       this._recordHistory(agent.id, 'failure', Date.now() - start);
       throw err;
@@ -169,7 +203,7 @@ export class Supervisor {
   /** Reset health for an agent */
   resetHealth(agentId: string): void {
     if (this.health.has(agentId)) {
-      this.health.set(agentId, { successCount: 0, failureCount: 0, lastUsed: 0, avgDuration: 0, history: [] });
+      this.health.set(agentId, { successCount: 0, failureCount: 0, lastUsed: 0, avgDuration: 0, history: [], circuit: "closed" });
     }
   }
 
@@ -203,9 +237,9 @@ export class Supervisor {
       });
       const h = state.health[a.id];
       if (h) {
-        this.health.set(a.id, { ...h, history: [...h.history] });
+        this.health.set(a.id, { ...h, history: [...h.history], circuit: h.circuit ?? "closed" });
       } else {
-        this.health.set(a.id, { successCount: 0, failureCount: 0, lastUsed: 0, avgDuration: 0, history: [] });
+        this.health.set(a.id, { successCount: 0, failureCount: 0, lastUsed: 0, avgDuration: 0, history: [], circuit: "closed" });
       }
     }
     this.strategy = state.strategy as NonNullable<SupervisorConfig["strategy"]>;

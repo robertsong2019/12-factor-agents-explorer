@@ -306,4 +306,102 @@ describe("Supervisor", () => {
     assert.equal(s2.listAgents().length, 1);
     assert.equal(s2.getHealth("a").successCount, 1);
   });
+
+  // ── Circuit Breaker ────────────────────────────────
+  it("circuit starts closed", () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    assert.equal(s.getCircuitState("a"), "closed");
+  });
+
+  it("circuit opens after maxFailures consecutive failures", async () => {
+    const s = new Supervisor({ maxFailures: 2 });
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async () => { throw new Error("boom"); } },
+      capabilities: ["*"],
+    });
+    await assert.rejects(() => s.execute("t1"));
+    assert.equal(s.getCircuitState("bad"), "closed"); // 1 failure, need 2
+    await assert.rejects(() => s.execute("t2"));
+    assert.equal(s.getCircuitState("bad"), "open"); // 2 failures = open
+  });
+
+  it("open circuit blocks agent selection", async () => {
+    const s = new Supervisor({ maxFailures: 1, strategy: "least-busy" });
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async () => { throw new Error("boom"); } },
+      capabilities: ["*"],
+    });
+    s.register(makeRole("good"));
+    // least-busy: both at 0, but 'bad' registered first → picked first
+    await assert.rejects(() => s.execute("t1"));
+    assert.equal(s.getCircuitState("bad"), "open");
+    const agent = s.selectAgent();
+    assert.equal(agent.id, "good");
+  });
+
+  it("circuit transitions to half-open after recovery timeout", async () => {
+    const s = new Supervisor({ maxFailures: 1, circuitRecoveryMs: 50 });
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async () => { throw new Error("boom"); } },
+      capabilities: ["*"],
+    });
+    await assert.rejects(() => s.execute("t1"));
+    assert.equal(s.getCircuitState("bad"), "open");
+    // Wait for recovery
+    await new Promise(r => setTimeout(r, 60));
+    assert.equal(s.getCircuitState("bad"), "half-open");
+  });
+
+  it("half-open circuit closes on success", async () => {
+    let calls = 0;
+    const s = new Supervisor({ maxFailures: 1, circuitRecoveryMs: 50 });
+    s.register({
+      id: "flaky", description: "flaky",
+      config: { executor: async () => { calls++; if (calls === 1) throw new Error("boom"); return "ok"; } },
+      capabilities: ["*"],
+    });
+    await assert.rejects(() => s.execute("t1"));
+    assert.equal(s.getCircuitState("flaky"), "open");
+    await new Promise(r => setTimeout(r, 60));
+    assert.equal(s.getCircuitState("flaky"), "half-open");
+    await s.execute("t2");
+    assert.equal(s.getCircuitState("flaky"), "closed");
+  });
+
+  it("half-open circuit reopens on failure", async () => {
+    const s = new Supervisor({ maxFailures: 1, circuitRecoveryMs: 50 });
+    s.register({
+      id: "bad", description: "always fails",
+      config: { executor: async () => { throw new Error("boom"); } },
+      capabilities: ["*"],
+    });
+    await assert.rejects(() => s.execute("t1"));
+    assert.equal(s.getCircuitState("bad"), "open");
+    await new Promise(r => setTimeout(r, 60));
+    assert.equal(s.getCircuitState("bad"), "half-open");
+    await assert.rejects(() => s.execute("t2"));
+    assert.equal(s.getCircuitState("bad"), "open");
+  });
+
+  it("resetHealth resets circuit to closed", async () => {
+    const s = new Supervisor({ maxFailures: 1 });
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async () => { throw new Error("boom"); } },
+      capabilities: ["*"],
+    });
+    await assert.rejects(() => s.execute("t1"));
+    assert.equal(s.getCircuitState("bad"), "open");
+    s.resetHealth("bad");
+    assert.equal(s.getCircuitState("bad"), "closed");
+  });
+
+  it("getCircuitState returns closed for unknown agent", () => {
+    const s = new Supervisor();
+    assert.equal(s.getCircuitState("nope"), "closed");
+  });
 });
