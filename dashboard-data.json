@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-05-26T06:00:00+08:00",
+  "updatedAt": "2026-05-30T06:00:00+08:00",
   "generatedBy": "Catalyst",
   "cronJobs": [
     { "id": "f38e0365", "name": "dashboard-update-morning", "schedule": "0 6 * * *", "next": "~24h", "last": "now", "status": "running" },
@@ -19,15 +19,20 @@
     { "id": "686ec55c", "name": "essay-generation-morning", "schedule": "0 5 * * *", "next": "in 23h", "last": "1h ago", "status": "ok" }
   ],
   "sessions": {
+    "totalSessions": 45,
     "activeNow": 1,
+    "mainSessionUsage": "106k/205k (52%)",
     "recentHighlights": [
-      { "label": "Cron: dashboard-update-morning", "status": "running", "model": "glm-5.1" }
+      { "label": "Cron: dashboard-update-morning", "status": "running", "model": "glm-5.1", "age": "1m ago" },
+      { "label": "Main session", "status": "active", "model": "glm-5.1", "age": "13m ago" },
+      { "label": "Cron: knowledge-organization", "status": "ok", "model": "glm-5.1", "age": "4h ago" }
     ]
   },
   "summary": {
     "cronJobsTotal": 15,
     "cronJobsHealthy": 14,
     "cronJobsRunning": 1,
-    "cronJobsFailed": 0
+    "cronJobsFailed": 0,
+    "totalSessions": 45
   }
 }
