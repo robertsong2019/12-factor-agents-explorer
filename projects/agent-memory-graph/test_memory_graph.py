@@ -1854,3 +1854,65 @@ class TestEdgeCount:
 
     def test_edge_count_empty(self, mg):
         assert mg.edge_count() == 0
+
+
+class TestFindComponents:
+    def test_single_component(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        mg.link(a.id, b.id, "r")
+        comps = mg.find_components()
+        assert len(comps) == 1
+        assert set(comps[0]) == {a.id, b.id}
+
+    def test_two_components(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        c = mg.add("c", "fact")
+        d = mg.add("d", "fact")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, d.id, "r")
+        comps = mg.find_components()
+        assert len(comps) == 2
+
+    def test_isolated_nodes(self, mg):
+        mg.add("a", "fact")
+        mg.add("b", "fact")
+        comps = mg.find_components()
+        assert len(comps) == 2
+
+    def test_empty_graph(self, mg):
+        assert mg.find_components() == []
+
+
+class TestDistanceMatrix:
+    def test_simple_chain(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        c = mg.add("c", "fact")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        dm = mg.distance_matrix()
+        assert dm[(a.id, a.id)] == 0
+        assert dm[(a.id, b.id)] == 1
+        assert dm[(a.id, c.id)] == 2
+
+    def test_disconnected(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        dm = mg.distance_matrix()
+        assert (a.id, a.id) in dm
+        assert (a.id, b.id) not in dm
+
+    def test_subset_nodes(self, mg):
+        a = mg.add("a", "fact")
+        b = mg.add("b", "fact")
+        c = mg.add("c", "fact")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        dm = mg.distance_matrix([a.id, c.id])
+        assert dm[(a.id, c.id)] == 2
+        assert (a.id, b.id) not in dm
+
+    def test_empty_graph(self, mg):
+        assert mg.distance_matrix() == {}

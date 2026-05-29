@@ -1399,6 +1399,62 @@ class MemoryGraph:
                                       (relation,)).fetchone()["c"]
         return self.conn.execute("SELECT COUNT(*) as c FROM edges").fetchone()["c"]
 
+    def find_components(self) -> list[list[str]]:
+        """Find all connected components (undirected). Returns list of node-id lists."""
+        visited = set()
+        components = []
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        for r in rows:
+            nid = r["id"]
+            if nid in visited:
+                continue
+            # BFS
+            comp = []
+            queue = [nid]
+            while queue:
+                cur = queue.pop(0)
+                if cur in visited:
+                    continue
+                visited.add(cur)
+                comp.append(cur)
+                for e in self.conn.execute("SELECT target FROM edges WHERE source=?", (cur,)).fetchall():
+                    if e["target"] not in visited:
+                        queue.append(e["target"])
+                for e in self.conn.execute("SELECT source FROM edges WHERE target=?", (cur,)).fetchall():
+                    if e["source"] not in visited:
+                        queue.append(e["source"])
+            components.append(comp)
+        return components
+
+    def distance_matrix(self, node_ids: list[str] = None) -> dict[tuple[str, str], int]:
+        """Compute shortest-path lengths between all pairs (BFS). Returns {(src, tgt): dist}.
+
+        If node_ids given, only compute for those nodes.
+        """
+        ids = node_ids
+        if ids is None:
+            ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        dist = {}
+        for src in ids:
+            if not self.has_node(src):
+                continue
+            # BFS from src
+            visited = {src}
+            queue = [(src, 0)]
+            while queue:
+                cur, d = queue.pop(0)
+                if cur in ids and (src, cur) not in dist:
+                    dist[(src, cur)] = d
+                for e in self.conn.execute("SELECT target FROM edges WHERE source=?", (cur,)).fetchall():
+                    if e["target"] not in visited:
+                        visited.add(e["target"])
+                        queue.append((e["target"], d + 1))
+                for e in self.conn.execute("SELECT source FROM edges WHERE target=?", (cur,)).fetchall():
+                    if e["source"] not in visited:
+                        visited.add(e["source"])
+                        queue.append((e["source"], d + 1))
+        return dist
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

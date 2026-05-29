@@ -20,3 +20,5 @@ timestamp	commit	metric	value	status	description
 2026-05-28T01:00	4b1a8d4	test_count	192/192	keep	importance_rank(limit,decay_hours) — composite importance from weight*0.4+degree*0.3+recency*0.3. +8 tests (184→192). Zero regressions.
 2026-05-28T19:15	5b485f4	test_count	201/201	keep	patch()+stats_summary() — graph sync via diff application + one-call stats dashboard. +9 tests (192→201). Zero regressions.
 2026-05-28T19:30	97b998f	test_count	209/209	keep	anonymize()+bfs_order() — privacy-safe graph export + BFS traversal. +8 tests (201→209). Zero regressions.
+2026-05-29T19:15	4fe42f6	test_count	226/226	keep	merge_graph(union/update)+diff_summary+group_by(kind/tag)+link_strength — graph merge/sync, diff analysis, node grouping, edge weight ranking. +17 tests (209→226). Zero regressions.
+2026-05-29T19:25	106d2f5	test_count	234/234	keep	random_node+unlink_all+edge_count — random sampling, bulk edge removal, edge counting by relation. +8 tests (226→234). Zero regressions.
