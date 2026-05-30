@@ -493,4 +493,86 @@ describe("Supervisor", () => {
     const results = await s.processQueueParallel(new TaskQueue());
     assert.equal(results.length, 0);
   });
+
+  // ── delegate ────────────────────────────────
+  it("delegate prefers specified agent", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    const r = await s.delegate("task", { preferAgent: "b" });
+    assert.equal(r.agentId, "b");
+    assert.equal(r.attempts, 1);
+    assert.equal(r.fallbackUsed, false);
+  });
+
+  it("delegate falls back when preferred agent unhealthy", async () => {
+    const s = new Supervisor({ maxFailures: 1 });
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async () => { throw new Error("boom"); } },
+      capabilities: ["*"],
+    });
+    s.register(makeRole("good"));
+    await assert.rejects(() => s.execute("t1")); // break bad
+    const r = await s.delegate("task", { preferAgent: "bad" });
+    assert.equal(r.agentId, "good");
+  });
+
+  it("delegate retries on failure", async () => {
+    const s = new Supervisor({ maxFailures: 10 });
+    let calls = 0;
+    s.register({
+      id: "flaky", description: "flaky",
+      config: { executor: async () => { calls++; if (calls < 2) throw new Error("boom"); return "ok"; } },
+      capabilities: ["*"],
+    });
+    const r = await s.delegate("task", { maxRetries: 3 });
+    assert.equal(r.result, "ok");
+    assert.equal(r.attempts, 2);
+    assert.equal(r.fallbackUsed, true);
+  });
+
+  it("delegate throws after max retries", async () => {
+    const s = new Supervisor({ maxFailures: 10 });
+    s.register({
+      id: "bad", description: "fails",
+      config: { executor: async () => { throw new Error("boom"); } },
+      capabilities: ["*"],
+    });
+    await assert.rejects(() => s.delegate("task", { maxRetries: 2 }), /boom/);
+  });
+
+  it("delegate with capability filter", async () => {
+    const s = new Supervisor();
+    s.register({ id: "a", description: "a", config: { executor: async (t) => `a:${t}` }, capabilities: ["math"] });
+    s.register({ id: "b", description: "b", config: { executor: async (t) => `b:${t}` }, capabilities: ["code"] });
+    const r = await s.delegate("task", { capability: "code" });
+    assert.equal(r.agentId, "b");
+  });
+
+  // ── healthReport ────────────────────────────────
+  it("healthReport returns per-agent details", () => {
+    const s = new Supervisor();
+    s.register({ id: "a", description: "a", config: { executor: async () => "" }, capabilities: ["math", "code"] });
+    s.register({ id: "b", description: "b", config: { executor: async () => "" }, capabilities: ["code"] });
+    const report = s.healthReport();
+    assert.equal(report.length, 2);
+    const a = report.find(r => r.agentId === "a");
+    assert.equal(a.healthy, true);
+    assert.deepEqual(a.capabilities, ["math", "code"]);
+  });
+
+  it("healthReport shows unhealthy agent", async () => {
+    const s = new Supervisor({ maxFailures: 1 });
+    s.register({ id: "bad", description: "fails", config: { executor: async () => { throw new Error("boom"); } }, capabilities: ["*"] });
+    await assert.rejects(() => s.execute("t1"));
+    const report = s.healthReport();
+    assert.equal(report[0].healthy, false);
+    assert.ok(report[0].failureCount >= 1);
+  });
+
+  it("healthReport empty for no agents", () => {
+    const s = new Supervisor();
+    assert.deepEqual(s.healthReport(), []);
+  });
 });

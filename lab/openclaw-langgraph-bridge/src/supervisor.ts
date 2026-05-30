@@ -354,6 +354,53 @@ export class Supervisor {
     for (const t of failed) queue.enqueue(t);
     return results;
   }
+
+  /** High-level delegation: capability match + load balance + fallback */
+  async delegate(
+    task: string,
+    opts?: { capability?: string; maxRetries?: number; preferAgent?: string }
+  ): Promise<{ agentId: string; result: string; attempts: number; fallbackUsed: boolean }> {
+    const maxRetries = opts?.maxRetries ?? 3;
+    // If preferAgent specified and healthy, try it first
+    if (opts?.preferAgent) {
+      const h = this.health.get(opts.preferAgent);
+      if (h && h.failureCount < this.maxFailures) {
+        try {
+          const r = await this.execute(task, opts?.capability);
+          if (r.agentId === opts.preferAgent) {
+            return { ...r, attempts: 1, fallbackUsed: false };
+          }
+        } catch { /* fall through */ }
+      }
+    }
+    // Try with fallback
+    let attempts = 0;
+    let lastError: Error | null = null;
+    while (attempts < maxRetries) {
+      attempts++;
+      try {
+        const r = await this.execute(task, opts?.capability);
+        return { ...r, attempts, fallbackUsed: attempts > 1 };
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e));
+      }
+    }
+    throw lastError ?? new Error(`delegate failed after ${attempts} attempts`);
+  }
+
+  /** Per-agent health report */
+  healthReport(): Array<{ agentId: string; healthy: boolean; failureCount: number; avgDuration: number; capabilities: string[] }> {
+    return [...this.health.entries()].map(([id, h]) => {
+      const agent = [...this.agents.values()].find(a => a.id === id);
+      return {
+        agentId: id,
+        healthy: h.failureCount < this.maxFailures,
+        failureCount: h.failureCount,
+        avgDuration: Math.round(h.avgDuration * 100) / 100,
+        capabilities: agent?.capabilities ?? [],
+      };
+    });
+  }
 }
 
 /**
