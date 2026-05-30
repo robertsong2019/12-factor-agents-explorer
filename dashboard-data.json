@@ -1,38 +1,29 @@
 {
-  "updatedAt": "2026-05-30T06:00:00+08:00",
+  "updatedAt": "2026-05-31T06:00:00+08:00",
   "generatedBy": "Catalyst",
   "cronJobs": [
-    { "id": "f38e0365", "name": "dashboard-update-morning", "schedule": "0 6 * * *", "next": "~24h", "last": "now", "status": "running" },
-    { "id": "9b2a8701", "name": "github-trending-daily", "schedule": "0 7 * * * @ Asia/Shanghai", "next": "in 60m", "last": "23h ago", "status": "ok" },
-    { "id": "2c714952", "name": "github-trending-deep", "schedule": "0 8 * * * @ Asia/Shanghai", "next": "in 2h", "last": "22h ago", "status": "ok" },
-    { "id": "610a8d6d", "name": "github-creative-evening", "schedule": "0 19 * * *", "next": "in 13h", "last": "11h ago", "status": "ok" },
-    { "id": "265091b6", "name": "deep-exploration-evening", "schedule": "0 20 * * *", "next": "in 14h", "last": "10h ago", "status": "ok" },
-    { "id": "bb46cb70", "name": "deep-exploration-evening-utc", "schedule": "0 12 * * * @ UTC", "next": "in 14h", "last": "10h ago", "status": "ok" },
-    { "id": "13a2f284", "name": "code-lab-evening", "schedule": "0 21 * * *", "next": "in 15h", "last": "9h ago", "status": "ok" },
-    { "id": "ce2fb615", "name": "tool-development-evening", "schedule": "0 22 * * *", "next": "in 16h", "last": "8h ago", "status": "ok" },
-    { "id": "78eac6fc", "name": "key-development-1", "schedule": "0 23 * * *", "next": "in 17h", "last": "7h ago", "status": "ok" },
-    { "id": "88679f9e", "name": "key-development-2", "schedule": "0 0 * * *", "next": "in 18h", "last": "6h ago", "status": "ok" },
-    { "id": "b0fd7e8d", "name": "key-development-3", "schedule": "0 1 * * *", "next": "in 19h", "last": "5h ago", "status": "ok" },
-    { "id": "fd0515b0", "name": "knowledge-organization", "schedule": "0 2 * * *", "next": "in 20h", "last": "4h ago", "status": "ok" },
-    { "id": "f7510f1f", "name": "project-testing-morning", "schedule": "0 3 * * *", "next": "in 21h", "last": "3h ago", "status": "ok" },
-    { "id": "77a5bcc6", "name": "documentation-morning", "schedule": "0 4 * * *", "next": "in 22h", "last": "2h ago", "status": "ok" },
-    { "id": "686ec55c", "name": "essay-generation-morning", "schedule": "0 5 * * *", "next": "in 23h", "last": "1h ago", "status": "ok" }
+    { "id": "f38e0365", "name": "dashboard-update-morning", "schedule": "0 6 * * *", "status": "running", "next": "~24h", "last": "now" },
+    { "id": "9b2a8701", "name": "github-trending-daily", "schedule": "0 7 * * *", "status": "ok", "next": "in 60m", "last": "23h ago" },
+    { "id": "2c714952", "name": "github-trending-deep", "schedule": "0 8 * * *", "status": "ok", "next": "in 2h", "last": "22h ago" },
+    { "id": "bb46cb70", "name": "deep-exploration-evening", "schedule": "0 12 * * * UTC", "status": "ok", "next": "in 14h", "last": "10h ago" },
+    { "id": "610a8d6d", "name": "github-creative-evening", "schedule": "0 19 * * *", "status": "ok", "next": "in 13h", "last": "11h ago" },
+    { "id": "265091b6", "name": "deep-exploration-evening", "schedule": "0 20 * * *", "status": "ok", "next": "in 14h", "last": "10h ago" },
+    { "id": "13a2f284", "name": "code-lab-evening", "schedule": "0 21 * * *", "status": "ok", "next": "in 15h", "last": "9h ago" },
+    { "id": "ce2fb615", "name": "tool-development-evening", "schedule": "0 22 * * *", "status": "ok", "next": "in 16h", "last": "8h ago" },
+    { "id": "78eac6fc", "name": "key-development-1", "schedule": "0 23 * * *", "status": "ok", "next": "in 17h", "last": "7h ago" },
+    { "id": "88679f9e", "name": "key-development-2", "schedule": "0 0 * * *", "status": "ok", "next": "in 18h", "last": "6h ago" },
+    { "id": "b0fd7e8d", "name": "key-development-3", "schedule": "0 1 * * *", "status": "ok", "next": "in 19h", "last": "5h ago" },
+    { "id": "fd0515b0", "name": "knowledge-organization", "schedule": "0 2 * * *", "status": "ok", "next": "in 20h", "last": "4h ago" },
+    { "id": "f7510f1f", "name": "project-testing-morning", "schedule": "0 3 * * *", "status": "ok", "next": "in 21h", "last": "3h ago" },
+    { "id": "77a5bcc6", "name": "documentation-morning", "schedule": "0 4 * * *", "status": "ok", "next": "in 22h", "last": "2h ago" },
+    { "id": "686ec55c", "name": "essay-generation-morning", "schedule": "0 5 * * *", "status": "ok", "next": "in 23h", "last": "1h ago" }
   ],
   "sessions": {
-    "totalSessions": 45,
-    "activeNow": 1,
-    "mainSessionUsage": "106k/205k (52%)",
-    "recentHighlights": [
-      { "label": "Cron: dashboard-update-morning", "status": "running", "model": "glm-5.1", "age": "1m ago" },
-      { "label": "Main session", "status": "active", "model": "glm-5.1", "age": "13m ago" },
-      { "label": "Cron: knowledge-organization", "status": "ok", "model": "glm-5.1", "age": "4h ago" }
-    ]
+    "total": 45,
+    "active": 3,
+    "last24h": 27,
+    "oldestActive": "main session (13m ago, 66% context)"
   },
-  "summary": {
-    "cronJobsTotal": 15,
-    "cronJobsHealthy": 14,
-    "cronJobsRunning": 1,
-    "cronJobsFailed": 0,
-    "totalSessions": 45
-  }
+  "model": "glm-5.1",
+  "contextWindow": "205k"
 }
