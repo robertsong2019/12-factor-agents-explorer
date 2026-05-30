@@ -1998,3 +1998,80 @@ class TestInducedSubgraph:
         assert node is not None
         assert node.label == "NodeA"
         assert node.kind == "type1"
+
+# ── evolve() + evolution_history() tests ──────────────────
+
+class TestEvolve:
+    def test_evolve_label(self):
+        g = MemoryGraph()
+        n = g.add("machine lerning", kind="concept")
+        updated = g.evolve(n.id, new_label="machine learning")
+        assert updated.label == "machine learning"
+        assert updated.kind == "concept"
+
+    def test_evolve_kind(self):
+        g = MemoryGraph()
+        n = g.add("Python", kind="concept")
+        updated = g.evolve(n.id, new_kind="skill")
+        assert updated.kind == "skill"
+        assert updated.label == "Python"
+
+    def test_evolve_both(self):
+        g = MemoryGraph()
+        n = g.add("neurl net", kind="concept")
+        updated = g.evolve(n.id, new_label="neural network", new_kind="model")
+        assert updated.label == "neural network"
+        assert updated.kind == "model"
+
+    def test_evolve_nonexistent_returns_none(self):
+        g = MemoryGraph()
+        assert g.evolve("nope", new_label="x") is None
+
+    def test_evolve_no_change_returns_node(self):
+        g = MemoryGraph()
+        n = g.add("hello", kind="fact")
+        result = g.evolve(n.id, new_label="hello", new_kind="fact")
+        assert result is not None
+        assert result.label == "hello"
+
+    def test_evolve_only_label_no_kind_change(self):
+        g = MemoryGraph()
+        n = g.add("old", kind="fact")
+        result = g.evolve(n.id, new_label="new")
+        assert result.label == "new"
+        assert result.kind == "fact"
+
+    def test_evolution_history_records_changes(self):
+        g = MemoryGraph()
+        n = g.add("v1", kind="fact")
+        g.evolve(n.id, new_label="v2", new_kind="concept")
+        g.evolve(n.id, new_label="v3")
+        history = g.evolution_history(n.id)
+        assert len(history) == 2
+        assert history[0]["old_label"] == "v1"
+        assert history[0]["new_label"] == "v2"
+        assert history[0]["old_kind"] == "fact"
+        assert history[0]["new_kind"] == "concept"
+        assert history[1]["old_label"] == "v2"
+        assert history[1]["new_label"] == "v3"
+        assert history[1]["old_kind"] == "concept"
+        assert history[1]["new_kind"] == "concept"
+
+    def test_evolution_history_empty_for_no_evolve(self):
+        g = MemoryGraph()
+        n = g.add("static", kind="fact")
+        assert g.evolution_history(n.id) == []
+
+    def test_evolution_history_nonexistent_node(self):
+        g = MemoryGraph()
+        assert g.evolution_history("nope") == []
+
+    def test_evolve_preserves_edges(self):
+        g = MemoryGraph()
+        a = g.add("A", kind="fact")
+        b = g.add("B", kind="fact")
+        g.link(a.id, b.id, "rel")
+        g.evolve(a.id, new_label="A2")
+        edges = g.edges_of(a.id)
+        assert len(edges) == 1
+        assert edges[0].relation == "rel"

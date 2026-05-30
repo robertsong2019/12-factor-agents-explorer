@@ -73,6 +73,16 @@ class MemoryGraph:
                 weight REAL DEFAULT 1.0,
                 PRIMARY KEY (source, target, relation)
             );
+            CREATE TABLE IF NOT EXISTS evolution_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id TEXT NOT NULL,
+                old_label TEXT,
+                new_label TEXT,
+                old_kind TEXT,
+                new_kind TEXT,
+                timestamp REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_evo_node ON evolution_log(node_id);
         """)
 
     def add(self, label: str, kind: str = "fact", data: dict = None, tags: list[str] = None) -> Node:
@@ -1554,6 +1564,40 @@ class MemoryGraph:
                     if sub.has_node(nid) and sub.has_node(e.target):
                         sub.link(nid, e.target, e.relation, e.weight)
         return sub
+
+    def evolve(self, node_id: str, new_label: str = None, new_kind: str = None) -> Optional[Node]:
+        """Evolve a node's label/kind and log the change to evolution_history.
+        Returns the updated node, or None if not found or nothing to change."""
+        node = self.get_node(node_id)
+        if node is None:
+            return None
+        old_label, old_kind = node.label, node.kind
+        nl = new_label if new_label is not None else old_label
+        nk = new_kind if new_kind is not None else old_kind
+        if nl == old_label and nk == old_kind:
+            return node  # nothing to change
+        self.conn.execute(
+            "INSERT INTO evolution_log (node_id, old_label, new_label, old_kind, new_kind, timestamp) VALUES (?,?,?,?,?,?)",
+            (node_id, old_label, nl, old_kind, nk, time.time())
+        )
+        self.conn.execute(
+            "UPDATE nodes SET label=?, kind=? WHERE id=?",
+            (nl, nk, node_id)
+        )
+        self.conn.commit()
+        node.label, node.kind = nl, nk
+        return node
+
+    def evolution_history(self, node_id: str) -> list[dict]:
+        """Return the evolution audit trail for a node, oldest first."""
+        rows = self.conn.execute(
+            "SELECT old_label, new_label, old_kind, new_kind, timestamp FROM evolution_log WHERE node_id=? ORDER BY id ASC",
+            (node_id,)
+        ).fetchall()
+        return [
+            {"old_label": r[0], "new_label": r[1], "old_kind": r[2], "new_kind": r[3], "timestamp": r[4]}
+            for r in rows
+        ]
 
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
