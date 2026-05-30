@@ -8,3 +8,5 @@ timestamp	commit	metric	value	status	description
 2026-05-25T22:03:51+08:00	8ebf2e6	test_pass_rate	14/14 (100%)	keep	F9 (find sessions by pattern/date) + F13 (grep wrapper) + F14 (tail wrapper). 14 tests all passing.
 2026-05-26T22:05	draft	F6_trend_tests	6/6	pass	trend command with sparkline + JSON output
 2026-05-26T22:10	draft	F5_summary_types_tests	4/4	pass	summary --types activity classification
+2026-05-30T22:10	local	F2_tests	6/6 (100%)	keep	F2: search date range filtering (--from/--to). 6 tests all passing.
+2026-05-30T22:15	local	F17_tests	13/13 (100%)	keep	F17: Integration tests with fixture data. 13 tests covering search/summary/today/date/stats.

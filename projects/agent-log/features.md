@@ -13,8 +13,8 @@
 ## 🔲 Feature Backlog
 
 ### Search Enhancements
-- [ ] **F1**: `search` with regex support — allow `-r` flag for regex patterns
-- [ ] **F2**: `search` with file filtering — filter by date range or file type
+- [x] **F1**: `search` with regex support — `-r`/`--regex` flag ✅ (previously done)
+- [x] **F2**: `search` with date range filtering (`--from`/`--to` YYYY-MM-DD) ✅ 2026-05-30
 - [x] **F3**: `search` with export — save results to file (`-o results.txt`) ✅ 2026-04-30
 
 ### Timeline & Summary
@@ -42,7 +42,7 @@
 
 ### Testing & Quality
 - [ ] **F16**: Unit tests for each command (Bats framework)
-- [ ] **F17**: Integration tests with sample data
+- [x] **F17**: Integration tests with sample fixture data ✅ 2026-05-30
 - [ ] **F18**: Performance benchmarks for large log sets
 
 ## Priorities

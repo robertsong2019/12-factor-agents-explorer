@@ -31,19 +31,26 @@ build_search_json() {
 # ── Commands ──
 
 cmd_search() {
-  local use_regex=0 query="" output_file=""
+  local use_regex=0 query="" output_file="" date_from="" date_to=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -r|--regex) use_regex=1 ;;
       -o|--output) shift; output_file="${1:-}" ;;
       -j|--json) JSON_OUTPUT=1 ;;
+      --from) shift; date_from="${1:-}" ;;
+      --to) shift; date_to="${1:-}" ;;
       *) query="$1" ;;
     esac
     shift
   done
 
-  [[ -z "$query" ]] && die "Usage: agent-log search [-r|--regex] [-o file] [-j|--json] <query>"
+  [[ -z "$query" ]] && die "Usage: agent-log search [-r|--regex] [-o file] [-j|--json] [--from DATE] [--to DATE] <query>"
+
+  # Validate date formats
+  local date_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+  [[ -n "$date_from" ]] && ! [[ "$date_from" =~ $date_re ]] && die "--from requires YYYY-MM-DD format, got: $date_from"
+  [[ -n "$date_to" ]] && ! [[ "$date_to" =~ $date_re ]] && die "--to requires YYYY-MM-DD format, got: $date_to"
 
   local files=()
   while IFS= read -r -d '' f; do files+=("$f"); done < <(
@@ -51,6 +58,20 @@ cmd_search() {
     find "$WORKSPACE" -maxdepth 1 -name '*.md' -print0 2>/dev/null
     find "$SESSIONS_DIR" -name '*.md' -print0 2>/dev/null
   )
+
+  # Filter by date range (only applies to files with dates in their path/name)
+  if [[ -n "$date_from" ]] || [[ -n "$date_to" ]]; then
+    local filtered=()
+    for f in "${files[@]}"; do
+      local basename; basename=$(basename "$f" .md)
+      if [[ "$basename" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        [[ -n "$date_from" ]] && [[ "$basename" < "$date_from" ]] && continue
+        [[ -n "$date_to" ]] && [[ "$basename" > "$date_to" ]] && continue
+      fi
+      filtered+=("$f")
+    done
+    files=("${filtered[@]}")
+  fi
   [[ ${#files[@]} -eq 0 ]] && die "No log files found. Check WORKSPACE=$WORKSPACE"
 
   local search_type="text"
