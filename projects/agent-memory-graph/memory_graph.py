@@ -1672,6 +1672,49 @@ class MemoryGraph:
         _dfs(from_id, to_id, [from_id], {from_id})
         return results
 
+    def jaccard_similarity(self, node_id1: int, node_id2: int) -> float:
+        """Jaccard similarity of neighbor sets between two nodes."""
+        n1 = set(r[0] for r in self.conn.execute(
+            "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+            (node_id1, node_id1)).fetchall())
+        n2 = set(r[0] for r in self.conn.execute(
+            "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+            (node_id2, node_id2)).fetchall())
+        if not n1 and not n2:
+            return 0.0
+        return len(n1 & n2) / len(n1 | n2)
+
+    def neighborhood_overlap(self, node_id1: int, node_id2: int) -> float:
+        """Overlap coefficient of neighbor sets (how much of the smaller set is shared)."""
+        n1 = set(r[0] for r in self.conn.execute(
+            "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+            (node_id1, node_id1)).fetchall())
+        n2 = set(r[0] for r in self.conn.execute(
+            "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+            (node_id2, node_id2)).fetchall())
+        min_size = min(len(n1), len(n2))
+        if min_size == 0:
+            return 0.0
+        return len(n1 & n2) / min_size
+
+    def adamic_adar(self, node_id1: int, node_id2: int) -> float:
+        """Adamic/Adar index — sum of 1/log(degree) over shared neighbors. Link prediction."""
+        n1 = set(r[0] for r in self.conn.execute(
+            "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+            (node_id1, node_id1)).fetchall())
+        n2 = set(r[0] for r in self.conn.execute(
+            "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+            (node_id2, node_id2)).fetchall())
+        common = n1 & n2
+        score = 0.0
+        for c in common:
+            deg = self.conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE source=? OR target=?", (c, c)
+            ).fetchone()[0]
+            if deg > 1:
+                score += 1.0 / (1.0 + deg)  # avoid log(0), use deg+1
+        return score
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

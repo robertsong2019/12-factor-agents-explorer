@@ -2143,3 +2143,47 @@ class TestEvolve:
         g.link(a.id, b.id, "r"); g.link(b.id, c.id, "r"); g.link(c.id, d.id, "r")
         paths = g.find_paths(a.id, d.id, max_depth=1)
         assert paths == []
+
+    # --- similarity / link prediction ---
+
+    def test_jaccard_similar(self):
+        g = MemoryGraph()
+        a, b, c, d = g.add("A"), g.add("B"), g.add("C"), g.add("D")
+        g.link(a.id, c.id, "r"); g.link(a.id, d.id, "r")
+        g.link(b.id, c.id, "r"); g.link(b.id, d.id, "r")
+        sim = g.jaccard_similarity(a.id, b.id)
+        assert sim == 1.0  # same neighbors
+
+    def test_jaccard_disjoint(self):
+        g = MemoryGraph()
+        a, b, c, d = g.add("A"), g.add("B"), g.add("C"), g.add("D")
+        g.link(a.id, c.id, "r")
+        g.link(b.id, d.id, "r")
+        assert g.jaccard_similarity(a.id, b.id) == 0.0
+
+    def test_jaccard_no_neighbors(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        assert g.jaccard_similarity(a.id, b.id) == 0.0
+
+    def test_neighborhood_overlap_partial(self):
+        g = MemoryGraph()
+        a, b, c, d, e = g.add("A"), g.add("B"), g.add("C"), g.add("D"), g.add("E")
+        g.link(a.id, c.id, "r"); g.link(a.id, d.id, "r")
+        g.link(b.id, d.id, "r"); g.link(b.id, e.id, "r")
+        # a neighbors: {c,d}, b neighbors: {d,e}, overlap: {d}
+        overlap = g.neighborhood_overlap(a.id, b.id)
+        assert overlap == 0.5  # 1 shared / min(2,2)
+
+    def test_adamic_adar_basic(self):
+        g = MemoryGraph()
+        a, b, c = g.add("A"), g.add("B"), g.add("C")
+        g.link(a.id, c.id, "r"); g.link(b.id, c.id, "r")
+        score = g.adamic_adar(a.id, b.id)
+        assert score > 0  # c is shared neighbor
+
+    def test_adamic_adar_no_common(self):
+        g = MemoryGraph()
+        a, b, c, d = g.add("A"), g.add("B"), g.add("C"), g.add("D")
+        g.link(a.id, c.id, "r"); g.link(b.id, d.id, "r")
+        assert g.adamic_adar(a.id, b.id) == 0.0
