@@ -2075,3 +2075,71 @@ class TestEvolve:
         edges = g.edges_of(a.id)
         assert len(edges) == 1
         assert edges[0].relation == "rel"
+
+    # --- is_dag / topological_sort ---
+
+    def test_is_dag_empty_graph(self):
+        g = MemoryGraph()
+        assert g.is_dag() is True
+
+    def test_is_dag_linear_chain(self):
+        g = MemoryGraph()
+        a, b, c = g.add("A"), g.add("B"), g.add("C")
+        g.link(a.id, b.id, "r"); g.link(b.id, c.id, "r")
+        assert g.is_dag() is True
+
+    def test_is_dag_with_cycle(self):
+        g = MemoryGraph()
+        a, b, c = g.add("A"), g.add("B"), g.add("C")
+        g.link(a.id, b.id, "r"); g.link(b.id, c.id, "r"); g.link(c.id, a.id, "r")
+        assert g.is_dag() is False
+
+    def test_topological_sort_linear(self):
+        g = MemoryGraph()
+        a, b, c = g.add("A"), g.add("B"), g.add("C")
+        g.link(a.id, b.id, "r"); g.link(b.id, c.id, "r")
+        order = g.topological_sort()
+        assert order.index(a.id) < order.index(b.id) < order.index(c.id)
+
+    def test_topological_sort_with_cycle_returns_empty(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        g.link(a.id, b.id, "r"); g.link(b.id, a.id, "r")
+        assert g.topological_sort() == []
+
+    def test_topological_sort_disconnected(self):
+        g = MemoryGraph()
+        a, b, c = g.add("A"), g.add("B"), g.add("C")
+        g.link(a.id, c.id, "r")
+        order = g.topological_sort()
+        assert len(order) == 3
+        assert order.index(a.id) < order.index(c.id)
+
+    # --- find_paths ---
+
+    def test_find_paths_single_path(self):
+        g = MemoryGraph()
+        a, b, c = g.add("A"), g.add("B"), g.add("C")
+        g.link(a.id, b.id, "r"); g.link(b.id, c.id, "r")
+        paths = g.find_paths(a.id, c.id)
+        assert paths == [[a.id, b.id, c.id]]
+
+    def test_find_paths_multiple_paths(self):
+        g = MemoryGraph()
+        a, b, c, d = g.add("A"), g.add("B"), g.add("C"), g.add("D")
+        g.link(a.id, b.id, "r"); g.link(b.id, d.id, "r")
+        g.link(a.id, c.id, "r"); g.link(c.id, d.id, "r")
+        paths = g.find_paths(a.id, d.id)
+        assert len(paths) == 2
+
+    def test_find_paths_no_path(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        assert g.find_paths(a.id, b.id) == []
+
+    def test_find_paths_max_depth(self):
+        g = MemoryGraph()
+        a, b, c, d = g.add("A"), g.add("B"), g.add("C"), g.add("D")
+        g.link(a.id, b.id, "r"); g.link(b.id, c.id, "r"); g.link(c.id, d.id, "r")
+        paths = g.find_paths(a.id, d.id, max_depth=1)
+        assert paths == []

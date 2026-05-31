@@ -1599,6 +1599,79 @@ class MemoryGraph:
             for r in rows
         ]
 
+    def is_dag(self) -> bool:
+        """Check if the graph is a Directed Acyclic Graph (no cycles)."""
+        visited = set()
+        rec_stack = set()
+
+        def _dfs(node_id):
+            visited.add(node_id)
+            rec_stack.add(node_id)
+            rows = self.conn.execute(
+                "SELECT target FROM edges WHERE source = ?", (node_id,)
+            ).fetchall()
+            for (target,) in rows:
+                if target not in visited:
+                    if _dfs(target):
+                        return True
+                elif target in rec_stack:
+                    return True
+            rec_stack.discard(node_id)
+            return False
+
+        all_nodes = [r[0] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        for nid in all_nodes:
+            if nid not in visited:
+                if _dfs(nid):
+                    return False
+        return True
+
+    def topological_sort(self) -> list:
+        """Return nodes in topological order (Kahn's algorithm). Returns [] if graph has cycles."""
+        nodes = [r[0] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        in_degree = {nid: 0 for nid in nodes}
+        adj = {nid: [] for nid in nodes}
+        for src, tgt in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            adj[src].append(tgt)
+            in_degree[tgt] = in_degree.get(tgt, 0) + 1
+
+        queue = [nid for nid in nodes if in_degree[nid] == 0]
+        result = []
+        while queue:
+            node = queue.pop(0)
+            result.append(node)
+            for neighbor in adj[node]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+        return result if len(result) == len(nodes) else []
+
+    def find_paths(self, from_id: int, to_id: int, max_depth: int = 10) -> list:
+        """Find all simple paths between two nodes (DFS, max_depth limit)."""
+        if not self.has_node(from_id) or not self.has_node(to_id):
+            return []
+        results = []
+
+        def _dfs(current, target, path, visited):
+            if len(path) - 1 > max_depth:
+                return
+            if current == target:
+                results.append(list(path))
+                return
+            neighbors = self.conn.execute(
+                "SELECT target FROM edges WHERE source = ?", (current,)
+            ).fetchall()
+            for (nxt,) in neighbors:
+                if nxt not in visited:
+                    visited.add(nxt)
+                    path.append(nxt)
+                    _dfs(nxt, target, path, visited)
+                    path.pop()
+                    visited.discard(nxt)
+
+        _dfs(from_id, to_id, [from_id], {from_id})
+        return results
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
@@ -1677,5 +1750,3 @@ def demo():
 
 if __name__ == "__main__":
     demo()
-
-    # (inserted before visualize_ascii — we'll add the method properly)
