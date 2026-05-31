@@ -2187,3 +2187,74 @@ class TestEvolve:
         a, b, c, d = g.add("A"), g.add("B"), g.add("C"), g.add("D")
         g.link(a.id, c.id, "r"); g.link(b.id, d.id, "r")
         assert g.adamic_adar(a.id, b.id) == 0.0
+
+    # --- revert_evolution ---
+
+    def test_revert_to_step_0(self):
+        g = MemoryGraph()
+        n = g.add("v1", kind="fact")
+        g.evolve(n.id, new_label="v2")
+        g.evolve(n.id, new_label="v3")
+        result = g.revert_evolution(n.id, 0)
+        assert result.label == "v2"
+        assert result.kind == "fact"
+        hist = g.evolution_history(n.id)
+        assert len(hist) == 1  # only step 0 remains
+
+    def test_revert_to_middle_step(self):
+        g = MemoryGraph()
+        n = g.add("alpha", kind="note")
+        g.evolve(n.id, new_label="beta", new_kind="fact")  # step 0
+        g.evolve(n.id, new_label="gamma")  # step 1
+        g.evolve(n.id, new_kind="event")  # step 2
+        result = g.revert_evolution(n.id, 1)  # revert to state after step 1 (gamma/fact)
+        assert result.label == "gamma"
+        assert result.kind == "fact"
+        hist = g.evolution_history(n.id)
+        assert len(hist) == 2  # steps 0 and 1
+
+    def test_revert_nonexistent_node(self):
+        g = MemoryGraph()
+        assert g.revert_evolution("nope", 0) is None
+
+    def test_revert_invalid_step(self):
+        g = MemoryGraph()
+        n = g.add("x")
+        g.evolve(n.id, new_label="y")
+        assert g.revert_evolution(n.id, 5) is None  # out of range
+        assert g.revert_evolution(n.id, -1) is None
+
+    def test_revert_no_history(self):
+        g = MemoryGraph()
+        n = g.add("never-evolved")
+        assert g.revert_evolution(n.id, 0) is None
+
+    # --- batch_evolve ---
+
+    def test_batch_evolve_multiple(self):
+        g = MemoryGraph()
+        a = g.add("A", kind="fact")
+        b = g.add("B", kind="note")
+        results = g.batch_evolve([
+            {"node_id": a.id, "new_label": "A2"},
+            {"node_id": b.id, "new_kind": "event"},
+        ])
+        assert len(results) == 2
+        assert results[0].label == "A2"
+        assert results[1].kind == "event"
+
+    def test_batch_evolve_with_failure(self):
+        g = MemoryGraph()
+        a = g.add("A")
+        results = g.batch_evolve([
+            {"node_id": a.id, "new_label": "A2"},
+            {"node_id": "nope", "new_label": "X"},
+            {"new_label": "no node_id"},
+        ])
+        assert results[0].label == "A2"
+        assert results[1] is None
+        assert results[2] is None
+
+    def test_batch_evolve_empty(self):
+        g = MemoryGraph()
+        assert g.batch_evolve([]) == []

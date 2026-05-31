@@ -1599,6 +1599,52 @@ class MemoryGraph:
             for r in rows
         ]
 
+    def revert_evolution(self, node_id: str, step_index: int) -> Optional[Node]:
+        """Revert a node to a specific evolution step (0-based index into evolution_history).
+        Removes all evolution_log entries after step_index and restores label/kind.
+        Returns the reverted node, or None if not found / invalid step."""
+        node = self.get_node(node_id)
+        if node is None:
+            return None
+        history = self.evolution_history(node_id)
+        if not history or step_index < 0 or step_index >= len(history):
+            return None
+        # The label/kind at step_index is the NEW state of that step.
+        # We revert TO that step's new_label/new_kind.
+        target = history[step_index]
+        # Delete log entries after step_index
+        rows = self.conn.execute(
+            "SELECT id FROM evolution_log WHERE node_id=? ORDER BY id ASC",
+            (node_id,)
+        ).fetchall()
+        ids_to_delete = [r[0] for r in rows[step_index + 1:]]
+        if ids_to_delete:
+            placeholders = ",".join("?" * len(ids_to_delete))
+            self.conn.execute(
+                f"DELETE FROM evolution_log WHERE id IN ({placeholders})",
+                ids_to_delete
+            )
+        self.conn.execute(
+            "UPDATE nodes SET label=?, kind=? WHERE id=?",
+            (target["new_label"], target["new_kind"], node_id)
+        )
+        self.conn.commit()
+        node.label = target["new_label"]
+        node.kind = target["new_kind"]
+        return node
+
+    def batch_evolve(self, mapping: list[dict]) -> list[Optional[Node]]:
+        """Evolve multiple nodes in one call. Each dict: {node_id, new_label?, new_kind?}.
+        Returns list of updated nodes (None for failures). Single transaction."""
+        results = []
+        for item in mapping:
+            nid = item.get("node_id")
+            if nid is None:
+                results.append(None)
+                continue
+            results.append(self.evolve(nid, item.get("new_label"), item.get("new_kind")))
+        return results
+
     def is_dag(self) -> bool:
         """Check if the graph is a Directed Acyclic Graph (no cycles)."""
         visited = set()
