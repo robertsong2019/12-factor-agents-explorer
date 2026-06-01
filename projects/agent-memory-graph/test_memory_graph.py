@@ -2404,3 +2404,55 @@ class TestEvolve:
         ancestors = g.ancestor_graph(c.id, max_depth=1)
         assert b.id in ancestors
         assert a.id not in ancestors
+
+    # ── Snapshot & Hash Tests ─────────────────────────────
+
+    def test_graph_hash_deterministic(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        g.link(a.id, b.id, "knows")
+        h1 = g.graph_hash()
+        h2 = g.graph_hash()
+        assert h1 == h2
+        assert len(h1) == 32  # MD5 hex
+
+    def test_graph_hash_changes_on_mutation(self):
+        g = MemoryGraph()
+        g.add("A")
+        h1 = g.graph_hash()
+        g.add("B")
+        h2 = g.graph_hash()
+        assert h1 != h2
+
+    def test_graph_hash_empty(self):
+        g = MemoryGraph()
+        assert len(g.graph_hash()) == 32
+
+    def test_snapshot_restore(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        g.link(a.id, b.id, "knows", 0.7)
+        snap = g.snapshot()
+        g.add("C")
+        assert g.stats()["nodes"] == 3
+        g.restore(snap)
+        assert g.stats()["nodes"] == 2
+        assert g.get_edge(a.id, b.id, "knows") is not None
+
+    def test_snapshot_restore_empty(self):
+        g = MemoryGraph()
+        g.add("X")
+        snap = g.snapshot()
+        g.add("Y")
+        g.restore(snap)
+        assert g.stats()["nodes"] == 1
+
+    def test_snapshot_preserves_evolution(self):
+        g = MemoryGraph()
+        a = g.add("A")
+        g.evolve(a.id, new_label="A2")
+        snap = g.snapshot()
+        g.evolve(a.id, new_label="A3")
+        assert len(g.evolution_history(a.id)) == 2
+        g.restore(snap)
+        assert len(g.evolution_history(a.id)) == 1

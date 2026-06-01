@@ -1882,6 +1882,53 @@ class MemoryGraph:
         self.conn.commit()
         return True
 
+    def graph_hash(self) -> str:
+        """Return a deterministic structural fingerprint (MD5) of the graph.
+        Based on sorted node/edge data, not IDs."""
+        import hashlib
+        parts = []
+        for r in self.conn.execute("SELECT label, kind, weight FROM nodes ORDER BY label").fetchall():
+            parts.append(f"n:{r['label']}|{r['kind']}|{r['weight']:.4f}")
+        for r in self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges ORDER BY source, target, relation"
+        ).fetchall():
+            parts.append(f"e:{r['source']}|{r['target']}|{r['relation']}|{r['weight']:.4f}")
+        return hashlib.md5("\n".join(parts).encode()).hexdigest()
+
+    def snapshot(self) -> dict:
+        """Capture complete graph state as a dict (nodes + edges + evolution log)."""
+        return {
+            "nodes": [dict(r) for r in self.conn.execute("SELECT * FROM nodes").fetchall()],
+            "edges": [dict(r) for r in self.conn.execute("SELECT * FROM edges").fetchall()],
+            "evolution": [dict(r) for r in self.conn.execute("SELECT * FROM evolution_log").fetchall()],
+            "edge_props": [dict(r) for r in self.conn.execute("SELECT * FROM edge_props").fetchall()],
+        }
+
+    def restore(self, snap: dict) -> None:
+        """Restore graph to a previously captured snapshot state."""
+        self.conn.executescript("DELETE FROM edge_props; DELETE FROM evolution_log; DELETE FROM edges; DELETE FROM nodes;")
+        for n in snap.get("nodes", []):
+            self.conn.execute(
+                "INSERT INTO nodes (id, label, kind, data, created, accessed, weight, tags) VALUES (?,?,?,?,?,?,?,?)",
+                (n["id"], n["label"], n["kind"], n["data"], n["created"], n["accessed"], n["weight"], n.get("tags", "[]"))
+            )
+        for e in snap.get("edges", []):
+            self.conn.execute(
+                "INSERT INTO edges (source, target, relation, weight) VALUES (?,?,?,?)",
+                (e["source"], e["target"], e["relation"], e["weight"])
+            )
+        for ev in snap.get("evolution", []):
+            self.conn.execute(
+                "INSERT INTO evolution_log (id, node_id, old_label, new_label, old_kind, new_kind, timestamp) VALUES (?,?,?,?,?,?,?)",
+                (ev["id"], ev["node_id"], ev["old_label"], ev["new_label"], ev["old_kind"], ev["new_kind"], ev["timestamp"])
+            )
+        for ep in snap.get("edge_props", []):
+            self.conn.execute(
+                "INSERT INTO edge_props (source, target, relation, properties) VALUES (?,?,?,?)",
+                (ep["source"], ep["target"], ep["relation"], ep["properties"])
+            )
+        self.conn.commit()
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
