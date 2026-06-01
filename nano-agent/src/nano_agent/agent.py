@@ -147,7 +147,10 @@ class Agent:
     def _execute_tool(self, tool_call: Dict[str, Any]) -> str:
         """执行工具调用"""
         tool_name = tool_call["name"]
-        arguments = json.loads(tool_call["arguments"])
+        try:
+            arguments = json.loads(tool_call["arguments"])
+        except (json.JSONDecodeError, TypeError) as e:
+            return f"错误: 无效的参数格式 - {e}"
 
         # 查找工具
         tool = next((t for t in self.tools if t.name == tool_name), None)

@@ -93,6 +93,8 @@ class Memory:
 
     def get_recent(self, n: int = 5) -> List[MemoryEntry]:
         """获取最近的记忆"""
+        if n <= 0:
+            return []
         return self._entries[-n:]
 
     def get_all(self) -> List[MemoryEntry]:
