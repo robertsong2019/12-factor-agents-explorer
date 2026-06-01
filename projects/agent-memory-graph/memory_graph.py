@@ -83,6 +83,13 @@ class MemoryGraph:
                 timestamp REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_evo_node ON evolution_log(node_id);
+            CREATE TABLE IF NOT EXISTS edge_props (
+                source TEXT,
+                target TEXT,
+                relation TEXT,
+                properties TEXT DEFAULT '{}',
+                PRIMARY KEY (source, target, relation)
+            );
         """)
 
     def add(self, label: str, kind: str = "fact", data: dict = None, tags: list[str] = None) -> Node:
@@ -1760,6 +1767,64 @@ class MemoryGraph:
             if deg > 1:
                 score += 1.0 / (1.0 + deg)  # avoid log(0), use deg+1
         return score
+
+    # ── Edge Management ──────────────────────────────────
+
+    def get_edge(self, source_id: str, target_id: str, relation: str) -> Optional[Edge]:
+        """Get a specific edge by source, target, and relation. Returns None if not found."""
+        row = self.conn.execute(
+            "SELECT * FROM edges WHERE source=? AND target=? AND relation=?",
+            (source_id, target_id, relation)
+        ).fetchone()
+        if not row:
+            return None
+        return Edge(row["source"], row["target"], row["relation"], row["weight"])
+
+    def update_edge(self, source_id: str, target_id: str, relation: str,
+                    weight: float = None, new_relation: str = None) -> Optional[Edge]:
+        """Update an edge's weight and/or rename its relation. Returns updated Edge or None."""
+        existing = self.get_edge(source_id, target_id, relation)
+        if not existing:
+            return None
+        if new_relation and new_relation != relation:
+            # Rename relation: insert new, delete old
+            self.conn.execute(
+                "INSERT INTO edges (source, target, relation, weight) VALUES (?, ?, ?, ?)",
+                (source_id, target_id, new_relation, weight if weight is not None else existing.weight)
+            )
+            self.conn.execute(
+                "DELETE FROM edges WHERE source=? AND target=? AND relation=?",
+                (source_id, target_id, relation)
+            )
+        elif weight is not None:
+            self.conn.execute(
+                "UPDATE edges SET weight=? WHERE source=? AND target=? AND relation=?",
+                (weight, source_id, target_id, relation)
+            )
+        self.conn.commit()
+        return self.get_edge(source_id, target_id, new_relation or relation)
+
+    def edge_properties(self, source_id: str, target_id: str, relation: str) -> Optional[dict]:
+        """Get edge properties (metadata dict stored in data column). Returns None if edge not found."""
+        row = self.conn.execute(
+            "SELECT properties FROM edge_props WHERE source=? AND target=? AND relation=?",
+            (source_id, target_id, relation)
+        ).fetchone()
+        if not row:
+            return None
+        return json.loads(row["properties"])
+
+    def set_edge_properties(self, source_id: str, target_id: str, relation: str,
+                            properties: dict) -> bool:
+        """Set edge properties (upsert). Returns False if edge doesn't exist."""
+        if not self.get_edge(source_id, target_id, relation):
+            return False
+        self.conn.execute(
+            "INSERT OR REPLACE INTO edge_props (source, target, relation, properties) VALUES (?, ?, ?, ?)",
+            (source_id, target_id, relation, json.dumps(properties))
+        )
+        self.conn.commit()
+        return True
 
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""

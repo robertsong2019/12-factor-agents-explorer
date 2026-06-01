@@ -2258,3 +2258,85 @@ class TestEvolve:
     def test_batch_evolve_empty(self):
         g = MemoryGraph()
         assert g.batch_evolve([]) == []
+
+    # ── Edge Management Tests ──────────────────────────────
+
+    def test_get_edge(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        g.link(a.id, b.id, "knows", 0.8)
+        edge = g.get_edge(a.id, b.id, "knows")
+        assert edge is not None
+        assert edge.source == a.id
+        assert edge.target == b.id
+        assert edge.relation == "knows"
+        assert edge.weight == 0.8
+
+    def test_get_edge_not_found(self):
+        g = MemoryGraph()
+        assert g.get_edge("x", "y", "z") is None
+
+    def test_update_edge_weight(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        g.link(a.id, b.id, "knows", 0.5)
+        updated = g.update_edge(a.id, b.id, "knows", weight=0.9)
+        assert updated is not None
+        assert updated.weight == 0.9
+        # Old edge is gone
+        check = g.get_edge(a.id, b.id, "knows")
+        assert check.weight == 0.9
+
+    def test_update_edge_rename_relation(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        g.link(a.id, b.id, "likes", 0.7)
+        updated = g.update_edge(a.id, b.id, "likes", new_relation="loves")
+        assert updated is not None
+        assert updated.relation == "loves"
+        assert updated.weight == 0.7
+        # Old relation gone
+        assert g.get_edge(a.id, b.id, "likes") is None
+        assert g.get_edge(a.id, b.id, "loves") is not None
+
+    def test_update_edge_rename_with_weight(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        g.link(a.id, b.id, "old", 0.5)
+        updated = g.update_edge(a.id, b.id, "old", weight=1.0, new_relation="new")
+        assert updated.relation == "new"
+        assert updated.weight == 1.0
+
+    def test_update_edge_nonexistent(self):
+        g = MemoryGraph()
+        assert g.update_edge("x", "y", "z", weight=0.5) is None
+
+    def test_update_edge_noop(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        g.link(a.id, b.id, "knows", 0.5)
+        # No changes specified
+        result = g.update_edge(a.id, b.id, "knows")
+        assert result is not None
+        assert result.weight == 0.5
+
+    def test_edge_properties(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        g.link(a.id, b.id, "knows")
+        assert g.edge_properties(a.id, b.id, "knows") is None
+        assert g.set_edge_properties(a.id, b.id, "knows", {"since": 2020, "trust": 0.9})
+        props = g.edge_properties(a.id, b.id, "knows")
+        assert props == {"since": 2020, "trust": 0.9}
+
+    def test_set_edge_properties_no_edge(self):
+        g = MemoryGraph()
+        assert g.set_edge_properties("x", "y", "z", {"a": 1}) is False
+
+    def test_edge_properties_upsert(self):
+        g = MemoryGraph()
+        a, b = g.add("A"), g.add("B")
+        g.link(a.id, b.id, "knows")
+        g.set_edge_properties(a.id, b.id, "knows", {"v": 1})
+        g.set_edge_properties(a.id, b.id, "knows", {"v": 2, "extra": True})
+        assert g.edge_properties(a.id, b.id, "knows") == {"v": 2, "extra": True}
