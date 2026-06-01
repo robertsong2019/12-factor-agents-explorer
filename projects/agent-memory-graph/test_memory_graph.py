@@ -2498,3 +2498,122 @@ class TestEvolve:
     def test_dedup_empty_graph(self):
         g = MemoryGraph()
         assert g.dedup_nodes() == []
+
+    # ── merge_evolution tests ────────────────────────────
+
+    def test_merge_evolution_collapses_history(self):
+        """Merging evolution collapses multiple steps into one summary entry."""
+        g = MemoryGraph()
+        n = g.add("v1", "concept")
+        g.evolve(n.id, "v2")
+        g.evolve(n.id, "v3")
+        g.evolve(n.id, "v4")
+        assert len(g.evolution_history(n.id)) == 3
+        result = g.merge_evolution(n.id)
+        assert result is not None
+        assert result["old_label"] == "v1"
+        assert result["new_label"] == "v4"
+        assert result["steps_collapsed"] == 3
+        history = g.evolution_history(n.id)
+        assert len(history) == 1
+        assert history[0]["old_label"] == "v1"
+        assert history[0]["new_label"] == "v4"
+
+    def test_merge_evolution_single_step(self):
+        """Merging a single-step history is a no-op (still collapses to 1 entry)."""
+        g = MemoryGraph()
+        n = g.add("original", "concept")
+        g.evolve(n.id, "updated")
+        result = g.merge_evolution(n.id)
+        assert result is not None
+        assert result["steps_collapsed"] == 1
+        assert len(g.evolution_history(n.id)) == 1
+
+    def test_merge_evolution_no_history(self):
+        """Merging a node with no evolution history returns None."""
+        g = MemoryGraph()
+        n = g.add("unchanged", "concept")
+        assert g.merge_evolution(n.id) is None
+
+    def test_merge_evolution_nonexistent_node(self):
+        """Merging evolution for a nonexistent node returns None."""
+        g = MemoryGraph()
+        assert g.merge_evolution(9999) is None
+
+    def test_merge_evolution_preserves_kinds(self):
+        """Merging captures original and final kinds across multiple kind changes."""
+        g = MemoryGraph()
+        n = g.add("draft", "note")
+        g.evolve(n.id, new_kind="concept")
+        g.evolve(n.id, new_kind="topic")
+        g.evolve(n.id, new_label="final", new_kind="category")
+        result = g.merge_evolution(n.id)
+        assert result["old_kind"] == "note"
+        assert result["new_kind"] == "category"
+        assert result["old_label"] == "draft"
+        assert result["new_label"] == "final"
+
+    def test_merge_evolution_independent_per_node(self):
+        """Merging evolution for one node doesn't affect another node's history."""
+        g = MemoryGraph()
+        a = g.add("a_v1", "concept")
+        b = g.add("b_v1", "concept")
+        g.evolve(a.id, "a_v2")
+        g.evolve(a.id, "a_v3")
+        g.evolve(b.id, "b_v2")
+        g.merge_evolution(a.id)
+        assert len(g.evolution_history(a.id)) == 1
+        assert len(g.evolution_history(b.id)) == 1  # b still has its own 1 entry
+        assert g.evolution_history(b.id)[0]["new_label"] == "b_v2"
+
+    # ── evolution_summary tests ──────────────────────────
+
+    def test_evolution_summary_empty_graph(self):
+        """Summary of empty graph has zero everything."""
+        g = MemoryGraph()
+        s = g.evolution_summary()
+        assert s["total_nodes"] == 0
+        assert s["evolved_nodes"] == 0
+        assert s["total_steps"] == 0
+        assert s["avg_steps"] == 0.0
+        assert s["most_evolved"] == []
+
+    def test_evolution_summary_no_evolution(self):
+        """Graph with nodes but no evolution has zero evolved_nodes."""
+        g = MemoryGraph()
+        g.add("a", "concept")
+        g.add("b", "concept")
+        s = g.evolution_summary()
+        assert s["total_nodes"] == 2
+        assert s["evolved_nodes"] == 0
+        assert s["total_steps"] == 0
+
+    def test_evolution_summary_with_evolution(self):
+        """Summary correctly counts evolved nodes and total steps."""
+        g = MemoryGraph()
+        a = g.add("a1", "concept")
+        b = g.add("b1", "concept")
+        c = g.add("c1", "concept")
+        g.evolve(a.id, "a2")
+        g.evolve(a.id, "a3")
+        g.evolve(b.id, "b2")
+        # c not evolved
+        s = g.evolution_summary()
+        assert s["total_nodes"] == 3
+        assert s["evolved_nodes"] == 2
+        assert s["total_steps"] == 3
+        assert s["avg_steps"] == 1.5
+        assert s["most_evolved"][0]["node_id"] == a.id
+        assert s["most_evolved"][0]["steps"] == 2
+
+    def test_evolution_summary_most_evolved_top5(self):
+        """most_evolved returns at most 5 entries, sorted by steps descending."""
+        g = MemoryGraph()
+        for i in range(7):
+            n = g.add(f"n{i}", "concept")
+            for j in range(i + 1):
+                g.evolve(n.id, f"n{i}_v{j + 2}")
+        s = g.evolution_summary()
+        assert len(s["most_evolved"]) == 5
+        assert s["most_evolved"][0]["steps"] == 7
+        assert s["most_evolved"][4]["steps"] == 3

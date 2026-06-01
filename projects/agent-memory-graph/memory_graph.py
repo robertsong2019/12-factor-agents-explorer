@@ -1974,6 +1974,56 @@ class MemoryGraph:
         self.conn.commit()
         return merged_groups
 
+    def merge_evolution(self, node_id: str) -> Optional[dict]:
+        """Collapse all evolution steps for a node into a single summary entry.
+        The summary records the original state → final state as one transition.
+        Returns the summary dict, or None if node doesn't exist or has no history."""
+        node = self.get_node(node_id)
+        if node is None:
+            return None
+        history = self.evolution_history(node_id)
+        if not history:
+            return None
+        first = history[0]
+        last = history[-1]
+        summary = {
+            "node_id": node_id,
+            "old_label": first["old_label"],
+            "new_label": last["new_label"],
+            "old_kind": first["old_kind"],
+            "new_kind": last["new_kind"],
+            "steps_collapsed": len(history),
+            "timestamp": last["timestamp"],
+        }
+        # Delete all existing entries and insert single summary
+        self.conn.execute("DELETE FROM evolution_log WHERE node_id=?", (node_id,))
+        self.conn.execute(
+            "INSERT INTO evolution_log (node_id, old_label, new_label, old_kind, new_kind, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+            (node_id, summary["old_label"], summary["new_label"],
+             summary["old_kind"], summary["new_kind"], summary["timestamp"])
+        )
+        self.conn.commit()
+        return summary
+
+    def evolution_summary(self) -> dict:
+        """Global evolution statistics across all nodes.
+        Returns: {total_nodes, evolved_nodes, total_steps, most_evolved, avg_steps}."""
+        total_nodes = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        evolved = self.conn.execute(
+            "SELECT node_id, COUNT(*) as steps FROM evolution_log GROUP BY node_id ORDER BY steps DESC"
+        ).fetchall()
+        evolved_nodes = len(evolved)
+        total_steps = sum(r["steps"] for r in evolved)
+        most_evolved = [{"node_id": r["node_id"], "steps": r["steps"]} for r in evolved[:5]]
+        avg_steps = round(total_steps / evolved_nodes, 2) if evolved_nodes > 0 else 0.0
+        return {
+            "total_nodes": total_nodes,
+            "evolved_nodes": evolved_nodes,
+            "total_steps": total_steps,
+            "most_evolved": most_evolved,
+            "avg_steps": avg_steps,
+        }
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
