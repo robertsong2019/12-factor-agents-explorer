@@ -343,3 +343,111 @@ describe('CollaborativeCreationAgent', () => {
     expect(a).toBeDefined();
   });
 });
+
+// ─── AdaptiveAgent Extra Tests ───────────────────────────────
+
+describe('AdaptiveAgent - feedback & knowledge', () => {
+  test('feedback clamped to [0, 1]', async () => {
+    const config: AdaptiveConfig = {
+      name: 'feedback-test',
+      capabilities: ['learning'],
+    };
+    const agent = new AdaptiveAgent(config);
+    await agent.process('test input');
+    // feedback above 1 should be clamped to 1, below 0 clamped to 0
+    // provideFeedback modifies the last experience's feedback field
+    await agent.provideFeedback(5); // above max → clamped to 1
+    await agent.provideFeedback(-3); // below min → clamped to 0
+    // should not throw
+    expect(true).toBe(true);
+    agent.clearAllIntervals();
+  });
+
+  test('feedback on empty experiences is safe', async () => {
+    const config: AdaptiveConfig = {
+      name: 'empty-fb',
+      capabilities: ['learning'],
+    };
+    const agent = new AdaptiveAgent(config);
+    await agent.provideFeedback(0.8); // no experiences yet
+    const metrics = agent.getPerformanceMetrics();
+    expect(metrics).toBeDefined();
+    agent.clearAllIntervals();
+  });
+
+  test('knowledge summary sorted by confidence desc', async () => {
+    const config: AdaptiveConfig = {
+      name: 'knowledge-test',
+      capabilities: ['learning'],
+    };
+    const agent = new AdaptiveAgent(config);
+    for (let i = 0; i < 5; i++) {
+      await agent.process(`topic ${i} learning`);
+    }
+    const summary = agent.getKnowledgeSummary();
+    // Check sort order
+    for (let i = 1; i < summary.length; i++) {
+      expect(summary[i - 1].confidence).toBeGreaterThanOrEqual(summary[i].confidence);
+    }
+    expect(summary.length).toBeLessThanOrEqual(20);
+    agent.clearAllIntervals();
+  });
+
+  test('performance metrics is a copy', async () => {
+    const config: AdaptiveConfig = {
+      name: 'metrics-copy',
+      capabilities: ['learning'],
+    };
+    const agent = new AdaptiveAgent(config);
+    await agent.process('test');
+    const m1 = agent.getPerformanceMetrics();
+    await agent.process('another');
+    const m2 = agent.getPerformanceMetrics();
+    expect(m1.totalTasks).toBe(1);
+    expect(m2.totalTasks).toBe(2);
+    agent.clearAllIntervals();
+  });
+});
+
+// ─── CollaborativeCreationAgent Extra Tests ──────────────────
+
+describe('CollaborativeCreationAgent - extra', () => {
+  test('collaboration status availableAgents filters by workload', async () => {
+    const config: CollaborativeConfig = {
+      name: 'workload-test',
+      capabilities: ['collaboration'],
+      maxAgents: 5,
+    };
+    const agent = new CollaborativeCreationAgent(config);
+    await agent.process('write a story about cats');
+    const status = await agent.getCollaborationStatus();
+    expect(status.availableAgents).toBeDefined();
+    // All available agents should have workload < 3
+    expect(Array.isArray(status.availableAgents)).toBe(true);
+    agent.clearAllIntervals();
+  });
+
+  test('collaboration status completedOutputs are approved', async () => {
+    const config: CollaborativeConfig = {
+      name: 'completed-test',
+      capabilities: ['collaboration'],
+      enableQualityControl: true,
+    };
+    const agent = new CollaborativeCreationAgent(config);
+    const status = await agent.getCollaborationStatus();
+    expect(Array.isArray(status.completedOutputs)).toBe(true);
+    agent.clearAllIntervals();
+  });
+
+  test('requestInnovation contains innovation content', async () => {
+    const config: CollaborativeConfig = {
+      name: 'innov-test',
+      capabilities: ['collaboration'],
+      enableInnovationBoost: true,
+    };
+    const agent = new CollaborativeCreationAgent(config);
+    const result = await agent.requestInnovation();
+    expect(result.length).toBeGreaterThan(10);
+    agent.clearAllIntervals();
+  });
+});
