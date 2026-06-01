@@ -22,3 +22,13 @@ timestamp	commit	metric	value	status	description
 2026-05-28T19:30	97b998f	test_count	209/209	keep	anonymize()+bfs_order() — privacy-safe graph export + BFS traversal. +8 tests (201→209). Zero regressions.
 2026-05-29T19:15	4fe42f6	test_count	226/226	keep	merge_graph(union/update)+diff_summary+group_by(kind/tag)+link_strength — graph merge/sync, diff analysis, node grouping, edge weight ranking. +17 tests (209→226). Zero regressions.
 2026-05-29T19:25	106d2f5	test_count	234/234	keep	random_node+unlink_all+edge_count — random sampling, bulk edge removal, edge counting by relation. +8 tests (226→234). Zero regressions.
+2026-05-29T19:35	48c7ae8	test_count	242/242	keep	find_components+distance_matrix — connected components detection + all-pairs shortest-path BFS. +8 tests (234→242). Zero regressions.
+2026-05-30T01:00	e5fd633	test_count	252/252	keep	cluster(kind,threshold)+induced_subgraph(node_ids) — label-similarity clustering via Levenshtein+UnionFind + induced subgraph extraction. +10 tests (242→252). Zero regressions.
+2026-05-31T01:00	d4163e5	test_count	262/262	keep	evolve(node_id, new_label, new_kind) + evolution_history(node_id) — node evolution with audit trail. Logs old/new label+kind to evolution_log table. +10 tests (252→262). Zero regressions.
+2026-05-31T19:00	55ff648	test_count	272/272	keep	is_dag()+topological_sort()+find_paths() — cycle detection (DFS), Kahn's topo sort, all-simple-paths DFS. +10 tests (262→272). Zero regressions.
+2026-05-31T19:15	fce1a98	test_count	278/278	keep	jaccard_similarity()+neighborhood_overlap()+adamic_adar() — link prediction via neighbor set similarity. +6 tests (272→278). Zero regressions.
+2026-06-01T01:00	655e03b	test_count	286/286	keep	revert_evolution(node_id, step_index) + batch_evolve(mapping) — evolution undo to specific step + batch node evolution. +8 tests (278→286). Zero regressions.
+2026-06-01T21:00	706af52	test_count	296/296	keep	get_edge()+update_edge()+edge_properties()+set_edge_properties() — edge CRUD + metadata storage (edge_props table). +10 tests (286→296). Zero regressions.
+2026-06-01T21:10	eef3aae	test_count	304/304	keep	dfs_order()+ancestor_graph()+descendant_graph() — DFS traversal + directed ancestor/descendant traversal. +8 tests (296→304). Zero regressions.
+2026-06-01T21:20	91bd645	test_count	310/310	keep	graph_hash()+snapshot()+restore() — structural MD5 fingerprint + complete graph state capture/restore (nodes+edges+evolution+edge_props). +6 tests (304→310). Zero regressions.
+2026-06-01T21:30	b563ee2	test_count	315/315	keep	dedup_nodes(similarity_threshold) — fuzzy label dedup via Levenshtein distance + merge_nodes. +5 tests (310→315). Zero regressions.
