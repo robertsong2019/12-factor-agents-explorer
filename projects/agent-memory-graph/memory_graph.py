@@ -1929,6 +1929,51 @@ class MemoryGraph:
             )
         self.conn.commit()
 
+    def dedup_nodes(self, similarity_threshold: float = 0.8) -> list[dict]:
+        """Find and merge nodes with similar labels (Levenshtein-based).
+        Returns list of merged groups: [{kept_id, merged_ids, label}]."""
+        def _levenshtein(a, b):
+            if len(a) < len(b):
+                return _levenshtein(b, a)
+            if not b:
+                return len(a)
+            prev = list(range(len(b) + 1))
+            for i, ca in enumerate(a):
+                curr = [i + 1]
+                for j, cb in enumerate(b):
+                    curr.append(min(prev[j + 1] + 1, curr[j] + 1,
+                                    prev[j] + (0 if ca == cb else 1)))
+                prev = curr
+            return prev[-1]
+
+        nodes = self.conn.execute("SELECT id, label FROM nodes").fetchall()
+        merged_groups = []
+        already_merged = set()
+
+        for i, n1 in enumerate(nodes):
+            if n1["id"] in already_merged:
+                continue
+            group = []
+            for n2 in nodes[i + 1:]:
+                if n2["id"] in already_merged:
+                    continue
+                max_len = max(len(n1["label"]), len(n2["label"]), 1)
+                dist = _levenshtein(n1["label"], n2["label"])
+                sim = 1.0 - dist / max_len
+                if sim >= similarity_threshold and n1["id"] != n2["id"]:
+                    group.append(n2)
+            if group:
+                for dup in group:
+                    self.merge_nodes(dup["id"], n1["id"])
+                    already_merged.add(dup["id"])
+                merged_groups.append({
+                    "kept_id": n1["id"],
+                    "merged_ids": [d["id"] for d in group],
+                    "label": n1["label"]
+                })
+        self.conn.commit()
+        return merged_groups
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

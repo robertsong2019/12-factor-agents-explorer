@@ -2456,3 +2456,45 @@ class TestEvolve:
         assert len(g.evolution_history(a.id)) == 2
         g.restore(snap)
         assert len(g.evolution_history(a.id)) == 1
+
+    # ── Dedup Tests ───────────────────────────────────────
+
+    def test_dedup_nodes_exact(self):
+        g = MemoryGraph()
+        g.add("Python", "skill")
+        g.add("Python", "skill")
+        assert g.stats()["nodes"] == 2
+        result = g.dedup_nodes()
+        assert len(result) == 1
+        assert g.stats()["nodes"] == 1
+
+    def test_dedup_nodes_fuzzy(self):
+        g = MemoryGraph()
+        g.add("Python", "skill")
+        g.add("Python3", "skill")  # very similar
+        result = g.dedup_nodes(similarity_threshold=0.8)
+        assert len(result) == 1
+        assert g.stats()["nodes"] == 1
+
+    def test_dedup_nodes_no_match(self):
+        g = MemoryGraph()
+        g.add("Python", "skill")
+        g.add("Rust", "skill")
+        result = g.dedup_nodes(similarity_threshold=0.8)
+        assert len(result) == 0
+        assert g.stats()["nodes"] == 2
+
+    def test_dedup_nodes_transfers_edges(self):
+        g = MemoryGraph()
+        target = g.add("Target")
+        dup1 = g.add("Python")
+        dup2 = g.add("Python3")
+        g.link(dup1.id, target.id, "teaches")
+        g.dedup_nodes(similarity_threshold=0.8)
+        # dup2 merged into dup1, dup1's edge should survive
+        assert g.stats()["nodes"] == 2
+        assert g.get_edge(dup1.id, target.id, "teaches") is not None
+
+    def test_dedup_empty_graph(self):
+        g = MemoryGraph()
+        assert g.dedup_nodes() == []
