@@ -1394,6 +1394,62 @@ class MemoryGraph:
                     queue.append((nb, depth + 1))
         return order
 
+    def dfs_order(self, start_id: str, max_depth: int = 10) -> list[str]:
+        """Return node ids in DFS traversal order from start_id."""
+        if not self.has_node(start_id):
+            return []
+        visited = set()
+        order = []
+        def _dfs(nid, depth):
+            if nid in visited or depth > max_depth:
+                return
+            visited.add(nid)
+            order.append(nid)
+            for r in self.conn.execute("SELECT target FROM edges WHERE source=?", (nid,)).fetchall():
+                _dfs(r["target"], depth + 1)
+            for r in self.conn.execute("SELECT source FROM edges WHERE target=?", (nid,)).fetchall():
+                _dfs(r["source"], depth + 1)
+        _dfs(start_id, 0)
+        return order
+
+    def ancestor_graph(self, node_id: str, max_depth: int = 10) -> list[str]:
+        """Return all ancestor node ids (following incoming edges) up to max_depth."""
+        if not self.has_node(node_id):
+            return []
+        visited = set()
+        queue = [(node_id, 0)]
+        result = []
+        while queue:
+            nid, depth = queue.pop(0)
+            if nid in visited or depth > max_depth:
+                continue
+            visited.add(nid)
+            if nid != node_id:
+                result.append(nid)
+            for r in self.conn.execute("SELECT source FROM edges WHERE target=?", (nid,)).fetchall():
+                if r["source"] not in visited:
+                    queue.append((r["source"], depth + 1))
+        return result
+
+    def descendant_graph(self, node_id: str, max_depth: int = 10) -> list[str]:
+        """Return all descendant node ids (following outgoing edges) up to max_depth."""
+        if not self.has_node(node_id):
+            return []
+        visited = set()
+        queue = [(node_id, 0)]
+        result = []
+        while queue:
+            nid, depth = queue.pop(0)
+            if nid in visited or depth > max_depth:
+                continue
+            visited.add(nid)
+            if nid != node_id:
+                result.append(nid)
+            for r in self.conn.execute("SELECT target FROM edges WHERE source=?", (nid,)).fetchall():
+                if r["target"] not in visited:
+                    queue.append((r["target"], depth + 1))
+        return result
+
     def random_node(self) -> Optional[Node]:
         """Return a random node from the graph, or None if empty."""
         row = self.conn.execute("SELECT id FROM nodes ORDER BY RANDOM() LIMIT 1").fetchone()

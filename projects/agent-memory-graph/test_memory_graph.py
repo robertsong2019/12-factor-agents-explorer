@@ -2340,3 +2340,67 @@ class TestEvolve:
         g.set_edge_properties(a.id, b.id, "knows", {"v": 1})
         g.set_edge_properties(a.id, b.id, "knows", {"v": 2, "extra": True})
         assert g.edge_properties(a.id, b.id, "knows") == {"v": 2, "extra": True}
+
+    # ── Traversal Tests ───────────────────────────────────
+
+    def test_dfs_order(self):
+        g = MemoryGraph()
+        a, b, c, d = g.add("A"), g.add("B"), g.add("C"), g.add("D")
+        g.link(a.id, b.id, "to")
+        g.link(b.id, c.id, "to")
+        g.link(a.id, d.id, "to")
+        order = g.dfs_order(a.id)
+        assert order[0] == a.id
+        assert len(order) == 4
+        assert set(order) == {a.id, b.id, c.id, d.id}
+
+    def test_dfs_order_missing(self):
+        g = MemoryGraph()
+        assert g.dfs_order("nonexistent") == []
+
+    def test_dfs_order_max_depth(self):
+        g = MemoryGraph()
+        a, b, c = g.add("A"), g.add("B"), g.add("C")
+        g.link(a.id, b.id, "to")
+        g.link(b.id, c.id, "to")
+        order = g.dfs_order(a.id, max_depth=1)
+        assert a.id in order
+        assert b.id in order
+        assert c.id not in order
+
+    def test_ancestor_graph(self):
+        g = MemoryGraph()
+        a, b, c = g.add("A"), g.add("B"), g.add("C")
+        g.link(a.id, b.id, "to")
+        g.link(b.id, c.id, "to")
+        ancestors = g.ancestor_graph(c.id)
+        assert b.id in ancestors
+        assert a.id in ancestors
+        assert c.id not in ancestors
+
+    def test_ancestor_graph_missing(self):
+        g = MemoryGraph()
+        assert g.ancestor_graph("x") == []
+
+    def test_descendant_graph(self):
+        g = MemoryGraph()
+        a, b, c = g.add("A"), g.add("B"), g.add("C")
+        g.link(a.id, b.id, "to")
+        g.link(b.id, c.id, "to")
+        descs = g.descendant_graph(a.id)
+        assert b.id in descs
+        assert c.id in descs
+        assert a.id not in descs
+
+    def test_descendant_graph_missing(self):
+        g = MemoryGraph()
+        assert g.descendant_graph("x") == []
+
+    def test_ancestor_graph_max_depth(self):
+        g = MemoryGraph()
+        a, b, c = g.add("A"), g.add("B"), g.add("C")
+        g.link(a.id, b.id, "to")
+        g.link(b.id, c.id, "to")
+        ancestors = g.ancestor_graph(c.id, max_depth=1)
+        assert b.id in ancestors
+        assert a.id not in ancestors
