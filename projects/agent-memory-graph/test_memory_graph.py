@@ -2830,3 +2830,50 @@ class TestRichClubCoefficient:
         mg.link(b.id, a.id, "r")  # now a=2, b=2
         rc = mg.rich_club_coefficient(2)
         assert rc > 0.0  # a-b reciprocal, they are connected
+
+class TestGlobalClusteringCoefficient:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.global_clustering_coefficient() == 0.0
+
+    def test_single_edge(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A","x"), mg.add("B","x")
+        mg.link(a.id, b.id, "r")
+        assert mg.global_clustering_coefficient() == 0.0
+
+    def test_closed_triplet(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A","x"), mg.add("B","x"), mg.add("C","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, c.id, "r"); mg.link(a.id, c.id, "r")
+        # Triplet a->b->c with a->c closing = fully closed
+        assert mg.global_clustering_coefficient() == 1.0
+
+    def test_open_triplet(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A","x"), mg.add("B","x"), mg.add("C","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, c.id, "r")
+        # No a->c closing edge
+        assert mg.global_clustering_coefficient() == 0.0
+
+class TestModularity:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.modularity({}) == 0.0
+
+    def test_single_community(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A","x"), mg.add("B","x")
+        mg.link(a.id, b.id, "r")
+        q = mg.modularity({a.id: 0, b.id: 0})
+        assert q > 0.0
+
+    def test_two_communities(self):
+        mg = MemoryGraph()
+        a1, a2 = mg.add("A1","x"), mg.add("A2","x")
+        b1, b2 = mg.add("B1","x"), mg.add("B2","x")
+        mg.link(a1.id, a2.id, "r"); mg.link(b1.id, b2.id, "r")
+        mg.link(a1.id, b1.id, "r")  # cross-community edge
+        q_correct = mg.modularity({a1.id: 0, a2.id: 0, b1.id: 1, b2.id: 1})
+        q_wrong = mg.modularity({a1.id: 0, a2.id: 1, b1.id: 0, b2.id: 1})
+        assert q_correct > q_wrong

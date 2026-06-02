@@ -2168,6 +2168,52 @@ class MemoryGraph:
                 links += 1
         return links / (nr * (nr - 1))
 
+    def global_clustering_coefficient(self) -> float:
+        """全局聚类系数(传递性): 闭合三元组数 / 三元组总数。"""
+        rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if len(rows) < 2:
+            return 0.0
+        # Build adjacency (directed)
+        adj = {}
+        for r in rows:
+            s, t = str(r["source"]), str(r["target"])
+            adj.setdefault(s, set()).add(t)
+        all_nodes = set(adj.keys())
+        for targets in adj.values():
+            all_nodes.update(targets)
+        # Count triplets (a->b->c) and triangles (a->b->c and a->c)
+        triplets = 0
+        triangles = 0
+        for a in adj:
+            for b in adj.get(a, set()):
+                for c in adj.get(b, set()):
+                    if c != a:
+                        triplets += 1
+                        if c in adj.get(a, set()):
+                            triangles += 1
+        return triangles / triplets if triplets > 0 else 0.0
+
+    def modularity(self, communities: dict[str, int]) -> float:
+        """模块度 Q: 衡量社区划分质量。communities = {node_id: community_id}。"""
+        rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not rows:
+            return 0.0
+        m = len(rows)
+        # Degree of each node
+        deg = {}
+        for r in rows:
+            s, t = str(r["source"]), str(r["target"])
+            deg[s] = deg.get(s, 0) + 1
+            deg[t] = deg.get(t, 0) + 1
+        q = 0.0
+        for r in rows:
+            s, t = str(r["source"]), str(r["target"])
+            c_s = communities.get(s, 0)
+            c_t = communities.get(t, 0)
+            if c_s == c_t:
+                q += 1 - (deg.get(s, 0) * deg.get(t, 0)) / (2 * m)
+        return q / (2 * m)
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
