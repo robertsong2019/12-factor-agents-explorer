@@ -1,9 +1,9 @@
 {
-  "updatedAt": "2026-06-02T06:00:00+08:00",
+  "updatedAt": "2026-06-03T06:00:00+08:00",
   "generatedBy": "Catalyst",
   "cronJobs": [
-    { "id": "f38e0365", "name": "dashboard-update-morning", "schedule": "0 6 * * *", "status": "running", "next": "24h", "last": "now" },
-    { "id": "9b2a8701", "name": "github-trending-daily", "schedule": "0 7 * * *", "status": "ok", "next": "1h", "last": "23h ago" },
+    { "id": "f38e0365", "name": "dashboard-update-morning", "schedule": "0 6 * * *", "status": "running", "next": "<1m", "last": "1d ago" },
+    { "id": "9b2a8701", "name": "github-trending-daily", "schedule": "0 7 * * *", "status": "ok", "next": "60m", "last": "23h ago" },
     { "id": "2c714952", "name": "github-trending-deep", "schedule": "0 8 * * *", "status": "ok", "next": "2h", "last": "22h ago" },
     { "id": "610a8d6d", "name": "github-creative-evening", "schedule": "0 19 * * *", "status": "ok", "next": "13h", "last": "11h ago" },
     { "id": "265091b6", "name": "deep-exploration-evening", "schedule": "0 20 * * *", "status": "ok", "next": "14h", "last": "10h ago" },
@@ -19,22 +19,14 @@
     { "id": "686ec55c", "name": "essay-generation-morning", "schedule": "0 5 * * *", "status": "ok", "next": "23h", "last": "1h ago" }
   ],
   "sessions": {
-    "total": 45,
-    "active": 3,
-    "model": "glm-5.1",
-    "mainSession": {
-      "age": "13m ago",
-      "tokens": "71k/205k",
-      "ctxPercent": 35
-    }
+    "active": 1,
+    "model": "glm-5.1"
   },
   "summary": {
     "totalCronJobs": 15,
     "ok": 14,
     "running": 1,
-    "error": 0,
-    "totalSessions": 45,
-    "activeSessions": 3
+    "error": 0
   },
   "alerts": []
 }
