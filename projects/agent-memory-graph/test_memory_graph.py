@@ -2617,3 +2617,89 @@ class TestEvolve:
         assert len(s["most_evolved"]) == 5
         assert s["most_evolved"][0]["steps"] == 7
         assert s["most_evolved"][4]["steps"] == 3
+
+# ── bfs_shortest_path / centrality_degree / reachability_count ──
+
+class TestBfsShortestPath:
+    def test_shortest_path_direct(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r")
+        path = mg.bfs_shortest_path(a.id, b.id)
+        assert path == [a.id, b.id]
+
+    def test_shortest_path_via_intermediate(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A", "x"), mg.add("B", "x"), mg.add("C", "x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, c.id, "r")
+        path = mg.bfs_shortest_path(a.id, c.id)
+        assert path == [a.id, b.id, c.id]
+
+    def test_shortest_path_picks_shortest(self):
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A","x"), mg.add("B","x"), mg.add("C","x"), mg.add("D","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, c.id, "r"); mg.link(c.id, d.id, "r")
+        mg.link(a.id, d.id, "r")  # shortcut
+        path = mg.bfs_shortest_path(a.id, d.id)
+        assert path == [a.id, d.id]
+
+    def test_shortest_path_no_path(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        assert mg.bfs_shortest_path(a.id, b.id) is None
+
+    def test_shortest_path_same_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        assert mg.bfs_shortest_path(a.id, a.id) == [a.id]
+
+    def test_shortest_path_nonexistent(self):
+        mg = MemoryGraph()
+        assert mg.bfs_shortest_path("nope", "nope") is None
+
+class TestCentralityDegree:
+    def test_isolated_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        assert mg.centrality_degree(a.id) == 0.0
+
+    def test_connected(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A","x"), mg.add("B","x"), mg.add("C","x")
+        mg.link(a.id, b.id, "r"); mg.link(a.id, c.id, "r")
+        # a has 2 edges (out), b has 1, c has 1 => a degree = 2/2 = 1.0
+        c_val = mg.centrality_degree(a.id)
+        assert c_val == 1.0
+
+    def test_nonexistent(self):
+        mg = MemoryGraph()
+        assert mg.centrality_degree("nope") is None
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        assert mg.centrality_degree(a.id) == 0.0
+
+class TestReachabilityCount:
+    def test_isolated(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        assert mg.reachability_count(a.id) == 0
+
+    def test_chain(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A","x"), mg.add("B","x"), mg.add("C","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, c.id, "r")
+        assert mg.reachability_count(a.id) == 2
+
+    def test_nonexistent(self):
+        mg = MemoryGraph()
+        assert mg.reachability_count("nope") == 0
+
+    def test_depth_limit(self):
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}", "x") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "r")
+        assert mg.reachability_count(nodes[0].id, max_depth=1) == 1
+        assert mg.reachability_count(nodes[0].id, max_depth=2) == 2

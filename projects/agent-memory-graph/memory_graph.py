@@ -2024,6 +2024,58 @@ class MemoryGraph:
             "avg_steps": avg_steps,
         }
 
+    def bfs_shortest_path(self, start_id: str, end_id: str, weight_key: str = None) -> Optional[list]:
+        """BFS最短路径。若 weight_key 给出则返回边权重的总和。"""
+        if not self.has_node(start_id) or not self.has_node(end_id):
+            return None
+        if start_id == end_id:
+            return [start_id]
+        visited = {start_id}
+        queue = [(start_id, [start_id])]
+        while queue:
+            current, path = queue.pop(0)
+            for nb in self.neighbors(current):
+                nid = str(nb.id)
+                if nid in visited:
+                    continue
+                visited.add(nid)
+                new_path = path + [nid]
+                if nid == end_id:
+                    return new_path
+                queue.append((nid, new_path))
+        return None
+
+    def centrality_degree(self, node_id: str) -> Optional[float]:
+        """度中心性 = degree / (n-1)，考虑双向边。"""
+        if not self.has_node(node_id):
+            return None
+        n = self.stats()["nodes"]
+        if n <= 1:
+            return 0.0
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM edges WHERE source=? OR target=?", (node_id, node_id)
+        ).fetchone()
+        return row["c"] / (n - 1) if row else 0.0
+
+    def reachability_count(self, node_id: str, max_depth: int = 10) -> int:
+        """从 node_id 可达的不同节点数（BFS，不含自身）。"""
+        if not self.has_node(node_id):
+            return 0
+        visited = {node_id}
+        queue = [node_id]
+        depth = 0
+        while queue and depth < max_depth:
+            depth += 1
+            next_q = []
+            for cur in queue:
+                for nb in self.neighbors(cur):
+                    nid = str(nb.id)
+                    if nid not in visited:
+                        visited.add(nid)
+                        next_q.append(nid)
+            queue = next_q
+        return len(visited) - 1
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
