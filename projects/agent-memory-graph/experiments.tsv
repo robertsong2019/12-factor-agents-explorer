@@ -34,3 +34,4 @@ timestamp	commit	metric	value	status	description
 2026-06-01T21:30	b563ee2	test_count	315/315	keep	dedup_nodes(similarity_threshold) — fuzzy label dedup via Levenshtein distance + merge_nodes. +5 tests (310→315). Zero regressions.
 2026-06-02T01:00	56e45e9	test_count	325/325	keep	merge_evolution(node_id) + evolution_summary() — collapse evolution history to single summary entry + global evolution stats (total/evolved nodes, avg steps, top-5 most evolved). +10 tests (315→325). Zero regressions.
 2026-06-02T21:10	998f3c9	test_count	339/339	keep	bfs_shortest_path()+centrality_degree()+reachability_count() — BFS shortest path, degree centrality (normalized), reachable node count with depth limit. +14 tests (325→339). Zero regressions.
+2026-06-02T21:20	7e56979	test_count	350/350	keep	graph_density()+reciprocity()+assortativity_degree() — directed graph density, edge reciprocity ratio, degree assortativity. +11 tests (339→350). Zero regressions.

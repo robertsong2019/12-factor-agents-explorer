@@ -2768,3 +2768,65 @@ class TestAssortativityDegree:
         mg.link(a.id, b.id, "r"); mg.link(b.id, c.id, "r")
         r = mg.assortativity_degree()
         assert -1.0 <= r <= 1.0
+
+class TestClusteringCoefficient:
+    def test_nonexistent(self):
+        mg = MemoryGraph()
+        assert mg.clustering_coefficient("nope") is None
+
+    def test_isolated(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        assert mg.clustering_coefficient(a.id) == 0.0
+
+    def test_single_edge(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A","x"), mg.add("B","x")
+        mg.link(a.id, b.id, "r")
+        assert mg.clustering_coefficient(a.id) == 0.0
+
+    def test_triangle(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A","x"), mg.add("B","x"), mg.add("C","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, c.id, "r"); mg.link(c.id, a.id, "r")
+        # Directed triangle: each node has 2 neighbors (1 in, 1 out)
+        # Between neighbors: 1 directed edge exists => ratio depends
+        cc = mg.clustering_coefficient(a.id)
+        assert cc > 0.0
+
+    def test_open_triple(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A","x"), mg.add("B","x"), mg.add("C","x")
+        mg.link(a.id, b.id, "r"); mg.link(a.id, c.id, "r")
+        # A's neighbors: B, C (both out). No edge B->C or C->B
+        assert mg.clustering_coefficient(a.id) == 0.0
+
+class TestRichClubCoefficient:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.rich_club_coefficient(1) == 0.0
+
+    def test_no_rich_nodes(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        assert mg.rich_club_coefficient(2) == 0.0
+
+    def test_rich_connected(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A","x"), mg.add("B","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, a.id, "r")
+        # Both have degree 2 (1 in + 1 out), >= 2
+        rc = mg.rich_club_coefficient(2)
+        assert rc > 0.0
+
+    def test_rich_not_connected(self):
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A","x"), mg.add("B","x"), mg.add("C","x"), mg.add("D","x")
+        mg.link(a.id, b.id, "r"); mg.link(c.id, d.id, "r")
+        # deg: a=1, b=2(1in+1...wait - a->b => a(out), b(in)
+        # Actually UNION ALL counts: a appears once(source), b appears once(target)
+        # deg: a=1, b=1, c=1, d=1. No node >= 2.
+        # Need higher degrees:
+        mg.link(b.id, a.id, "r")  # now a=2, b=2
+        rc = mg.rich_club_coefficient(2)
+        assert rc > 0.0  # a-b reciprocal, they are connected

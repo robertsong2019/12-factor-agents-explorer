@@ -2125,6 +2125,49 @@ class MemoryGraph:
         r_val = (sum_jk / m - sum_j_plus_k / (4 * m * m)) / (sigma_sq / (2 * m)) if m > 0 else 0.0
         return max(-1.0, min(1.0, r_val))
 
+    def clustering_coefficient(self, node_id: str) -> Optional[float]:
+        """局部聚类系数: 邻居间实际边数 / 最大可能边数。"""
+        if not self.has_node(node_id):
+            return None
+        nbs = set()
+        for n in self.neighbors(node_id):
+            nbs.add(str(n.id))
+        for r in self.conn.execute("SELECT source FROM edges WHERE target=?", (node_id,)).fetchall():
+            nbs.add(str(r["source"]))
+        k = len(nbs)
+        if k < 2:
+            return 0.0
+        nb_set = set(nbs)
+        links = 0
+        rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        for r in rows:
+            s, t = str(r["source"]), str(r["target"])
+            if s in nb_set and t in nb_set and s != t:
+                links += 1
+        return links / (k * (k - 1))
+
+    def rich_club_coefficient(self, degree_k: int) -> float:
+        """富人俱乐部系数: 度>=k的节点间实际边数/最大可能。"""
+        rows = self.conn.execute(
+            "SELECT source FROM edges UNION ALL SELECT target FROM edges"
+        ).fetchall()
+        deg = {}
+        for r in rows:
+            nid = str(r[0]) if not isinstance(r, dict) else str(r[list(r.keys())[0]])
+            deg[nid] = deg.get(nid, 0) + 1
+        rich = [nid for nid, d in deg.items() if d >= degree_k]
+        nr = len(rich)
+        if nr < 2:
+            return 0.0
+        rich_set = set(rich)
+        links = 0
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            if s in rich_set and t in rich_set:
+                links += 1
+        return links / (nr * (nr - 1))
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
