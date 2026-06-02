@@ -141,6 +141,12 @@ Pipeline.register_tool(MyTool())
 python -m pytest tests/
 ```
 
+## 相关项目
+
+- **[mini-agent](../mini-agent/)** — Agent 框架（编排 Pipeline 的大脑）
+- **[mini-mcp](../mini-mcp/)** — 工具注册与调用协议
+- **[综合教程](../TUTORIAL.md)** — 从零构建 AI Agent
+
 ## 设计理念
 
 - **零依赖** — 纯标准库，拿来就用

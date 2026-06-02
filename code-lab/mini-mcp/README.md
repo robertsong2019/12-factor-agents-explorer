@@ -45,6 +45,12 @@ python3 mini_mcp.py --call stats '{"numbers": [1,2,3,4,5]}'
 - `help` - 显示帮助
 - `quit` - 退出
 
+## 相关项目
+
+- **[mini-agent](../mini-agent/)** — Agent 框架（用工具的大脑）
+- **[agent-pipeline](../agent-pipeline/)** — 工具串联工作流
+- **[综合教程](../TUTORIAL.md)** — 从零构建 AI Agent
+
 ## 设计理念
 
 MCP (Model Context Protocol) 的核心思想：**工具是独立可调用的单元，有明确的输入输出契约**。

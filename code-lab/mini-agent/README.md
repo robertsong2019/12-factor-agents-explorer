@@ -14,6 +14,18 @@ python agent.py
 
 No external dependencies — uses only Python stdlib (with a mock LLM for demo).
 
+## 相关项目
+
+- **[mini-mcp](../mini-mcp/)** — Agent 的工具协议层
+- **[agent-pipeline](../agent-pipeline/)** — Agent 的工作流引擎
+- **[综合教程](../TUTORIAL.md)** — 从零构建 AI Agent
+
+## 相关项目
+
+- **[mini-mcp](../mini-mcp/)** — 工具注册与调用协议（Agent 的工具层）
+- **[agent-pipeline](../agent-pipeline/)** — 工具串联工作流（Agent 的执行引擎）
+- **[综合教程](../TUTORIAL.md)** — 从零构建 AI Agent，串联三个项目
+
 ## Architecture
 
 ```
