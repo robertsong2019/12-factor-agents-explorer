@@ -2703,3 +2703,68 @@ class TestReachabilityCount:
             mg.link(nodes[i].id, nodes[i+1].id, "r")
         assert mg.reachability_count(nodes[0].id, max_depth=1) == 1
         assert mg.reachability_count(nodes[0].id, max_depth=2) == 2
+
+class TestGraphDensity:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.graph_density() == 0.0
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        mg.add("A", "x")
+        assert mg.graph_density() == 0.0
+
+    def test_two_nodes_one_edge(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A","x"), mg.add("B","x")
+        mg.link(a.id, b.id, "r")
+        assert mg.graph_density() == 0.5  # 1 / (2*1)
+
+    def test_complete_directed(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A","x"), mg.add("B","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, a.id, "r")
+        assert mg.graph_density() == 1.0  # 2 / (2*1)
+
+    def test_three_nodes_chain(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A","x"), mg.add("B","x"), mg.add("C","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, c.id, "r")
+        # 2 edges, max = 3*2 = 6 => 2/6
+        assert abs(mg.graph_density() - 2/6) < 0.001
+
+class TestReciprocity:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.reciprocity() == 0.0
+
+    def test_no_reciprocal(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A","x"), mg.add("B","x")
+        mg.link(a.id, b.id, "r")
+        assert mg.reciprocity() == 0.0
+
+    def test_fully_reciprocal(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A","x"), mg.add("B","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, a.id, "r")
+        assert mg.reciprocity() == 1.0
+
+    def test_mixed(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A","x"), mg.add("B","x"), mg.add("C","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, a.id, "r"); mg.link(b.id, c.id, "r")
+        # 3 edges, 1 reciprocal pair (2 edges) => 2/3
+        assert abs(mg.reciprocity() - 2/3) < 0.001
+
+class TestAssortativityDegree:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.assortativity_degree() == 0.0
+
+    def test_chain(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A","x"), mg.add("B","x"), mg.add("C","x")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, c.id, "r")
+        r = mg.assortativity_degree()
+        assert -1.0 <= r <= 1.0

@@ -2076,6 +2076,55 @@ class MemoryGraph:
             queue = next_q
         return len(visited) - 1
 
+    def graph_density(self) -> float:
+        """图密度 = 实际边数 / 最大可能边数。有向图最大 n*(n-1)。"""
+        stats = self.stats()
+        n = stats["nodes"]
+        if n <= 1:
+            return 0.0
+        e = stats["edges"]
+        return e / (n * (n - 1))
+
+    def reciprocity(self) -> float:
+        """互惠率 = 双向边对数 / 总边数。"""
+        stats = self.stats()
+        e = stats["edges"]
+        if e == 0:
+            return 0.0
+        rows = self.conn.execute("SELECT source, target, relation FROM edges").fetchall()
+        pairs = set()
+        reciprocal = 0
+        for r in rows:
+            key = (str(r["source"]), str(r["target"]), r["relation"])
+            rev = (str(r["target"]), str(r["source"]), r["relation"])
+            if rev in pairs:
+                reciprocal += 1
+            pairs.add(key)
+        return reciprocal * 2 / e if reciprocal > 0 else 0.0
+
+    def assortativity_degree(self) -> float:
+        """度-度相关性: 正值=相似度节点互连(同配), 负值=异配。"""
+        rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not rows:
+            return 0.0
+        deg = {}
+        for r in rows:
+            s, t = str(r["source"]), str(r["target"])
+            deg[s] = deg.get(s, 0) + 1
+            deg[t] = deg.get(t, 0) + 1
+        # Also count edges from reverse direction (in-degree)
+        for r in rows:
+            s, t = str(r["source"]), str(r["target"])
+            # total degree already counted both directions above
+        m = len(rows)
+        sum_jk = sum(deg.get(str(r["source"]), 0) * deg.get(str(r["target"]), 0) for r in rows)
+        sum_j_plus_k = sum((deg.get(str(r["source"]), 0) + deg.get(str(r["target"]), 0)) ** 2 for r in rows)
+        sigma_sq = sum_j_plus_k / (2 * m) - (sum_jk / m) ** 2 if m > 0 else 0
+        if sigma_sq == 0:
+            return 0.0
+        r_val = (sum_jk / m - sum_j_plus_k / (4 * m * m)) / (sigma_sq / (2 * m)) if m > 0 else 0.0
+        return max(-1.0, min(1.0, r_val))
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
