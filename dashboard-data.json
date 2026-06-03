@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-06-03T06:00:00+08:00",
+  "updatedAt": "2026-06-04T06:00:00+08:00",
   "generatedBy": "Catalyst",
   "cronJobs": [
     { "id": "f38e0365", "name": "dashboard-update-morning", "schedule": "0 6 * * *", "status": "running", "next": "<1m", "last": "1d ago" },
@@ -12,7 +12,7 @@
     { "id": "ce2fb615", "name": "tool-development-evening", "schedule": "0 22 * * *", "status": "ok", "next": "16h", "last": "8h ago" },
     { "id": "78eac6fc", "name": "key-development-1", "schedule": "0 23 * * *", "status": "ok", "next": "17h", "last": "7h ago" },
     { "id": "88679f9e", "name": "key-development-2", "schedule": "0 0 * * *", "status": "ok", "next": "18h", "last": "6h ago" },
-    { "id": "b0fd7e8d", "name": "key-development-3", "schedule": "0 1 * * *", "status": "ok", "next": "19h", "last": "5h ago" },
+    { "id": "b0fd7e8d", "name": "key-development-3", "schedule": "0 1 * * *", "status": "error", "next": "19h", "last": "5h ago" },
     { "id": "fd0515b0", "name": "knowledge-organization", "schedule": "0 2 * * *", "status": "ok", "next": "20h", "last": "4h ago" },
     { "id": "f7510f1f", "name": "project-testing-morning", "schedule": "0 3 * * *", "status": "ok", "next": "21h", "last": "3h ago" },
     { "id": "77a5bcc6", "name": "documentation-morning", "schedule": "0 4 * * *", "status": "ok", "next": "22h", "last": "2h ago" },
@@ -20,13 +20,20 @@
   ],
   "sessions": {
     "active": 1,
-    "model": "glm-5.1"
+    "model": "glm-5.1",
+    "recentSessions": [
+      { "key": "cron:github-trending-daily", "lastActive": "23h ago", "usage": "12%" },
+      { "key": "direct:feishu", "lastActive": "45h ago", "usage": "17%" },
+      { "key": "wecom", "lastActive": "65d ago", "usage": "9%" }
+    ]
   },
   "summary": {
     "totalCronJobs": 15,
-    "ok": 14,
+    "ok": 13,
     "running": 1,
-    "error": 0
+    "error": 1
   },
-  "alerts": []
+  "alerts": [
+    { "level": "warn", "job": "key-development-3", "message": "Last run ended with error status" }
+  ]
 }
