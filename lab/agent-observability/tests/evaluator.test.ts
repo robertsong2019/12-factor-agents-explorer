@@ -269,6 +269,40 @@ describe('Evaluator', () => {
     assert.ok(md.includes('❌'));
   });
 
+  it('getWeights returns configured weights', () => {
+    const ev = new Evaluator();
+    ev.addCheck('a', () => [{ dimension: 'a', score: 1, reason: '' }], 2.0);
+    ev.addCheck('b', () => [{ dimension: 'b', score: 1, reason: '' }], 0.5);
+    const w = ev.getWeights();
+    assert.equal(w.get('a'), 2.0);
+    assert.equal(w.get('b'), 0.5);
+    assert.equal(w.get('c'), undefined);
+    // verify it's a copy
+    w.set('a', 99);
+    assert.equal(ev.getWeights().get('a'), 2.0);
+  });
+
+  it('removeCheck returns false for unknown check', () => {
+    const ev = new Evaluator();
+    assert.strictEqual(ev.removeCheck('nonexistent'), false);
+  });
+
+  it('compareTraces detects cost_efficiency regression', () => {
+    const cheap: Span[] = [{ ...makeSpan(), operation: 'llm.call' as const, startTime: 0, endTime: 10, attributes: { totalTokens: 50 } }];
+    const expensive: Span[] = [{ ...makeSpan(), operation: 'llm.call' as const, startTime: 0, endTime: 10, attributes: { totalTokens: 100000 } }];
+    const diffs = compareTraces(cheap, expensive);
+    const cost = diffs.find(d => d.dimension === 'cost_efficiency');
+    assert.ok(cost);
+    assert.ok(cost!.delta < 0);
+  });
+
+  it('evaluate with empty spans returns results from built-in checks', () => {
+    const ev = new Evaluator();
+    ev.addBuiltinChecks();
+    const results = ev.evaluate([]);
+    assert.equal(results.length, 4); // all 4 built-in checks
+  });
+
   it('addBuiltinChecks registers all 4 checks', () => {
     const ev = new Evaluator();
     ev.addBuiltinChecks();
