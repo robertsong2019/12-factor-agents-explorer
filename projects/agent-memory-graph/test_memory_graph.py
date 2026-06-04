@@ -3083,3 +3083,143 @@ class TestHasCycle:
         mg.link(b.id, c.id, "r")
         mg.link(c.id, a.id, "r")
         assert mg.has_cycle() is True
+
+
+# ── 进阶图分析 ────────────────────────────────────────
+
+class TestDegreeHistogram:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.degree_histogram() == {}
+
+    def test_basic(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        hist = mg.degree_histogram()
+        assert hist[2] == 1  # a has degree 2
+        assert hist[1] == 2  # b and c have degree 1
+
+    def test_isolated(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        hist = mg.degree_histogram()
+        assert hist[0] == 2
+
+
+class TestDegreeSequence:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.degree_sequence() == []
+
+    def test_desc(self):
+        mg = MemoryGraph()
+        a, b, c, d = [mg.add(f"N{i}", "x") for i in range(4)]
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        mg.link(a.id, d.id, "r")
+        seq = mg.degree_sequence()
+        assert seq == [3, 1, 1, 1]
+
+    def test_asc(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r")
+        seq = mg.degree_sequence(order="asc")
+        assert seq == [0, 1, 1]
+
+
+class TestLargestComponentSize:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.largest_component_size() == 0
+
+    def test_single(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        assert mg.largest_component_size() == 1
+
+    def test_connected(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        assert mg.largest_component_size() == 3
+
+    def test_disconnected(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        c, d, e = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(c.id, d.id, "r")
+        mg.link(d.id, e.id, "r")
+        assert mg.largest_component_size() == 3
+
+
+class TestCommunityDetectionGreedy:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.community_detection_greedy() == {}
+
+    def test_single(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        comm = mg.community_detection_greedy()
+        assert len(comm) == 1
+        assert comm[a.id] == 0
+
+    def test_two_communities(self):
+        mg = MemoryGraph()
+        a1, a2 = mg.add("A1", "x"), mg.add("A2", "x")
+        b1, b2 = mg.add("B1", "x"), mg.add("B2", "x")
+        mg.link(a1.id, a2.id, "r")
+        mg.link(b1.id, b2.id, "r")
+        comm = mg.community_detection_greedy()
+        # Connected pairs should be in same or adjacent community
+        assert comm[a1.id] != comm[b1.id] or comm[a2.id] != comm[b2.id]
+
+    def test_all_connected(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(a.id, c.id, "r")
+        comm = mg.community_detection_greedy()
+        assert len(set(comm.values())) <= 2  # tight cluster → 1-2 communities
+
+
+class TestBetweennessCentralityApprox:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.betweenness_centrality_approx() == {}
+
+    def test_bridge_node(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        bc = mg.betweenness_centrality_approx(samples=10)
+        # b is the bridge → highest betweenness
+        assert bc[b.id] >= bc[a.id]
+        assert bc[b.id] >= bc[c.id]
+
+    def test_leaf_zero(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        bc = mg.betweenness_centrality_approx(samples=10)
+        # Leaf nodes (a, c) have 0 betweenness
+        assert bc[a.id] == 0.0
+        assert bc[c.id] == 0.0
+
+    def test_star_center(self):
+        mg = MemoryGraph()
+        center = mg.add("hub", "x")
+        leaves = [mg.add(f"L{i}", "x") for i in range(5)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        bc = mg.betweenness_centrality_approx(samples=10)
+        # Center has highest betweenness
+        for leaf in leaves:
+            assert bc[center.id] >= bc[leaf.id]

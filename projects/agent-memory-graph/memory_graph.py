@@ -2359,6 +2359,146 @@ class MemoryGraph:
                     return True
         return False
 
+    # ── 进阶图分析 ────────────────────────────────────────
+
+    def degree_histogram(self) -> dict[int, int]:
+        """度分布直方图。返回 {degree: count}。"""
+        rows = self.conn.execute(
+            """SELECT id, (
+                SELECT COUNT(*) FROM edges e WHERE e.source = n.id OR e.target = n.id
+               ) AS deg FROM nodes n"""
+        ).fetchall()
+        hist: dict[int, int] = {}
+        for r in rows:
+            d = r["deg"]
+            hist[d] = hist.get(d, 0) + 1
+        return hist
+
+    def degree_sequence(self, order: str = "desc") -> list[int]:
+        """返回所有节点的度数序列（排序后）。"""
+        rows = self.conn.execute(
+            """SELECT (
+                SELECT COUNT(*) FROM edges e WHERE e.source = n.id OR e.target = n.id
+               ) AS deg FROM nodes n"""
+        ).fetchall()
+        degs = [r["deg"] for r in rows]
+        return sorted(degs, reverse=(order == "desc"))
+
+    def largest_component_size(self) -> int:
+        """最大连通分量大小（基于 Union-Find）。"""
+        nodes = [str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if not nodes:
+            return 0
+        parent = {nid: nid for nid in nodes}
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        for e in edges:
+            union(str(e["source"]), str(e["target"]))
+
+        comp_size: dict[str, int] = {}
+        for nid in nodes:
+            root = find(nid)
+            comp_size[root] = comp_size.get(root, 0) + 1
+        return max(comp_size.values()) if comp_size else 0
+
+    def community_detection_greedy(self) -> dict[str, int]:
+        """贪心社区检测（基于边密度）。返回 {node_id: community_id}。
+
+        简单方法：按度数降序分配，高优先级节点吸引邻居。
+        """
+        nodes = [str(r["id"]) for r in
+                 self.conn.execute("SELECT id FROM nodes ORDER BY weight DESC").fetchall()]
+        if not nodes:
+            return {}
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        adj: dict[str, set[str]] = {nid: set() for nid in nodes}
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            if s in adj:
+                adj[s].add(t)
+            if t in adj:
+                adj[t].add(s)
+
+        community = {}
+        next_cid = 0
+        for nid in nodes:
+            if nid in community:
+                continue
+            # Check if any neighbor already has a community
+            neighbor_comms = {community[nb] for nb in adj[nid] if nb in community}
+            if neighbor_comms:
+                # Join the most connected community (first one for simplicity)
+                community[nid] = min(neighbor_comms)
+            else:
+                community[nid] = next_cid
+                next_cid += 1
+        return community
+
+    def betweenness_centrality_approx(self, samples: int = 20) -> dict[str, float]:
+        """近似介数中心性（基于采样 Brandes 算法）。
+
+        对大图提供 O(samples * V) 近似而非 O(V^3) 精确计算。
+        """
+        nodes = [str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if not nodes:
+            return {}
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        adj: dict[str, list[str]] = {nid: [] for nid in nodes}
+        node_set = set(nodes)
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            if s in node_set:
+                adj[s].append(t)
+            if t in node_set:
+                adj[t].append(s)
+
+        bc = {nid: 0.0 for nid in nodes}
+        import random
+        sample = nodes if len(nodes) <= samples else random.sample(nodes, samples)
+
+        for src in sample:
+            # BFS with dependency accumulation (Brandes)
+            stack = []
+            pred = {nid: [] for nid in nodes}
+            sigma = {nid: 0 for nid in nodes}
+            sigma[src] = 1
+            dist = {nid: -1 for nid in nodes}
+            dist[src] = 0
+            queue = [src]
+            while queue:
+                v = queue.pop(0)
+                stack.append(v)
+                for w in adj[v]:
+                    if dist[w] < 0:
+                        queue.append(w)
+                        dist[w] = dist[v] + 1
+                    if dist[w] == dist[v] + 1:
+                        sigma[w] += sigma[v]
+                        pred[w].append(v)
+            delta = {nid: 0.0 for nid in nodes}
+            while stack:
+                w = stack.pop()
+                for v in pred[w]:
+                    delta[v] += (sigma[v] / sigma[w]) * (1 + delta[w])
+                if w != src:
+                    bc[w] += delta[w]
+
+        # Normalize
+        n = len(nodes)
+        scale = 2 / ((n - 1) * (n - 2)) if n > 2 else 1
+        return {nid: round(bc[nid] * scale, 4) for nid in nodes}
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
