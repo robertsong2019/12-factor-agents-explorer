@@ -2499,6 +2499,103 @@ class MemoryGraph:
         scale = 2 / ((n - 1) * (n - 2)) if n > 2 else 1
         return {nid: round(bc[nid] * scale, 4) for nid in nodes}
 
+    # ── 图变换 ──────────────────────────────────────────
+
+    def reverse_edges(self) -> int:
+        """反转所有边的方向。返回受影响的边数。"""
+        count = self.conn.execute("SELECT COUNT(*) AS c FROM edges").fetchone()["c"]
+        if count == 0:
+            return 0
+        self.conn.execute("UPDATE edges SET source = target, target = source")
+        self.conn.commit()
+        return count
+
+    def to_undirected(self) -> int:
+        """将有向多重边合并为无向（对称边去重）。
+
+        对于每对 (A→B, B→A) 只保留一条。返回移除的边数。
+        """
+        edges = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges"
+        ).fetchall()
+        seen = set()
+        to_remove = []
+        for e in edges:
+            s, t, rel = str(e["source"]), str(e["target"]), e["relation"]
+            key = (min(s, t), max(s, t), rel)
+            if key in seen:
+                to_remove.append((s, t, rel))
+            else:
+                seen.add(key)
+        for s, t, rel in to_remove:
+            self.conn.execute(
+                "DELETE FROM edges WHERE source=? AND target=? AND relation=?",
+                (s, t, rel),
+            )
+        self.conn.commit()
+        return len(to_remove)
+
+    def induce_by_tags(self, tags: list[str], match_all: bool = False) -> dict:
+        """按标签筛选节点，返回由这些节点组成的子图。
+
+        match_all=True 时要求所有标签都存在，False 时任一匹配即可。
+        """
+        nodes = self.conn.execute("SELECT * FROM nodes").fetchall()
+        tag_set = set(tags)
+        filtered_ids = set()
+        for n in nodes:
+            node_tags = set(json.loads(n["tags"])) if n["tags"] else set()
+            if match_all:
+                if tag_set.issubset(node_tags):
+                    filtered_ids.add(str(n["id"]))
+            else:
+                if node_tags & tag_set:
+                    filtered_ids.add(str(n["id"]))
+
+        edges = self.conn.execute(
+            "SELECT * FROM edges WHERE source IN (%s) AND target IN (%s)"
+            % (",".join("?" * len(filtered_ids)), ",".join("?" * len(filtered_ids))),
+            list(filtered_ids) + list(filtered_ids),
+        ).fetchall()
+
+        return {
+            "nodes": [
+                {"id": str(r["id"]), "label": r["label"], "kind": r["kind"],
+                 "weight": r["weight"], "tags": json.loads(r["tags"]) if r["tags"] else []}
+                for r in nodes if str(r["id"]) in filtered_ids
+            ],
+            "edges": [
+                {"source": str(r["source"]), "target": str(r["target"]),
+                 "relation": r["relation"], "weight": r["weight"]}
+                for r in edges
+            ],
+        }
+
+    def weight_normalize(self, target_min: float = 0.0, target_max: float = 1.0) -> int:
+        """将所有节点权重线性归一化到 [target_min, target_max]。返回更新的节点数。"""
+        rows = self.conn.execute("SELECT id, weight FROM nodes").fetchall()
+        if not rows:
+            return 0
+        weights = [r["weight"] for r in rows]
+        w_min, w_max = min(weights), max(weights)
+        if w_max == w_min:
+            # All same weight → set to target_max
+            for r in rows:
+                self.conn.execute(
+                    "UPDATE nodes SET weight=? WHERE id=?",
+                    (target_max, str(r["id"])),
+                )
+        else:
+            scale = (target_max - target_min) / (w_max - w_min)
+            for r in rows:
+                normalized = target_min + (r["weight"] - w_min) * scale
+                self.conn.execute(
+                    "UPDATE nodes SET weight=? WHERE id=?",
+                    (round(normalized, 4), str(r["id"])),
+                )
+        self.conn.commit()
+        return len(rows)
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

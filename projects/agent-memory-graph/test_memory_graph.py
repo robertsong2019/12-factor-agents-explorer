@@ -3223,3 +3223,103 @@ class TestBetweennessCentralityApprox:
         # Center has highest betweenness
         for leaf in leaves:
             assert bc[center.id] >= bc[leaf.id]
+
+
+# ── 图变换 ──────────────────────────────────────────────
+
+class TestReverseEdges:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.reverse_edges() == 0
+
+    def test_basic(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r")
+        n = mg.reverse_edges()
+        assert n == 1
+        edges = mg.edges_of(a.id, "incoming")
+        assert len(edges) == 1
+        assert edges[0].source == b.id
+
+    def test_multi(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        assert mg.reverse_edges() == 2
+
+
+class TestToUndirected:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.to_undirected() == 0
+
+    def test_no_dup(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r")
+        assert mg.to_undirected() == 0
+        assert mg.count_edges() == 1
+
+    def test_dedup(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, a.id, "r")
+        removed = mg.to_undirected()
+        assert removed == 1
+        assert mg.count_edges() == 1
+
+
+class TestInduceByTags:
+    def test_empty(self):
+        mg = MemoryGraph()
+        result = mg.induce_by_tags(["t"])
+        assert result["nodes"] == []
+        assert result["edges"] == []
+
+    def test_match_any(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.tag_nodes("red", [a.id, b.id])
+        mg.tag_nodes("blue", [c.id])
+        mg.link(a.id, b.id, "r")
+        result = mg.induce_by_tags(["red"])
+        assert len(result["nodes"]) == 2
+        assert len(result["edges"]) == 1
+
+    def test_match_all(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.tag_nodes("red", [a.id, b.id, c.id])
+        mg.tag_nodes("big", [a.id])
+        result = mg.induce_by_tags(["red", "big"], match_all=True)
+        assert len(result["nodes"]) == 1
+        assert result["nodes"][0]["id"] == a.id
+
+
+class TestWeightNormalize:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.weight_normalize() == 0
+
+    def test_basic(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.reweight(a.id, -0.5)
+        mg.reweight(c.id, 0.5)
+        n = mg.weight_normalize(0.0, 1.0)
+        assert n == 3
+        wa = mg.get_node(a.id).weight
+        wc = mg.get_node(c.id).weight
+        assert abs(wa - 0.0) < 0.01
+        assert abs(wc - 1.0) < 0.01
+
+    def test_all_same(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        n = mg.weight_normalize()
+        assert n == 2
+        # All same → set to target_max
+        assert abs(mg.get_node(a.id).weight - 1.0) < 0.01
