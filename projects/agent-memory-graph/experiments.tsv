@@ -36,3 +36,8 @@ timestamp	commit	metric	value	status	description
 2026-06-02T21:10	998f3c9	test_count	339/339	keep	bfs_shortest_path()+centrality_degree()+reachability_count() — BFS shortest path, degree centrality (normalized), reachable node count with depth limit. +14 tests (325→339). Zero regressions.
 2026-06-02T21:20	7e56979	test_count	350/350	keep	graph_density()+reciprocity()+assortativity_degree() — directed graph density, edge reciprocity ratio, degree assortativity. +11 tests (339→350). Zero regressions.
 2026-06-02T21:30	eb827ed	test_count	359/359	keep	clustering_coefficient()+rich_club_coefficient() — local clustering (bidirectional), rich-club coefficient. +9 tests (350→359). Zero regressions.
+2026-06-02T21:40	9b5a0d1	test_count	366/366	keep	global_clustering_coefficient()+modularity() — directed transitivity + Newman modularity Q. +7 tests (359→366). Zero regressions.
+2026-06-03T23:00	1d7f3cf	test_count	366/366	keep	pyproject.toml for PyPI publish — build verified (wheel+sdist), zero regressions
+2026-06-04T19:30+08:00	e6acdd7	test_count	393/393	keep	clear/is_empty/count_edges/batch_reweight/to_adjacency_list/serialize_dot/find_orphans/find_roots/find_leaves/has_cycle — lifecycle+graph utilities. +27 tests (366→393). Zero regressions.
+2026-06-04T19:50+08:00	41b887f	test_count	411/411	keep	degree_histogram+degree_sequence+largest_component_size+community_detection_greedy+betweenness_centrality_approx — +18 tests (393→411). Zero regressions. Cycle 2/3.
+2026-06-04T20:10+08:00	f896a7f	test_count	423/423	keep	reverse_edges+to_undirected+induce_by_tags+weight_normalize — graph transformation toolkit. +12 tests (411→423). Zero regressions. Cycle 3/3.
