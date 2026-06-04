@@ -2214,6 +2214,151 @@ class MemoryGraph:
                 q += 1 - (deg.get(s, 0) * deg.get(t, 0)) / (2 * m)
         return q / (2 * m)
 
+    # ── 生命周期 & 工具方法 ──────────────────────────────
+
+    def clear(self) -> None:
+        """删除所有节点和边，重置图为空状态。"""
+        self.conn.execute("DELETE FROM edges")
+        self.conn.execute("DELETE FROM edge_props")
+        self.conn.execute("DELETE FROM evolution_log")
+        self.conn.execute("DELETE FROM nodes")
+        self.conn.commit()
+
+    def is_empty(self) -> bool:
+        """图是否为空（无节点）。"""
+        row = self.conn.execute("SELECT COUNT(*) AS c FROM nodes").fetchone()
+        return row["c"] == 0
+
+    def count_edges(self) -> int:
+        """返回图中边的总数。"""
+        row = self.conn.execute("SELECT COUNT(*) AS c FROM edges").fetchone()
+        return row["c"]
+
+    def batch_reweight(self, items: list[dict]) -> int:
+        """批量调整权重。items = [{"id": ..., "delta": 0.1}, ...]。返回成功更新数。"""
+        count = 0
+        for item in items:
+            nid = str(item["id"])
+            delta = float(item["delta"])
+            node = self.conn.execute(
+                "SELECT id, weight FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if node is None:
+                continue
+            new_weight = max(0.0, node["weight"] + delta)
+            self.conn.execute(
+                "UPDATE nodes SET weight=? WHERE id=?",
+                (new_weight, nid),
+            )
+            count += 1
+        self.conn.commit()
+        return count
+
+    def to_adjacency_list(self) -> dict[str, list[dict]]:
+        """导出邻接表表示。返回 {node_id: [{"target": ..., "relation": ..., "weight": ...}]}。"""
+        adj: dict[str, list[dict]] = {}
+        rows = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges"
+        ).fetchall()
+        for r in rows:
+            adj.setdefault(str(r["source"]), []).append({
+                "target": str(r["target"]),
+                "relation": r["relation"],
+                "weight": r["weight"],
+            })
+        return adj
+
+    def serialize_dot(self) -> str:
+        """导出为 Graphviz DOT 格式字符串，用于可视化工具集成。"""
+        lines = ["digraph memory {"]
+        lines.append('  node [shape=box];')
+        nodes = self.conn.execute("SELECT id, label, kind, weight FROM nodes").fetchall()
+        for n in nodes:
+            safe_label = n["label"].replace('"', '\\"')
+            lines.append(
+                f'  "{n["id"]}" [label="{safe_label}", kind="{n["kind"]}", weight="{n["weight"]:.2f}"];'
+            )
+        edges = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges"
+        ).fetchall()
+        for e in edges:
+            safe_rel = e["relation"].replace('"', '\\"')
+            lines.append(
+                f'  "{e["source"]}" -> "{e["target"]}" [label="{safe_rel}", weight="{e["weight"]:.2f}"];'
+            )
+        lines.append("}")
+        return "\n".join(lines)
+
+    def find_orphans(self) -> list[Node]:
+        """返回所有没有边的孤立节点。"""
+        rows = self.conn.execute(
+            """SELECT n.* FROM nodes n
+               WHERE NOT EXISTS (SELECT 1 FROM edges e WHERE e.source = n.id OR e.target = n.id)
+               ORDER BY n.weight DESC"""
+        ).fetchall()
+        return [Node(r["id"], r["label"], r["kind"],
+                    json.loads(r["data"]) if r["data"] else {},
+                    r["created"], r["accessed"], r["weight"])
+                for r in rows]
+
+    def find_roots(self) -> list[Node]:
+        """返回无入边的节点（有向图的根），包括孤立节点。"""
+        rows = self.conn.execute(
+            """SELECT n.* FROM nodes n
+               WHERE NOT EXISTS (SELECT 1 FROM edges e_in WHERE e_in.target = n.id)
+               ORDER BY n.weight DESC"""
+        ).fetchall()
+        return [Node(r["id"], r["label"], r["kind"],
+                    json.loads(r["data"]) if r["data"] else {},
+                    r["created"], r["accessed"], r["weight"])
+                for r in rows]
+
+    def find_leaves(self) -> list[Node]:
+        """返回无出边的节点（有向图的叶），包括孤立节点。"""
+        rows = self.conn.execute(
+            """SELECT n.* FROM nodes n
+               WHERE NOT EXISTS (SELECT 1 FROM edges e_out WHERE e_out.source = n.id)
+               ORDER BY n.weight DESC"""
+        ).fetchall()
+        return [Node(r["id"], r["label"], r["kind"],
+                    json.loads(r["data"]) if r["data"] else {},
+                    r["created"], r["accessed"], r["weight"])
+                for r in rows]
+
+    def has_cycle(self) -> bool:
+        """检测图中是否存在环（基于 DFS 三色标记法）。"""
+        nodes = [str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        adj: dict[str, list[str]] = {}
+        for r in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            adj.setdefault(str(r["source"]), []).append(str(r["target"]))
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color = {nid: WHITE for nid in nodes}
+
+        def _visit(start):
+            stack = [(start, iter(adj.get(start, [])))]
+            color[start] = GRAY
+            while stack:
+                node, it = stack[-1]
+                found = False
+                for nb in it:
+                    if color.get(nb, WHITE) == GRAY:
+                        return True
+                    if color.get(nb, WHITE) == WHITE:
+                        color[nb] = GRAY
+                        stack.append((nb, iter(adj.get(nb, []))))
+                        found = True
+                        break
+                if not found:
+                    color[node] = BLACK
+                    stack.pop()
+            return False
+
+        for nid in nodes:
+            if color[nid] == WHITE:
+                if _visit(nid):
+                    return True
+        return False
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]

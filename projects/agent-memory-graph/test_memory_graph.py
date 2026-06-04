@@ -2877,3 +2877,209 @@ class TestModularity:
         q_correct = mg.modularity({a1.id: 0, a2.id: 0, b1.id: 1, b2.id: 1})
         q_wrong = mg.modularity({a1.id: 0, a2.id: 1, b1.id: 0, b2.id: 1})
         assert q_correct > q_wrong
+
+
+# ── 生命周期 & 工具方法 ─────────────────────────────
+
+class TestClear:
+    def test_clear_empty(self):
+        mg = MemoryGraph()
+        mg.clear()
+        assert mg.is_empty()
+        assert mg.stats()["nodes"] == 0
+
+    def test_clear_with_data(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r")
+        mg.tag_nodes("t", [a.id])
+        mg.clear()
+        assert mg.is_empty()
+        assert mg.stats()["nodes"] == 0
+        assert mg.stats()["edges"] == 0
+        assert mg.count_edges() == 0
+
+    def test_clear_evolution_log(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        mg.evolve(a.id, "A2", "y")
+        assert mg.evolution_summary()["evolved_nodes"] == 1
+        mg.clear()
+        a2 = mg.add("New", "x")
+        summary = mg.evolution_summary()
+        assert summary["evolved_nodes"] == 0
+        assert summary["total_steps"] == 0
+
+
+class TestIsEmpty:
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.is_empty()
+
+    def test_non_empty(self):
+        mg = MemoryGraph()
+        mg.add("node", "x")
+        assert not mg.is_empty()
+
+    def test_after_clear(self):
+        mg = MemoryGraph()
+        mg.add("node", "x")
+        mg.clear()
+        assert mg.is_empty()
+
+
+class TestCountEdges:
+    def test_zero(self):
+        mg = MemoryGraph()
+        assert mg.count_edges() == 0
+
+    def test_count(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        assert mg.count_edges() == 2
+
+    def test_multi_relation(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "friend")
+        mg.link(a.id, b.id, "coworker")
+        assert mg.count_edges() == 2
+
+
+class TestBatchReweight:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.batch_reweight([]) == 0
+
+    def test_basic(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        n = mg.batch_reweight([
+            {"id": a.id, "delta": 0.1},
+            {"id": b.id, "delta": -0.2},
+        ])
+        assert n == 2
+        assert abs(mg.get_node(a.id).weight - 1.1) < 0.01
+        assert abs(mg.get_node(b.id).weight - 0.8) < 0.01
+
+    def test_nonexistent_id(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        n = mg.batch_reweight([
+            {"id": a.id, "delta": 0.1},
+            {"id": "nonexistent", "delta": 0.5},
+        ])
+        assert n == 1
+
+    def test_floor_zero(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        mg.batch_reweight([{"id": a.id, "delta": -5.0}])
+        assert mg.get_node(a.id).weight == 0.0
+
+
+class TestToAdjacencyList:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.to_adjacency_list() == {}
+
+    def test_basic(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r", 0.5)
+        mg.link(b.id, c.id, "to", 1.0)
+        adj = mg.to_adjacency_list()
+        assert len(adj) == 2
+        assert len(adj[a.id]) == 1
+        assert adj[a.id][0]["target"] == b.id
+        assert adj[a.id][0]["relation"] == "r"
+        assert adj[a.id][0]["weight"] == 0.5
+        assert len(adj[b.id]) == 1
+
+    def test_multi_edge(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r1")
+        mg.link(a.id, b.id, "r2")
+        adj = mg.to_adjacency_list()
+        assert len(adj[a.id]) == 2
+
+
+class TestSerializeDot:
+    def test_empty(self):
+        mg = MemoryGraph()
+        dot = mg.serialize_dot()
+        assert "digraph" in dot
+
+    def test_basic(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "y")
+        mg.link(a.id, b.id, "rel")
+        dot = mg.serialize_dot()
+        assert "digraph memory" in dot
+        assert a.id in dot
+        assert b.id in dot
+        assert "rel" in dot
+        assert "->" in dot
+
+    def test_special_chars(self):
+        mg = MemoryGraph()
+        a = mg.add('node"with"quotes', "x")
+        dot = mg.serialize_dot()
+        assert '\\"' in dot
+
+
+class TestFindOrphans:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.find_orphans() == []
+
+    def test_all_connected(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r")
+        assert mg.find_orphans() == []
+
+    def test_orphan_exists(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A", "x"), mg.add("B", "x"), mg.add("C", "x")
+        mg.link(a.id, b.id, "r")
+        orphans = mg.find_orphans()
+        assert len(orphans) == 1
+        assert orphans[0].id == c.id
+
+
+class TestHasCycle:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.has_cycle() is False
+
+    def test_no_cycle_chain(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        assert mg.has_cycle() is False
+
+    def test_simple_cycle(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, a.id, "r")
+        assert mg.has_cycle() is True
+
+    def test_self_loop(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        mg.link(a.id, a.id, "self")
+        assert mg.has_cycle() is True
+
+    def test_triangle_cycle(self):
+        mg = MemoryGraph()
+        a, b, c = [mg.add(f"N{i}", "x") for i in range(3)]
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        assert mg.has_cycle() is True
