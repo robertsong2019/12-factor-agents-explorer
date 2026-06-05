@@ -3132,6 +3132,64 @@ class MemoryGraph:
                 eccentricities.append(ecc)
         return min(eccentricities) if eccentricities else None
 
+    # ── 连通性分析 ──────────────────────────────────────
+
+    def connected_components(self) -> list[list[str]]:
+        """返回所有连通分量（双向边语义）。
+
+        每个分量为节点 ID 列表，按大小降序排列。
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return []
+        visited: set[str] = set()
+        components: list[list[str]] = []
+        for row in rows:
+            nid = str(row["id"])
+            if nid in visited:
+                continue
+            dists = self._bfs_distances(nid)
+            comp = list(dists.keys())
+            visited.update(comp)
+            components.append(comp)
+        components.sort(key=len, reverse=True)
+        return components
+
+    def is_connected(self) -> bool:
+        """图是否连通（单一连通分量）。空图返回 True，单节点返回 True。"""
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return True
+        first = str(rows[0]["id"])
+        dists = self._bfs_distances(first)
+        return len(dists) == len(rows)
+
+    def average_path_length(self) -> Optional[float]:
+        """所有可达节点对的平均最短路径长度（双向边语义）。
+
+        仅计算同一连通分量内的节点对，不对不可达对做无穷惩罚。
+        空图返回 None，单节点返回 0.0。
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return None
+        total_dist = 0
+        pair_count = 0
+        visited_pairs: set[frozenset] = set()
+        for row in rows:
+            nid = str(row["id"])
+            dists = self._bfs_distances(nid)
+            for target, dist in dists.items():
+                if target == nid:
+                    continue
+                pair = frozenset({nid, target})
+                if pair in visited_pairs:
+                    continue
+                visited_pairs.add(pair)
+                total_dist += dist
+                pair_count += 1
+        return round(total_dist / pair_count, 4) if pair_count > 0 else 0.0
+
 
 # ── 演示 ──────────────────────────────────────────────────
 

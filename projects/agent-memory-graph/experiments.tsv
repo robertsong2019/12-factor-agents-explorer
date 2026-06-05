@@ -49,3 +49,5 @@ timestamp	commit	metric	value	status	description
 2026-06-05T21:10+08:00	df847ca	test_count	467/467	keep	search_by_label(regex)+search_labels(prefix) — label search APIs. +11 tests (456→467). Zero regressions. Cycle 2/4.
 2026-06-05T21:20+08:00	f216d0f	test_count	478/478	keep	edge_weight_stats+weight_distribution — weight analytics & histogram. +11 tests (467→478). Zero regressions. Cycle 3/4.
 2026-06-05T21:30+08:00	de85b3e	test_count	489/489	keep	to_adjacency_matrix+node_distance — matrix export & hop distance. +11 tests (478→489). Zero regressions. Cycle 4/4.
+2026-06-05T23:00+08:00	73b0f6f	test_count	517/517	keep	closeness_centrality+graph_diameter+eccentricity+graph_radius — Wasserman-Faust closeness, all-pairs diameter, per-node eccentricity, graph radius. Bidirectional BFS helper (_bfs_distances). +28 tests (489→517). Zero regressions.
+2026-06-06T01:00+08:00	0ed8b2b	test_count	537/537	keep	connected_components+is_connected+average_path_length — connectivity analysis: all connected components (sorted by size), graph connectivity check, mean shortest path length. Builds on _bfs_distances from closeness/diameter work. +20 tests (517→537). Zero regressions.

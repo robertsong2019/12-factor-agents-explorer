@@ -4204,3 +4204,167 @@ class TestGraphRadius:
                 if x.id != y.id:
                     mg.link(x.id, y.id, "r")
         assert mg.graph_radius() == 1
+
+
+# ── 连通性分析 ──────────────────────────────────────────
+
+class TestConnectedComponents:
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.connected_components() == []
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        n = mg.add("A")
+        comps = mg.connected_components()
+        assert len(comps) == 1
+        assert comps[0] == [n.id]
+
+    def test_connected_graph(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        comps = mg.connected_components()
+        assert len(comps) == 1
+        assert set(comps[0]) == {a.id, b.id, c.id}
+
+    def test_two_components(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        c, d = mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, d.id, "r")
+        comps = mg.connected_components()
+        assert len(comps) == 2
+        assert len(comps[0]) == 2
+        assert len(comps[1]) == 2
+        # Sorted by size descending
+        assert len(comps[0]) >= len(comps[1])
+
+    def test_three_components_mixed_sizes(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        d, e = mg.add("D"), mg.add("E")
+        f = mg.add("F")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(d.id, e.id, "r")
+        comps = mg.connected_components()
+        assert len(comps) == 3
+        assert len(comps[0]) == 3  # A-B-C
+        assert len(comps[1]) == 2  # D-E
+        assert len(comps[2]) == 1  # F
+
+    def test_isolated_nodes(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        comps = mg.connected_components()
+        assert len(comps) == 3
+
+    def test_directional_edges_treated_as_undirected(self):
+        """connected_components uses bidirectional BFS."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")  # A→B only
+        mg.link(b.id, c.id, "r")  # B→C only
+        comps = mg.connected_components()
+        assert len(comps) == 1  # All connected via bidirectional traversal
+
+
+class TestIsConnected:
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.is_connected() is True
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        assert mg.is_connected() is True
+
+    def test_connected_graph(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        assert mg.is_connected() is True
+
+    def test_disconnected_graph(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        c, d = mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, d.id, "r")
+        assert mg.is_connected() is False
+
+    def test_isolated_node_in_connected_graph(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        c = mg.add("C")  # isolated
+        mg.link(a.id, b.id, "r")
+        assert mg.is_connected() is False
+
+
+class TestAveragePathLength:
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.average_path_length() is None
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        assert mg.average_path_length() == 0.0
+
+    def test_two_connected_nodes(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.average_path_length() == 1.0
+
+    def test_line_graph_4_nodes(self):
+        """A-B-C-D: pairs = 6, distances = 1+2+3+1+2+1 = 10, avg = 10/6 ≈ 1.6667"""
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, d.id, "r")
+        assert mg.average_path_length() == round(10 / 6, 4)
+
+    def test_complete_graph(self):
+        """K4: all pairs distance=1, avg = 1.0"""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        for x in nodes:
+            for y in nodes:
+                if x.id != y.id:
+                    mg.link(x.id, y.id, "r")
+        assert mg.average_path_length() == 1.0
+
+    def test_star_graph(self):
+        """center + 3 leaves: 3 pairs at dist 1, 3 pairs at dist 2 → avg = 9/6 = 1.5"""
+        mg = MemoryGraph()
+        center = mg.add("center")
+        leaves = [mg.add(f"L{i}") for i in range(3)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        assert mg.average_path_length() == 1.5
+
+    def test_disconnected_components(self):
+        """Two pairs: A-B and C-D. Only reachable pairs counted.
+        Pairs: (A,B)=1, (C,D)=1. Avg = 2/2 = 1.0"""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        c, d = mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, d.id, "r")
+        assert mg.average_path_length() == 1.0
+
+    def test_all_isolated(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        mg.add("B")
+        mg.add("C")
+        assert mg.average_path_length() == 0.0
