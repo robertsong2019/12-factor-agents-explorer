@@ -1,42 +1,250 @@
 {
-  "updatedAt": "2026-06-05T06:00:00+08:00",
+  "updatedAt": "2026-06-06T06:01:33+08:00",
   "generatedBy": "Catalyst",
   "system": {
     "host": "VM-0-5-ubuntu",
-    "os": "Linux 6.8.0-71-generic",
+    "os": "Linux 6.8.0-71-generic (x64)",
     "node": "v22.22.1",
     "model": "glm-5.1",
-    "channel": "feishu"
+    "channel": "feishu",
+    "openclawVersion": "2026.4.14"
   },
   "cronJobs": [
-    { "id": "f38e0365", "name": "dashboard-update-morning", "schedule": "0 6 * * *", "status": "running", "next": "<1m", "last": "1d ago" },
-    { "id": "9b2a8701", "name": "github-trending-daily", "schedule": "0 7 * * *", "status": "ok", "next": "60m", "last": "23h ago" },
-    { "id": "2c714952", "name": "github-trending-deep", "schedule": "0 8 * * *", "status": "ok", "next": "2h", "last": "22h ago" },
-    { "id": "610a8d6d", "name": "github-creative-evening", "schedule": "0 19 * * *", "status": "ok", "next": "13h", "last": "11h ago" },
-    { "id": "265091b6", "name": "deep-exploration-evening", "schedule": "0 20 * * *", "status": "ok", "next": "14h", "last": "10h ago" },
-    { "id": "bb46cb70", "name": "deep-exploration-evening-utc", "schedule": "0 12 * * * UTC", "status": "ok", "next": "14h", "last": "10h ago" },
-    { "id": "13a2f284", "name": "code-lab-evening", "schedule": "0 21 * * *", "status": "ok", "next": "15h", "last": "9h ago" },
-    { "id": "ce2fb615", "name": "tool-development-evening", "schedule": "0 22 * * *", "status": "ok", "next": "16h", "last": "8h ago" },
-    { "id": "78eac6fc", "name": "key-development-1", "schedule": "0 23 * * *", "status": "error", "next": "17h", "last": "7h ago" },
-    { "id": "88679f9e", "name": "key-development-2", "schedule": "0 0 * * *", "status": "error", "next": "18h", "last": "6h ago" },
-    { "id": "b0fd7e8d", "name": "key-development-3", "schedule": "0 1 * * *", "status": "ok", "next": "19h", "last": "5h ago" },
-    { "id": "fd0515b0", "name": "knowledge-organization", "schedule": "0 2 * * *", "status": "ok", "next": "20h", "last": "4h ago" },
-    { "id": "f7510f1f", "name": "project-testing-morning", "schedule": "0 3 * * *", "status": "ok", "next": "21h", "last": "3h ago" },
-    { "id": "77a5bcc6", "name": "documentation-morning", "schedule": "0 4 * * *", "status": "ok", "next": "22h", "last": "2h ago" },
-    { "id": "686ec55c", "name": "essay-generation-morning", "schedule": "0 5 * * *", "status": "ok", "next": "23h", "last": "1h ago" }
+    {
+      "id": "f38e0365",
+      "name": "dashboard-update-morning",
+      "schedule": "0 6 * * *",
+      "status": "running",
+      "next": "<1m",
+      "last": "1d ago"
+    },
+    {
+      "id": "9b2a8701",
+      "name": "github-trending-daily",
+      "schedule": "0 7 * * *",
+      "status": "ok",
+      "next": "60m",
+      "last": "23h ago"
+    },
+    {
+      "id": "2c714952",
+      "name": "github-trending-deep",
+      "schedule": "0 8 * * *",
+      "status": "ok",
+      "next": "2h",
+      "last": "22h ago"
+    },
+    {
+      "id": "610a8d6d",
+      "name": "github-creative-evening",
+      "schedule": "0 19 * * *",
+      "status": "ok",
+      "next": "13h",
+      "last": "11h ago"
+    },
+    {
+      "id": "265091b6",
+      "name": "deep-exploration-evening",
+      "schedule": "0 20 * * *",
+      "status": "ok",
+      "next": "14h",
+      "last": "10h ago"
+    },
+    {
+      "id": "bb46cb70",
+      "name": "deep-exploration-evening-utc",
+      "schedule": "0 12 * * * UTC",
+      "status": "ok",
+      "next": "14h",
+      "last": "10h ago"
+    },
+    {
+      "id": "13a2f284",
+      "name": "code-lab-evening",
+      "schedule": "0 21 * * *",
+      "status": "ok",
+      "next": "15h",
+      "last": "9h ago"
+    },
+    {
+      "id": "ce2fb615",
+      "name": "tool-development-evening",
+      "schedule": "0 22 * * *",
+      "status": "ok",
+      "next": "16h",
+      "last": "8h ago"
+    },
+    {
+      "id": "78eac6fc",
+      "name": "key-development-1",
+      "schedule": "0 23 * * *",
+      "status": "error",
+      "next": "17h",
+      "last": "7h ago"
+    },
+    {
+      "id": "88679f9e",
+      "name": "key-development-2",
+      "schedule": "0 0 * * *",
+      "status": "ok",
+      "next": "18h",
+      "last": "6h ago"
+    },
+    {
+      "id": "b0fd7e8d",
+      "name": "key-development-3",
+      "schedule": "0 1 * * *",
+      "status": "error",
+      "next": "19h",
+      "last": "5h ago"
+    },
+    {
+      "id": "fd0515b0",
+      "name": "knowledge-organization",
+      "schedule": "0 2 * * *",
+      "status": "ok",
+      "next": "20h",
+      "last": "4h ago"
+    },
+    {
+      "id": "f7510f1f",
+      "name": "project-testing-morning",
+      "schedule": "0 3 * * *",
+      "status": "ok",
+      "next": "21h",
+      "last": "3h ago"
+    },
+    {
+      "id": "77a5bcc6",
+      "name": "documentation-morning",
+      "schedule": "0 4 * * *",
+      "status": "ok",
+      "next": "22h",
+      "last": "2h ago"
+    },
+    {
+      "id": "686ec55c",
+      "name": "essay-generation-morning",
+      "schedule": "0 5 * * *",
+      "status": "ok",
+      "next": "23h",
+      "last": "1h ago"
+    }
   ],
   "sessions": {
     "total": 45,
-    "active24h": 30,
+    "active24h": 32,
+    "totalTokensAll": 2377437,
     "model": "glm-5.1",
     "topSessions": [
-      { "key": "main", "age": "13m ago", "tokens": "177k/205k", "ctx": "87%" },
-      { "key": "cron:essay-generation", "age": "1h ago", "tokens": "51k/205k", "ctx": "25%" },
-      { "key": "cron:documentation", "age": "2h ago", "tokens": "46k/205k", "ctx": "22%" },
-      { "key": "cron:knowledge-org", "age": "3h ago", "tokens": "87k/205k", "ctx": "43%" },
-      { "key": "cron:project-testing", "age": "4h ago", "tokens": "60k/205k", "ctx": "29%" },
-      { "key": "cron:github-trending-deep", "age": "22h ago", "tokens": "39k/205k", "ctx": "19%" },
-      { "key": "feishu:direct", "age": "21h ago", "tokens": "37k/205k", "ctx": "18%" }
+      {
+        "name": "project-testing-morning",
+        "key": "cron:f7510f1f-9db8-46e7-8019-3c9a4858db2e:run:ac92",
+        "tokens": 95679,
+        "contextLimit": 204800,
+        "contextPct": 47,
+        "ageHours": 3.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "deep-exploration-evening-utc",
+        "key": "cron:bb46cb70-ec67-4790-b98d-bdacf280f2a1",
+        "tokens": 94260,
+        "contextLimit": 204800,
+        "contextPct": 46,
+        "ageHours": 9.9,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "deep-exploration-evening",
+        "key": "cron:265091b6-6c5f-4afb-8485-7108945fe1f7:run:493e",
+        "tokens": 93160,
+        "contextLimit": 204800,
+        "contextPct": 45,
+        "ageHours": 10.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "main-session",
+        "key": "main",
+        "tokens": 92135,
+        "contextLimit": 204800,
+        "contextPct": 45,
+        "ageHours": 0.2,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "code-lab-evening",
+        "key": "cron:13a2f284-a1ed-4394-979a-5392fbdf50f7",
+        "tokens": 74524,
+        "contextLimit": 204800,
+        "contextPct": 36,
+        "ageHours": 9.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "github-creative-evening",
+        "key": "cron:610a8d6d-faba-40c2-945c-9ba8472c4839",
+        "tokens": 74121,
+        "contextLimit": 204800,
+        "contextPct": 36,
+        "ageHours": 11.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "knowledge-organization",
+        "key": "cron:fd0515b0-f483-411d-b110-3a16fbc49983",
+        "tokens": 70517,
+        "contextLimit": 204800,
+        "contextPct": 34,
+        "ageHours": 4.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "cron:e257f25e-de69-4f09-888f-deb83448ca23",
+        "key": "cron:e257f25e-de69-4f09-888f-deb83448ca23",
+        "tokens": 63708,
+        "contextLimit": 200000,
+        "contextPct": 32,
+        "ageHours": 1920.0,
+        "model": "glm-5"
+      },
+      {
+        "name": "key-development-3",
+        "key": "cron:b0fd7e8d-f946-4228-bb85-1baaa3502c7c:run:57cd",
+        "tokens": 57294,
+        "contextLimit": 204800,
+        "contextPct": 28,
+        "ageHours": 5.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "key-development-1",
+        "key": "cron:78eac6fc-c2d7-41d2-a5d1-9a52892f89ab",
+        "tokens": 55049,
+        "contextLimit": 204800,
+        "contextPct": 27,
+        "ageHours": 7.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "tool-development-evening",
+        "key": "cron:ce2fb615-132a-4c40-864f-86de27bea24c",
+        "tokens": 54860,
+        "contextLimit": 204800,
+        "contextPct": 27,
+        "ageHours": 7.5,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "cron:789e2aa9-b95e-4fa3-9570-719b1aa813ab",
+        "key": "cron:789e2aa9-b95e-4fa3-9570-719b1aa813ab",
+        "tokens": 53187,
+        "contextLimit": 200000,
+        "contextPct": 27,
+        "ageHours": 1921.0,
+        "model": "glm-5"
+      }
     ]
   },
   "summary": {
@@ -46,7 +254,15 @@
     "error": 2
   },
   "alerts": [
-    { "level": "error", "job": "key-development-1", "message": "Last run ended with error status" },
-    { "level": "error", "job": "key-development-2", "message": "Last run ended with error status" }
+    {
+      "level": "error",
+      "job": "key-development-1",
+      "message": "Last run ended with error status (id: 78eac6fc)"
+    },
+    {
+      "level": "error",
+      "job": "key-development-3",
+      "message": "Last run ended with error status (id: b0fd7e8d)"
+    }
   ]
 }
