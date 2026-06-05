@@ -3465,3 +3465,76 @@ class TestAuthorityScore:
         auth = mg.authority_score()
         # No edges → all equal authority (0 or equal baseline)
         assert len(auth) == 2
+
+
+# ── Serialize Format Tests ────────────────────────────────
+
+class TestSerializeFormats:
+    def test_graphml_empty(self):
+        mg = MemoryGraph()
+        xml = mg.serialize_graphml()
+        assert '<?xml' in xml
+        assert '<graphml' in xml
+        assert '</graphml>' in xml
+
+    def test_graphml_basic(self):
+        mg = MemoryGraph()
+        a, b = mg.add("Alpha", "concept"), mg.add("Beta", "concept")
+        mg.link(a.id, b.id, "relates")
+        xml = mg.serialize_graphml()
+        assert '<node' in xml
+        assert '<edge' in xml
+        assert 'Alpha' in xml
+        assert 'relates' in xml
+        assert xml.count('<node') == 2
+        assert xml.count('<edge') == 1
+
+    def test_graphml_escapes_special_chars(self):
+        mg = MemoryGraph()
+        mg.add("A&B <test>", "x")
+        xml = mg.serialize_graphml()
+        assert 'A&amp;B &lt;test&gt;' in xml
+        assert 'A&B <test>' not in xml or xml.count('A&B <test>') == 0
+
+    def test_cytoscape_empty(self):
+        mg = MemoryGraph()
+        data = mg.serialize_cytoscape()
+        assert "elements" in data
+        assert data["elements"]["nodes"] == []
+        assert data["elements"]["edges"] == []
+
+    def test_cytoscape_basic(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        data = mg.serialize_cytoscape()
+        assert len(data["elements"]["nodes"]) == 3
+        assert len(data["elements"]["edges"]) == 2
+        edge0 = data["elements"]["edges"][0]["data"]
+        assert edge0["source"] == a.id
+        assert edge0["target"] == b.id
+        assert edge0["relation"] == "r"
+
+    def test_cytoscape_preserves_tags(self):
+        mg = MemoryGraph()
+        mg.add("Tagged", tags=["important", "core"])
+        data = mg.serialize_cytoscape()
+        node = data["elements"]["nodes"][0]["data"]
+        assert "important" in node["tags"]
+        assert "core" in node["tags"]
+
+    def test_edgelist_empty(self):
+        mg = MemoryGraph()
+        assert mg.serialize_edgelist() == []
+
+    def test_edgelist_basic(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r", 2.5)
+        el = mg.serialize_edgelist()
+        assert len(el) == 1
+        parts = el[0].split()
+        assert parts[0] == a.id
+        assert parts[1] == b.id
+        assert float(parts[2]) == 2.5

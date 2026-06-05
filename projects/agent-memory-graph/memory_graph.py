@@ -2713,6 +2713,78 @@ class MemoryGraph:
                     lines.append(f"    ──{e['relation']}──▶ {tgt['label'][:25]}")
         return "\n".join(lines)
 
+    def serialize_graphml(self) -> str:
+        """导出为 GraphML XML 格式，兼容 Gephi/yEd/Cytoscape 桌面版。"""
+        import html
+        lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+            '  <key id="label" for="node" attr.name="label" attr.type="string"/>',
+            '  <key id="kind" for="node" attr.name="kind" attr.type="string"/>',
+            '  <key id="weight" for="node" attr.name="weight" attr.type="double"/>',
+            '  <key id="relation" for="edge" attr.name="relation" attr.type="string"/>',
+            '  <key id="eweight" for="edge" attr.name="weight" attr.type="double"/>',
+            '  <graph id="G" edgedefault="directed">',
+        ]
+        nodes = self.conn.execute("SELECT * FROM nodes").fetchall()
+        for n in nodes:
+            lines.append(
+                f'    <node id="{n["id"]}">'
+                f'<data key="label">{html.escape(n["label"])}</data>'
+                f'<data key="kind">{html.escape(n["kind"])}</data>'
+                f'<data key="weight">{n["weight"]}</data>'
+                '</node>'
+            )
+        edges = self.conn.execute("SELECT * FROM edges").fetchall()
+        for i, e in enumerate(edges):
+            lines.append(
+                f'    <edge id="e{i}" source="{e["source"]}" target="{e["target"]}">'
+                f'<data key="relation">{html.escape(e["relation"])}</data>'
+                f'<data key="eweight">{e["weight"]}</data>'
+                '</edge>'
+            )
+        lines.append('  </graph>')
+        lines.append('</graphml>')
+        return '\n'.join(lines)
+
+    def serialize_cytoscape(self) -> dict:
+        """导出为 Cytoscape.js JSON 格式，兼容 cytoscape.js 前端可视化。"""
+        nodes = self.conn.execute("SELECT * FROM nodes").fetchall()
+        edges = self.conn.execute("SELECT * FROM edges").fetchall()
+        return {
+            "elements": {
+                "nodes": [
+                    {
+                        "data": {
+                            "id": str(n["id"]),
+                            "label": n["label"],
+                            "kind": n["kind"],
+                            "weight": n["weight"],
+                            "tags": json.loads(n["tags"]) if n["tags"] else [],
+                        }
+                    }
+                    for n in nodes
+                ],
+                "edges": [
+                    {
+                        "data": {
+                            "id": f"e{i}",
+                            "source": str(e["source"]),
+                            "target": str(e["target"]),
+                            "relation": e["relation"],
+                            "weight": e["weight"],
+                        }
+                    }
+                    for i, e in enumerate(edges)
+                ],
+            }
+        }
+
+    def serialize_edgelist(self) -> list[str]:
+        """导出为边列表格式 ['source_id target_id weight', ...]。"""
+        edges = self.conn.execute("SELECT source, target, weight FROM edges").fetchall()
+        return [f"{e['source']} {e['target']} {e['weight']}" for e in edges]
+
 
 # ── 演示 ──────────────────────────────────────────────────
 
