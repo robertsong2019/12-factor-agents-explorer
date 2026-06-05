@@ -3323,3 +3323,145 @@ class TestWeightNormalize:
         assert n == 2
         # All same → set to target_max
         assert abs(mg.get_node(a.id).weight - 1.0) < 0.01
+
+
+# ── PageRank Tests ────────────────────────────────────────
+
+class TestPageRank:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.pagerank() == {}
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        pr = mg.pagerank()
+        assert len(pr) == 1
+        # Single dangling node → rank ≈ 1.0
+        assert abs(pr[a.id] - 1.0) < 0.1
+
+    def test_basic_convergence(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        pr = mg.pagerank()
+        assert len(pr) == 3
+        # In a cycle, all should be roughly equal
+        vals = list(pr.values())
+        assert max(vals) - min(vals) < 0.1
+
+    def test_hub_gets_higher_rank(self):
+        mg = MemoryGraph()
+        hub = mg.add("Hub")
+        s1, s2, s3 = mg.add("S1"), mg.add("S2"), mg.add("S3")
+        # Many nodes point to hub
+        mg.link(s1.id, hub.id, "r")
+        mg.link(s2.id, hub.id, "r")
+        mg.link(s3.id, hub.id, "r")
+        pr = mg.pagerank()
+        assert pr[hub.id] > pr[s1.id]
+        assert pr[hub.id] > pr[s2.id]
+        assert pr[hub.id] > pr[s3.id]
+
+    def test_dangling_node_handling(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        # b has no outbound → dangling
+        pr = mg.pagerank()
+        assert len(pr) == 2
+        total = sum(pr.values())
+        assert abs(total - 1.0) < 0.05  # roughly sums to 1
+
+    def test_damping_parameter(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, a.id, "r")
+        pr_low = mg.pagerank(damping=0.5)
+        pr_high = mg.pagerank(damping=0.95)
+        # Both should converge
+        assert len(pr_low) == 2
+        assert len(pr_high) == 2
+
+
+# ── Eigenvector Centrality Tests ──────────────────────────
+
+class TestEigenvectorCentrality:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.eigenvector_centrality() == {}
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        ec = mg.eigenvector_centrality()
+        assert len(ec) == 1
+        assert ec[a.id] > 0
+
+    def test_star_graph(self):
+        mg = MemoryGraph()
+        center = mg.add("Center")
+        leaves = [mg.add(f"L{i}") for i in range(5)]
+        for leaf in leaves:
+            mg.link(leaf.id, center.id, "r", 1.0)  # leaves → center
+        ec = mg.eigenvector_centrality()
+        # Center receives links from all leaves → highest centrality
+        assert ec[center.id] > 0
+        for leaf in leaves:
+            assert ec[center.id] >= ec[leaf.id] - 0.01
+
+    def test_linear_chain(self):
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "r")
+        ec = mg.eigenvector_centrality()
+        assert len(ec) == 5
+        # All should have non-negative centrality
+        for nid, val in ec.items():
+            assert val >= -0.01
+
+    def test_weighted_edges(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r", 5.0)
+        mg.link(a.id, c.id, "r", 1.0)
+        ec = mg.eigenvector_centrality()
+        # B should get more centrality due to higher weight
+        assert ec[b.id] >= ec[c.id] - 0.01
+
+
+# ── HITS Authority Score Tests ─────────────────────────────
+
+class TestAuthorityScore:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.authority_score() == {}
+
+    def test_basic_authority(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, b.id, "r")
+        auth = mg.authority_score()
+        # B is pointed to by both A and C → highest authority
+        assert auth[b.id] > auth[a.id]
+        assert auth[b.id] > auth[c.id]
+
+    def test_hub_vs_authority(self):
+        mg = MemoryGraph()
+        hub = mg.add("Hub")
+        auth_node = mg.add("Authority")
+        mg.link(hub.id, auth_node.id, "r")
+        auth = mg.authority_score()
+        assert auth[auth_node.id] > auth[hub.id]
+
+    def test_isolated_nodes(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        auth = mg.authority_score()
+        # No edges → all equal authority (0 or equal baseline)
+        assert len(auth) == 2

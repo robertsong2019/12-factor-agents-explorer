@@ -2596,6 +2596,103 @@ class MemoryGraph:
         self.conn.commit()
         return len(rows)
 
+    def pagerank(self, damping: float = 0.85, max_iter: int = 100, tol: float = 1e-6) -> dict[str, float]:
+        """PageRank 迭代求解。返回 {node_id: score}。"""
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not nodes:
+            return {}
+        node_ids = [str(r["id"]) for r in nodes]
+        n = len(node_ids)
+        rank = {nid: 1.0 / n for nid in node_ids}
+        # 构建入边索引
+        inbound = {nid: [] for nid in node_ids}
+        outbound_count = {nid: 0 for nid in node_ids}
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            if s in outbound_count and t in inbound:
+                inbound[t].append(s)
+                outbound_count[s] += 1
+        for _ in range(max_iter):
+            new_rank = {}
+            dangling_sum = sum(rank[nid] for nid in node_ids if outbound_count[nid] == 0)
+            for nid in node_ids:
+                contrib = 0.0
+                for src in inbound[nid]:
+                    if outbound_count[src] > 0:
+                        contrib += rank[src] / outbound_count[src]
+                # Dangling node redistribution
+                contrib += dangling_sum / n
+                new_rank[nid] = (1 - damping) / n + damping * contrib
+            diff = sum(abs(new_rank[nid] - rank[nid]) for nid in node_ids)
+            rank = new_rank
+            if diff < tol:
+                break
+        return rank
+
+    def eigenvector_centrality(self, max_iter: int = 100, tol: float = 1e-6) -> dict[str, float]:
+        """幂迭代法求近似特征向量中心性。返回 {node_id: centrality}。"""
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not nodes:
+            return {}
+        node_ids = [str(r["id"]) for r in nodes]
+        id_set = set(node_ids)
+        # 构建邻接表
+        adj = {nid: [] for nid in node_ids}
+        edges = self.conn.execute("SELECT source, target, weight FROM edges").fetchall()
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            w = e["weight"] if e["weight"] else 1.0
+            if s in id_set and t in id_set:
+                adj[s].append((t, w))
+        v = {nid: 1.0 for nid in node_ids}
+        for _ in range(max_iter):
+            new_v = {nid: 0.0 for nid in node_ids}
+            for src in node_ids:
+                for tgt, w in adj[src]:
+                    new_v[tgt] += v[src] * w
+            norm = sum(val * val for val in new_v.values()) ** 0.5
+            if norm == 0:
+                break
+            new_v = {nid: val / norm for nid, val in new_v.items()}
+            diff = sum(abs(new_v[nid] - v[nid]) for nid in node_ids)
+            v = new_v
+            if diff < tol:
+                break
+        return v
+
+    def authority_score(self, max_iter: int = 50) -> dict[str, float]:
+        """HITS 算法：返回 {node_id: (hub_score, authority_score)} 的 authority 部分。"""
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not nodes:
+            return {}
+        node_ids = [str(r["id"]) for r in nodes]
+        id_set = set(node_ids)
+        inbound = {nid: [] for nid in node_ids}
+        outbound = {nid: [] for nid in node_ids}
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            if s in id_set and t in id_set:
+                inbound[t].append(s)
+                outbound[s].append(t)
+        hub = {nid: 1.0 for nid in node_ids}
+        auth = {nid: 1.0 for nid in node_ids}
+        for _ in range(max_iter):
+            # Authority update
+            new_auth = {nid: sum(hub[s] for s in inbound[nid]) for nid in node_ids}
+            a_norm = max(new_auth.values()) or 1
+            new_auth = {nid: v / a_norm for nid, v in new_auth.items()}
+            # Hub update
+            new_hub = {nid: sum(new_auth[t] for t in outbound[nid]) for nid in node_ids}
+            h_norm = max(new_hub.values()) or 1
+            new_hub = {nid: v / h_norm for nid, v in new_hub.items()}
+            if (sum(abs(new_auth[nid] - auth[nid]) for nid in node_ids) +
+                sum(abs(new_hub[nid] - hub[nid]) for nid in node_ids)) < 1e-6:
+                break
+            auth, hub = new_auth, new_hub
+        return auth
+
     def visualize_ascii(self) -> str:
         """简单的 ASCII 可视化。"""
         lines = ["📊 Memory Network:"]
