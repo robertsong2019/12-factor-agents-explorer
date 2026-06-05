@@ -67,8 +67,31 @@ response = agent.run("计算 15 乘以 7，然后加上 33")
 **工具注册要点：**
 
 - 函数的 **docstring** 会自动成为工具的 `description`（给 LLM 看的）
-- 函数的 **参数签名** 会自动提取为 `parameters`
+- 函数的 **参数签名** 会自动提取为 `parameters`，包括 **类型推断**
 - 工具返回值应该是 **字符串**
+
+**类型自动推断：**
+
+Python 类型注解会自动映射为 JSON Schema 类型：
+
+| Python 类型 | 工具参数类型 |
+|-------------|-------------|
+| `str` | `string` |
+| `int` | `integer` |
+| `float` | `number` |
+| `bool` | `boolean` |
+| `list` | `array` |
+| `dict` | `object` |
+
+```python
+@tool
+def search(query: str, max_results: int = 10) -> str:
+    # 参数自动提取为:
+    # {"query": {"type": "string"}, "max_results": {"type": "integer", "default": 10}}
+    ...
+```
+
+> 💡 无类型注解的参数默认为 `string`。建议始终添加类型注解以获得精确映射。
 
 **自定义工具名和描述：**
 

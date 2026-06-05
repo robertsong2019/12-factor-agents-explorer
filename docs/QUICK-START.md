@@ -54,6 +54,7 @@ cd projects/agent-memory-service && npm install && npm test
 | 文档 | 路径 |
 |------|------|
 | 项目列表和状态 | [README.md](../README.md) |
+| 术语表 | [docs/GLOSSARY.md](GLOSSARY.md) |
 | 文档维护指南 | [docs/DOCUMENTATION-GUIDE.md](DOCUMENTATION-GUIDE.md) |
 | 历史改进报告 | [docs/reports/](reports/) |
 | 集成示例 | [examples/README.md](../examples/README.md) |
@@ -66,4 +67,4 @@ python3 examples/integration-demo.py
 
 ---
 
-_最后更新: 2026-04-20_
+_最后更新: 2026-06-06_

@@ -12,7 +12,36 @@ Three composable components unified via a high-level `AgentObserver` facade:
 
 **91 tests passing · Zero dependencies · Pure TypeScript**
 
-## Quick Start
+## ⚡ 30-Second Quick Start
+
+Copy, paste, run — see observability in action:
+
+```ts
+import { AgentObserver } from './src/index.js';
+
+const obs = new AgentObserver();
+
+obs.startRun('hello', 'Test run');
+obs.llmCall('gpt-4', 'Hi', 'Hello!');
+obs.endRun();
+
+console.log(obs.reportMarkdown());
+// ✅ Score, token usage, latency — all captured
+```
+
+**Add guardrails** (one line):
+
+```ts
+obs.getPolicyEngine().loadFromJSON([
+  { name: 'no-rm', description: 'Block rm', category: 'tool_execution', type: 'blockDestructiveOps' },
+]);
+const { allowed } = obs.toolExecute('bash', 'rm -rf /');
+// → allowed: false, violation logged
+```
+
+---
+
+## Quick Start (Full Example)
 
 ```ts
 import { AgentObserver } from './src/index.js';
