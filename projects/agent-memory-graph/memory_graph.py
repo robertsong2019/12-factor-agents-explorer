@@ -1518,6 +1518,54 @@ class MemoryGraph:
                                       (relation,)).fetchone()["c"]
         return self.conn.execute("SELECT COUNT(*) as c FROM edges").fetchone()["c"]
 
+    def edge_weight_stats(self, relation: str = None) -> dict:
+        """Statistics about edge weights (min/max/mean/sum/count).
+
+        Args:
+            relation: optional filter by relation type.
+        """
+        if relation:
+            rows = self.conn.execute(
+                "SELECT weight FROM edges WHERE relation=?", (relation,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute("SELECT weight FROM edges").fetchall()
+        if not rows:
+            return {"count": 0, "min": 0, "max": 0, "mean": 0, "sum": 0}
+        weights = [r["weight"] for r in rows]
+        return {
+            "count": len(weights),
+            "min": min(weights),
+            "max": max(weights),
+            "mean": round(sum(weights) / len(weights), 4),
+            "sum": round(sum(weights), 4),
+        }
+
+    def weight_distribution(self, bins: int = 10) -> list[dict]:
+        """Histogram of node weight distribution.
+
+        Args:
+            bins: number of histogram bins.
+        """
+        rows = self.conn.execute("SELECT weight FROM nodes").fetchall()
+        if not rows:
+            return []
+        weights = [r["weight"] for r in rows]
+        w_min, w_max = min(weights), max(weights)
+        if w_max == w_min:
+            return [{"range": f"{w_min:.2f}", "count": len(weights)}]
+        step = (w_max - w_min) / bins
+        distribution = []
+        for i in range(bins):
+            lo = w_min + i * step
+            hi = lo + step if i < bins - 1 else w_max
+            count = sum(1 for w in weights if lo <= w < hi or (i == bins - 1 and w == hi))
+            distribution.append({
+                "range": f"{lo:.2f}-{hi:.2f}",
+                "count": count,
+            })
+        return distribution
+
     def find_components(self) -> list[list[str]]:
         """Find all connected components (undirected). Returns list of node-id lists."""
         visited = set()

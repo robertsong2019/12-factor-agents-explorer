@@ -3795,3 +3795,117 @@ class TestSearchLabels:
         results = mg.search_labels("alpha")
         # higher weight should come first
         assert results[0].weight >= results[1].weight
+
+
+class TestEdgeWeightStats:
+
+    def test_empty(self):
+        mg = MemoryGraph()
+        s = mg.edge_weight_stats()
+        assert s == {"count": 0, "min": 0, "max": 0, "mean": 0, "sum": 0}
+
+    def test_basic(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r", 1.0)
+        mg.link(b.id, c.id, "r", 3.0)
+        mg.link(c.id, a.id, "r", 5.0)
+        s = mg.edge_weight_stats()
+        assert s["count"] == 3
+        assert s["min"] == 1.0
+        assert s["max"] == 5.0
+        assert s["sum"] == 9.0
+        assert s["mean"] == 3.0
+
+    def test_filter_by_relation(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "friend", 1.0)
+        mg.link(b.id, c.id, "foe", 10.0)
+        s = mg.edge_weight_stats(relation="friend")
+        assert s["count"] == 1
+        assert s["mean"] == 1.0
+        s2 = mg.edge_weight_stats(relation="foe")
+        assert s2["count"] == 1
+        assert s2["mean"] == 10.0
+
+    def test_no_matching_relation(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r", 1.0)
+        s = mg.edge_weight_stats(relation="nonexistent")
+        assert s["count"] == 0
+
+    def test_negative_weights(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r", -2.5)
+        s = mg.edge_weight_stats()
+        assert s["min"] == -2.5
+        assert s["sum"] == -2.5
+
+
+class TestWeightDistribution:
+
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.weight_distribution() == []
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        dist = mg.weight_distribution()
+        assert len(dist) == 1
+        assert dist[0]["count"] == 1
+
+    def test_multiple_nodes(self):
+        mg = MemoryGraph()
+        for i in range(10):
+            mg.add(f"node_{i}")
+        # Set varied weights directly
+        for r in mg.conn.execute("SELECT id FROM nodes").fetchall():
+            import random
+            random.seed(hash(r['id']) % 1000)
+            mg.conn.execute("UPDATE nodes SET weight=? WHERE id=?",
+                            (random.random(), r['id']))
+        mg.conn.commit()
+        dist = mg.weight_distribution(bins=5)
+        assert len(dist) == 5
+        assert sum(b["count"] for b in dist) == 10
+
+    def test_bins_parameter(self):
+        mg = MemoryGraph()
+        ids = []
+        for i in range(20):
+            n = mg.add(f"n{i}")
+            ids.append(n.id)
+        # Set varied weights directly (0.0 to 1.0)
+        for idx, nid in enumerate(ids):
+            mg.conn.execute("UPDATE nodes SET weight=? WHERE id=?",
+                            (idx / 20.0, nid))
+        mg.conn.commit()
+        dist3 = mg.weight_distribution(bins=3)
+        dist10 = mg.weight_distribution(bins=10)
+        assert len(dist3) == 3
+        assert len(dist10) == 10
+
+    def test_with_varied_weights(self):
+        mg = MemoryGraph()
+        nodes = [mg.add(f"n{i}") for i in range(5)]
+        for i, n in enumerate(nodes):
+            mg.conn.execute("UPDATE nodes SET weight=? WHERE id=?",
+                            (i / 5.0, n.id))
+        mg.conn.commit()
+        dist = mg.weight_distribution(bins=3)
+        assert sum(b["count"] for b in dist) == 5
+
+    def test_range_strings(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.conn.execute("UPDATE nodes SET weight=0.0 WHERE id=?", (a.id,))
+        mg.conn.execute("UPDATE nodes SET weight=1.0 WHERE id=?", (b.id,))
+        mg.conn.commit()
+        dist = mg.weight_distribution(bins=2)
+        assert "range" in dist[0]
+        assert "-" in dist[0]["range"]
