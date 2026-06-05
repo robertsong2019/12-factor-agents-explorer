@@ -411,6 +411,52 @@ class MemoryGraph:
                      json.loads(r["data"]), r["created"], r["accessed"], r["weight"])
                 for r in rows]
 
+    def search_by_label(self, pattern: str, limit: int = 50) -> list[Node]:
+        """Find nodes whose label matches a regex pattern.
+
+        Args:
+            pattern: Python regex pattern (or simple substring if invalid regex).
+            limit: max results.
+        """
+        import re
+        try:
+            compiled = re.compile(pattern, re.IGNORECASE)
+            rows = self.conn.execute("SELECT * FROM nodes").fetchall()
+            results = []
+            for r in rows:
+                if compiled.search(r["label"]):
+                    results.append(Node(
+                        r["id"], r["label"], r["kind"],
+                        json.loads(r["data"]), r["created"], r["accessed"], r["weight"]
+                    ))
+                    if len(results) >= limit:
+                        break
+            return results
+        except re.error:
+            # Fallback to LIKE substring search
+            rows = self.conn.execute(
+                "SELECT * FROM nodes WHERE label LIKE ? LIMIT ?",
+                (f"%{pattern}%", limit)
+            ).fetchall()
+            return [Node(r["id"], r["label"], r["kind"],
+                         json.loads(r["data"]), r["created"], r["accessed"], r["weight"])
+                    for r in rows]
+
+    def search_labels(self, prefix: str, limit: int = 20) -> list[Node]:
+        """Fast prefix search on node labels using SQLite LIKE.
+
+        Args:
+            prefix: label prefix to search for.
+            limit: max results.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE label LIKE ? ORDER BY weight DESC LIMIT ?",
+            (f"{prefix}%", limit)
+        ).fetchall()
+        return [Node(r["id"], r["label"], r["kind"],
+                     json.loads(r["data"]), r["created"], r["accessed"], r["weight"])
+                for r in rows]
+
     def search_by_data(self, key: str, value=None) -> list[Node]:
         """Find nodes whose data dict contains key (and optionally matches value)."""
         results = []

@@ -3709,3 +3709,89 @@ class TestTagStats:
         mg.add("B", tags=["a"])
         s = mg.tag_stats()
         assert s["avg_tags_per_node"] == 2.0  # 4 tag instances / 2 nodes
+
+
+class TestSearchByLabel:
+
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.search_by_label("test") == []
+
+    def test_substring_match(self):
+        mg = MemoryGraph()
+        mg.add("Python Tutorial")
+        mg.add("Rust Guide")
+        mg.add("Python Cookbook")
+        results = mg.search_by_label("Python")
+        assert len(results) == 2
+
+    def test_regex_match(self):
+        mg = MemoryGraph()
+        mg.add("node_001")
+        mg.add("node_002")
+        mg.add("item_003")
+        results = mg.search_by_label(r"^node_")
+        assert len(results) == 2
+
+    def test_invalid_regex_fallback(self):
+        mg = MemoryGraph()
+        mg.add("test [bracket")
+        mg.add("normal")
+        # Invalid regex should fallback to LIKE
+        results = mg.search_by_label("[bracket")
+        assert len(results) == 1
+        assert results[0].label == "test [bracket"
+
+    def test_limit(self):
+        mg = MemoryGraph()
+        for i in range(10):
+            mg.add(f"test_{i}")
+        results = mg.search_by_label("test", limit=3)
+        assert len(results) == 3
+
+    def test_case_insensitive(self):
+        mg = MemoryGraph()
+        mg.add("Python")
+        mg.add("python")
+        results = mg.search_by_label("python")
+        labels = [n.label for n in results]
+        assert "Python" in labels
+        assert "python" in labels
+
+
+class TestSearchLabels:
+
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.search_labels("test") == []
+
+    def test_prefix_match(self):
+        mg = MemoryGraph()
+        mg.add("Python 3")
+        mg.add("Python Tutorial")
+        mg.add("Rust")
+        results = mg.search_labels("Python")
+        assert len(results) == 2
+
+    def test_no_false_positives(self):
+        mg = MemoryGraph()
+        mg.add("Great Python")  # contains but doesn't start with
+        results = mg.search_labels("Python")
+        assert len(results) == 0
+
+    def test_limit(self):
+        mg = MemoryGraph()
+        for i in range(5):
+            mg.add(f"api_v{i}")
+        results = mg.search_labels("api", limit=2)
+        assert len(results) == 2
+
+    def test_weight_ordering(self):
+        mg = MemoryGraph()
+        a = mg.add("alpha_one")
+        b = mg.add("alpha_two")
+        mg.reweight(b.id, 5.0)  # b has higher weight
+        mg.reweight(a.id, 0.0)  # a stays default-ish
+        results = mg.search_labels("alpha")
+        # higher weight should come first
+        assert results[0].weight >= results[1].weight
