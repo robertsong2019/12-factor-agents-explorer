@@ -3052,6 +3052,86 @@ class MemoryGraph:
             "least_used": cloud[-1] if cloud else None,
         }
 
+    def _bfs_distances(self, node_id: str) -> dict[str, int]:
+        """Bidirectional BFS: shortest distances from node_id to all reachable nodes.
+
+        Treats edges as undirected (source↔target), which is the standard for
+        graph-analysis metrics (diameter, eccentricity, closeness).
+        """
+        distances = {node_id: 0}
+        queue = [node_id]
+        while queue:
+            cur = queue.pop(0)
+            # Both outgoing (source→target) and incoming (target→source) edges
+            rows = self.conn.execute(
+                "SELECT target AS nb FROM edges WHERE source=? "
+                "UNION "
+                "SELECT source AS nb FROM edges WHERE target=?",
+                (cur, cur)
+            ).fetchall()
+            for r in rows:
+                nid = str(r["nb"])
+                if nid not in distances:
+                    distances[nid] = distances[cur] + 1
+                    queue.append(nid)
+        return distances
+
+    def closeness_centrality(self, node_id: str) -> Optional[float]:
+        """接近中心性 (Wasserman-Faust normalization).
+
+        C(v) = reachable² / ((n-1) * sum(distances))
+
+        值越高表示该节点越"中心"。对不可达节点自动惩罚。
+        """
+        if not self.has_node(node_id):
+            return None
+        n = self.stats()["nodes"]
+        if n <= 1:
+            return 0.0
+        distances = self._bfs_distances(node_id)
+        reachable = len(distances) - 1
+        if reachable == 0:
+            return 0.0
+        total_dist = sum(distances.values())
+        return (reachable * reachable) / ((n - 1) * total_dist)
+
+    def graph_diameter(self) -> Optional[int]:
+        """图直径 = 所有连通分量中最长最短路径。
+
+        空图返回 None，孤立节点图返回 0。
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return None
+        diameter = 0
+        for row in rows:
+            nid = str(row["id"])
+            distances = self._bfs_distances(nid)
+            if distances:
+                local_max = max(distances.values())
+                if local_max > diameter:
+                    diameter = local_max
+        return diameter
+
+    def eccentricity(self, node_id: str) -> Optional[int]:
+        """离心率 = 从 node_id 到最远可达节点的距离（双向边）。"""
+        if not self.has_node(node_id):
+            return None
+        distances = self._bfs_distances(node_id)
+        return max(distances.values()) if distances else 0
+
+    def graph_radius(self) -> Optional[int]:
+        """图半径 = 所有节点离心率的最小值。"""
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return None
+        eccentricities = []
+        for row in rows:
+            ecc = self.eccentricity(str(row["id"]))
+            if ecc is not None:
+                eccentricities.append(ecc)
+        return min(eccentricities) if eccentricities else None
+
 
 # ── 演示 ──────────────────────────────────────────────────
 

@@ -3987,3 +3987,220 @@ class TestNodeDistance:
         mg = MemoryGraph()
         b = mg.add("B")
         assert mg.node_distance("nonexistent", b.id) is None
+
+
+class TestClosenessCentrality:
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        assert mg.closeness_centrality(a.id) == 0.0
+
+    def test_two_connected_nodes(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        # reachable=1, total_dist=1, n-1=1 → 1²/(1*1) = 1.0
+        assert mg.closeness_centrality(a.id) == 1.0
+
+    def test_line_graph_end(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        # From A: dist to B=1, C=2. reachable=2, total=3, n-1=2
+        # WF: 2² / (2*3) = 4/6 ≈ 0.6667
+        c_a = mg.closeness_centrality(a.id)
+        assert abs(c_a - (4.0/6.0)) < 1e-9
+
+    def test_line_graph_center(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        # From B: dist to A=1, C=1. reachable=2, total=2, n-1=2
+        # WF: 2² / (2*2) = 1.0
+        assert mg.closeness_centrality(b.id) == 1.0
+
+    def test_center_more_central(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        c_b = mg.closeness_centrality(b.id)
+        c_a = mg.closeness_centrality(a.id)
+        assert c_b > c_a
+
+    def test_isolated_node(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        assert mg.closeness_centrality(a.id) == 0.0
+
+    def test_nonexistent_node(self):
+        mg = MemoryGraph()
+        assert mg.closeness_centrality("nonexistent") is None
+
+    def test_star_graph_center(self):
+        mg = MemoryGraph()
+        center = mg.add("center")
+        leaves = [mg.add(f"L{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        # n=5, reachable=4, total_dist=4, n-1=4
+        # WF: 4² / (4*4) = 1.0
+        assert mg.closeness_centrality(center.id) == 1.0
+
+    def test_disconnected_penalty(self):
+        """Node in disconnected graph should have lower closeness."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        c, d = mg.add("C"), mg.add("D")  # isolated
+        mg.link(a.id, b.id, "r")
+        # n=4, reachable=1, total_dist=1, n-1=3
+        # WF: 1² / (3*1) = 0.333
+        c_a = mg.closeness_centrality(a.id)
+        assert abs(c_a - (1.0/3.0)) < 1e-9
+
+    def test_complete_graph(self):
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        for x in nodes:
+            for y in nodes:
+                if x.id != y.id:
+                    mg.link(x.id, y.id, "r")
+        # n=4, from any node: reachable=3, total_dist=3, n-1=3
+        # WF: 9 / (3*3) = 1.0
+        assert mg.closeness_centrality(nodes[0].id) == 1.0
+
+
+class TestGraphDiameter:
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.graph_diameter() is None
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        assert mg.graph_diameter() == 0
+
+    def test_two_connected_nodes(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.graph_diameter() == 1
+
+    def test_line_graph_5(self):
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "r")
+        assert mg.graph_diameter() == 4
+
+    def test_star_graph(self):
+        mg = MemoryGraph()
+        center = mg.add("center")
+        leaves = [mg.add(f"L{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        assert mg.graph_diameter() == 2
+
+    def test_disconnected_components(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        d, e = mg.add("D"), mg.add("E")
+        mg.link(d.id, e.id, "r")
+        assert mg.graph_diameter() == 2
+
+    def test_complete_graph(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        for x in [a, b, c]:
+            for y in [a, b, c]:
+                if x.id != y.id:
+                    mg.link(x.id, y.id, "r")
+        assert mg.graph_diameter() == 1
+
+    def test_only_isolated_nodes(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        mg.add("B")
+        assert mg.graph_diameter() == 0
+
+
+class TestEccentricity:
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        assert mg.eccentricity(a.id) == 0
+
+    def test_line_graph(self):
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, d.id, "r")
+        assert mg.eccentricity(a.id) == 3
+        assert mg.eccentricity(b.id) == 2
+        assert mg.eccentricity(c.id) == 2
+        assert mg.eccentricity(d.id) == 3
+
+    def test_star_graph(self):
+        mg = MemoryGraph()
+        center = mg.add("center")
+        leaves = [mg.add(f"L{i}") for i in range(3)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        assert mg.eccentricity(center.id) == 1
+        assert mg.eccentricity(leaves[0].id) == 2
+
+    def test_nonexistent_node(self):
+        mg = MemoryGraph()
+        assert mg.eccentricity("nonexistent") is None
+
+    def test_isolated_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        assert mg.eccentricity(a.id) == 0
+
+
+class TestGraphRadius:
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.graph_radius() is None
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        assert mg.graph_radius() == 0
+
+    def test_line_graph(self):
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, d.id, "r")
+        # eccentricities: A=3, B=2, C=2, D=3 → radius=2
+        assert mg.graph_radius() == 2
+
+    def test_star_graph(self):
+        mg = MemoryGraph()
+        center = mg.add("center")
+        leaves = [mg.add(f"L{i}") for i in range(3)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        assert mg.graph_radius() == 1
+
+    def test_complete_graph(self):
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        for x in nodes:
+            for y in nodes:
+                if x.id != y.id:
+                    mg.link(x.id, y.id, "r")
+        assert mg.graph_radius() == 1
