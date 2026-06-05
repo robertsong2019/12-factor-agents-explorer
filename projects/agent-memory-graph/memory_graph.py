@@ -2885,6 +2885,39 @@ class MemoryGraph:
                     count += 1
         return count
 
+    def tag_cloud(self, limit: int = 0) -> list[dict]:
+        """Return tag frequency as sorted list of {tag, count} dicts.
+
+        Args:
+            limit: if >0, return only top-N most frequent tags.
+        """
+        freq = {}
+        for r in self.conn.execute("SELECT tags FROM nodes").fetchall():
+            for tag in json.loads(r["tags"]):
+                freq[tag] = freq.get(tag, 0) + 1
+        result = [{"tag": t, "count": c} for t, c in sorted(freq.items(), key=lambda x: -x[1])]
+        return result[:limit] if limit > 0 else result
+
+    def tag_stats(self) -> dict:
+        """Comprehensive tag statistics."""
+        all_tags = self.all_tags()
+        cloud = self.tag_cloud()
+        total_nodes = self.conn.execute("SELECT COUNT(*) as c FROM nodes").fetchone()["c"]
+        tagged_count = self.conn.execute(
+            "SELECT COUNT(*) as c FROM nodes WHERE tags != '[]'"
+        ).fetchone()["c"]
+        total_tag_instances = sum(item["count"] for item in cloud)
+        avg_tags = total_tag_instances / total_nodes if total_nodes else 0
+        return {
+            "unique_tags": len(all_tags),
+            "total_tag_instances": total_tag_instances,
+            "tagged_nodes": tagged_count,
+            "untagged_nodes": total_nodes - tagged_count,
+            "avg_tags_per_node": round(avg_tags, 2),
+            "most_used": cloud[0] if cloud else None,
+            "least_used": cloud[-1] if cloud else None,
+        }
+
 
 # ── 演示 ──────────────────────────────────────────────────
 

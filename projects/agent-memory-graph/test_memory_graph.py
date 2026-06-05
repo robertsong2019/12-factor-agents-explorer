@@ -3621,3 +3621,91 @@ class TestTriangleCount:
     def test_local_nonexistent(self):
         mg = MemoryGraph()
         assert mg.local_triangle_count("nonexistent") == 0
+
+
+# ── tag_cloud + tag_stats tests ──────────────────────────────
+
+class TestTagCloud:
+
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.tag_cloud() == []
+
+    def test_single_tag(self):
+        mg = MemoryGraph()
+        mg.add("A", tags=["x"])
+        cloud = mg.tag_cloud()
+        assert cloud == [{"tag": "x", "count": 1}]
+
+    def test_multiple_tags_sorted(self):
+        mg = MemoryGraph()
+        mg.add("A", tags=["python", "ai"])
+        mg.add("B", tags=["python"])
+        mg.add("C", tags=["python", "rust"])
+        cloud = mg.tag_cloud()
+        # python=3, ai=1, rust=1; sorted by count desc
+        assert cloud[0] == {"tag": "python", "count": 3}
+        assert len(cloud) == 3
+
+    def test_tag_cloud_limit(self):
+        mg = MemoryGraph()
+        for label, tags in [("A", ["t1"]), ("B", ["t1", "t2"]), ("C", ["t1"])]:
+            mg.add(label, tags=tags)
+        cloud = mg.tag_cloud(limit=1)
+        assert len(cloud) == 1
+        assert cloud[0]["tag"] == "t1"
+
+    def test_tag_cloud_limit_zero_means_all(self):
+        mg = MemoryGraph()
+        mg.add("A", tags=["x", "y"])
+        cloud = mg.tag_cloud(limit=0)
+        assert len(cloud) == 2
+
+    def test_untagged_not_included(self):
+        mg = MemoryGraph()
+        mg.add("A", tags=["x"])
+        mg.add("B")  # no tags
+        cloud = mg.tag_cloud()
+        assert len(cloud) == 1
+        assert cloud[0]["tag"] == "x"
+
+
+class TestTagStats:
+
+    def test_empty(self):
+        mg = MemoryGraph()
+        s = mg.tag_stats()
+        assert s["unique_tags"] == 0
+        assert s["total_tag_instances"] == 0
+        assert s["tagged_nodes"] == 0
+        assert s["untagged_nodes"] == 0
+        assert s["most_used"] is None
+        assert s["least_used"] is None
+
+    def test_basic_stats(self):
+        mg = MemoryGraph()
+        mg.add("A", tags=["python", "ai"])
+        mg.add("B", tags=["python"])
+        mg.add("C")  # untagged
+        s = mg.tag_stats()
+        assert s["unique_tags"] == 2
+        assert s["total_tag_instances"] == 3
+        assert s["tagged_nodes"] == 2
+        assert s["untagged_nodes"] == 1
+        assert s["avg_tags_per_node"] == 1.0
+        assert s["most_used"] == {"tag": "python", "count": 2}
+
+    def test_all_tagged(self):
+        mg = MemoryGraph()
+        mg.add("A", tags=["x"])
+        mg.add("B", tags=["y"])
+        s = mg.tag_stats()
+        assert s["tagged_nodes"] == 2
+        assert s["untagged_nodes"] == 0
+
+    def test_avg_tags_per_node(self):
+        mg = MemoryGraph()
+        mg.add("A", tags=["a", "b", "c"])
+        mg.add("B", tags=["a"])
+        s = mg.tag_stats()
+        assert s["avg_tags_per_node"] == 2.0  # 4 tag instances / 2 nodes
