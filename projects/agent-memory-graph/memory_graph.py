@@ -2785,6 +2785,106 @@ class MemoryGraph:
         edges = self.conn.execute("SELECT source, target, weight FROM edges").fetchall()
         return [f"{e['source']} {e['target']} {e['weight']}" for e in edges]
 
+    def k_core(self, k: int) -> list[str]:
+        """k-core 分解：返回度数 ≥ k 的节点 ID 列表（迭代删除度数不足的节点）。"""
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        node_ids = {str(r["id"]) for r in nodes}
+        if not node_ids:
+            return []
+        # Build undirected degree map (treat directed as undirected)
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        adj = {nid: set() for nid in node_ids}
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            if s in node_ids and t in node_ids:
+                adj[s].add(t)
+                adj[t].add(s)
+        # Iteratively prune nodes with degree < k
+        changed = True
+        while changed:
+            changed = False
+            to_remove = set()
+            for nid in node_ids:
+                if len(adj[nid]) < k:
+                    to_remove.add(nid)
+            if to_remove:
+                changed = True
+                for nid in to_remove:
+                    node_ids.discard(nid)
+                    for neighbor in adj[nid]:
+                        if neighbor in adj:
+                            adj[neighbor].discard(nid)
+        return sorted(node_ids)
+
+    def core_number(self) -> dict[str, int]:
+        """每个节点的 core number（最大 k-core 包含该节点的 k 值）。"""
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        node_ids = {str(r["id"]) for r in nodes}
+        if not node_ids:
+            return {}
+        # Build undirected adjacency
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        adj = {nid: set() for nid in node_ids}
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            if s in node_ids and t in node_ids:
+                adj[s].add(t)
+                adj[t].add(s)
+        # Batagelj-Zaversnik algorithm
+        degree = {nid: len(adj[nid]) for nid in node_ids}
+        # Sort nodes by degree
+        sorted_nodes = sorted(node_ids, key=lambda n: degree[n])
+        core = {}
+        for nid in sorted_nodes:
+            core[nid] = degree[nid]
+            for neighbor in adj[nid]:
+                if degree[neighbor] > degree[nid]:
+                    degree[neighbor] -= 1
+        return core
+
+    def count_triangles(self) -> int:
+        """统计图中三角形数量（有向边视为无向）。"""
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        node_ids = {str(r["id"]) for r in nodes}
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        adj = {nid: set() for nid in node_ids}
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            if s in node_ids and t in node_ids:
+                adj[s].add(t)
+                adj[t].add(s)
+        count = 0
+        id_list = sorted(node_ids)
+        id_index = {nid: i for i, nid in enumerate(id_list)}
+        for i, u in enumerate(id_list):
+            for v in adj[u]:
+                if id_index.get(v, -1) > i:
+                    for w in adj[v]:
+                        if id_index.get(w, -1) > id_index[v]:
+                            if w in adj[u]:
+                                count += 1
+        return count
+
+    def local_triangle_count(self, node_id: str) -> int:
+        """单节点参与的三角形数量。"""
+        if node_id not in {str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()}:
+            return 0
+        # Build adjacency for neighborhood
+        all_edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        adj = {}
+        for e in all_edges:
+            s, t = str(e["source"]), str(e["target"])
+            adj.setdefault(s, set()).add(t)
+            adj.setdefault(t, set()).add(s)
+        neighbors = adj.get(node_id, set())
+        count = 0
+        neighbor_list = list(neighbors)
+        for i, v in enumerate(neighbor_list):
+            for w in neighbor_list[i+1:]:
+                if w in adj.get(v, set()):
+                    count += 1
+        return count
+
 
 # ── 演示 ──────────────────────────────────────────────────
 

@@ -3538,3 +3538,86 @@ class TestSerializeFormats:
         assert parts[0] == a.id
         assert parts[1] == b.id
         assert float(parts[2]) == 2.5
+
+
+# ── k-Core / Triangle Count Tests ─────────────────────────
+
+class TestKCore:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.k_core(2) == []
+
+    def test_single_node_k1(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        assert a.id in mg.k_core(0)
+        # k=1 requires degree >= 1, isolated node should be pruned
+        assert a.id not in mg.k_core(1)
+
+    def test_triangle_k2(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        result = mg.k_core(2)
+        assert len(result) == 3  # all have degree 2
+
+    def test_k3_excludes_low_degree(self):
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        # Triangle among A, B, C
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        # D only connected to A
+        mg.link(d.id, a.id, "r")
+        result = mg.k_core(3)
+        assert d.id not in result
+
+    def test_core_number_empty(self):
+        mg = MemoryGraph()
+        assert mg.core_number() == {}
+
+    def test_core_number_basic(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        core = mg.core_number()
+        assert all(core[nid] == 2 for nid in [a.id, b.id, c.id])
+
+
+class TestTriangleCount:
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.count_triangles() == 0
+
+    def test_no_triangle(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        assert mg.count_triangles() == 0
+
+    def test_one_triangle(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        assert mg.count_triangles() == 1
+
+    def test_local_triangle_count(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        assert mg.local_triangle_count(a.id) == 1
+        assert mg.local_triangle_count(b.id) == 1
+
+    def test_local_nonexistent(self):
+        mg = MemoryGraph()
+        assert mg.local_triangle_count("nonexistent") == 0
