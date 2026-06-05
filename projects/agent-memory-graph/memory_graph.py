@@ -2362,6 +2362,46 @@ class MemoryGraph:
             })
         return adj
 
+    def to_adjacency_matrix(self, weight_key: str = None) -> dict[str, dict]:
+        """Export adjacency matrix as nested dict: {source: {target: value}}.
+
+        Args:
+            weight_key: if None, uses 1 for connected (binary).
+                        'weight' uses edge weight.
+                        Other values try edge properties JSON.
+        """
+        node_rows = self.conn.execute("SELECT id FROM nodes ORDER BY id").fetchall()
+        node_ids = [str(r["id"]) for r in node_rows]
+        matrix = {nid: {} for nid in node_ids}
+        if weight_key is None or weight_key == "weight":
+            edge_rows = self.conn.execute(
+                "SELECT source, target, weight FROM edges"
+            ).fetchall()
+            for e in edge_rows:
+                s, t = str(e["source"]), str(e["target"])
+                matrix[s][t] = e["weight"] if weight_key == "weight" else 1
+        else:
+            # Try edge_properties method if available
+            edge_rows = self.conn.execute(
+                "SELECT source, target, relation, weight FROM edges"
+            ).fetchall()
+            for e in edge_rows:
+                s, t = str(e["source"]), str(e["target"])
+                props = self.edge_properties(s, t, e["relation"])
+                matrix[s][t] = (props or {}).get(weight_key, 0)
+        return matrix
+
+    def node_distance(self, source_id: str, target_id: str) -> Optional[int]:
+        """Shortest unweighted hop distance between two nodes. Returns None if unreachable.
+
+        Alias for shortest_path length, but returns just the integer distance
+        for quick connectivity checks.
+        """
+        path = self.shortest_path(source_id, target_id)
+        if path is None:
+            return None
+        return len(path) - 1
+
     def serialize_dot(self) -> str:
         """导出为 Graphviz DOT 格式字符串，用于可视化工具集成。"""
         lines = ["digraph memory {"]

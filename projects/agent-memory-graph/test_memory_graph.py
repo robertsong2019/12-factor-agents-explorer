@@ -3909,3 +3909,81 @@ class TestWeightDistribution:
         dist = mg.weight_distribution(bins=2)
         assert "range" in dist[0]
         assert "-" in dist[0]["range"]
+
+
+class TestAdjacencyMatrix:
+
+    def test_empty(self):
+        mg = MemoryGraph()
+        assert mg.to_adjacency_matrix() == {}
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        m = mg.to_adjacency_matrix()
+        assert len(m) == 1
+        nid = list(m.keys())[0]
+        assert m[nid] == {}
+
+    def test_binary(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        m = mg.to_adjacency_matrix()
+        assert m[a.id][b.id] == 1
+        assert m[b.id][c.id] == 1
+        assert a.id not in m.get(c.id, {})
+
+    def test_weighted(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r", 3.5)
+        m = mg.to_adjacency_matrix(weight_key="weight")
+        assert m[a.id][b.id] == 3.5
+
+    def test_directed(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")  # only A→B
+        m = mg.to_adjacency_matrix()
+        assert b.id in m[a.id]
+        assert a.id not in m[b.id]
+
+    def test_all_nodes_present(self):
+        mg = MemoryGraph()
+        nodes = [mg.add(f"n{i}") for i in range(5)]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        m = mg.to_adjacency_matrix()
+        assert len(m) == 5  # all 5 nodes are keys
+
+
+class TestNodeDistance:
+
+    def test_same_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        assert mg.node_distance(a.id, a.id) == 0
+
+    def test_direct_connection(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.node_distance(a.id, b.id) == 1
+
+    def test_two_hops(self):
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        assert mg.node_distance(a.id, c.id) == 2
+
+    def test_unreachable(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        assert mg.node_distance(a.id, b.id) is None
+
+    def test_nonexistent_source(self):
+        mg = MemoryGraph()
+        b = mg.add("B")
+        assert mg.node_distance("nonexistent", b.id) is None
