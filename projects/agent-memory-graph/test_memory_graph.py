@@ -4370,6 +4370,180 @@ class TestAveragePathLength:
         assert mg.average_path_length() == 0.0
 
 
+class TestEffectiveDiameter:
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.effective_diameter() is None
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        assert mg.effective_diameter() == 0.0
+
+    def test_two_connected_nodes(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        # 1 pair at distance 1, p0.9 = 1
+        assert mg.effective_diameter() == 1.0
+
+    def test_line_graph_5_nodes(self):
+        """A-B-C-D-E: 10 pairs. Distances: 1×4, 2×3, 3×2, 4×1 = [1,1,1,1,2,2,2,3,3,4]
+        p0.9: idx = int(10*0.9) = 9 → all_dists[9] = 4
+        p0.5: idx = int(10*0.5) = 5 → all_dists[5] = 2
+        """
+        mg = MemoryGraph()
+        nodes = [mg.add(c) for c in "ABCDE"]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "r")
+        assert mg.effective_diameter(0.9) == 4.0
+        assert mg.effective_diameter(0.5) == 2.0
+
+    def test_disconnected_components(self):
+        """Two pairs A-B, C-D. Distances = [1, 1]. p0.9 → 1."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        c, d = mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, d.id, "r")
+        assert mg.effective_diameter() == 1.0
+
+    def test_all_isolated(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        mg.add("B")
+        assert mg.effective_diameter() == 0.0
+
+    def test_invalid_percentile(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        with pytest.raises(ValueError):
+            mg.effective_diameter(0)
+        with pytest.raises(ValueError):
+            mg.effective_diameter(1.5)
+
+    def test_complete_graph(self):
+        """K4: all 6 pairs at distance 1. Any percentile = 1."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        for x in nodes:
+            for y in nodes:
+                if x.id != y.id:
+                    mg.link(x.id, y.id, "r")
+        assert mg.effective_diameter() == 1.0
+
+
+class TestHarmonicCentrality:
+
+    def test_missing_node(self):
+        mg = MemoryGraph()
+        assert mg.harmonic_centrality("nonexistent") is None
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        n = mg.add("A")
+        assert mg.harmonic_centrality(n.id) == 0.0
+
+    def test_two_connected_nodes(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        # H(A) = 1/1 / (2-1) = 1.0
+        assert mg.harmonic_centrality(a.id) == 1.0
+
+    def test_line_graph(self):
+        """A-B-C: H(B) = (1/1 + 1/1) / 2 = 1.0, H(A) = (1/1 + 1/2) / 2 = 0.75"""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        assert mg.harmonic_centrality(b.id) == 1.0
+        assert mg.harmonic_centrality(a.id) == 0.75
+
+    def test_disconnected(self):
+        """A-B, C isolated. H(A) = (1/1) / 2 ≈ 0.5. C contributes 0."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        # H(A) = (1/1) / (3-1) = 0.5
+        assert mg.harmonic_centrality(a.id) == 0.5
+        # H(C) = 0 / 2 = 0.0
+        assert mg.harmonic_centrality(c.id) == 0.0
+
+    def test_center_of_star(self):
+        """Center connected to 3 leaves. H(center) = (1+1+1) / 3 = 1.0"""
+        mg = MemoryGraph()
+        center = mg.add("center")
+        for i in range(3):
+            leaf = mg.add(f"L{i}")
+            mg.link(center.id, leaf.id, "r")
+        assert mg.harmonic_centrality(center.id) == 1.0
+
+
+class TestClusteringCoefficient:
+
+    def test_missing_node(self):
+        mg = MemoryGraph()
+        assert mg.clustering_coefficient("nonexistent") is None
+
+    def test_isolated_node(self):
+        mg = MemoryGraph()
+        n = mg.add("A")
+        assert mg.clustering_coefficient(n.id) == 0.0
+
+    def test_single_edge(self):
+        """A-B. A has 1 neighbor → k<2 → 0.0"""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.clustering_coefficient(a.id) == 0.0
+
+    def test_triangle(self):
+        """A-B, B-C, C-A: A's neighbors {B,C} are connected → 1.0"""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        assert mg.clustering_coefficient(a.id) == 1.0
+
+    def test_open_triple(self):
+        """A-B, A-C, but B-C not connected → 0.0"""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        # A has 2 neighbors {B, C}, 0 edges between them → 0.0
+        assert mg.clustering_coefficient(a.id) == 0.0
+
+    def test_complete_graph_k4(self):
+        """K4: each node has 3 neighbors, all connected → 1.0"""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        for x in nodes:
+            for y in nodes:
+                if x.id != y.id:
+                    mg.link(x.id, y.id, "r")
+        for n in nodes:
+            assert mg.clustering_coefficient(n.id) == 1.0
+
+    def test_partial_clustering(self):
+        """A connected to B, C, D. Only B-C connected among neighbors.
+        k=3, possible=3, actual=1 → 1/3 ≈ 0.333333
+        """
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b, c, d = mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        mg.link(a.id, d.id, "r")
+        mg.link(b.id, c.id, "r")  # B-C edge
+        result = mg.clustering_coefficient(a.id)
+        assert abs(result - (1.0 / 3.0)) < 1e-5
+
+
 # ── 向量搜索测试 (sqlite-vec 可选集成) ────────────────────
 
 import pytest

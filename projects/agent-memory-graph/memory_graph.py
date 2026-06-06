@@ -3581,6 +3581,94 @@ class MemoryGraph:
                 pair_count += 1
         return round(total_dist / pair_count, 4) if pair_count > 0 else 0.0
 
+    def effective_diameter(self, percentile: float = 0.9) -> Optional[float]:
+        """有效直径 — 第 percentile 分位的最短路径长度。
+
+        比最大直径更鲁棒：忽略少数极端长路径。
+        例如 percentile=0.9 表示 90% 的可达节点对在此距离以内。
+
+        空图返回 None，无可达对返回 0.0。
+        """
+        if not 0 < percentile <= 1:
+            raise ValueError("percentile must be in (0, 1]")
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return None
+        all_dists: list[int] = []
+        visited_pairs: set[frozenset] = set()
+        for row in rows:
+            nid = str(row["id"])
+            dists = self._bfs_distances(nid)
+            for target, dist in dists.items():
+                if target == nid:
+                    continue
+                pair = frozenset({nid, target})
+                if pair in visited_pairs:
+                    continue
+                visited_pairs.add(pair)
+                all_dists.append(dist)
+        if not all_dists:
+            return 0.0
+        all_dists.sort()
+        idx = int(len(all_dists) * percentile)
+        if idx >= len(all_dists):
+            idx = len(all_dists) - 1
+        return float(all_dists[idx])
+
+    def harmonic_centrality(self, node_id: str) -> Optional[float]:
+        """调和中心性 = Σ(1/distance) 对所有可达节点。
+
+        对不可达节点距离视为无穷大（贡献为 0），
+        因此在断开图中比 closeness 更有意义。
+        归一化到 [0, 1] 区间：H(v) = Σ(1/d) / (n-1)。
+        """
+        if not self.has_node(node_id):
+            return None
+        n = self.stats()["nodes"]
+        if n <= 1:
+            return 0.0
+        distances = self._bfs_distances(node_id)
+        score = sum(1.0 / d for _, d in distances.items() if d > 0)
+        return round(score / (n - 1), 6)
+
+    def clustering_coefficient(self, node_id: str) -> Optional[float]:
+        """局部聚类系数 = 邻居之间实际边数 / 可能边数。
+
+        衡量节点的邻居彼此连接的程度（"朋友的朋友也是朋友"）。
+        值域 [0, 1]。度为 0 或 1 时返回 0.0。
+        双向边语义。
+        """
+        if not self.has_node(node_id):
+            return None
+        # Get neighbors (bidirectional)
+        rows = self.conn.execute(
+            "SELECT target AS nb FROM edges WHERE source=? "
+            "UNION "
+            "SELECT source AS nb FROM edges WHERE target=?",
+            (node_id, node_id)
+        ).fetchall()
+        neighbors = [str(r["nb"]) for r in rows]
+        k = len(neighbors)
+        if k < 2:
+            return 0.0
+        # Count edges between neighbors
+        neighbor_set = set(neighbors)
+        edge_count = 0
+        for nb in neighbors:
+            nb_rows = self.conn.execute(
+                "SELECT target AS nb2 FROM edges WHERE source=? "
+                "UNION "
+                "SELECT source AS nb2 FROM edges WHERE target=?",
+                (nb, nb)
+            ).fetchall()
+            for r in nb_rows:
+                if str(r["nb2"]) in neighbor_set and str(r["nb2"]) != nb:
+                    edge_count += 1
+        # Each edge counted twice (once from each endpoint)
+        actual_edges = edge_count / 2
+        possible_edges = k * (k - 1) / 2
+        return round(actual_edges / possible_edges, 6)
+
     # ── 向量搜索 (sqlite-vec 可选集成) ────────────────────
 
     def _ensure_vec_table(self, dims: int):
