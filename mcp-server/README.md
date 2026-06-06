@@ -39,7 +39,7 @@ The OpenClaw MCP Server acts as a bridge between AI agents and OpenClaw's powerf
 
 ## Supported Tools
 
-16 tools spanning file operations, search, execution, and system introspection:
+18 tools spanning file operations, search, execution, and system introspection:
 
 ### File Operations
 
@@ -57,6 +57,8 @@ The OpenClaw MCP Server acts as a bridge between AI agents and OpenClaw's powerf
 | `find_files` | Find files by glob pattern | `pattern`, `path`, `maxResults` |
 | `file_info` | File metadata (size, timestamps, SHA-256) | `path`, `computeHash` |
 | `search_files` | Regex search across files | `pattern`, `path`, `include`, `maxResults` |
+| `head` | Read first N lines of a file (preview large files) | `path`, `lines` |
+| `tail` | Read last N lines of a file (check log endings) | `path`, `lines` |
 
 ### System & Search
 
@@ -163,12 +165,13 @@ npm run build
 
 ## Testing
 
-The project includes tests for:
+The project includes **526 tests** covering:
 
-1. Tool listing
-2. Tool execution
-3. Error handling
-4. Schema validation
+1. Tool listing and schema validation
+2. Tool execution (file ops, search, exec)
+3. Error handling and edge cases
+4. Path sandboxing and command validation
+5. Transport layer
 
 Run tests with:
 ```bash
@@ -177,7 +180,7 @@ npm test
 
 ## Roadmap
 
-- [x] ~~Add more OpenClaw tools~~ — 16 tools implemented
+- [x] ~~Add more OpenClaw tools~~ — 18 tools implemented (incl. head/tail)
 - [x] ~~Streamable HTTP transport~~ — MVP complete
 - [ ] Integrate web_search with real Brave API (currently mocked)
 - [ ] Add authentication/authorization

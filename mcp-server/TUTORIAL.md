@@ -191,6 +191,44 @@ Inspector 会打开一个 Web UI（默认 http://localhost:6274），你可以�
 // 返回确认信息
 ```
 
+### head — 读取文件前 N 行
+
+```json
+// 调用
+{ "path": "/var/log/app.log", "lines": 20 }
+
+// 返回
+{
+  "tool": "head",
+  "path": "/var/log/app.log",
+  "requestedLines": 20,
+  "totalLines": 1542,
+  "returnedLines": 20,
+  "content": "..." // 前 20 行
+}
+```
+
+适合快速预览大文件，无需加载全部内容。
+
+### tail — 读取文件后 N 行
+
+```json
+// 调用
+{ "path": "/var/log/app.log", "lines": 50 }
+
+// 返回
+{
+  "tool": "tail",
+  "path": "/var/log/app.log",
+  "requestedLines": 50,
+  "totalLines": 1542,
+  "returnedLines": 50,
+  "content": "..." // 后 50 行
+}
+```
+
+适合查看日志末尾、检查最新输出。
+
 ### exec — 执行命令
 
 ```json
@@ -294,9 +332,9 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node dist/index.js
 
 ### 当前限制
 
-- 工具目前是 **mocked** 状态（返回模拟数据）
-- 仅支持 **stdio** 传输（HTTP 传输计划中）
-- 尚未集成 OpenClaw 的真实 API
+- `web_search` 需要配置 Brave API Key 才能使用真实搜索
+- 仅支持 **stdio** 传输（Streamable HTTP 已完成 MVP）
+- 文件操作已完全实现（非 mock），直接操作工作区文件系统
 
 ---
 
@@ -304,9 +342,18 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | node dist/index.js
 
 ```
 src/
-├── index.ts          # 入口：MCP Server 初始化 + 工具注册
-├── tool-mapping.ts   # OpenClaw 工具 → MCP schema 转换
-└── openclaw-api.ts   # OpenClaw API 客户端（placeholder）
+├── index.ts          # 入口：MCP Server 初始化 + 工具注册 (113L)
+└── tools.ts          # 18 个工具定义 + 安全层 (700L)
+
+tests/                # 526 个测试
+├── read.test.js
+├── write.test.js
+├── edit.test.js
+├── head-tail.test.js
+├── exec-validation.test.js
+├── safe-path-validation.test.js
+├── memory-search.test.js
+└── ... (共 21 个测试文件)
 ```
 
 ---
