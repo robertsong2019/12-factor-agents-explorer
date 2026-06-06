@@ -194,8 +194,11 @@ Tests are located in `tests/` and mirror the `src/` structure:
 
 ```
 tests/
-└── trustNetwork.test.ts   # Core simulation logic tests (30+ cases)
+├── trustNetwork.test.ts         # Core simulation logic (30+ cases)
+└── trustNetworkExtended.test.ts # Extended edge cases & metrics (20+ cases)
 ```
+
+**Total: 51 tests** across 2 test files.
 
 ### What's Tested
 
@@ -205,9 +208,10 @@ tests/
 | Agent CRUD | Add/remove agents, relation cleanup |
 | Trust Relations | Set/get weights, clamping [0,1], nonexistent agents |
 | Trust Calculation | PageRank scores in [0,1], single-agent edge case |
-| Simulation | Step counting, batch simulation |
+| Simulation | Step counting, batch simulation, 0/1 agent edge cases |
 | Metrics | Network health, trust distribution, empty network |
-| Agent Metrics | Individual metrics, trends, reliability |
+| Agent Metrics | Individual metrics, trends, reliability, velocity |
+| Interaction Details | Cooperation refusal, trust weight updates, history capping |
 | Import/Export | JSON round-trip, invalid JSON handling |
 | Reset | State restoration |
 
