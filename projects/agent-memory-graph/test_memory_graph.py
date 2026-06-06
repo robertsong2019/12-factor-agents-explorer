@@ -4480,7 +4480,7 @@ class TestSearchHybrid:
         results = mg.search_hybrid("Python")
         assert len(results) > 0
         assert any(r["label"] == "Python programming" for r in results)
-        assert "text" in results[0]["sources"]
+        assert any(s in results[0]["sources"] for s in ("text", "bm25"))
 
     def test_search_hybrid_with_embedding(self):
         """文本 + 向量混合搜索。"""
@@ -4493,7 +4493,7 @@ class TestSearchHybrid:
         assert len(results) > 0
         top = results[0]
         assert top["node_id"] == n1.id
-        assert "text" in top["sources"]
+        assert any(s in top["sources"] for s in ("text", "bm25"))
         assert "vector" in top["sources"]
 
     def test_search_hybrid_graph_boost(self):
@@ -5372,3 +5372,228 @@ class TestEdgeBetweenness:
         assert len(eb) == 1
         key = tuple(sorted(["a", "b"]))
         assert eb[key] == 1.0  # single edge between 2 nodes
+
+
+# ═════════════════════════════════════════════════════════════════════
+# FTS5 BM25 Full-Text Search Tests
+# ═════════════════════════════════════════════════════════════════════
+
+class TestBM25Search:
+    """Tests for FTS5-based BM25 full-text search."""
+
+    def test_bm25_basic_match(self):
+        """Basic BM25 search finds matching nodes by label."""
+        mg = MemoryGraph()
+        mg.add("Python programming language", "skill")
+        mg.add("Rust systems programming", "skill")
+        mg.add("machine learning fundamentals", "concept")
+        results = mg.search_bm25("programming")
+        assert len(results) > 0
+        labels = [r["label"] for r in results]
+        assert "Python programming language" in labels
+        assert "Rust systems programming" in labels
+
+    def test_bm25_no_match(self):
+        """BM25 returns empty for non-matching query."""
+        mg = MemoryGraph()
+        mg.add("hello world", "greeting")
+        results = mg.search_bm25("nonexistentterm12345")
+        assert len(results) == 0
+
+    def test_bm25_ranking_relevance(self):
+        """BM25 ranks more relevant documents higher."""
+        mg = MemoryGraph()
+        mg.add("Python Python Python", "skill")  # high TF
+        mg.add("Python overview", "concept")       # lower TF
+        results = mg.search_bm25("Python")
+        assert len(results) >= 2
+        assert results[0]["label"] == "Python Python Python"
+
+    def test_bm25_multi_field_search(self):
+        """BM25 searches across label, data, kind, and tags."""
+        mg = MemoryGraph()
+        mg.add("database design", "skill", data={"db": "sqlite"}, tags=["backend"])
+        mg.add("frontend wizardry", "skill", data={"framework": "react"}, tags=["ui"])
+        # Search in data
+        results = mg.search_bm25("sqlite")
+        assert len(results) >= 1
+        assert results[0]["label"] == "database design"
+        # Search in tags
+        results2 = mg.search_bm25("backend")
+        assert len(results2) >= 1
+        assert results2[0]["label"] == "database design"
+
+    def test_bm25_limit(self):
+        """BM25 respects limit parameter."""
+        mg = MemoryGraph()
+        for i in range(20):
+            mg.add(f"project alpha {i}", "task")
+        results = mg.search_bm25("alpha", limit=5)
+        assert len(results) == 5
+
+    def test_bm25_score_format(self):
+        """BM25 results contain required fields."""
+        mg = MemoryGraph()
+        mg.add("test node", "fact")
+        results = mg.search_bm25("test")
+        assert len(results) == 1
+        r = results[0]
+        assert "node_id" in r
+        assert "label" in r
+        assert "kind" in r
+        assert "score" in r
+        assert "matched_fields" in r
+        assert isinstance(r["score"], (int, float))
+        assert r["score"] > 0
+
+    def test_bm25_prefix_query(self):
+        """FTS5 prefix queries work."""
+        mg = MemoryGraph()
+        mg.add("programming", "skill")
+        mg.add("programmatic", "concept")
+        mg.add("procedural", "skill")
+        results = mg.search_bm25("prog*")
+        assert len(results) >= 2
+
+    def test_bm25_phrase_query(self):
+        """FTS5 phrase queries with quotes work."""
+        mg = MemoryGraph()
+        mg.add("machine learning basics", "concept")
+        mg.add("learning machine operations", "task")
+        results = mg.search_bm25('"machine learning"')
+        assert len(results) >= 1
+        assert results[0]["label"] == "machine learning basics"
+
+    def test_bm25_after_delete(self):
+        """FTS index stays in sync after node deletion."""
+        mg = MemoryGraph()
+        n = mg.add("unique searchable text", "fact")
+        assert len(mg.search_bm25("unique")) == 1
+        mg.delete_node(n.id)
+        assert len(mg.search_bm25("unique")) == 0
+
+    def test_bm25_after_update(self):
+        """FTS index stays in sync after node update."""
+        mg = MemoryGraph()
+        n = mg.add("old label", "fact")
+        assert len(mg.search_bm25("old")) == 1
+        mg.update_node(n.id, label="new label")
+        assert len(mg.search_bm25("old")) == 0
+        assert len(mg.search_bm25("new")) == 1
+
+    def test_bm25_after_rename_node(self):
+        """FTS index stays in sync after rename_node."""
+        mg = MemoryGraph()
+        n = mg.add("alpha version", "task")
+        assert len(mg.search_bm25("alpha")) == 1
+        mg.rename_node(n.id, "beta version")
+        assert len(mg.search_bm25("alpha")) == 0
+        assert len(mg.search_bm25("beta")) == 1
+
+    def test_bm25_after_tag_change(self):
+        """FTS index stays in sync after tag operations."""
+        mg = MemoryGraph()
+        n = mg.add("project x", "task")
+        assert len(mg.search_bm25("urgent")) == 0
+        mg.tag_nodes("urgent", [n.id])
+        assert len(mg.search_bm25("urgent")) == 1
+        mg.clear_tags(n.id)
+        assert len(mg.search_bm25("urgent")) == 0
+
+    def test_bm25_after_rename_tag(self):
+        """FTS index stays in sync after rename_tag."""
+        mg = MemoryGraph()
+        n = mg.add("node", "fact")
+        mg.tag_nodes("oldtag", [n.id])
+        assert len(mg.search_bm25("oldtag")) == 1
+        mg.rename_tag("oldtag", "newtag")
+        assert len(mg.search_bm25("oldtag")) == 0
+        assert len(mg.search_bm25("newtag")) == 1
+
+    def test_bm25_after_merge_nodes(self):
+        """FTS index stays in sync after merge_nodes."""
+        mg = MemoryGraph()
+        n1 = mg.add("alpha data", "fact", data={"key": "value"})
+        n2 = mg.add("beta info", "fact")
+        assert len(mg.search_bm25("alpha")) == 1
+        assert len(mg.search_bm25("beta")) == 1
+        mg.merge_nodes(n1.id, n2.id)
+        assert len(mg.search_bm25("alpha")) == 0  # source deleted
+        assert len(mg.search_bm25("beta")) == 1   # target still exists
+
+    def test_bm25_after_clone_node(self):
+        """FTS index includes cloned nodes."""
+        mg = MemoryGraph()
+        n = mg.add("original content", "fact")
+        assert len(mg.search_bm25("original")) == 1
+        mg.clone_node(n.id, "cloned original content")
+        assert len(mg.search_bm25("original")) == 2
+
+    def test_bm25_after_clear(self):
+        """FTS index is cleared after clear()."""
+        mg = MemoryGraph()
+        mg.add("hello", "greeting")
+        mg.add("world", "greeting")
+        assert len(mg.search_bm25("hello")) == 1
+        mg.clear()
+        assert len(mg.search_bm25("hello")) == 0
+        assert len(mg.search_bm25("world")) == 0
+
+    def test_bm25_add_many_sync(self):
+        """FTS index syncs after add_many batch operations."""
+        mg = MemoryGraph()
+        mg.add_many([
+            {"label": "alpha task", "kind": "task"},
+            {"label": "beta task", "kind": "task"},
+            {"label": "gamma task", "kind": "task"},
+        ])
+        results = mg.search_bm25("task")
+        assert len(results) == 3
+
+    def test_bm25_fts_rebuild(self):
+        """_fts_rebuild recreates the index from scratch."""
+        mg = MemoryGraph()
+        mg.add("node one", "fact")
+        mg.add("node two", "fact")
+        # Rebuild should work and find all nodes
+        mg._fts_rebuild()
+        results = mg.search_bm25("node")
+        assert len(results) == 2
+
+    def test_bm25_search_hybrid_uses_bm25(self):
+        """search_hybrid uses BM25 as text path when available."""
+        mg = MemoryGraph()
+        mg.add("Python programming", "skill")
+        mg.add("Rust systems", "skill")
+        results = mg.search_hybrid("Python")
+        assert len(results) > 0
+        top = results[0]
+        assert top["label"] == "Python programming"
+        # Should have bm25 source
+        assert "bm25" in top["sources"]
+
+    def test_bm25_boolean_query(self):
+        """FTS5 Boolean queries (AND/OR/NOT) work."""
+        mg = MemoryGraph()
+        mg.add("machine learning", "concept")
+        mg.add("machine repair", "task")
+        results = mg.search_bm25("machine AND learning")
+        assert len(results) == 1
+        assert results[0]["label"] == "machine learning"
+
+    def test_bm25_with_empty_graph(self):
+        """BM25 search on empty graph returns empty list."""
+        mg = MemoryGraph()
+        assert mg.search_bm25("anything") == []
+
+    def test_bm25_weight_boost(self):
+        """Higher weight nodes get boosted BM25 scores."""
+        mg = MemoryGraph()
+        n1 = mg.add("same keyword", "fact")
+        n2 = mg.add("same keyword", "fact")
+        mg.reweight(n1.id, -0.5)  # lower weight to 0.5
+        results = mg.search_bm25("keyword")
+        assert len(results) == 2
+        # Higher weight node (n2, weight=1.0) should rank higher
+        assert results[0]["node_id"] == n2.id
+        assert results[0]["score"] > results[1]["score"]

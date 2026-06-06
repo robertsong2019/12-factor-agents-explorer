@@ -91,6 +91,16 @@ class MemoryGraph:
                 PRIMARY KEY (source, target, relation)
             );
         """)
+        # FTS5 full-text index for BM25 search
+        try:
+            self.conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts
+                USING fts5(node_id UNINDEXED, label, kind, data, tags,
+                           tokenize='unicode61')
+            """)
+            self._fts_enabled = True
+        except sqlite3.OperationalError:
+            self._fts_enabled = False
 
     def add(self, label: str, kind: str = "fact", data: dict = None, tags: list[str] = None) -> Node:
         """添加一个记忆节点。"""
@@ -105,6 +115,7 @@ class MemoryGraph:
             (node.id, node.label, node.kind, json.dumps(node.data),
              node.created, node.accessed, node.weight, json.dumps(tags or []))
         )
+        self._fts_sync_node(node.id)
         self.conn.commit()
         return node
 
@@ -122,6 +133,7 @@ class MemoryGraph:
         if not row:
             return False
         self.conn.execute("DELETE FROM edges WHERE source=? OR target=?", (node_id, node_id))
+        self._fts_delete_node(node_id)
         self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
         self.conn.commit()
         return True
@@ -140,6 +152,7 @@ class MemoryGraph:
             "UPDATE nodes SET label=?, kind=?, data=?, weight=? WHERE id=?",
             (new_label, new_kind, new_data, new_weight, node_id)
         )
+        self._fts_sync_node(node_id)
         self.conn.commit()
         return self.get_node(node_id)
 
@@ -162,6 +175,7 @@ class MemoryGraph:
                 (node.id, node.label, node.kind, json.dumps(node.data),
                  node.created, node.accessed, node.weight, json.dumps(tags))
             )
+            self._fts_sync_node(node.id)
             nodes.append(node)
         self.conn.commit()
         return nodes
@@ -201,6 +215,7 @@ class MemoryGraph:
             if tag not in tags:
                 tags.append(tag)
                 self.conn.execute("UPDATE nodes SET tags=? WHERE id=?", (json.dumps(tags), nid))
+                self._fts_sync_node(nid)
         self.conn.commit()
 
     def search_by_tag(self, tag: str) -> list[Node]:
@@ -336,7 +351,9 @@ class MemoryGraph:
             (json.dumps(merged_data), new_weight, target_id)
         )
         # Delete source
+        self._fts_delete_node(source_id)
         self.conn.execute("DELETE FROM nodes WHERE id=?", (source_id,))
+        self._fts_sync_node(target_id)
         self.conn.commit()
         row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (target_id,)).fetchone()
         return Node(row["id"], row["label"], row["kind"],
@@ -527,6 +544,7 @@ class MemoryGraph:
             if old_tag in tags:
                 tags[tags.index(old_tag)] = new_tag
                 self.conn.execute("UPDATE nodes SET tags=? WHERE id=?", (json.dumps(tags), r["id"]))
+                self._fts_sync_node(r["id"])
                 count += 1
         self.conn.commit()
         return count
@@ -536,6 +554,7 @@ class MemoryGraph:
         if not self.has_node(node_id):
             return False
         self.conn.execute("UPDATE nodes SET tags='[]' WHERE id=?", (node_id,))
+        self._fts_sync_node(node_id)
         self.conn.commit()
         return True
 
@@ -838,6 +857,7 @@ class MemoryGraph:
         if not self.has_node(node_id):
             return None
         self.conn.execute("UPDATE nodes SET label=? WHERE id=?", (new_label, node_id))
+        self._fts_sync_node(node_id)
         self.conn.commit()
         return self.get_node(node_id)
 
@@ -853,6 +873,7 @@ class MemoryGraph:
             (new_id, new_label or row["label"], row["kind"], row["data"],
              time.time(), time.time(), row["weight"], row["tags"])
         )
+        self._fts_sync_node(new_id)
         self.conn.commit()
         return self.get_node(new_id)
 
@@ -2316,6 +2337,8 @@ class MemoryGraph:
         self.conn.execute("DELETE FROM edge_props")
         self.conn.execute("DELETE FROM evolution_log")
         self.conn.execute("DELETE FROM nodes")
+        if getattr(self, '_fts_enabled', False):
+            self.conn.execute("DELETE FROM nodes_fts")
         self.conn.commit()
 
     def is_empty(self) -> bool:
@@ -3674,6 +3697,92 @@ class MemoryGraph:
             })
         return results
 
+    # ── FTS5 BM25 full-text search ──────────────────────────────────────
+
+    def _fts_sync_node(self, node_id: str):
+        """Insert/update FTS index for a single node."""
+        if not getattr(self, '_fts_enabled', False):
+            return
+        row = self.conn.execute(
+            "SELECT id, label, kind, data, tags FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            self.conn.execute("DELETE FROM nodes_fts WHERE node_id=?", (node_id,))
+            return
+        self.conn.execute("DELETE FROM nodes_fts WHERE node_id=?", (node_id,))
+        self.conn.execute(
+            "INSERT INTO nodes_fts(node_id, label, kind, data, tags) VALUES (?,?,?,?,?)",
+            (row["id"], row["label"], row["kind"], row["data"], row["tags"])
+        )
+
+    def _fts_delete_node(self, node_id: str):
+        """Remove a node from FTS index."""
+        if not getattr(self, '_fts_enabled', False):
+            return
+        self.conn.execute("DELETE FROM nodes_fts WHERE node_id=?", (node_id,))
+
+    def _fts_rebuild(self):
+        """Rebuild the FTS index from scratch (all nodes)."""
+        if not getattr(self, '_fts_enabled', False):
+            return
+        self.conn.execute("DELETE FROM nodes_fts")
+        rows = self.conn.execute("SELECT id, label, kind, data, tags FROM nodes").fetchall()
+        for r in rows:
+            self.conn.execute(
+                "INSERT INTO nodes_fts(node_id, label, kind, data, tags) VALUES (?,?,?,?,?)",
+                (r["id"], r["label"], r["kind"], r["data"], r["tags"])
+            )
+
+    def search_bm25(self, query: str, limit: int = 10) -> list[dict]:
+        """BM25 full-text search via SQLite FTS5.
+
+        Ranks nodes by BM25 relevance across label, kind, data, and tags.
+        Falls back to search_unified() if FTS5 is unavailable.
+
+        Args:
+            query: FTS5 query string (supports prefix, AND, OR, NOT, "phrase")
+            limit: Max results
+
+        Returns:
+            list of {node_id, label, kind, score, matched_fields} sorted by BM25 score desc
+        """
+        if not getattr(self, '_fts_enabled', False):
+            # Fallback to unified search
+            results = self.search_unified(query, limit=limit)
+            return [
+                {"node_id": r["node"].id, "label": r["node"].label,
+                 "kind": r["node"].kind, "score": r["score"],
+                 "matched_fields": r["matched_fields"]}
+                for r in results
+            ]
+        try:
+            # Fetch by raw BM25, then re-sort by weight-boosted score
+            rows = self.conn.execute(
+                """
+                SELECT n.id, n.label, n.kind, n.weight,
+                       bm25(nodes_fts) as score
+                FROM nodes_fts JOIN nodes n ON nodes_fts.node_id = n.id
+                WHERE nodes_fts MATCH ?
+                ORDER BY score
+                LIMIT ?
+                """,
+                (query, limit * 3)
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        results = []
+        for r in rows:
+            bm25_score = -r["score"]  # bm25() returns negative (lower = better)
+            results.append({
+                "node_id": r["id"],
+                "label": r["label"],
+                "kind": r["kind"],
+                "score": round(bm25_score * r["weight"], 6),
+                "matched_fields": ["bm25"],
+            })
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:limit]
+
     def search_hybrid(self, query: str, embedding: list[float] = None, limit: int = 10) -> list[dict]:
         """混合搜索: 文本 + 向量(可选) + 图邻居 RRF 融合。
 
@@ -3696,12 +3805,19 @@ class MemoryGraph:
         rrf_scores: dict[str, float] = defaultdict(float)
         sources_map: dict[str, set] = defaultdict(set)
 
-        # 路1: 文本搜索
-        text_results = self.search_unified(query, limit=limit * 3)
+        # 路1: BM25 文本搜索 (fallback 到 search_unified)
+        text_results = self.search_bm25(query, limit=limit * 3)
+        if not text_results:
+            text_results = [
+                {"node_id": r["node"].id, "label": r["node"].label,
+                 "kind": r["node"].kind, "score": r["score"],
+                 "matched_fields": r["matched_fields"]}
+                for r in self.search_unified(query, limit=limit * 3)
+            ]
         for rank, item in enumerate(text_results):
-            nid = item["node"].id
+            nid = item["node_id"]
             rrf_scores[nid] += 1.0 / (K + rank + 1)
-            sources_map[nid].add("text")
+            sources_map[nid].add("bm25" if "bm25" in item.get("matched_fields", []) else "text")
 
         # 路2: 向量搜索 (可选)
         if embedding is not None:
@@ -3716,7 +3832,7 @@ class MemoryGraph:
 
         # 路3: 图邻居加权 (以文本搜索 top 结果为种子)
         if text_results:
-            seed_id = text_results[0]["node"].id
+            seed_id = text_results[0]["node_id"]
             if self.has_node(seed_id):
                 for rank, neighbor in enumerate(self.neighbors(seed_id)):
                     nid = neighbor.id
