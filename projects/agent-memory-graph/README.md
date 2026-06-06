@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-537-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-567-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -17,13 +17,14 @@
 - **批量操作** — add_many / link_many / delete_many / batch_reweight 高效批量写入
 - **图算法** — PageRank、中心性（度/介数/特征向量）、社区发现、k-core、三角形计数、聚类系数
 - **图变换** — 反转边、转无向、按标签诱导子图、权重归一化
+- **向量搜索** — sqlite-vec 可选集成，KNN 向量搜索 + 三路 RRF 混合搜索 (文本+向量+图邻居)
 - **演化追踪** — 记录节点 label/kind 变化历史，支持回滚和合并
 - **快照与恢复** — 一键快照 → 恢复完整图谱状态
 - **去重** — 基于 Levenshtein 距离的模糊标签去重 + 合并
-- **导入导出** — JSON / DOT 格式，支持跨实例迁移
+- **导入导出** — JSON / DOT / GraphML / Cytoscape 格式，支持跨实例迁移
 - **子图提取** — 聚焦邻域提取，适配 LLM context window
 - **差分与合并** — 图差异对比、patch 应用、双图合并
-- **零依赖** — 仅用 Python 标准库（sqlite3 + json + math）
+- **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## 安装
 
@@ -700,13 +701,60 @@ dot = mg.serialize_dot()
 
 ---
 
+### 向量搜索 (sqlite-vec 可选集成)
+
+> 需要安装可选依赖: `pip install sqlite-vec`
+
+#### `add_embedding(node_id, embedding) -> None`
+
+为节点添加向量嵌入。首次调用决定维度，后续必须一致。
+
+#### `add_embeddings_batch(items) -> int`
+
+批量添加嵌入。`items = [(node_id, embedding), ...]`，返回成功添加数。
+
+#### `search_similar(embedding, limit=10) -> list[dict]`
+
+KNN 向量相似度搜索。返回 `{node_id, label, kind, distance, score}` 按距离升序。
+
+#### `search_similar_to_node(node_id, limit=10) -> list[dict]`
+
+基于嵌入向量查找与指定节点最相似的其他节点。排除自身。
+
+#### `search_hybrid(query, embedding=None, limit=10) -> list[dict]`
+
+三路混合搜索 (Reciprocal Rank Fusion):
+1. **文本搜索**: label/data/tags/kind 匹配
+2. **向量搜索** (可选): embedding KNN
+3. **图邻居加权**: 种子节点的邻居 bonus
+
+返回 `{node_id, label, kind, score, sources}` 按融合分数降序。向量不可用时静默降级。
+
+#### `remove_embedding(node_id) -> bool`
+
+删除节点的向量嵌入。
+
+#### `has_embedding(node_id) -> bool`
+
+检查节点是否有嵌入向量。
+
+#### `embedding_count() -> int`
+
+返回已存储嵌入的数量。
+
+#### `vector_stats() -> dict`
+
+返回 `{count, has_vectors, dimensions, node_count, coverage}` 统计信息。
+
+---
+
 ## 测试
 
 ```bash
 python3 -m pytest test_memory_graph.py -q
 ```
 
-423 个测试覆盖所有 API。
+567 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -717,6 +765,7 @@ python3 -m pytest test_memory_graph.py -q
 5. **图算法** — PageRank 发现重要记忆，社区发现识别知识领域
 6. **演化追踪** — 记忆不是静态的，记录概念的演变过程
 7. **快照与恢复** — Agent 实验"如果改变这个记忆会怎样"，然后回滚
+8. **向量搜索** — sqlite-vec 可选集成，三路 RRF 混合搜索 (文本+向量+图) 是 npm/PyPI 唯一三合一方案
 
 ## 许可
 
