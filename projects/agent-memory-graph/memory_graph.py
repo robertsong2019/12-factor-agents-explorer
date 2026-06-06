@@ -3754,6 +3754,34 @@ class MemoryGraph:
         vec_row = self.conn.execute("SELECT rowid FROM vec_nodes WHERE rowid = ?", (row["rowid"],)).fetchone()
         return vec_row is not None
 
+    def update_embedding(self, node_id: str, embedding: list[float]) -> bool:
+        """更新已有嵌入向量。如果节点没有嵌入则创建。返回是否成功。"""
+        self.remove_embedding(node_id)
+        self.add_embedding(node_id, embedding)
+        return True
+
+    def remove_embeddings_batch(self, node_ids: list[str]) -> int:
+        """批量删除嵌入向量。返回实际删除数量。"""
+        removed = 0
+        for nid in node_ids:
+            if self.remove_embedding(nid):
+                removed += 1
+        return removed
+
+    def search_similar_by_kind(self, embedding: list[float], kind: str, limit: int = 10) -> list[dict]:
+        """在特定 kind 的节点中搜索相似向量。"""
+        all_results = self.search_similar(embedding, limit=limit * 5)
+        return [r for r in all_results if self.get_node(r["node_id"]).kind == kind][:limit]
+
+    def search_similar_by_tag(self, embedding: list[float], tag: str, limit: int = 10) -> list[dict]:
+        """在特定标签的节点中搜索相似向量。"""
+        tagged = self.search_by_tag(tag)
+        tagged_ids = {n.id for n in tagged}
+        if not tagged_ids:
+            return []
+        all_results = self.search_similar(embedding, limit=limit * 5)
+        return [r for r in all_results if r["node_id"] in tagged_ids][:limit]
+
 
 # ── 演示 ──────────────────────────────────────────────────
 

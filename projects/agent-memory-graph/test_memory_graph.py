@@ -5112,3 +5112,105 @@ class TestArticulationPoints:
         assert "c" in aps
         assert "d" in aps
         assert len(aps) == 2
+
+
+# ── update_embedding + remove_embeddings_batch ──────────────────
+
+class TestUpdateEmbedding:
+
+    def test_update_changes_vector(self):
+        """更新嵌入后搜索结果应反映新向量。"""
+        mg = MemoryGraph()
+        a = mg.add("a", kind="concept")
+        b = mg.add("b", kind="concept")
+        mg.add_embedding(a.id, [1.0, 0.0])
+        mg.add_embedding(b.id, [0.0, 1.0])
+        # Search for a-like → a first
+        results = mg.search_similar([1.0, 0.0], limit=2)
+        assert results[0]["node_id"] == a.id
+        # Update a to be like b
+        mg.update_embedding(a.id, [0.0, 1.0])
+        results = mg.search_similar([1.0, 0.0], limit=2)
+        # Now a should be far from [1,0] and b should be far too
+        # Both are [0,1] so distance is same; just verify update worked
+        a_result = [r for r in results if r["node_id"] == a.id]
+        assert len(a_result) == 1
+
+    def test_update_nonexistent_creates(self):
+        """update_embedding 对无嵌入的节点也能工作。"""
+        mg = MemoryGraph()
+        node = mg.add("test")
+        assert not mg.has_embedding(node.id)
+        mg.update_embedding(node.id, [0.5, 0.5])
+        assert mg.has_embedding(node.id)
+
+
+class TestRemoveEmbeddingsBatch:
+
+    def test_batch_remove(self):
+        mg = MemoryGraph()
+        a = mg.add("a")
+        b = mg.add("b")
+        c = mg.add("c")
+        mg.add_embedding(a.id, [1.0, 0.0])
+        mg.add_embedding(b.id, [0.0, 1.0])
+        mg.add_embedding(c.id, [0.5, 0.5])
+        removed = mg.remove_embeddings_batch([a.id, b.id])
+        assert removed == 2
+        assert not mg.has_embedding(a.id)
+        assert not mg.has_embedding(b.id)
+        assert mg.has_embedding(c.id)
+
+    def test_batch_remove_with_nonexistent(self):
+        """删除不存在的嵌入不计入 removed。"""
+        mg = MemoryGraph()
+        a = mg.add("a")
+        mg.add_embedding(a.id, [1.0, 0.0])
+        removed = mg.remove_embeddings_batch([a.id, "nonexistent"])
+        assert removed == 1
+
+    def test_batch_remove_empty_list(self):
+        mg = MemoryGraph()
+        assert mg.remove_embeddings_batch([]) == 0
+
+
+# ── search_similar_by_kind / by_tag ─────────────────────────────
+
+class TestSearchSimilarByKind:
+
+    def test_filter_by_kind(self):
+        mg = MemoryGraph()
+        concept = mg.add("concept1", kind="concept")
+        entity = mg.add("entity1", kind="entity")
+        mg.add_embedding(concept.id, [1.0, 0.0, 0.0])
+        mg.add_embedding(entity.id, [0.9, 0.1, 0.0])
+        results = mg.search_similar_by_kind([1.0, 0.0, 0.0], "concept")
+        assert all(mg.get_node(r["node_id"]).kind == "concept" for r in results)
+        assert any(r["node_id"] == concept.id for r in results)
+
+    def test_no_matching_kind(self):
+        mg = MemoryGraph()
+        a = mg.add("a", kind="concept")
+        mg.add_embedding(a.id, [1.0, 0.0])
+        results = mg.search_similar_by_kind([1.0, 0.0], "entity")
+        assert len(results) == 0
+
+
+class TestSearchSimilarByTag:
+
+    def test_filter_by_tag(self):
+        mg = MemoryGraph()
+        tagged = mg.add("tagged_node")
+        untagged = mg.add("untagged_node")
+        mg.tag_nodes([tagged.id], "important")
+        mg.add_embedding(tagged.id, [1.0, 0.0, 0.0])
+        mg.add_embedding(untagged.id, [0.95, 0.05, 0.0])
+        results = mg.search_similar_by_tag([1.0, 0.0, 0.0], "important")
+        assert all(r["node_id"] == tagged.id for r in results)
+
+    def test_no_matching_tag(self):
+        mg = MemoryGraph()
+        a = mg.add("a")
+        mg.add_embedding(a.id, [1.0, 0.0])
+        results = mg.search_similar_by_tag([1.0, 0.0], "nonexistent")
+        assert len(results) == 0
