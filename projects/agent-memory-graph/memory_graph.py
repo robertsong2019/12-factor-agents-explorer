@@ -3190,6 +3190,205 @@ class MemoryGraph:
                 pair_count += 1
         return round(total_dist / pair_count, 4) if pair_count > 0 else 0.0
 
+    # ── 向量搜索 (sqlite-vec 可选集成) ────────────────────
+
+    def _ensure_vec_table(self, dims: int):
+        """确保 vec_nodes 虚拟表存在，返回是否首次创建。"""
+        try:
+            import sqlite_vec
+            if not getattr(self, '_vec_loaded', False):
+                self.conn.enable_load_extension(True)
+                sqlite_vec.load(self.conn)
+                self.conn.enable_load_extension(False)
+                self._vec_loaded = True
+        except ImportError:
+            raise ImportError("sqlite-vec is required for vector operations. Install: pip install sqlite-vec")
+        row = self.conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_nodes'").fetchone()
+        if not row:
+            self.conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_nodes USING vec0(embedding float[{dims}])")
+            self._vec_dims = dims
+            return True
+        return False
+
+    def _node_to_rowid(self, node_id: str) -> int:
+        """将 node_id 字符串映射为稳定的整数 rowid。"""
+        row = self.conn.execute("SELECT rowid FROM node_rowids WHERE node_id = ?", (node_id,)).fetchone()
+        if row:
+            return row["rowid"]
+        self.conn.execute("INSERT OR IGNORE INTO node_rowids(node_id) VALUES (?)", (node_id,))
+        return self.conn.execute("SELECT rowid FROM node_rowids WHERE node_id = ?", (node_id,)).fetchone()["rowid"]
+
+    def _ensure_rowid_table(self):
+        """确保 node_rowids 映射表存在。"""
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS node_rowids (
+                node_id TEXT PRIMARY KEY
+            )
+        """)
+
+    def add_embedding(self, node_id: str, embedding: list[float]) -> None:
+        """为节点添加向量嵌入。需要可选依赖 sqlite-vec。
+
+        Args:
+            node_id: 目标节点 ID
+            embedding: 浮点向量 (任意维度, 首次调用决定维度)
+
+        Raises:
+            ImportError: 如果 sqlite-vec 未安装
+            ValueError: 如果节点不存在或维度不匹配
+        """
+        if not self.has_node(node_id):
+            raise ValueError(f"Node not found: {node_id}")
+        try:
+            import sqlite_vec
+        except ImportError:
+            raise ImportError("sqlite-vec is required. Install: pip install sqlite-vec")
+
+        self._ensure_rowid_table()
+        dims = len(embedding)
+        self._ensure_vec_table(dims)
+
+        rowid = self._node_to_rowid(node_id)
+        vec = sqlite_vec.serialize_float32(embedding)
+        self.conn.execute("DELETE FROM vec_nodes WHERE rowid = ?", (rowid,))
+        self.conn.execute("INSERT INTO vec_nodes(rowid, embedding) VALUES (?, ?)", (rowid, vec))
+        self.conn.commit()
+
+    def search_similar(self, embedding: list[float], limit: int = 10) -> list[dict]:
+        """向量相似度搜索 (KNN)。需要可选依赖 sqlite-vec。
+
+        Args:
+            embedding: 查询向量
+            limit: 返回数量上限
+
+        Returns:
+            list of {node_id, label, kind, distance, score} 按距离升序
+
+        Raises:
+            ImportError: 如果 sqlite-vec 未安装
+            ValueError: 如果尚未添加任何嵌入
+        """
+        try:
+            import sqlite_vec
+        except ImportError:
+            raise ImportError("sqlite-vec is required. Install: pip install sqlite-vec")
+
+        if not hasattr(self, '_vec_dims'):
+            row = self.conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vec_nodes'").fetchone()
+            if not row:
+                raise ValueError("No embeddings found. Call add_embedding() first.")
+
+        self._ensure_rowid_table()
+        vec = sqlite_vec.serialize_float32(embedding)
+        rows = self.conn.execute(
+            """
+            SELECT v.rowid, v.distance, n.id, n.label, n.kind, n.weight
+            FROM vec_nodes AS v
+            JOIN node_rowids AS r ON v.rowid = r.rowid
+            JOIN nodes AS n ON r.node_id = n.id
+            WHERE v.embedding MATCH ? AND v.k = ?
+            ORDER BY v.distance
+            """,
+            (vec, limit)
+        ).fetchall()
+        results = []
+        for row in rows:
+            dist = row["distance"]
+            # 距离转相似度分数 (1/(1+distance), 范围 0~1)
+            score = 1.0 / (1.0 + dist)
+            results.append({
+                "node_id": row["id"],
+                "label": row["label"],
+                "kind": row["kind"],
+                "distance": round(dist, 6),
+                "score": round(score, 6),
+                "weight": row["weight"],
+            })
+        return results
+
+    def search_hybrid(self, query: str, embedding: list[float] = None, limit: int = 10) -> list[dict]:
+        """混合搜索: 文本 + 向量(可选) + 图邻居 RRF 融合。
+
+        三路融合策略:
+        1. 文本搜索 (search_unified 已有): label/data/tags/kind
+        2. 向量搜索 (可选): embedding KNN
+        3. 图邻居加权: 邻居节点 bonus
+
+        使用 Reciprocal Rank Fusion (RRF) 合并排名, k=60.
+
+        Args:
+            query: 文本查询
+            embedding: 可选查询向量
+            limit: 返回数量上限
+
+        Returns:
+            list of {node_id, label, kind, score, sources} 按融合分数降序
+        """
+        K = 60  # RRF 常数
+        rrf_scores: dict[str, float] = defaultdict(float)
+        sources_map: dict[str, set] = defaultdict(set)
+
+        # 路1: 文本搜索
+        text_results = self.search_unified(query, limit=limit * 3)
+        for rank, item in enumerate(text_results):
+            nid = item["node"].id
+            rrf_scores[nid] += 1.0 / (K + rank + 1)
+            sources_map[nid].add("text")
+
+        # 路2: 向量搜索 (可选)
+        if embedding is not None:
+            try:
+                vec_results = self.search_similar(embedding, limit=limit * 3)
+                for rank, item in enumerate(vec_results):
+                    nid = item["node_id"]
+                    rrf_scores[nid] += 1.0 / (K + rank + 1)
+                    sources_map[nid].add("vector")
+            except (ImportError, ValueError):
+                pass  # 向量不可用时静默跳过
+
+        # 路3: 图邻居加权 (以文本搜索 top 结果为种子)
+        if text_results:
+            seed_id = text_results[0]["node"].id
+            if self.has_node(seed_id):
+                for rank, neighbor in enumerate(self.neighbors(seed_id)):
+                    nid = neighbor.id
+                    rrf_scores[nid] += 0.5 / (K + rank + 1)  # 权重较低
+                    sources_map[nid].add("graph")
+
+        # 排序并构建结果
+        ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+        results = []
+        for nid, score in ranked:
+            node = self.get_node(nid)
+            if node:
+                results.append({
+                    "node_id": nid,
+                    "label": node.label,
+                    "kind": node.kind,
+                    "score": round(score, 6),
+                    "sources": sorted(sources_map[nid]),
+                })
+        return results
+
+    def remove_embedding(self, node_id: str) -> bool:
+        """删除节点的向量嵌入。返回是否实际删除了。"""
+        self._ensure_rowid_table()
+        row = self.conn.execute("SELECT rowid FROM node_rowids WHERE node_id = ?", (node_id,)).fetchone()
+        if not row:
+            return False
+        cur = self.conn.execute("DELETE FROM vec_nodes WHERE rowid = ?", (row["rowid"],))
+        self.conn.execute("DELETE FROM node_rowids WHERE node_id = ?", (node_id,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def embedding_count(self) -> int:
+        """返回已存储嵌入的数量。"""
+        try:
+            row = self.conn.execute("SELECT COUNT(*) as c FROM vec_nodes").fetchone()
+            return row["c"] if row else 0
+        except sqlite3.OperationalError:
+            return 0
+
 
 # ── 演示 ──────────────────────────────────────────────────
 

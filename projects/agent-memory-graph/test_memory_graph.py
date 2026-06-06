@@ -4368,3 +4368,174 @@ class TestAveragePathLength:
         mg.add("B")
         mg.add("C")
         assert mg.average_path_length() == 0.0
+
+
+# ── 向量搜索测试 (sqlite-vec 可选集成) ────────────────────
+
+import pytest
+
+
+class TestVectorSearch:
+    """测试 sqlite-vec 向量搜索集成。"""
+
+    def test_add_embedding_basic(self):
+        """添加嵌入到节点, 验证不报错。"""
+        mg = MemoryGraph()
+        node = mg.add("AI concept", "concept")
+        mg.add_embedding(node.id, [0.1, 0.2, 0.3, 0.4])
+        assert mg.embedding_count() == 1
+
+    def test_add_embedding_multiple(self):
+        """多个节点添加嵌入。"""
+        mg = MemoryGraph()
+        n1 = mg.add("Python", "skill")
+        n2 = mg.add("Rust", "skill")
+        n3 = mg.add("AI", "concept")
+        mg.add_embedding(n1.id, [1.0, 0.0, 0.0, 0.0])
+        mg.add_embedding(n2.id, [0.0, 1.0, 0.0, 0.0])
+        mg.add_embedding(n3.id, [0.0, 0.0, 1.0, 0.0])
+        assert mg.embedding_count() == 3
+
+    def test_add_embedding_overwrite(self):
+        """同节点重复添加嵌入会覆盖。"""
+        mg = MemoryGraph()
+        node = mg.add("test", "fact")
+        mg.add_embedding(node.id, [1.0, 0.0, 0.0, 0.0])
+        mg.add_embedding(node.id, [0.0, 1.0, 0.0, 0.0])
+        assert mg.embedding_count() == 1
+
+    def test_add_embedding_nonexistent_node(self):
+        """不存在的节点应报 ValueError。"""
+        mg = MemoryGraph()
+        with pytest.raises(ValueError):
+            mg.add_embedding("nonexistent", [0.1, 0.2])
+
+    def test_search_similar_basic(self):
+        """基本 KNN 搜索返回最近邻。"""
+        mg = MemoryGraph()
+        n1 = mg.add("cat", "concept")
+        n2 = mg.add("dog", "concept")
+        n3 = mg.add("car", "concept")
+        mg.add_embedding(n1.id, [0.1, 0.9, 0.0, 0.0])
+        mg.add_embedding(n2.id, [0.2, 0.8, 0.1, 0.0])
+        mg.add_embedding(n3.id, [0.9, 0.1, 0.8, 0.5])
+        results = mg.search_similar([0.15, 0.85, 0.05, 0.0], limit=2)
+        assert len(results) == 2
+        assert results[0]["node_id"] in (n1.id, n2.id)
+        assert results[0]["distance"] <= results[1]["distance"]
+        assert 0 < results[0]["score"] <= 1.0
+
+    def test_search_similar_returns_metadata(self):
+        """搜索结果包含 label, kind, distance, score。"""
+        mg = MemoryGraph()
+        node = mg.add("test node", "fact", {"meta": "data"})
+        mg.add_embedding(node.id, [0.5, 0.5])
+        results = mg.search_similar([0.5, 0.5], limit=1)
+        assert len(results) == 1
+        assert results[0]["label"] == "test node"
+        assert results[0]["kind"] == "fact"
+        assert "distance" in results[0]
+        assert "score" in results[0]
+
+    def test_remove_embedding(self):
+        """删除嵌入后 embedding_count 减少。"""
+        mg = MemoryGraph()
+        n1 = mg.add("a")
+        n2 = mg.add("b")
+        mg.add_embedding(n1.id, [1.0, 0.0])
+        mg.add_embedding(n2.id, [0.0, 1.0])
+        assert mg.embedding_count() == 2
+        assert mg.remove_embedding(n1.id) is True
+        assert mg.embedding_count() == 1
+        # 删除已删除的返回 False
+        assert mg.remove_embedding(n1.id) is False
+
+    def test_remove_embedding_nonexistent(self):
+        """删除不存在的嵌入返回 False。"""
+        mg = MemoryGraph()
+        assert mg.remove_embedding("nonexistent") is False
+
+    def test_embedding_count_empty(self):
+        """空图嵌入数为 0。"""
+        mg = MemoryGraph()
+        assert mg.embedding_count() == 0
+
+    def test_search_similar_no_embeddings(self):
+        """没有嵌入时搜索应报 ValueError。"""
+        mg = MemoryGraph()
+        mg.add("test")
+        with pytest.raises(ValueError):
+            mg.search_similar([0.1, 0.2])
+
+
+class TestSearchHybrid:
+    """测试混合搜索 (RRF 融合)。"""
+
+    def test_search_hybrid_text_only(self):
+        """仅文本查询 (无向量) 应正常工作。"""
+        mg = MemoryGraph()
+        mg.add("Python programming", "skill")
+        mg.add("Rust systems", "skill")
+        mg.add("machine learning", "concept")
+        results = mg.search_hybrid("Python")
+        assert len(results) > 0
+        assert any(r["label"] == "Python programming" for r in results)
+        assert "text" in results[0]["sources"]
+
+    def test_search_hybrid_with_embedding(self):
+        """文本 + 向量混合搜索。"""
+        mg = MemoryGraph()
+        n1 = mg.add("AI research", "concept")
+        n2 = mg.add("Web dev", "skill")
+        mg.add_embedding(n1.id, [0.9, 0.1])
+        mg.add_embedding(n2.id, [0.1, 0.9])
+        results = mg.search_hybrid("AI", embedding=[0.9, 0.1])
+        assert len(results) > 0
+        top = results[0]
+        assert top["node_id"] == n1.id
+        assert "text" in top["sources"]
+        assert "vector" in top["sources"]
+
+    def test_search_hybrid_graph_boost(self):
+        """图邻居加成: 被搜索节点的邻居应出现在结果中。"""
+        mg = MemoryGraph()
+        n1 = mg.add("AI", "concept")
+        n2 = mg.add("ML", "concept")
+        mg.link(n1.id, n2.id, "related")
+        results = mg.search_hybrid("AI")
+        labels = [r["label"] for r in results]
+        assert "AI" in labels
+        # ML 应通过 graph boost 出现
+        assert "ML" in labels
+
+    def test_search_hybrid_empty_graph(self):
+        """空图混合搜索返回空列表。"""
+        mg = MemoryGraph()
+        results = mg.search_hybrid("nothing")
+        assert results == []
+
+    def test_search_hybrid_limit(self):
+        """limit 参数限制返回数量。"""
+        mg = MemoryGraph()
+        for i in range(10):
+            mg.add(f"item_{i}", "concept")
+        results = mg.search_hybrid("item", limit=3)
+        assert len(results) <= 3
+
+    def test_search_hybrid_sources_field(self):
+        """结果包含 sources 字段标注命中来源。"""
+        mg = MemoryGraph()
+        n1 = mg.add("Python", "skill")
+        mg.add_embedding(n1.id, [0.5, 0.5])
+        results = mg.search_hybrid("Python", embedding=[0.5, 0.5])
+        assert len(results) > 0
+        assert "sources" in results[0]
+        assert isinstance(results[0]["sources"], list)
+
+    def test_search_hybrid_vector_unavailable_silent(self):
+        """向量搜索不可用时 (未安装/无嵌入) 静默降级为纯文本。"""
+        mg = MemoryGraph()
+        mg.add("test item", "concept")
+        # 不添加嵌入但传 embedding 参数, 应不报错
+        results = mg.search_hybrid("test", embedding=[0.1, 0.2])
+        assert len(results) > 0  # 文本搜索仍工作
