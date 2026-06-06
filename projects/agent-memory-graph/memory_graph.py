@@ -2577,6 +2577,113 @@ class MemoryGraph:
                     r["created"], r["accessed"], r["weight"])
                 for r in rows]
 
+    # ── Graph theory algorithms ──────────────────────────────────────────
+
+    def is_bipartite(self) -> bool:
+        """检查图是否为二分图（BFS 染色法，将边视为无向）。"""
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        color = {}  # node_id -> 0/1
+        # Build undirected adjacency
+        adj = {str(r["id"]): [] for r in nodes}
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = str(e["source"]), str(e["target"])
+            adj.setdefault(s, []).append(t)
+            adj.setdefault(t, []).append(s)
+        for start in adj:
+            if start in color:
+                continue
+            color[start] = 0
+            queue = [start]
+            while queue:
+                u = queue.pop(0)
+                for v in adj.get(u, []):
+                    if v not in color:
+                        color[v] = 1 - color[u]
+                        queue.append(v)
+                    elif color[v] == color[u]:
+                        return False
+        return True
+
+    def find_bridges(self) -> list[tuple]:
+        """寻找桥边（删除后使图不连通的边），基于 Tarjan 桥算法。
+
+        将边视为无向。返回 [(source, target, relation), ...]。
+        """
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        node_ids = [str(r["id"]) for r in nodes]
+        # Build undirected adjacency with edge info
+        adj = {nid: [] for nid in node_ids}
+        edge_map = {}  # (u,v sorted) -> (source, target, relation)
+        for e in self.conn.execute("SELECT source, target, relation FROM edges").fetchall():
+            s, t, rel = str(e["source"]), str(e["target"]), e["relation"]
+            adj.setdefault(s, []).append(t)
+            adj.setdefault(t, []).append(s)
+            key = tuple(sorted([s, t]))
+            edge_map[key] = (s, t, rel)
+
+        disc = {}
+        low = {}
+        timer = [0]
+        bridges = []
+
+        def dfs(u, parent):
+            disc[u] = low[u] = timer[0]
+            timer[0] += 1
+            for v in adj.get(u, []):
+                if v not in disc:
+                    dfs(v, u)
+                    low[u] = min(low[u], low[v])
+                    if low[v] > disc[u]:
+                        key = tuple(sorted([u, v]))
+                        if key in edge_map:
+                            bridges.append(edge_map[key])
+                elif v != parent:
+                    low[u] = min(low[u], disc[v])
+
+        for nid in node_ids:
+            if nid not in disc:
+                dfs(nid, None)
+        return bridges
+
+    def articulation_points(self) -> list[str]:
+        """寻找割点（删除后使图不连通的节点），基于 Tarjan 割点算法。
+
+        将边视为无向。返回节点 ID 列表。
+        """
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        node_ids = [str(r["id"]) for r in nodes]
+        adj = {nid: set() for nid in node_ids}
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = str(e["source"]), str(e["target"])
+            adj.setdefault(s, set()).add(t)
+            adj.setdefault(t, set()).add(s)
+
+        disc = {}
+        low = {}
+        timer = [0]
+        ap = set()
+
+        def dfs(u, parent):
+            children = 0
+            disc[u] = low[u] = timer[0]
+            timer[0] += 1
+            for v in adj.get(u, []):
+                if v not in disc:
+                    children += 1
+                    dfs(v, u)
+                    low[u] = min(low[u], low[v])
+                    if parent is None and children > 1:
+                        ap.add(u)
+                    elif parent is not None and low[v] >= disc[u]:
+                        ap.add(u)
+                elif v != parent:
+                    low[u] = min(low[u], disc[v])
+
+        for nid in node_ids:
+            if nid not in disc:
+                dfs(nid, None)
+        return sorted(ap)
+
     def find_roots(self) -> list[Node]:
         """返回无入边的节点（有向图的根），包括孤立节点。"""
         rows = self.conn.execute(

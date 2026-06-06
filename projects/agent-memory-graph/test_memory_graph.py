@@ -4895,3 +4895,220 @@ class TestImportGraphML:
         result = mg.import_graphml(xml)
         assert result["nodes"] == 2
         assert result["edges"] == 1
+
+
+# ── is_bipartite ───────────────────────────────────────────────
+
+class TestIsBipartite:
+
+    def test_simple_bipartite(self):
+        """a-b-c 是二分图 ({a,c} vs {b})。"""
+        mg = MemoryGraph()
+        mg._insert_node_raw("a", "A")
+        mg._insert_node_raw("b", "B")
+        mg._insert_node_raw("c", "C")
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")
+        assert mg.is_bipartite() is True
+
+    def test_triangle_not_bipartite(self):
+        """三角形不是二分图。"""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c"]:
+            mg._insert_node_raw(n, n)
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")
+        mg.link("c", "a", "r")
+        assert mg.is_bipartite() is False
+
+    def test_single_edge(self):
+        """单条边是二分图。"""
+        mg = MemoryGraph()
+        mg._insert_node_raw("x", "X")
+        mg._insert_node_raw("y", "Y")
+        mg.link("x", "y", "r")
+        assert mg.is_bipartite() is True
+
+    def test_disconnected_bipartite(self):
+        """不连通的二分图仍然是二分图。"""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c", "d"]:
+            mg._insert_node_raw(n, n)
+        mg.link("a", "b", "r")
+        mg.link("c", "d", "r")
+        assert mg.is_bipartite() is True
+
+    def test_empty_graph(self):
+        """空图是二分图。"""
+        mg = MemoryGraph()
+        assert mg.is_bipartite() is True
+
+    def test_single_node(self):
+        """单节点是二分图。"""
+        mg = MemoryGraph()
+        mg.add("solo")
+        assert mg.is_bipartite() is True
+
+    def test_odd_cycle_not_bipartite(self):
+        """五边形不是二分图（奇环）。"""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c", "d", "e"]:
+            mg._insert_node_raw(n, n)
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")
+        mg.link("c", "d", "r")
+        mg.link("d", "e", "r")
+        mg.link("e", "a", "r")
+        assert mg.is_bipartite() is False
+
+
+# ── find_bridges ───────────────────────────────────────────────
+
+class TestFindBridges:
+
+    def test_single_bridge(self):
+        """a-b-c 中 b-c 是桥（如果 a-b 不在另一条路径上）...actually a-b and b-c are both bridges."""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c"]:
+            mg._insert_node_raw(n, n)
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")
+        bridges = mg.find_bridges()
+        assert len(bridges) == 2
+
+    def test_no_bridge_in_cycle(self):
+        """环中没有桥。"""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c"]:
+            mg._insert_node_raw(n, n)
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")
+        mg.link("c", "a", "r")
+        bridges = mg.find_bridges()
+        assert len(bridges) == 0
+
+    def test_bridge_in_figure_eight(self):
+        """两个三角形共享一个节点，共享节点的两条边不是桥，其余4条都是桥... wait no.
+        共享节点 b: a-b-c-a + d-b-e-d. All edges are bridges except none form cycle.
+        Actually: a-b, b-c, c-a form triangle (no bridges).
+        d-b, b-e, e-d form triangle (no bridges).
+        So 0 bridges."""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c", "d", "e"]:
+            mg._insert_node_raw(n, n)
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")
+        mg.link("c", "a", "r")
+        mg.link("d", "b", "r")
+        mg.link("b", "e", "r")
+        mg.link("e", "d", "r")
+        bridges = mg.find_bridges()
+        assert len(bridges) == 0
+
+    def test_bridge_single_edge(self):
+        """单条边就是桥。"""
+        mg = MemoryGraph()
+        mg._insert_node_raw("x", "X")
+        mg._insert_node_raw("y", "Y")
+        mg.link("x", "y", "r")
+        bridges = mg.find_bridges()
+        assert len(bridges) == 1
+
+    def test_bridge_returns_edge_info(self):
+        """桥返回 (source, target, relation) 元组。"""
+        mg = MemoryGraph()
+        mg._insert_node_raw("a", "A")
+        mg._insert_node_raw("b", "B")
+        mg.link("a", "b", "connects")
+        bridges = mg.find_bridges()
+        assert len(bridges) == 1
+        src, tgt, rel = bridges[0]
+        assert src == "a"
+        assert tgt == "b"
+        assert rel == "connects"
+
+    def test_no_bridges_in_complete_graph(self):
+        """K4 完全图没有桥。"""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c", "d"]:
+            mg._insert_node_raw(n, n)
+        for i, a in enumerate(["a", "b", "c", "d"]):
+            for b in ["a", "b", "c", "d"][i+1:]:
+                mg.link(a, b, "r")
+        bridges = mg.find_bridges()
+        assert len(bridges) == 0
+
+
+# ── articulation_points ────────────────────────────────────────
+
+class TestArticulationPoints:
+
+    def test_simple_cut_vertex(self):
+        """a-b-c-d 线性图，b 和 c 是割点。"""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c", "d"]:
+            mg._insert_node_raw(n, n)
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")
+        mg.link("c", "d", "r")
+        aps = mg.articulation_points()
+        assert "b" in aps
+        assert "c" in aps
+
+    def test_no_cut_vertex_in_cycle(self):
+        """环中没有割点。"""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c", "d"]:
+            mg._insert_node_raw(n, n)
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")
+        mg.link("c", "d", "r")
+        mg.link("d", "a", "r")
+        aps = mg.articulation_points()
+        assert len(aps) == 0
+
+    def test_center_of_star(self):
+        """星形图中心是割点。"""
+        mg = MemoryGraph()
+        for n in ["center", "a", "b", "c", "d"]:
+            mg._insert_node_raw(n, n)
+        mg.link("center", "a", "r")
+        mg.link("center", "b", "r")
+        mg.link("center", "c", "r")
+        mg.link("center", "d", "r")
+        aps = mg.articulation_points()
+        assert "center" in aps
+
+    def test_empty_graph(self):
+        """空图没有割点。"""
+        mg = MemoryGraph()
+        assert mg.articulation_points() == []
+
+    def test_single_edge_no_cut(self):
+        """单条边两端都不是割点（删除任一节点只留一个节点）。"""
+        mg = MemoryGraph()
+        mg._insert_node_raw("a", "A")
+        mg._insert_node_raw("b", "B")
+        mg.link("a", "b", "r")
+        aps = mg.articulation_points()
+        assert len(aps) == 0
+
+    def test_two_triangles_connected(self):
+        """两个三角形通过一条边相连，连接边的两端是割点。"""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c", "d", "e", "f"]:
+            mg._insert_node_raw(n, n)
+        # Triangle 1: a-b-c-a
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")
+        mg.link("c", "a", "r")
+        # Bridge: c-d
+        mg.link("c", "d", "r")
+        # Triangle 2: d-e-f-d
+        mg.link("d", "e", "r")
+        mg.link("e", "f", "r")
+        mg.link("f", "d", "r")
+        aps = mg.articulation_points()
+        assert "c" in aps
+        assert "d" in aps
+        assert len(aps) == 2
