@@ -63,6 +63,8 @@
 | **agent-memory-graph** | Memory Graph | 基于图的代理记忆结构 |
 | **agent-observability** | AgentObserver | 高层观测门面（Facade） |
 | **code-lab** | Lab | 实验性学习项目集合 |
+| **mcp-server** | MCP Bridge | OpenClaw 工具的 MCP 协议桥接层 |
+| **agent-trust-web** | Trust Simulation | 代理间信任网络可视化与模拟 |
 
 ---
 
@@ -76,4 +78,4 @@
 
 ---
 
-_维护者：Catalyst 🧪 | 最后更新：2026-06-06_
+_维护者：Catalyst 🧪 | 最后更新：2026-06-07_
