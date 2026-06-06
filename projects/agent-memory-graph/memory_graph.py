@@ -2423,6 +2423,148 @@ class MemoryGraph:
         lines.append("}")
         return "\n".join(lines)
 
+    # ── Import formats (round-trip from serialize_*) ──────────────────────
+
+    def _insert_node_raw(self, nid: str, label: str, kind: str = "", weight: float = 1.0, tags: list = None):
+        """直接用指定 ID 插入节点（内部方法，用于 import）。"""
+        now = time.time()
+        self.conn.execute(
+            "INSERT OR IGNORE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            (nid, label, kind, "{}", now, now, weight, json.dumps(tags or []))
+        )
+        self.conn.commit()
+
+    def import_edgelist(self, lines: list[str], *, merge: bool = False) -> dict:
+        """从边列表导入。每行格式 'source_id target_id [weight]'。
+
+        Args:
+            lines: 边列表字符串列表
+            merge: True=合入现有图(跳过已有节点), False=清空后导入
+
+        Returns:
+            {"nodes": N, "edges": M} 导入统计
+        """
+        if not merge:
+            self.clear()
+        node_count = edge_count = 0
+        for raw in lines:
+            parts = raw.strip().split()
+            if len(parts) < 2:
+                continue
+            src, tgt = parts[0], parts[1]
+            weight = float(parts[2]) if len(parts) >= 3 else 1.0
+            if not self.has_node(src):
+                self._insert_node_raw(src, src)
+                node_count += 1
+            if not self.has_node(tgt):
+                self._insert_node_raw(tgt, tgt)
+                node_count += 1
+            self.link(src, tgt, "", weight=weight)
+            edge_count += 1
+        return {"nodes": node_count, "edges": edge_count}
+
+    def import_cytoscape(self, data: dict, *, merge: bool = False) -> dict:
+        """从 Cytoscape.js JSON 导入，兼容 serialize_cytoscape() 的输出格式。
+
+        Args:
+            data: Cytoscape.js JSON dict
+            merge: True=合入现有图, False=清空后导入
+
+        Returns:
+            {"nodes": N, "edges": M} 导入统计
+        """
+        if not merge:
+            self.clear()
+        elements = data.get("elements", data)
+        node_count = edge_count = 0
+
+        # Import nodes first
+        for n in elements.get("nodes", []):
+            d = n.get("data", n)
+            nid = str(d["id"])
+            label = d.get("label", nid)
+            kind = d.get("kind", "")
+            weight = d.get("weight", 1.0)
+            tags = d.get("tags", [])
+            if merge and self.has_node(nid):
+                continue
+            self._insert_node_raw(nid, label, kind, weight, tags if isinstance(tags, list) else [tags] if tags else None)
+            node_count += 1
+
+        # Import edges
+        for e in elements.get("edges", []):
+            d = e.get("data", e)
+            src = str(d["source"])
+            tgt = str(d["target"])
+            relation = d.get("relation", "")
+            weight = d.get("weight", 1.0)
+            self.link(src, tgt, relation, weight=weight)
+            edge_count += 1
+
+        return {"nodes": node_count, "edges": edge_count}
+
+    def import_graphml(self, xml_string: str, *, merge: bool = False) -> dict:
+        """从 GraphML XML 导入。
+
+        Args:
+            xml_string: GraphML XML 字符串
+            merge: True=合入现有图, False=清空后导入
+
+        Returns:
+            {"nodes": N, "edges": M} 导入统计
+        """
+        import xml.etree.ElementTree as ET
+        if not merge:
+            self.clear()
+        ns = "{http://graphml.graphdrawing.org/xmlns}"
+        root = ET.fromstring(xml_string)
+
+        # Build key mapping (key id -> attr name / type)
+        key_map = {}
+        for key in root.findall(f"{ns}key"):
+            key_map[key.get("id")] = {
+                "name": key.get("attr.name", key.get("id")),
+                "for": key.get("for", "node"),
+            }
+
+        node_count = edge_count = 0
+        graph = root.find(f"{ns}graph")
+        if graph is None:
+            return {"nodes": 0, "edges": 0}
+
+        # Parse data values from <data key="..."> elements
+        def parse_data(parent_el, target_type):
+            vals = {}
+            for d in parent_el.findall(f"{ns}data"):
+                key_id = d.get("key")
+                if key_id in key_map and key_map[key_id]["for"] == target_type:
+                    vals[key_map[key_id]["name"]] = d.text or ""
+            return vals
+
+        # Import nodes
+        for node_el in graph.findall(f"{ns}node"):
+            nid = node_el.get("id")
+            if merge and self.has_node(nid):
+                continue
+            attrs = parse_data(node_el, "node")
+            label = attrs.get("label", nid)
+            kind = attrs.get("kind", "")
+            weight = float(attrs.get("weight", 1.0))
+            self._insert_node_raw(nid, label, kind, weight)
+            node_count += 1
+
+        # Import edges
+        for edge_el in graph.findall(f"{ns}edge"):
+            src = edge_el.get("source")
+            tgt = edge_el.get("target")
+            attrs = parse_data(edge_el, "edge")
+            relation = attrs.get("relation", "")
+            weight = float(attrs.get("weight", 1.0))
+            self.link(src, tgt, relation=relation, weight=weight)
+            edge_count += 1
+
+        return {"nodes": node_count, "edges": edge_count}
+
     def find_orphans(self) -> list[Node]:
         """返回所有没有边的孤立节点。"""
         rows = self.conn.execute(

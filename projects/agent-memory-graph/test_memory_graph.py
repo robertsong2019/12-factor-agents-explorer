@@ -4671,3 +4671,227 @@ class TestVectorBatchOps:
         results = mg.search_similar([0.1, 0.2, 0.3], limit=2)
         for r in results:
             assert 0 < r["score"] <= 1.0
+
+
+# ── import_edgelist ────────────────────────────────────────────
+
+class TestImportEdgelist:
+
+    def test_basic_import(self):
+        mg = MemoryGraph()
+        lines = ["a b 0.5", "b c 1.0", "a c 0.3"]
+        result = mg.import_edgelist(lines)
+        assert result["nodes"] == 3
+        assert result["edges"] == 3
+        assert mg.has_node("a")
+        assert mg.has_node("b")
+        assert mg.has_node("c")
+
+    def test_default_weight(self):
+        mg = MemoryGraph()
+        lines = ["x y"]
+        result = mg.import_edgelist(lines)
+        assert result["edges"] == 1
+        edges = mg.conn.execute("SELECT weight FROM edges WHERE source='x' AND target='y'").fetchone()
+        assert edges["weight"] == 1.0
+
+    def test_clear_before_import(self):
+        mg = MemoryGraph()
+        n1 = mg.add("old1")
+        mg.import_edgelist(["a b"])
+        assert not mg.has_node(n1.id)
+        assert mg.has_node("a")
+
+    def test_merge_mode(self):
+        mg = MemoryGraph()
+        existing = mg.add("existing")
+        result = mg.import_edgelist([f"{existing.id} new_node 0.5"], merge=True)
+        assert mg.has_node(existing.id)
+        assert mg.has_node("new_node")
+        assert result["nodes"] == 1
+
+    def test_empty_lines(self):
+        mg = MemoryGraph()
+        result = mg.import_edgelist(["", "  ", "a b"])
+        assert result["nodes"] == 2
+        assert result["edges"] == 1
+
+    def test_round_trip(self):
+        """export → import 往返测试。"""
+        mg1 = MemoryGraph()
+        a = mg1.add("Alpha")
+        b = mg1.add("Beta")
+        mg1.link(a.id, b.id, "r", weight=0.7)
+        mg1.link(b.id, a.id, "r", weight=0.3)
+        exported = mg1.serialize_edgelist()
+        mg2 = MemoryGraph()
+        mg2.import_edgelist(exported)
+        assert len(mg2.conn.execute("SELECT id FROM nodes").fetchall()) == 2
+        assert len(mg2.conn.execute("SELECT source FROM edges").fetchall()) == 2
+
+    def test_extra_columns_ignored(self):
+        mg = MemoryGraph()
+        lines = ["a b 0.5 extra_label extra_stuff"]
+        result = mg.import_edgelist(lines)
+        assert result["edges"] == 1
+
+
+# ── import_cytoscape ────────────────────────────────────────────
+
+class TestImportCytoscape:
+
+    def test_basic_import(self):
+        mg = MemoryGraph()
+        data = {
+            "elements": {
+                "nodes": [
+                    {"data": {"id": "n1", "label": "Node1", "kind": "concept", "weight": 1.5, "tags": []}},
+                    {"data": {"id": "n2", "label": "Node2", "kind": "entity", "weight": 0.8, "tags": ["test"]}},
+                ],
+                "edges": [
+                    {"data": {"id": "e0", "source": "n1", "target": "n2", "relation": "related", "weight": 0.5}},
+                ],
+            }
+        }
+        result = mg.import_cytoscape(data)
+        assert result["nodes"] == 2
+        assert result["edges"] == 1
+        assert mg.has_node("n1")
+        assert mg.has_node("n2")
+
+    def test_merge_mode(self):
+        mg = MemoryGraph()
+        existing = mg.add("existing")
+        data = {
+            "elements": {
+                "nodes": [{"data": {"id": existing.id, "label": "X"}}, {"data": {"id": "new", "label": "Y"}}],
+                "edges": [],
+            }
+        }
+        result = mg.import_cytoscape(data, merge=True)
+        assert result["nodes"] == 1
+        assert mg.has_node("new")
+
+    def test_round_trip(self):
+        """serialize_cytoscape → import_cytoscape 往返测试。"""
+        mg1 = MemoryGraph()
+        alpha = mg1.add("Alpha", kind="concept")
+        beta = mg1.add("Beta", kind="entity")
+        mg1.conn.execute("UPDATE nodes SET weight=2.0 WHERE id=?", (alpha.id,))
+        mg1.conn.execute("UPDATE nodes SET weight=1.0 WHERE id=?", (beta.id,))
+        mg1.link(alpha.id, beta.id, "connects", weight=0.6)
+        exported = mg1.serialize_cytoscape()
+        mg2 = MemoryGraph()
+        mg2.import_cytoscape(exported)
+        assert len(mg2.conn.execute("SELECT id FROM nodes").fetchall()) == 2
+        assert len(mg2.conn.execute("SELECT source FROM edges").fetchall()) == 1
+        node = mg2.get_node(alpha.id)
+        assert node.label == "Alpha"
+        assert node.kind == "concept"
+
+    def test_missing_optional_fields(self):
+        mg = MemoryGraph()
+        data = {
+            "elements": {
+                "nodes": [{"data": {"id": "x"}}, {"data": {"id": "y"}}],
+                "edges": [{"data": {"source": "x", "target": "y"}}],
+            }
+        }
+        result = mg.import_cytoscape(data)
+        assert result["nodes"] == 2
+        assert result["edges"] == 1
+        node = mg.get_node("x")
+        assert node.label == "x"  # default to id
+
+    def test_tags_import(self):
+        mg = MemoryGraph()
+        data = {
+            "elements": {
+                "nodes": [{"data": {"id": "n1", "label": "N1", "tags": ["demo"]}}],
+                "edges": [],
+            }
+        }
+        mg.import_cytoscape(data)
+        tags = mg.all_tags()
+        assert "demo" in tags
+
+    def test_clear_before_import(self):
+        mg = MemoryGraph()
+        mg.add("old")
+        data = {"elements": {"nodes": [{"data": {"id": "new"}}], "edges": []}}
+        mg.import_cytoscape(data)
+        assert not mg.has_node("old")
+        assert mg.has_node("new")
+
+
+# ── import_graphml ────────────────────────────────────────────
+
+class TestImportGraphML:
+
+    def test_basic_import(self):
+        mg = MemoryGraph()
+        xml = '''<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="d0" for="node" attr.name="label" attr.type="string"/>
+  <key id="d1" for="node" attr.name="kind" attr.type="string"/>
+  <key id="d2" for="node" attr.name="weight" attr.type="double"/>
+  <key id="d3" for="edge" attr.name="relation" attr.type="string"/>
+  <key id="d4" for="edge" attr.name="weight" attr.type="double"/>
+  <graph>
+    <node id="a"><data key="d0">Alpha</data><data key="d1">concept</data><data key="d2">1.5</data></node>
+    <node id="b"><data key="d0">Beta</data><data key="d1">entity</data><data key="d2">0.8</data></node>
+    <edge source="a" target="b"><data key="d3">related</data><data key="d4">0.5</data></edge>
+  </graph>
+</graphml>'''
+        result = mg.import_graphml(xml)
+        assert result["nodes"] == 2
+        assert result["edges"] == 1
+        assert mg.has_node("a")
+        node = mg.get_node("a")
+        assert node.label == "Alpha"
+        assert node.kind == "concept"
+        assert node.weight == 1.5
+
+    def test_round_trip(self):
+        """serialize_graphml → import_graphml 往返测试。"""
+        mg1 = MemoryGraph()
+        x = mg1.add("X", kind="concept")
+        y = mg1.add("Y", kind="entity")
+        mg1.conn.execute("UPDATE nodes SET weight=2.0 WHERE id=?", (x.id,))
+        mg1.conn.execute("UPDATE nodes SET weight=1.0 WHERE id=?", (y.id,))
+        mg1.link(x.id, y.id, "connects", weight=0.7)
+        exported = mg1.serialize_graphml()
+        mg2 = MemoryGraph()
+        mg2.import_graphml(exported)
+        assert len(mg2.conn.execute("SELECT id FROM nodes").fetchall()) == 2
+        assert len(mg2.conn.execute("SELECT source FROM edges").fetchall()) == 1
+        node = mg2.get_node(x.id)
+        assert node.label == "X"
+        assert node.kind == "concept"
+
+    def test_merge_mode(self):
+        mg = MemoryGraph()
+        existing = mg.add("existing")
+        xml = f'''<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <graph><node id="{existing.id}"/><node id="new"/></graph>
+</graphml>'''
+        result = mg.import_graphml(xml, merge=True)
+        assert result["nodes"] == 1
+        assert mg.has_node("new")
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        xml = '<graphml xmlns="http://graphml.graphdrawing.org/xmlns"><graph/></graphml>'
+        result = mg.import_graphml(xml)
+        assert result["nodes"] == 0
+        assert result["edges"] == 0
+
+    def test_missing_keys_still_imports(self):
+        """GraphML 没有自定义 key 时仍能导入节点和边。"""
+        mg = MemoryGraph()
+        xml = '''<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <graph><node id="a"/><node id="b"/><edge source="a" target="b"/></graph>
+</graphml>'''
+        result = mg.import_graphml(xml)
+        assert result["nodes"] == 2
+        assert result["edges"] == 1
