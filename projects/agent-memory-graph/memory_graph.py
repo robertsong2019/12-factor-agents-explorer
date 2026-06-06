@@ -3389,6 +3389,122 @@ class MemoryGraph:
         except sqlite3.OperationalError:
             return 0
 
+    def add_embeddings_batch(self, items: list[tuple[str, list[float]]]) -> int:
+        """批量添加嵌入。items = [(node_id, embedding), ...]
+
+        Returns:
+            成功添加的数量
+        """
+        try:
+            import sqlite_vec
+        except ImportError:
+            raise ImportError("sqlite-vec is required. Install: pip install sqlite-vec")
+
+        if not items:
+            return 0
+
+        self._ensure_rowid_table()
+        dims = len(items[0][1])
+        self._ensure_vec_table(dims)
+
+        count = 0
+        for node_id, embedding in items:
+            if not self.has_node(node_id):
+                continue
+            rowid = self._node_to_rowid(node_id)
+            vec = sqlite_vec.serialize_float32(embedding)
+            self.conn.execute("DELETE FROM vec_nodes WHERE rowid = ?", (rowid,))
+            self.conn.execute("INSERT INTO vec_nodes(rowid, embedding) VALUES (?, ?)", (rowid, vec))
+            count += 1
+        self.conn.commit()
+        return count
+
+    def search_similar_to_node(self, node_id: str, limit: int = 10) -> list[dict]:
+        """查找与指定节点最相似的其他节点 (基于嵌入向量)。
+
+        Args:
+            node_id: 种子节点 ID (必须有嵌入)
+            limit: 返回数量上限
+
+        Returns:
+            list of {node_id, label, kind, distance, score} 排除自身
+
+        Raises:
+            ValueError: 如果节点不存在或没有嵌入
+        """
+        try:
+            import sqlite_vec
+        except ImportError:
+            raise ImportError("sqlite-vec is required. Install: pip install sqlite-vec")
+
+        self._ensure_rowid_table()
+        row = self.conn.execute("SELECT rowid FROM node_rowids WHERE node_id = ?", (node_id,)).fetchone()
+        if not row:
+            raise ValueError(f"No embedding found for node: {node_id}")
+
+        seed_rowid = row["rowid"]
+        # 使用子查询直接获取种子向量并匹配
+        rows = self.conn.execute(
+            """
+            SELECT v.rowid, v.distance, n.id, n.label, n.kind, n.weight
+            FROM vec_nodes AS v
+            JOIN node_rowids AS r ON v.rowid = r.rowid
+            JOIN nodes AS n ON r.node_id = n.id
+            WHERE v.embedding MATCH (
+                SELECT embedding FROM vec_nodes WHERE rowid = ?
+            ) AND v.k = ?
+            ORDER BY v.distance
+            """,
+            (seed_rowid, limit + 1)
+        ).fetchall()
+        results = []
+        for r in rows:
+            if r["id"] == node_id:
+                continue
+            dist = r["distance"]
+            score = 1.0 / (1.0 + dist)
+            results.append({
+                "node_id": r["id"],
+                "label": r["label"],
+                "kind": r["kind"],
+                "distance": round(dist, 6),
+                "score": round(score, 6),
+                "weight": r["weight"],
+            })
+        return results[:limit]
+
+    def vector_stats(self) -> dict:
+        """返回向量存储的统计信息。"""
+        count = self.embedding_count()
+        if count == 0:
+            return {"count": 0, "has_vectors": False}
+        node_count = self.conn.execute("SELECT COUNT(*) as c FROM nodes").fetchone()["c"]
+        coverage = round(count / node_count, 4) if node_count > 0 else 0.0
+        # 维度
+        dims = getattr(self, '_vec_dims', None)
+        if not dims:
+            row = self.conn.execute("SELECT sql FROM sqlite_master WHERE name='vec_nodes'").fetchone()
+            if row:
+                import re
+                m = re.search(r'float\[(\d+)\]', row["sql"])
+                dims = int(m.group(1)) if m else None
+        return {
+            "count": count,
+            "has_vectors": True,
+            "dimensions": dims,
+            "node_count": node_count,
+            "coverage": coverage,
+        }
+
+    def has_embedding(self, node_id: str) -> bool:
+        """检查节点是否有嵌入向量。"""
+        self._ensure_rowid_table()
+        row = self.conn.execute("SELECT rowid FROM node_rowids WHERE node_id = ?", (node_id,)).fetchone()
+        if not row:
+            return False
+        vec_row = self.conn.execute("SELECT rowid FROM vec_nodes WHERE rowid = ?", (row["rowid"],)).fetchone()
+        return vec_row is not None
+
 
 # ── 演示 ──────────────────────────────────────────────────
 

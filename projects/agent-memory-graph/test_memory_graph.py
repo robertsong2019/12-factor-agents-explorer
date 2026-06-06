@@ -4539,3 +4539,135 @@ class TestSearchHybrid:
         # 不添加嵌入但传 embedding 参数, 应不报错
         results = mg.search_hybrid("test", embedding=[0.1, 0.2])
         assert len(results) > 0  # 文本搜索仍工作
+
+
+class TestVectorBatchOps:
+    """测试向量批量操作和工具。"""
+
+    def test_add_embeddings_batch_basic(self):
+        """批量添加嵌入。"""
+        mg = MemoryGraph()
+        n1 = mg.add("alpha")
+        n2 = mg.add("beta")
+        n3 = mg.add("gamma")
+        count = mg.add_embeddings_batch([
+            (n1.id, [1.0, 0.0, 0.0]),
+            (n2.id, [0.0, 1.0, 0.0]),
+            (n3.id, [0.0, 0.0, 1.0]),
+        ])
+        assert count == 3
+        assert mg.embedding_count() == 3
+
+    def test_add_embeddings_batch_skip_nonexistent(self):
+        """批量添加时跳过不存在的节点。"""
+        mg = MemoryGraph()
+        n1 = mg.add("real")
+        count = mg.add_embeddings_batch([
+            (n1.id, [1.0, 0.0]),
+            ("nonexistent", [0.0, 1.0]),
+        ])
+        assert count == 1
+        assert mg.embedding_count() == 1
+
+    def test_add_embeddings_batch_empty(self):
+        """空列表返回 0。"""
+        mg = MemoryGraph()
+        assert mg.add_embeddings_batch([]) == 0
+
+    def test_search_similar_to_node(self):
+        """基于节点嵌入查找相似节点。"""
+        mg = MemoryGraph()
+        n1 = mg.add("cat", "concept")
+        n2 = mg.add("dog", "concept")
+        n3 = mg.add("car", "concept")
+        mg.add_embedding(n1.id, [0.1, 0.9, 0.0])
+        mg.add_embedding(n2.id, [0.2, 0.8, 0.1])
+        mg.add_embedding(n3.id, [0.9, 0.1, 0.8])
+        results = mg.search_similar_to_node(n1.id, limit=2)
+        assert len(results) <= 2
+        # 排除自身
+        assert all(r["node_id"] != n1.id for r in results)
+        # dog 应比 car 更接近 cat
+        if len(results) >= 2:
+            dog_result = next((r for r in results if r["node_id"] == n2.id), None)
+            car_result = next((r for r in results if r["node_id"] == n3.id), None)
+            if dog_result and car_result:
+                assert dog_result["distance"] <= car_result["distance"]
+
+    def test_search_similar_to_node_no_embedding(self):
+        """节点没有嵌入时报 ValueError。"""
+        mg = MemoryGraph()
+        node = mg.add("test")
+        with pytest.raises(ValueError):
+            mg.search_similar_to_node(node.id)
+
+    def test_vector_stats_empty(self):
+        """空图向量统计。"""
+        mg = MemoryGraph()
+        stats = mg.vector_stats()
+        assert stats["count"] == 0
+        assert stats["has_vectors"] is False
+
+    def test_vector_stats_with_data(self):
+        """有嵌入时的统计。"""
+        mg = MemoryGraph()
+        n1 = mg.add("a")
+        n2 = mg.add("b")
+        mg.add_embedding(n1.id, [1.0, 0.0, 0.0, 0.0])
+        mg.add_embedding(n2.id, [0.0, 1.0, 0.0, 0.0])
+        stats = mg.vector_stats()
+        assert stats["count"] == 2
+        assert stats["has_vectors"] is True
+        assert stats["dimensions"] == 4
+        assert stats["node_count"] == 2
+        assert stats["coverage"] == 1.0
+
+    def test_vector_stats_partial_coverage(self):
+        """部分节点有嵌入。"""
+        mg = MemoryGraph()
+        n1 = mg.add("has_vec")
+        mg.add("no_vec_1")
+        mg.add("no_vec_2")
+        mg.add_embedding(n1.id, [0.5, 0.5])
+        stats = mg.vector_stats()
+        assert stats["count"] == 1
+        assert stats["node_count"] == 3
+        assert 0 < stats["coverage"] < 1.0
+
+    def test_has_embedding_true(self):
+        """有嵌入的节点返回 True。"""
+        mg = MemoryGraph()
+        node = mg.add("test")
+        mg.add_embedding(node.id, [0.5, 0.5])
+        assert mg.has_embedding(node.id) is True
+
+    def test_has_embedding_false(self):
+        """无嵌入的节点返回 False。"""
+        mg = MemoryGraph()
+        node = mg.add("test")
+        assert mg.has_embedding(node.id) is False
+
+    def test_has_embedding_nonexistent(self):
+        """不存在的节点返回 False。"""
+        mg = MemoryGraph()
+        assert mg.has_embedding("nonexistent") is False
+
+    def test_remove_then_has_embedding(self):
+        """删除嵌入后 has_embedding 返回 False。"""
+        mg = MemoryGraph()
+        node = mg.add("test")
+        mg.add_embedding(node.id, [0.5, 0.5])
+        assert mg.has_embedding(node.id) is True
+        mg.remove_embedding(node.id)
+        assert mg.has_embedding(node.id) is False
+
+    def test_search_similar_score_range(self):
+        """相似度搜索的 score 在 0~1 范围。"""
+        mg = MemoryGraph()
+        n1 = mg.add("a")
+        n2 = mg.add("b")
+        mg.add_embedding(n1.id, [0.1, 0.2, 0.3])
+        mg.add_embedding(n2.id, [0.4, 0.5, 0.6])
+        results = mg.search_similar([0.1, 0.2, 0.3], limit=2)
+        for r in results:
+            assert 0 < r["score"] <= 1.0
