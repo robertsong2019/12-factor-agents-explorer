@@ -5214,3 +5214,161 @@ class TestSearchSimilarByTag:
         mg.add_embedding(a.id, [1.0, 0.0])
         results = mg.search_similar_by_tag([1.0, 0.0], "nonexistent")
         assert len(results) == 0
+
+
+# ── import_adjacency_list ──────────────────────────────────────
+
+class TestImportAdjacencyList:
+
+    def test_basic_import(self):
+        mg = MemoryGraph()
+        adj = {"a": [{"target": "b", "relation": "r", "weight": 0.5}],
+               "b": [{"target": "c", "relation": "r", "weight": 1.0}]}
+        result = mg.import_adjacency_list(adj)
+        assert result["nodes"] == 3
+        assert result["edges"] == 2
+        assert mg.has_node("a")
+        assert mg.has_node("c")
+
+    def test_round_trip(self):
+        """to_adjacency_list → import_adjacency_list 往返。"""
+        mg1 = MemoryGraph()
+        mg1._insert_node_raw("x", "X")
+        mg1._insert_node_raw("y", "Y")
+        mg1.link("x", "y", "rel", weight=0.7)
+        exported = mg1.to_adjacency_list()
+        mg2 = MemoryGraph()
+        mg2.import_adjacency_list(exported)
+        nodes = mg2.conn.execute("SELECT id FROM nodes").fetchall()
+        edges = mg2.conn.execute("SELECT source, target FROM edges").fetchall()
+        assert len(nodes) == 2
+        assert len(edges) == 1
+
+    def test_merge_mode(self):
+        mg = MemoryGraph()
+        existing = mg.add("existing")
+        adj = {existing.id: [{"target": "new", "relation": "r", "weight": 0.5}]}
+        result = mg.import_adjacency_list(adj, merge=True)
+        assert mg.has_node("new")
+        assert result["nodes"] == 1
+
+    def test_empty_adj(self):
+        mg = MemoryGraph()
+        result = mg.import_adjacency_list({})
+        assert result["nodes"] == 0
+        assert result["edges"] == 0
+
+    def test_missing_relation_defaults(self):
+        mg = MemoryGraph()
+        adj = {"a": [{"target": "b"}]}
+        result = mg.import_adjacency_list(adj)
+        assert result["edges"] == 1
+        edges = mg.conn.execute("SELECT relation, weight FROM edges WHERE source='a'").fetchone()
+        assert edges["relation"] == ""
+        assert edges["weight"] == 1.0
+
+
+# ── neighbors_filtered ─────────────────────────────────────────
+
+class TestNeighborsFiltered:
+
+    def test_filter_by_relation(self):
+        mg = MemoryGraph()
+        mg._insert_node_raw("center", "C")
+        mg._insert_node_raw("a", "A")
+        mg._insert_node_raw("b", "B")
+        mg.link("center", "a", "friend")
+        mg.link("center", "b", "colleague")
+        friends = mg.neighbors_filtered("center", relation="friend")
+        assert len(friends) == 1
+        assert friends[0].id == "a"
+
+    def test_filter_by_min_weight(self):
+        mg = MemoryGraph()
+        mg._insert_node_raw("c", "C")
+        mg._insert_node_raw("light", "L")
+        mg._insert_node_raw("heavy", "H")
+        mg.link("c", "light", "r", weight=0.2)
+        mg.link("c", "heavy", "r", weight=0.9)
+        result = mg.neighbors_filtered("c", min_weight=0.5)
+        ids = [n.id for n in result]
+        assert "heavy" in ids
+        assert "light" not in ids
+
+    def test_direction_in(self):
+        mg = MemoryGraph()
+        mg._insert_node_raw("a", "A")
+        mg._insert_node_raw("b", "B")
+        mg._insert_node_raw("c", "C")
+        mg.link("a", "c", "r")
+        mg.link("b", "c", "r")
+        in_neighbors = mg.neighbors_filtered("c", direction="in")
+        ids = [n.id for n in in_neighbors]
+        assert "a" in ids
+        assert "b" in ids
+
+    def test_direction_both(self):
+        mg = MemoryGraph()
+        mg._insert_node_raw("a", "A")
+        mg._insert_node_raw("b", "B")
+        mg._insert_node_raw("c", "C")
+        mg.link("a", "b", "r")  # b has out to nothing, in from a
+        mg.link("b", "c", "r")  # b has out to c
+        both = mg.neighbors_filtered("b", direction="both")
+        ids = {n.id for n in both}
+        assert ids == {"a", "c"}
+
+    def test_no_matching(self):
+        mg = MemoryGraph()
+        mg._insert_node_raw("a", "A")
+        mg._insert_node_raw("b", "B")
+        mg.link("a", "b", "r")
+        result = mg.neighbors_filtered("a", relation="nonexistent")
+        assert len(result) == 0
+
+
+# ── edge_betweenness ───────────────────────────────────────────
+
+class TestEdgeBetweenness:
+
+    def test_bridge_has_high_betweenness(self):
+        """桥边应有最高介数。"""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c", "d"]:
+            mg._insert_node_raw(n, n)
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")  # bridge between two halves
+        mg.link("c", "d", "r")
+        eb = mg.edge_betweenness()
+        # b-c edge should have highest betweenness
+        bc_key = tuple(sorted(["b", "c"]))
+        ab_key = tuple(sorted(["a", "b"]))
+        cd_key = tuple(sorted(["c", "d"]))
+        assert eb[bc_key] > eb[ab_key]
+        assert eb[bc_key] > eb[cd_key]
+
+    def test_cycle_edges_equal(self):
+        """环中所有边介数相等。"""
+        mg = MemoryGraph()
+        for n in ["a", "b", "c"]:
+            mg._insert_node_raw(n, n)
+        mg.link("a", "b", "r")
+        mg.link("b", "c", "r")
+        mg.link("c", "a", "r")
+        eb = mg.edge_betweenness()
+        values = list(eb.values())
+        assert max(values) - min(values) < 0.01  # all approximately equal
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.edge_betweenness() == {}
+
+    def test_single_edge(self):
+        mg = MemoryGraph()
+        mg._insert_node_raw("a", "A")
+        mg._insert_node_raw("b", "B")
+        mg.link("a", "b", "r")
+        eb = mg.edge_betweenness()
+        assert len(eb) == 1
+        key = tuple(sorted(["a", "b"]))
+        assert eb[key] == 1.0  # single edge between 2 nodes

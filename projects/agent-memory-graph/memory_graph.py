@@ -2434,6 +2434,36 @@ class MemoryGraph:
         )
         self.conn.commit()
 
+    def import_adjacency_list(self, adj: dict, *, merge: bool = False) -> dict:
+        """从邻接表导入，兼容 to_adjacency_list() 的输出格式。
+
+        Args:
+            adj: {source_id: [{"target": ..., "relation": ..., "weight": ...}, ...]}
+            merge: True=合入现有图, False=清空后导入
+
+        Returns:
+            {"nodes": N, "edges": M} 导入统计
+        """
+        if not merge:
+            self.clear()
+        node_count = edge_count = 0
+        for src, edges in adj.items():
+            if not self.has_node(src):
+                self._insert_node_raw(src, src)
+                node_count += 1
+            for e in edges:
+                tgt = e.get("target", e.get("target_id", ""))
+                if not tgt:
+                    continue
+                rel = e.get("relation", "")
+                w = e.get("weight", 1.0)
+                if not self.has_node(tgt):
+                    self._insert_node_raw(tgt, tgt)
+                    node_count += 1
+                self.link(src, tgt, rel, weight=w)
+                edge_count += 1
+        return {"nodes": node_count, "edges": edge_count}
+
     def import_edgelist(self, lines: list[str], *, merge: bool = False) -> dict:
         """从边列表导入。每行格式 'source_id target_id [weight]'。
 
@@ -2683,6 +2713,95 @@ class MemoryGraph:
             if nid not in disc:
                 dfs(nid, None)
         return sorted(ap)
+
+    def neighbors_filtered(self, node_id: str, relation: str = None, min_weight: float = 0, direction: str = "out") -> list[Node]:
+        """获取邻居节点，支持关系/权重/方向过滤。
+
+        Args:
+            node_id: 起始节点
+            relation: 仅包含此关系的边（None=所有）
+            min_weight: 最小权重阈值
+            direction: 'out'(出边), 'in'(入边), 'both'(双向)
+
+        Returns:
+            邻居 Node 列表
+        """
+        if direction == "out":
+            sql = """SELECT DISTINCT n.* FROM nodes n
+                      JOIN edges e ON n.id=e.target WHERE e.source=?"""
+            params = [node_id]
+        elif direction == "in":
+            sql = """SELECT DISTINCT n.* FROM nodes n
+                      JOIN edges e ON n.id=e.source WHERE e.target=?"""
+            params = [node_id]
+        else:
+            sql = """SELECT DISTINCT n.* FROM nodes n
+                      JOIN edges e ON (n.id=e.target AND e.source=?)
+                         OR (n.id=e.source AND e.target=?)"""
+            params = [node_id, node_id]
+
+        if relation is not None:
+            sql += " AND e.relation=?"
+            params.append(relation)
+        if min_weight > 0:
+            sql += " AND e.weight >= ?"
+            params.append(min_weight)
+
+        rows = self.conn.execute(sql, params).fetchall()
+        return [Node(r["id"], r["label"], r["kind"],
+                    json.loads(r["data"]) if r["data"] else {},
+                    r["created"], r["accessed"], r["weight"])
+                for r in rows]
+
+    def edge_betweenness(self) -> dict:
+        """计算边介数中心性（基于最短路径经过次数）。
+
+        将图视为无向。返回 {(source, target): betweenness_score}。
+        """
+        nodes = [str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        edges = self.conn.execute("SELECT DISTINCT source, target FROM edges").fetchall()
+        edge_set = set()
+        adj = {n: set() for n in nodes}
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            key = tuple(sorted([s, t]))
+            edge_set.add(key)
+            adj.setdefault(s, set()).add(t)
+            adj.setdefault(t, set()).add(s)
+
+        betweenness = {e: 0.0 for e in edge_set}
+
+        for source in nodes:
+            # BFS: find shortest paths
+            dist = {source: 0}
+            sigma = {source: 1}  # number of shortest paths
+            pred = {n: [] for n in nodes}
+            queue = [source]
+            for u in queue:
+                for v in adj.get(u, []):
+                    if v not in dist:
+                        dist[v] = dist[u] + 1
+                        sigma[v] = sigma[u]
+                        pred[v] = [u]
+                        queue.append(v)
+                    elif dist[v] == dist[u] + 1:
+                        sigma[v] += sigma[u]
+                        pred[v].append(u)
+
+            # Accumulation (Brandes' algorithm edge part)
+            delta = {n: 0.0 for n in nodes}
+            for w in reversed(queue):
+                for v in pred[w]:
+                    c = sigma[v] / sigma[w] * (1 + delta[w])
+                    key = tuple(sorted([v, w]))
+                    if key in betweenness:
+                        betweenness[key] += c
+                    delta[v] += c
+
+        # Undirected: divide by 2
+        for k in betweenness:
+            betweenness[k] /= 2.0
+        return betweenness
 
     def find_roots(self) -> list[Node]:
         """返回无入边的节点（有向图的根），包括孤立节点。"""
