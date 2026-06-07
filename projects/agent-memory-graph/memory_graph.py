@@ -3034,6 +3034,73 @@ class MemoryGraph:
                 next_cid += 1
         return community
 
+    def community_summary(self, communities: dict = None, algorithm: str = "lp") -> list[dict]:
+        """Summarize detected communities with key metrics.
+
+        Args:
+            communities: pre-computed {label: [node_ids]} dict. If None, auto-detects.
+            algorithm: "lp" for label propagation, "greedy" for greedy modularity.
+
+        Returns list of dicts with: id, size, top_members, density, top_tags, avg_weight.
+        """
+        if communities is None:
+            if algorithm == "greedy":
+                comm_map = self.community_detection_greedy()
+                communities = {}
+                for nid, cid in comm_map.items():
+                    communities.setdefault(cid, []).append(nid)
+            else:
+                communities = self.community_detect()
+        if not communities:
+            return []
+        results = []
+        for cid, node_ids in communities.items():
+            if not node_ids:
+                continue
+            placeholders = ",".join("?" * len(node_ids))
+            rows = self.conn.execute(
+                f"SELECT id, label, kind, weight, tags FROM nodes WHERE id IN ({placeholders})",
+                node_ids
+            ).fetchall()
+            # Internal edges
+            edge_count = self.conn.execute(
+                f"SELECT COUNT(*) as c FROM edges WHERE source IN ({placeholders}) AND target IN ({placeholders})",
+                node_ids + node_ids
+            ).fetchone()["c"]
+            # Density: actual / max possible
+            n = len(node_ids)
+            max_edges = n * (n - 1)
+            density = edge_count / max_edges if max_edges > 0 else 0.0
+            # Top members by weight
+            sorted_rows = sorted(rows, key=lambda r: r["weight"], reverse=True)
+            top_members = [
+                {"id": r["id"], "label": r["label"], "weight": r["weight"]}
+                for r in sorted_rows[:5]
+            ]
+            # Tag aggregation
+            tag_freq = {}
+            for r in rows:
+                for tag in json.loads(r["tags"]):
+                    tag_freq[tag] = tag_freq.get(tag, 0) + 1
+            top_tags = sorted(tag_freq.items(), key=lambda x: x[1], reverse=True)[:5]
+            # Kind distribution
+            kind_counts = {}
+            for r in rows:
+                kind_counts[r["kind"]] = kind_counts.get(r["kind"], 0) + 1
+            avg_weight = sum(r["weight"] for r in rows) / len(rows)
+            results.append({
+                "id": cid,
+                "size": n,
+                "top_members": top_members,
+                "internal_edges": edge_count,
+                "density": round(density, 4),
+                "top_tags": top_tags,
+                "kinds": kind_counts,
+                "avg_weight": round(avg_weight, 4),
+            })
+        results.sort(key=lambda x: x["size"], reverse=True)
+        return results
+
     def betweenness_centrality_approx(self, samples: int = 20) -> dict[str, float]:
         """近似介数中心性（基于采样 Brandes 算法）。
 

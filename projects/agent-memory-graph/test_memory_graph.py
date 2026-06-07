@@ -6154,3 +6154,125 @@ class TestSingleTagOps:
         mg.remove_tag(n.id, "y")
         row = mg.conn.execute("SELECT tags FROM nodes WHERE id=?", (n.id,)).fetchone()
         assert json.loads(row["tags"]) == []
+
+
+class TestCommunitySummary:
+    """Tests for community_summary — community insight dashboard."""
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.community_summary() == []
+
+    def test_single_community(self):
+        mg = MemoryGraph()
+        a = mg.add("Alice", "person", tags=["team-a"])
+        b = mg.add("Bob", "person", tags=["team-a"])
+        mg.link(a.id, b.id, "colleague")
+        result = mg.community_summary()
+        assert len(result) >= 1
+        c = result[0]
+        assert c["size"] >= 2
+        assert c["internal_edges"] >= 1
+        assert 0 <= c["density"] <= 1
+        assert len(c["top_members"]) >= 1
+        assert c["avg_weight"] > 0
+
+    def test_two_communities(self):
+        mg = MemoryGraph()
+        # Community A
+        a1 = mg.add("A1", "person", tags=["alpha"])
+        a2 = mg.add("A2", "person", tags=["alpha"])
+        mg.link(a1.id, a2.id, "knows")
+        mg.link(a2.id, a1.id, "knows")
+        # Community B
+        b1 = mg.add("B1", "concept")
+        b2 = mg.add("B2", "concept")
+        mg.link(b1.id, b2.id, "related")
+        communities = {0: [a1.id, a2.id], 1: [b1.id, b2.id]}
+        result = mg.community_summary(communities=communities)
+        assert len(result) == 2
+        assert result[0]["size"] == 2
+        assert result[1]["size"] == 2
+
+    def test_density_calculation(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(a.id, c.id, "r")
+        communities = {0: [a.id, b.id, c.id]}
+        result = mg.community_summary(communities=communities)
+        assert result[0]["internal_edges"] == 3
+        assert result[0]["density"] > 0
+
+    def test_top_tags_aggregation(self):
+        mg = MemoryGraph()
+        a = mg.add("A", tags=["python", "ml"])
+        b = mg.add("B", tags=["python", "data"])
+        c = mg.add("C", tags=["python"])
+        communities = {0: [a.id, b.id, c.id]}
+        result = mg.community_summary(communities=communities)
+        tags = dict(result[0]["top_tags"])
+        assert tags.get("python") == 3
+
+    def test_kinds_distribution(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "person")
+        b = mg.add("B", "person")
+        c = mg.add("C", "concept")
+        communities = {0: [a.id, b.id, c.id]}
+        result = mg.community_summary(communities=communities)
+        kinds = result[0]["kinds"]
+        assert kinds.get("person") == 2
+        assert kinds.get("concept") == 1
+
+    def test_sorted_by_size(self):
+        mg = MemoryGraph()
+        nodes_big = [mg.add(f"N{i}") for i in range(5)]
+        nodes_small = [mg.add(f"S{i}") for i in range(2)]
+        communities = {0: [n.id for n in nodes_big], 1: [n.id for n in nodes_small]}
+        result = mg.community_summary(communities=communities)
+        assert result[0]["size"] >= result[1]["size"]
+
+    def test_avg_weight(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.conn.execute("UPDATE nodes SET weight=0.5 WHERE id=?", (a.id,))
+        mg.conn.execute("UPDATE nodes SET weight=1.0 WHERE id=?", (b.id,))
+        mg.conn.commit()
+        communities = {0: [a.id, b.id]}
+        result = mg.community_summary(communities=communities)
+        assert abs(result[0]["avg_weight"] - 0.75) < 0.01
+
+    def test_with_greedy_algorithm(self):
+        mg = MemoryGraph()
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "related")
+        result = mg.community_summary(algorithm="greedy")
+        assert len(result) >= 1
+
+    def test_isolated_nodes(self):
+        """Isolated nodes still get summarized."""
+        mg = MemoryGraph()
+        a = mg.add("Lone")
+        communities = {0: [a.id]}
+        result = mg.community_summary(communities=communities)
+        assert len(result) == 1
+        assert result[0]["size"] == 1
+        assert result[0]["density"] == 0.0
+        assert result[0]["internal_edges"] == 0
+
+    def test_top_members_sorted_by_weight(self):
+        mg = MemoryGraph()
+        a = mg.add("Low")
+        b = mg.add("High")
+        mg.conn.execute("UPDATE nodes SET weight=0.3 WHERE id=?", (a.id,))
+        mg.conn.execute("UPDATE nodes SET weight=0.95 WHERE id=?", (b.id,))
+        mg.conn.commit()
+        communities = {0: [a.id, b.id]}
+        result = mg.community_summary(communities=communities)
+        assert result[0]["top_members"][0]["label"] == "High"
