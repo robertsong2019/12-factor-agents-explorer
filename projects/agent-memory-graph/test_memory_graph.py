@@ -6469,3 +6469,204 @@ class TestSearchGraphRAG:
         for mode in ["naive"]:
             results = mg.search_graphrag("node", mode=mode, limit=3)
             assert len(results) <= 3
+
+
+class TestEffectiveEccentricity:
+
+    def test_missing_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        assert mg.effective_eccentricity("ZZZ") is None
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        assert mg.effective_eccentricity(a.id) == 0.0
+
+    def test_two_connected(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.effective_eccentricity(a.id) == 1.0
+
+    def test_line_graph_5(self):
+        """A—B—C—D—E: eccentricity(A)=4, effective_eccentricity(A, 0.9) should be ≤4."""
+        mg = MemoryGraph()
+        nodes = [mg.add(c) for c in "ABCDE"]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "r")
+        # Distances from A: B=1, C=2, D=3, E=4
+        # 4 reachable nodes, 0.9 * 4 = 3.6 → idx=3 → dist=4
+        assert mg.effective_eccentricity(nodes[0].id, 0.9) == 4.0
+        # 0.5 * 4 = 2 → idx=2 → dist=3
+        assert mg.effective_eccentricity(nodes[0].id, 0.5) == 3.0
+
+    def test_disconnected(self):
+        """A—B and C—D: effective_eccentricity(A) only sees B."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        c, d = mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, d.id, "r")
+        # From A: only B is reachable at distance 1
+        assert mg.effective_eccentricity(a.id) == 1.0
+
+    def test_all_isolated(self):
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        assert mg.effective_eccentricity(a.id) == 0.0
+
+    def test_invalid_percentile(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        with pytest.raises(ValueError):
+            mg.effective_eccentricity(a.id, 0)
+        with pytest.raises(ValueError):
+            mg.effective_eccentricity(a.id, 1.5)
+
+    def test_central_node_star(self):
+        """Star: center connected to 4 leaves. Center's distances: all 1."""
+        mg = MemoryGraph()
+        center = mg.add("center")
+        leaves = [mg.add(f"leaf{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        # From center: all 4 leaves at distance 1
+        assert mg.effective_eccentricity(center.id, 0.9) == 1.0
+
+
+class TestGlobalEfficiency:
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.global_efficiency() is None
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        assert mg.global_efficiency() == 0.0
+
+    def test_two_connected(self):
+        """A—B: ordered pairs (A→B and B→A) both distance 1 → 1/1+1/1 = 2.
+        Normalized by 2*1 = 2 → 1.0."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.global_efficiency() == 1.0
+
+    def test_line_graph_3(self):
+        """A—B—C: ordered pairs distances:
+        A→B=1, A→C=2, B→A=1, B→C=1, C→A=2, C→B=1
+        efficiency = 1+0.5+1+1+0.5+1 = 5
+        normalized by 3*2=6 → 5/6 ≈ 0.833333"""
+        mg = MemoryGraph()
+        nodes = [mg.add(c) for c in "ABC"]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        result = mg.global_efficiency()
+        assert abs(result - 5/6) < 0.001
+
+    def test_disconnected_lower_efficiency(self):
+        """A—B and C—D: disconnected pairs contribute 0."""
+        mg = MemoryGraph()
+        nodes = [mg.add(c) for c in "ABCD"]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        # 4 nodes, 12 ordered pairs
+        # Reachable: A↔B (2 pairs, d=1), C↔D (2 pairs, d=1)
+        # efficiency = 1+1+1+1 = 4
+        # normalized by 12 → 4/12 = 0.333333
+        result = mg.global_efficiency()
+        assert abs(result - 4/12) < 0.001
+
+    def test_complete_graph_higher(self):
+        """K4: all pairs at distance 1 → efficiency = 1.0."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        assert mg.global_efficiency() == 1.0
+
+    def test_disconnected_vs_connected(self):
+        """Connected graph should have higher efficiency than disconnected."""
+        mg_conn = MemoryGraph()
+        cn = [mg_conn.add(c) for c in "ABCD"]
+        mg_conn.link(cn[0].id, cn[1].id, "r")
+        mg_conn.link(cn[1].id, cn[2].id, "r")
+        mg_conn.link(cn[2].id, cn[3].id, "r")
+
+        mg_disc = MemoryGraph()
+        dn = [mg_disc.add(c) for c in "ABCD"]
+        mg_disc.link(dn[0].id, dn[1].id, "r")
+        mg_disc.link(dn[2].id, dn[3].id, "r")
+
+        assert mg_conn.global_efficiency() > mg_disc.global_efficiency()
+
+
+class TestSMetric:
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.s_metric() is None
+
+    def test_single_node(self):
+        mg = MemoryGraph()
+        mg.add("A")
+        assert mg.s_metric() == 0.0
+
+    def test_single_edge(self):
+        """A—B: deg(A)=1, deg(B)=1, S = 1*1 = 1."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.s_metric() == 1.0
+
+    def test_star_graph(self):
+        """Star with center connected to 3 leaves:
+        center deg=3, each leaf deg=1
+        S = 3*1 + 3*1 + 3*1 = 9"""
+        mg = MemoryGraph()
+        center = mg.add("center")
+        leaves = [mg.add(f"leaf{i}") for i in range(3)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        assert mg.s_metric() == 9.0
+
+    def test_path_graph(self):
+        """A—B—C—D: deg A=1, B=2, C=2, D=1
+        S = 1*2 + 2*2 + 2*1 = 2+4+2 = 8"""
+        mg = MemoryGraph()
+        nodes = [mg.add(c) for c in "ABCD"]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        assert mg.s_metric() == 8.0
+
+    def test_complete_k4(self):
+        """K4: each node has degree 3, 6 edges.
+        S = 6 * (3*3) = 54"""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        assert mg.s_metric() == 54.0
+
+    def test_disconnected_components(self):
+        """A—B and C—D: deg each =1, S = 1*1 + 1*1 = 2"""
+        mg = MemoryGraph()
+        nodes = [mg.add(c) for c in "ABCD"]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        assert mg.s_metric() == 2.0
+
+    def test_hub_structure(self):
+        """A—B—C and A—D: deg A=2, B=2, C=1, D=1
+        Edges: A-B(2*2=4), B-C(2*1=2), A-D(2*1=2) → S=8"""
+        mg = MemoryGraph()
+        nodes = [mg.add(c) for c in "ABCD"]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[0].id, nodes[3].id, "r")
+        assert mg.s_metric() == 8.0

@@ -3885,6 +3885,97 @@ class MemoryGraph:
         possible_edges = k * (k - 1) / 2
         return round(actual_edges / possible_edges, 6)
 
+    def effective_eccentricity(self, node_id: str, percentile: float = 0.9) -> Optional[float]:
+        """有效离心率 — 从 node_id 出发，第 percentile 分位的可达距离。
+
+        结合 eccentricity（最大距离）和 effective_diameter（分位数）的思想：
+        eccentricity 取绝对最大值，容易受单个离群节点影响；
+        effective_eccentricity 取分位数，更鲁棒地描述节点的"可达范围"。
+
+        例如 percentile=0.9 表示 90% 的可达节点在此距离以内。
+
+        Returns:
+            float: 分位数距离；节点不存在返回 None；无可达节点返回 0.0。
+        """
+        if not self.has_node(node_id):
+            return None
+        if not 0 < percentile <= 1:
+            raise ValueError("percentile must be in (0, 1]")
+        distances = self._bfs_distances(node_id)
+        # Exclude self (distance 0)
+        reach_dists = sorted(d for d in distances.values() if d > 0)
+        if not reach_dists:
+            return 0.0
+        idx = int(len(reach_dists) * percentile)
+        if idx >= len(reach_dists):
+            idx = len(reach_dists) - 1
+        return float(reach_dists[idx])
+
+    def global_efficiency(self) -> Optional[float]:
+        """全局效率 — 所有节点对效率的平均值。
+
+        效率(v,u) = 1 / distance(v,u)，不可达时效率为 0。
+        全局效率 = Σ 1/d(v,u) / (n*(n-1))，归一化到 [0, 1]。
+
+        衡量图中信息流动的整体效率。比 average_path_length 更好地
+        处理断开图：断开的节点对贡献 0 而非被忽略或视为无穷。
+
+        References:
+            Latora & Marchiori (2001) "Efficient behavior of small-world networks"
+
+        Returns:
+            float: 全局效率 [0, 1]；空图返回 None。
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return None
+        n = len(rows)
+        node_ids = [str(r["id"]) for r in rows]
+        total_efficiency = 0.0
+        for nid in node_ids:
+            dists = self._bfs_distances(nid)
+            for target, d in dists.items():
+                if target != nid and d > 0:
+                    total_efficiency += 1.0 / d
+        # Normalize by n*(n-1) (ordered pairs, not unordered)
+        denom = n * (n - 1)
+        return round(total_efficiency / denom, 6) if denom > 0 else 0.0
+
+    def s_metric(self) -> Optional[float]:
+        """S-metric — 所有边的端点度数乘积之和。
+
+        S = Σ_{(u,v) ∈ E} deg(u) × deg(v)
+
+        衡量图中 hub-hub 连接的程度。高 S 值意味着高度数节点
+        倾向于相互连接（如互联网拓扑）。低 S 值意味着 hub 连接
+        的是低度数节点（如星形图）。
+
+        可用于评估图的 "scale-free" 程度和 hub 结构质量。
+
+        References:
+            Li et al. (2005) "Towards a Theory of Scale-Free Graphs:
+            Definition, Properties, and Implications"
+
+        Returns:
+            float: S-metric 值；空图返回 None。
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return None
+        # Pre-compute degrees
+        degrees = {}
+        for row in rows:
+            nid = str(row["id"])
+            degrees[nid] = self.degree(nid)
+        # Sum over edges (each edge counted once)
+        edge_rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        s = 0
+        for er in edge_rows:
+            src = str(er["source"])
+            tgt = str(er["target"])
+            s += degrees.get(src, 0) * degrees.get(tgt, 0)
+        return float(s)
+
     # ── 向量搜索 (sqlite-vec 可选集成) ────────────────────
 
     def _ensure_vec_table(self, dims: int):
