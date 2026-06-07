@@ -5771,3 +5771,216 @@ class TestBM25Search:
         # Higher weight node (n2, weight=1.0) should rank higher
         assert results[0]["node_id"] == n2.id
         assert results[0]["score"] > results[1]["score"]
+
+
+# ── to_markdown tests ──────────────────────────────────────
+
+class TestToMarkdown:
+    """to_markdown(): export graph as markdown for LLM context."""
+
+    def test_empty_graph(self, mg):
+        md = mg.to_markdown()
+        assert "Memory Graph" in md
+        assert "(empty)" in md
+
+    def test_basic_export(self, mg):
+        mg.add("Alice", "person", {"role": "engineer"})
+        mg.add("Bob", "person")
+        md = mg.to_markdown()
+        assert "## person" in md
+        assert "**Alice**" in md
+        assert "**Bob**" in md
+
+    def test_kind_grouping(self, mg):
+        mg.add("Alice", "person")
+        mg.add("Rust", "concept")
+        mg.add("Debug session", "event")
+        md = mg.to_markdown()
+        # Kinds should appear as headers in sorted order
+        assert "## concept" in md
+        assert "## event" in md
+        assert "## person" in md
+
+    def test_weight_display(self, mg):
+        n = mg.add("Important", "concept")
+        mg.conn.execute("UPDATE nodes SET weight=0.5 WHERE id=?", (n.id,))
+        mg.conn.commit()
+        md = mg.to_markdown()
+        assert "(w=0.50)" in md
+
+    def test_no_weight_for_default(self, mg):
+        mg.add("Normal", "concept")
+        md = mg.to_markdown()
+        assert "(w=" not in md
+
+    def test_tags_display(self, mg):
+        mg.add("Tagged", "concept", tags=["important", "verified"])
+        md = mg.to_markdown()
+        assert "`important`" in md
+        assert "`verified`" in md
+
+    def test_data_display(self, mg):
+        mg.add("With Data", "concept", {"key1": "value1", "count": 42})
+        md = mg.to_markdown()
+        assert "key1" in md
+        assert "value1" in md
+
+    def test_include_data_false(self, mg):
+        mg.add("Node", "concept", {"secret": "hidden"})
+        md = mg.to_markdown(include_data=False)
+        assert "secret" not in md
+
+    def test_include_edges_true(self, mg):
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "knows")
+        md = mg.to_markdown(include_edges=True)
+        assert "## Relationships" in md
+        assert "knows" in md
+        assert "Alice" in md
+        assert "Bob" in md
+
+    def test_include_edges_false(self, mg):
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "knows")
+        md = mg.to_markdown(include_edges=False)
+        assert "## Relationships" not in md
+
+    def test_node_ids_filter(self, mg):
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        c = mg.add("Carol", "person")
+        md = mg.to_markdown(node_ids=[a.id, b.id])
+        assert "Alice" in md
+        assert "Bob" in md
+        assert "Carol" not in md
+
+    def test_max_nodes_limit(self, mg):
+        for i in range(10):
+            mg.add(f"Node{i}", "concept")
+        md = mg.to_markdown(max_nodes=3)
+        # Only 3 nodes should appear
+        count = md.count("- **Node")
+        assert count <= 3
+
+    def test_edge_weight_display(self, mg):
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "trusts", weight=0.8)
+        md = mg.to_markdown()
+        assert "(w=0.80)" in md
+
+    def test_node_count_in_header(self, mg):
+        mg.add("A", "person")
+        mg.add("B", "person")
+        mg.add("C", "concept")
+        md = mg.to_markdown()
+        assert "person (2)" in md
+        assert "concept (1)" in md
+
+
+# ── context_window tests ───────────────────────────────────
+
+class TestContextWindow:
+    """context_window(): extract focused subgraph for LLM context."""
+
+    def test_basic(self, mg):
+        a = mg.add("Alice", "person", {"role": "dev"})
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "works_with")
+        ctx = mg.context_window([a.id])
+        assert "## person" in ctx
+        assert "**Alice**" in ctx
+        assert "**Bob**" in ctx
+
+    def test_seed_marker(self, mg):
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "knows")
+        ctx = mg.context_window([a.id])
+        assert "★" in ctx
+        # Star should be on Alice (seed)
+        alice_line = [l for l in ctx.split("\n") if "Alice" in l][0]
+        assert "★" in alice_line
+
+    def test_non_seed_no_marker(self, mg):
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "knows")
+        ctx = mg.context_window([a.id])
+        bob_line = [l for l in ctx.split("\n") if "Bob" in l][0]
+        assert "★" not in bob_line
+
+    def test_hops_0(self, mg):
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "knows")
+        ctx = mg.context_window([a.id], hops=0)
+        assert "Alice" in ctx
+        assert "Bob" not in ctx
+
+    def test_hops_2(self, mg):
+        a = mg.add("A", "x")
+        b = mg.add("B", "x")
+        c = mg.add("C", "x")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        ctx = mg.context_window([a.id], hops=2)
+        assert "A" in ctx
+        assert "B" in ctx
+        assert "C" in ctx
+
+    def test_max_nodes_limit(self, mg):
+        a = mg.add("Seed", "x")
+        for i in range(10):
+            n = mg.add(f"Node{i}", "x")
+            mg.link(a.id, n.id, "r")
+        ctx = mg.context_window([a.id], max_nodes=3)
+        # Should not contain all nodes
+        count = ctx.count("- **")
+        assert count <= 3
+
+    def test_empty_seed(self, mg):
+        ctx = mg.context_window(["nonexistent"])
+        assert "no data" in ctx
+
+    def test_relationships_section(self, mg):
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "mentors")
+        ctx = mg.context_window([a.id])
+        assert "## Relationships" in ctx
+        assert "mentors" in ctx
+
+    def test_multiple_seeds(self, mg):
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        c = mg.add("Carol", "person")
+        mg.link(a.id, c.id, "knows")
+        mg.link(b.id, c.id, "knows")
+        ctx = mg.context_window([a.id, b.id])
+        # Both seeds should be marked
+        alice_line = [l for l in ctx.split("\n") if "Alice" in l][0]
+        bob_line = [l for l in ctx.split("\n") if "Bob" in l][0]
+        assert "★" in alice_line
+        assert "★" in bob_line
+
+    def test_tags_in_context(self, mg):
+        a = mg.add("Tagged", "concept", tags=["important"])
+        ctx = mg.context_window([a.id])
+        assert "`important`" in ctx
+
+    def test_data_in_context(self, mg):
+        a = mg.add("WithData", "concept", {"level": 5})
+        ctx = mg.context_window([a.id])
+        assert "level" in ctx
+
+    def test_reverse_edge_traversal(self, mg):
+        """context_window should traverse incoming edges too."""
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(b.id, a.id, "reports_to")  # B → A
+        # Seeding from A, should find B via reverse edge
+        ctx = mg.context_window([a.id], hops=1)
+        assert "Bob" in ctx

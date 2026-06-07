@@ -4105,6 +4105,174 @@ class MemoryGraph:
         all_results = self.search_similar(embedding, limit=limit * 5)
         return [r for r in all_results if r["node_id"] in tagged_ids][:limit]
 
+    # ── LLM 上下文导出 ────────────────────────────────────
+
+    def to_markdown(self, node_ids: list[str] | None = None, max_nodes: int = 50,
+                    include_edges: bool = True, include_data: bool = True) -> str:
+        """将图谱导出为 Markdown 文本，适合注入 LLM 上下文。
+
+        Args:
+            node_ids: 仅导出指定节点（None=全部，按 weight 降序取 max_nodes）
+            max_nodes: 最大节点数（防止 token 爆炸）
+            include_edges: 是否包含关系列表
+            include_data: 是否包含节点 data 字段
+
+        Returns:
+            Markdown 字符串，结构为：标题 + 节点列表 + 关系列表
+        """
+        if node_ids is not None:
+            node_ids = set(node_ids)
+            rows = self.conn.execute(
+                "SELECT * FROM nodes WHERE id IN (%s) ORDER BY weight DESC LIMIT ?"
+                % ",".join("?" * len(node_ids)),
+                (*node_ids, max_nodes)
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM nodes ORDER BY weight DESC LIMIT ?", (max_nodes,)
+            ).fetchall()
+
+        if not rows:
+            return "# Memory Graph\n\n(empty)\n"
+
+        lines = ["# Memory Graph", ""]
+        id_set = {r["id"] for r in rows}
+
+        # 按_kind 分组
+        by_kind: dict[str, list] = defaultdict(list)
+        for r in rows:
+            by_kind[r["kind"]].append(r)
+
+        for kind in sorted(by_kind):
+            lines.append(f"## {kind} ({len(by_kind[kind])})")
+            for r in by_kind[kind]:
+                tags = json.loads(r["tags"]) if r["tags"] else []
+                tag_str = f" `{'` `'.join(tags)}`" if tags else ""
+                data_str = ""
+                if include_data and r["data"] and r["data"] != "{}":
+                    try:
+                        d = json.loads(r["data"])
+                        if d:
+                            items = ", ".join(f"{k}={v!r}" for k, v in d.items())
+                            data_str = f" — {items}"
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                weight_str = f" (w={r['weight']:.2f})" if r["weight"] != 1.0 else ""
+                lines.append(f"- **{r['label']}**{weight_str}{tag_str}{data_str}")
+            lines.append("")
+
+        if include_edges:
+            edge_rows = self.conn.execute(
+                "SELECT * FROM edges WHERE source IN (%s) OR target IN (%s) ORDER BY weight DESC"
+                % (",".join("?" * len(id_set)), ",".join("?" * len(id_set))),
+                (*id_set, *id_set)
+            ).fetchall()
+            if edge_rows:
+                label_map = {r["id"]: r["label"] for r in rows}
+                lines.append("## Relationships")
+                shown = 0
+                for e in edge_rows:
+                    if shown >= max_nodes * 2:
+                        break
+                    src = label_map.get(e["source"], e["source"])
+                    tgt = label_map.get(e["target"], e["target"])
+                    w = f" (w={e['weight']:.2f})" if e["weight"] != 1.0 else ""
+                    lines.append(f"- {src} —{e['relation']}→ {tgt}{w}")
+                    shown += 1
+                lines.append("")
+
+        return "\n".join(lines)
+
+    def context_window(self, node_ids: list[str], hops: int = 1, max_nodes: int = 30) -> str:
+        """提取以指定节点为中心的局部子图，输出为 Markdown 上下文。
+
+        比 to_markdown() 更聚焦：先 BFS 扩展 hops 跳邻居，再格式化。
+        适合把「最相关的记忆」注入 prompt。
+
+        Args:
+            node_ids: 种子节点列表
+            hops: BFS 扩展跳数（默认1跳=直接邻居）
+            max_nodes: 最大节点数
+
+        Returns:
+            Markdown 字符串，种子节点标 ★
+        """
+        seed = set(node_ids)
+        collected = dict()  # id → Row
+
+        # 加载种子节点
+        for nid in node_ids:
+            r = self.conn.execute("SELECT * FROM nodes WHERE id = ?", (nid,)).fetchone()
+            if r:
+                collected[nid] = r
+
+        # BFS 扩展
+        frontier = list(node_ids)
+        for _ in range(hops):
+            next_frontier = []
+            for nid in frontier:
+                for r in self.conn.execute(
+                    "SELECT n.* FROM nodes n JOIN edges e ON n.id=e.target WHERE e.source = ?",
+                    (nid,)
+                ).fetchall():
+                    if r["id"] not in collected and len(collected) < max_nodes:
+                        collected[r["id"]] = r
+                        next_frontier.append(r["id"])
+                for r in self.conn.execute(
+                    "SELECT n.* FROM nodes n JOIN edges e ON n.id=e.source WHERE e.target = ?",
+                    (nid,)
+                ).fetchall():
+                    if r["id"] not in collected and len(collected) < max_nodes:
+                        collected[r["id"]] = r
+                        next_frontier.append(r["id"])
+            frontier = next_frontier
+
+        if not collected:
+            return "# Context Window\n\n(no data)\n"
+
+        lines = ["# Context Window", ""]
+
+        # 按 kind 分组
+        by_kind: dict[str, list] = defaultdict(list)
+        for r in collected.values():
+            by_kind[r["kind"]].append(r)
+
+        for kind in sorted(by_kind):
+            lines.append(f"## {kind}")
+            for r in by_kind[kind]:
+                marker = " ★" if r["id"] in seed else ""
+                tags = json.loads(r["tags"]) if r["tags"] else []
+                tag_str = f" `{'` `'.join(tags)}`" if tags else ""
+                data_str = ""
+                if r["data"] and r["data"] != "{}":
+                    try:
+                        d = json.loads(r["data"])
+                        if d:
+                            items = ", ".join(f"{k}={v!r}" for k, v in d.items())
+                            data_str = f" — {items}"
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                lines.append(f"- **{r['label']}**{marker}{tag_str}{data_str}")
+            lines.append("")
+
+        # 收集相关边
+        id_set = set(collected.keys())
+        edge_rows = self.conn.execute(
+            "SELECT * FROM edges WHERE source IN (%s) OR target IN (%s) ORDER BY weight DESC"
+            % (",".join("?" * len(id_set)), ",".join("?" * len(id_set))),
+            (*id_set, *id_set)
+        ).fetchall()
+        if edge_rows:
+            label_map = {nid: collected[nid]["label"] for nid in id_set}
+            lines.append("## Relationships")
+            for e in edge_rows[:max_nodes * 2]:
+                src = label_map.get(e["source"], e["source"])
+                tgt = label_map.get(e["target"], e["target"])
+                lines.append(f"- {src} —{e['relation']}→ {tgt}")
+            lines.append("")
+
+        return "\n".join(lines)
+
 
 # ── 演示 ──────────────────────────────────────────────────
 
