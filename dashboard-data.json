@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-06-06T06:01:33+08:00",
+  "updatedAt": "2026-06-08T06:00:00+08:00",
   "generatedBy": "Catalyst",
   "system": {
     "host": "VM-0-5-ubuntu",
@@ -94,7 +94,7 @@
       "id": "b0fd7e8d",
       "name": "key-development-3",
       "schedule": "0 1 * * *",
-      "status": "error",
+      "status": "ok",
       "next": "19h",
       "last": "5h ago"
     },
@@ -134,116 +134,115 @@
   "sessions": {
     "total": 45,
     "active24h": 32,
-    "totalTokensAll": 2377437,
     "model": "glm-5.1",
     "topSessions": [
       {
-        "name": "project-testing-morning",
-        "key": "cron:f7510f1f-9db8-46e7-8019-3c9a4858db2e:run:ac92",
-        "tokens": 95679,
-        "contextLimit": 204800,
-        "contextPct": 47,
-        "ageHours": 3.0,
+        "name": "main-session",
+        "key": "main",
+        "tokens": 153000,
+        "contextLimit": 205000,
+        "contextPct": 75,
+        "ageHours": 0.2,
         "model": "glm-5.1"
       },
       {
-        "name": "deep-exploration-evening-utc",
-        "key": "cron:bb46cb70-ec67-4790-b98d-bdacf280f2a1",
-        "tokens": 94260,
-        "contextLimit": 204800,
-        "contextPct": 46,
-        "ageHours": 9.9,
+        "name": "essay-generation-morning",
+        "key": "cron:686ec55c-17ca-43a9-9977-65a3c320ec3a",
+        "tokens": 84000,
+        "contextLimit": 205000,
+        "contextPct": 41,
+        "ageHours": 9.0,
         "model": "glm-5.1"
       },
       {
         "name": "deep-exploration-evening",
-        "key": "cron:265091b6-6c5f-4afb-8485-7108945fe1f7:run:493e",
-        "tokens": 93160,
-        "contextLimit": 204800,
+        "key": "cron:265091b6-6c5f-4afb-8485-7108945fe1f7",
+        "tokens": 91000,
+        "contextLimit": 205000,
         "contextPct": 45,
         "ageHours": 10.0,
         "model": "glm-5.1"
       },
       {
-        "name": "main-session",
-        "key": "main",
-        "tokens": 92135,
-        "contextLimit": 204800,
-        "contextPct": 45,
-        "ageHours": 0.2,
+        "name": "deep-exploration-evening-utc",
+        "key": "cron:bb46cb70-ec67-4790-b98d-bdacf280f2a1",
+        "tokens": 69000,
+        "contextLimit": 205000,
+        "contextPct": 34,
+        "ageHours": 10.0,
         "model": "glm-5.1"
       },
       {
         "name": "code-lab-evening",
         "key": "cron:13a2f284-a1ed-4394-979a-5392fbdf50f7",
-        "tokens": 74524,
-        "contextLimit": 204800,
-        "contextPct": 36,
-        "ageHours": 9.0,
-        "model": "glm-5.1"
+        "tokens": 82000,
+        "contextLimit": 205000,
+        "contextPct": 40,
+        "model": "glm-5.1",
+        "ageHours": 11.0
       },
       {
         "name": "github-creative-evening",
         "key": "cron:610a8d6d-faba-40c2-945c-9ba8472c4839",
-        "tokens": 74121,
-        "contextLimit": 204800,
-        "contextPct": 36,
+        "tokens": 82000,
+        "contextLimit": 205000,
+        "contextPct": 40,
         "ageHours": 11.0,
-        "model": "glm-5.1"
-      },
-      {
-        "name": "knowledge-organization",
-        "key": "cron:fd0515b0-f483-411d-b110-3a16fbc49983",
-        "tokens": 70517,
-        "contextLimit": 204800,
-        "contextPct": 34,
-        "ageHours": 4.0,
-        "model": "glm-5.1"
-      },
-      {
-        "name": "cron:e257f25e-de69-4f09-888f-deb83448ca23",
-        "key": "cron:e257f25e-de69-4f09-888f-deb83448ca23",
-        "tokens": 63708,
-        "contextLimit": 200000,
-        "contextPct": 32,
-        "ageHours": 1920.0,
-        "model": "glm-5"
-      },
-      {
-        "name": "key-development-3",
-        "key": "cron:b0fd7e8d-f946-4228-bb85-1baaa3502c7c:run:57cd",
-        "tokens": 57294,
-        "contextLimit": 204800,
-        "contextPct": 28,
-        "ageHours": 5.0,
-        "model": "glm-5.1"
-      },
-      {
-        "name": "key-development-1",
-        "key": "cron:78eac6fc-c2d7-41d2-a5d1-9a52892f89ab",
-        "tokens": 55049,
-        "contextLimit": 204800,
-        "contextPct": 27,
-        "ageHours": 7.0,
         "model": "glm-5.1"
       },
       {
         "name": "tool-development-evening",
         "key": "cron:ce2fb615-132a-4c40-864f-86de27bea24c",
-        "tokens": 54860,
-        "contextLimit": 204800,
-        "contextPct": 27,
-        "ageHours": 7.5,
+        "tokens": 68000,
+        "contextLimit": 205000,
+        "contextPct": 33,
+        "ageHours": 8.0,
         "model": "glm-5.1"
       },
       {
-        "name": "cron:789e2aa9-b95e-4fa3-9570-719b1aa813ab",
-        "key": "cron:789e2aa9-b95e-4fa3-9570-719b1aa813ab",
-        "tokens": 53187,
-        "contextLimit": 200000,
-        "contextPct": 27,
-        "ageHours": 1921.0,
-        "model": "glm-5"
+        "name": "knowledge-organization",
+        "key": "cron:fd0515b0-f483-411d-b110-3a16fbc49983",
+        "tokens": 71000,
+        "contextLimit": 205000,
+        "contextPct": 35,
+        "ageHours": 4.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "key-development-1",
+        "key": "cron:78eac6fc-c2d7-41d2-a5d1-9a52892f89ab",
+        "tokens": 42000,
+        "contextLimit": 205000,
+        "contextPct": 20,
+        "ageHours": 7.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "key-development-2",
+        "key": "cron:88679f9e-ba09-4e1a-8dbd-a2dc12808544",
+        "tokens": 46000,
+        "contextLimit": 205000,
+        "contextPct": 23,
+        "ageHours": 6.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "key-development-3",
+        "key": "cron:b0fd7e8d-f946-4228-bb85-1baaa3502c7c",
+        "tokens": 57000,
+        "contextLimit": 205000,
+        "contextPct": 28,
+        "ageHours": 5.0,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "project-testing-morning",
+        "key": "cron:f7510f1f-9db8-46e7-8019-3c9a4858db2e",
+        "tokens": 53000,
+        "contextLimit": 205000,
+        "contextPct": 26,
+        "ageHours": 3.0,
+        "model": "glm-5.1"
       }
     ]
   },
@@ -260,9 +259,9 @@
       "message": "Last run ended with error status (id: 78eac6fc)"
     },
     {
-      "level": "error",
-      "job": "key-development-3",
-      "message": "Last run ended with error status (id: b0fd7e8d)"
+      "level": "warning",
+      "job": "main-session",
+      "message": "Main session context at 75% - approaching compression threshold"
     }
   ]
 }
