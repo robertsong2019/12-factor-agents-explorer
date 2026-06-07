@@ -66,3 +66,4 @@ timestamp	commit	metric	value	status	description
 2026-06-07T21:30+08:00	a174cd7	test_count	713→724	keep	community_summary — community insight dashboard (density, top members, tag aggregation, kind distribution). +11 tests. Zero regressions. Cycle 2/4.
 2026-06-07T21:45+08:00	ebfc8c3	test_count	724→733	keep	node_roles+role_summary — structural role classification (hub/authority/bridge/isolated/member). +9 tests. Zero regressions. Cycle 3/4.
 2026-06-07T22:00+08:00	c2283a0	test_count	733→743	keep	search_graphrag — GraphRAG unified retrieval (naive/local/global/hybrid modes). Community-level search, graph expansion. +10 tests. Zero regressions. 108th consecutive day. Cycle 4/4.
+2026-06-07T23:00+08:00	099a29c	doc_coverage	567→743 tests, +30 APIs	keep	README comprehensive sync: BM25/GraphRAG/Tag CRUD/LLM export/Community/Algorithms/Import-Export/Vector CRUD sections. Badge 567→743. 743/743 pass. Zero regressions. 108th consecutive day.
