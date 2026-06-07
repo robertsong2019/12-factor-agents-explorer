@@ -6379,3 +6379,93 @@ class TestNodeRoles:
         valid = {"hub", "authority", "bridge", "isolated", "member"}
         for role in roles.values():
             assert role in valid
+
+
+class TestSearchGraphRAG:
+    """Tests for search_graphrag — GraphRAG-style unified retrieval."""
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.search_graphrag("anything") == []
+
+    def test_naive_mode(self):
+        mg = MemoryGraph()
+        mg.add("Python tutorial", "skill")
+        mg.add("Gardening tips", "hobby")
+        results = mg.search_graphrag("python", mode="naive")
+        assert len(results) >= 1
+        assert any("Python" in r["label"] for r in results)
+
+    def test_local_mode_expands_graph(self):
+        mg = MemoryGraph()
+        a = mg.add("Python", "skill")
+        b = mg.add("Django", "framework")
+        c = mg.add("Flask", "framework")
+        mg.link(a.id, b.id, "uses")
+        mg.link(a.id, c.id, "uses")
+        results = mg.search_graphrag("python", mode="local", limit=10)
+        ids = {r["node_id"] for r in results}
+        # Should include the seed AND its neighbors
+        assert a.id in ids
+        assert b.id in ids or c.id in ids
+
+    def test_local_mode_empty_query(self):
+        mg = MemoryGraph()
+        mg.add("Node")
+        results = mg.search_graphrag("nonexistent", mode="local")
+        assert results == []
+
+    def test_global_mode_finds_community(self):
+        mg = MemoryGraph()
+        # Build two clear communities
+        py_nodes = [mg.add(n, "skill", tags=["python"]) for n in ["Python", "Django", "Flask"]]
+        cook_nodes = [mg.add(n, "hobby", tags=["cooking"]) for n in ["Cooking", "Baking", "Grilling"]]
+        # Link within communities
+        for i in range(len(py_nodes) - 1):
+            mg.link(py_nodes[i].id, py_nodes[i + 1].id, "related")
+        for i in range(len(cook_nodes) - 1):
+            mg.link(cook_nodes[i].id, cook_nodes[i + 1].id, "related")
+        results = mg.search_graphrag("python", mode="global", limit=5)
+        assert len(results) >= 1
+        # Should return python community members
+        labels = {r["label"] for r in results}
+        assert any(l in labels for l in ["Python", "Django", "Flask"])
+
+    def test_global_mode_falls_back_when_no_match(self):
+        mg = MemoryGraph()
+        mg.add("Lonely", "thing")
+        results = mg.search_graphrag("xyz", mode="global")
+        # Should not crash, returns something (empty or fallback)
+        assert isinstance(results, list)
+
+    def test_hybrid_mode(self):
+        mg = MemoryGraph()
+        mg.add("AI research", "topic")
+        mg.add("ML papers", "topic")
+        mg.link("AI research", "ML papers", "related")
+        results = mg.search_graphrag("research", mode="hybrid")
+        assert isinstance(results, list)
+
+    def test_unknown_mode_falls_back(self):
+        mg = MemoryGraph()
+        mg.add("Test node")
+        results = mg.search_graphrag("test", mode="nonexistent")
+        assert isinstance(results, list)
+
+    def test_results_have_required_fields(self):
+        mg = MemoryGraph()
+        mg.add("Python", "skill")
+        for mode in ["naive", "local", "global", "hybrid"]:
+            results = mg.search_graphrag("python", mode=mode)
+            for r in results:
+                assert "node_id" in r
+                assert "label" in r
+                assert "score" in r
+
+    def test_limit_respected(self):
+        mg = MemoryGraph()
+        for i in range(10):
+            mg.add(f"Node{i}")
+        for mode in ["naive"]:
+            results = mg.search_graphrag("node", mode=mode, limit=3)
+            assert len(results) <= 3

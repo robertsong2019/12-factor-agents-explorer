@@ -4321,6 +4321,124 @@ class MemoryGraph:
         all_results = self.search_similar(embedding, limit=limit * 5)
         return [r for r in all_results if r["node_id"] in tagged_ids][:limit]
 
+    # ── GraphRAG 统一检索 ─────────────────────────────────
+
+    def search_graphrag(self, query: str, mode: str = "hybrid",
+                        embedding: list[float] = None,
+                        limit: int = 10,
+                        expand_hops: int = 1) -> list[dict]:
+        """GraphRAG-style unified retrieval with mode selection.
+
+        Modes:
+        - "naive": Direct text search (BM25/search_unified)
+        - "local": Text search + 1-hop graph expansion
+        - "global": Community-level search (find relevant communities first)
+        - "hybrid": Full 3-way RRF fusion (text + vector + graph) via search_hybrid
+
+        Each result includes: node_id, label, kind, score, sources, community (if detected).
+
+        Args:
+            query: Natural language query
+            mode: Retrieval mode (naive/local/global/hybrid)
+            embedding: Optional query vector for hybrid mode
+            limit: Max results
+            expand_hops: Graph expansion depth for local mode
+
+        Returns:
+            list of dicts sorted by score descending
+        """
+        if mode == "hybrid":
+            results = self.search_hybrid(query, embedding=embedding, limit=limit)
+            for r in results:
+                r.setdefault("sources", ["hybrid"])
+            return results
+
+        if mode == "naive":
+            results = self.search_bm25(query, limit=limit)
+            if not results:
+                results = [
+                    {"node_id": r["node"].id, "label": r["node"].label,
+                     "kind": r["node"].kind, "score": r["score"],
+                     "sources": ["text"]}
+                    for r in self.search_unified(query, limit=limit)
+                ]
+            return results
+
+        if mode == "local":
+            # Step 1: find seed nodes via text search
+            seeds = self.search_bm25(query, limit=max(limit // 2, 3))
+            if not seeds:
+                seeds = [
+                    {"node_id": r["node"].id, "label": r["node"].label,
+                     "kind": r["node"].kind, "score": r["score"]}
+                    for r in self.search_unified(query, limit=max(limit // 2, 3))
+                ]
+            if not seeds:
+                return []
+            # Step 2: expand with graph neighbors
+            expanded = {}
+            for seed in seeds:
+                nid = seed["node_id"]
+                expanded[nid] = seed
+                expanded[nid]["sources"] = ["text"]
+                # Get neighbors
+                for nb in self.neighbors(nid, depth=expand_hops):
+                    if nb.id not in expanded:
+                        expanded[nb.id] = {
+                            "node_id": nb.id, "label": nb.label,
+                            "kind": nb.kind, "score": seed["score"] * 0.5,
+                            "sources": ["graph"]
+                        }
+                    else:
+                        if "graph" not in expanded[nb.id].get("sources", []):
+                            expanded[nb.id]["sources"].append("graph")
+            results = sorted(expanded.values(), key=lambda x: x.get("score", 0), reverse=True)
+            return results[:limit]
+
+        if mode == "global":
+            # Community-level search: find which communities are relevant
+            communities = self.community_detect()
+            if not communities:
+                return self.search_graphrag(query, mode="naive", limit=limit)
+            summaries = self.community_summary(communities=communities)
+            # Score communities by tag/keyword overlap with query
+            query_lower = query.lower()
+            scored_communities = []
+            for summary in summaries:
+                score = 0.0
+                for tag, freq in summary.get("top_tags", []):
+                    if tag.lower() in query_lower or query_lower in tag.lower():
+                        score += freq * 2
+                for member in summary.get("top_members", []):
+                    if query_lower in member.get("label", "").lower():
+                        score += 3
+                scored_communities.append((summary["id"], score, summary))
+            scored_communities.sort(key=lambda x: x[1], reverse=True)
+            # Take top community and return its members
+            if not scored_communities or scored_communities[0][1] == 0:
+                return self.search_graphrag(query, mode="local", limit=limit,
+                                           embedding=embedding) if embedding else \
+                       self.search_graphrag(query, mode="naive", limit=limit)
+            best_comm_id = scored_communities[0][0]
+            node_ids = communities[best_comm_id]
+            # Return community members sorted by weight
+            placeholders = ",".join("?" * len(node_ids))
+            rows = self.conn.execute(
+                f"SELECT id, label, kind, weight FROM nodes WHERE id IN ({placeholders}) "
+                "ORDER BY weight DESC LIMIT ?",
+                (*node_ids, limit)
+            ).fetchall()
+            return [
+                {"node_id": r["id"], "label": r["label"],
+                 "kind": r["kind"], "score": r["weight"],
+                 "sources": ["community"],
+                 "community": best_comm_id}
+                for r in rows
+            ]
+
+        # Unknown mode: fallback to hybrid
+        return self.search_graphrag(query, mode="hybrid", embedding=embedding, limit=limit)
+
     # ── LLM 上下文导出 ────────────────────────────────────
 
     def to_markdown(self, node_ids: list[str] | None = None, max_nodes: int = 50,
