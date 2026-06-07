@@ -5984,3 +5984,84 @@ class TestContextWindow:
         # Seeding from A, should find B via reverse edge
         ctx = mg.context_window([a.id], hops=1)
         assert "Bob" in ctx
+
+
+# ── prune_by_relevance tests ───────────────────────────────
+
+class TestPruneByRelevance:
+    """prune_by_relevance(): intelligent pruning keeping top-k relevant nodes."""
+
+    def test_basic_prune(self, mg):
+        mg.add("Python tutorial", "skill")
+        mg.add("Rust programming", "skill")
+        mg.add("Cooking recipe", "knowledge")
+        result = mg.prune_by_relevance("Python", keep_k=1)
+        assert result["nodes_removed"] >= 1
+        # Python tutorial should survive
+        remaining = {r["label"] for r in mg.conn.execute("SELECT label FROM nodes").fetchall()}
+        assert "Python tutorial" in remaining
+
+    def test_keep_k_limit(self, mg):
+        for i in range(10):
+            mg.add(f"Topic {i}", "concept")
+        result = mg.prune_by_relevance("Topic", keep_k=3)
+        assert result["nodes_removed"] == 7
+        count = mg.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        assert count == 3
+
+    def test_min_weight_preserve(self, mg):
+        n1 = mg.add("Irrelevant", "concept")
+        n2 = mg.add("Important", "concept")
+        mg.conn.execute("UPDATE nodes SET weight=0.9 WHERE id=?", (n2.id,))
+        mg.conn.commit()
+        result = mg.prune_by_relevance("nonexistent_query", keep_k=1, min_weight=0.8)
+        # Important node should survive via weight
+        remaining = {r["label"] for r in mg.conn.execute("SELECT label FROM nodes").fetchall()}
+        assert "Important" in remaining
+        assert result["kept_by_weight"] >= 1
+
+    def test_empty_graph(self, mg):
+        result = mg.prune_by_relevance("anything", keep_k=5)
+        assert result["nodes_removed"] == 0
+
+    def test_all_relevant(self, mg):
+        """If all nodes match, none should be removed."""
+        mg.add("Python basics", "skill")
+        mg.add("Python advanced", "skill")
+        result = mg.prune_by_relevance("Python", keep_k=10)
+        assert result["nodes_removed"] == 0
+
+    def test_edges_removed(self, mg):
+        a = mg.add("Python", "skill")
+        b = mg.add("Unrelated", "concept")
+        mg.link(a.id, b.id, "connected")
+        result = mg.prune_by_relevance("Python", keep_k=1)
+        assert result["edges_removed"] >= 1
+
+    def test_returned_counts(self, mg):
+        mg.add("Python core", "skill")
+        mg.add("Rust async", "skill")
+        mg.add("Cooking", "knowledge")
+        result = mg.prune_by_relevance("Python", keep_k=1)
+        assert "nodes_removed" in result
+        assert "edges_removed" in result
+        assert "kept_by_relevance" in result
+        assert "kept_by_weight" in result
+        assert isinstance(result["nodes_removed"], int)
+
+    def test_no_fts_error(self, mg):
+        """Should not crash even if FTS table has issues."""
+        mg.add("Test", "concept")
+        result = mg.prune_by_relevance("query", keep_k=5)
+        assert isinstance(result, dict)
+
+    def test_keeps_relevant_with_weight_fallback(self, mg):
+        """Node relevant to query kept; high-weight irrelevant node also kept."""
+        relevant = mg.add("Python guide", "skill")
+        heavy = mg.add("Gardening", "hobby")
+        mg.conn.execute("UPDATE nodes SET weight=0.95 WHERE id=?", (heavy.id,))
+        mg.conn.commit()
+        result = mg.prune_by_relevance("Python", keep_k=1, min_weight=0.9)
+        remaining = {r["label"] for r in mg.conn.execute("SELECT label FROM nodes").fetchall()}
+        assert "Python guide" in remaining
+        assert "Gardening" in remaining

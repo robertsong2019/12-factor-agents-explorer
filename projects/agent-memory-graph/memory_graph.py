@@ -674,6 +674,70 @@ class MemoryGraph:
         self.conn.commit()
         return {"nodes_removed": len(node_ids), "edges_removed": edge_count}
 
+    def prune_by_relevance(self, query: str, keep_k: int = 50, min_weight: float = 0.0) -> dict:
+        """保留与 query 最相关的 keep_k 个节点，其余剪枝。
+
+        使用 BM25 搜索找到最相关的节点，然后删除不在 top-k 中的节点。
+        这是 "智能遗忘" — 忘掉无关的，记住相关的。
+
+        Args:
+            query: 相关性查询（如 "Python web development"）
+            keep_k: 保留的节点数量
+            min_weight: 额外保留 weight >= min_weight 的节点（0=不保留）
+
+        Returns:
+            {nodes_removed, edges_removed, kept_by_relevance, kept_by_weight}
+        """
+        # BM25 搜索找到相关节点
+        try:
+            results = self.search_bm25(query, limit=keep_k)
+            relevant_ids = {r["node_id"] for r in results}
+        except Exception:
+            relevant_ids = set()
+
+        # 额外保留高 weight 节点
+        weight_ids = set()
+        if min_weight > 0:
+            rows = self.conn.execute(
+                "SELECT id FROM nodes WHERE weight >= ?", (min_weight,)
+            ).fetchall()
+            weight_ids = {r["id"] for r in rows}
+
+        keep_ids = relevant_ids | weight_ids
+        all_ids = {r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()}
+        remove_ids = all_ids - keep_ids
+
+        if not remove_ids:
+            return {"nodes_removed": 0, "edges_removed": 0,
+                    "kept_by_relevance": len(relevant_ids),
+                    "kept_by_weight": len(weight_ids - relevant_ids)}
+
+        placeholders = ",".join("?" for _ in remove_ids)
+        edge_count = self.conn.execute(
+            f"SELECT COUNT(*) c FROM edges WHERE source IN ({placeholders}) OR target IN ({placeholders})",
+            list(remove_ids) + list(remove_ids)
+        ).fetchone()["c"]
+
+        self.conn.execute(
+            f"DELETE FROM edges WHERE source IN ({placeholders}) OR target IN ({placeholders})",
+            list(remove_ids) + list(remove_ids)
+        )
+        self.conn.execute(
+            f"DELETE FROM nodes WHERE id IN ({placeholders})",
+            list(remove_ids)
+        )
+        # 同步 FTS
+        for nid in remove_ids:
+            self._fts_delete_node(nid)
+        # 同步向量
+        for nid in remove_ids:
+            self.remove_embedding(nid)
+        self.conn.commit()
+
+        return {"nodes_removed": len(remove_ids), "edges_removed": edge_count,
+                "kept_by_relevance": len(relevant_ids),
+                "kept_by_weight": len(weight_ids - relevant_ids)}
+
     def aggregate(self, kind: str, field: str = "weight", fn: str = "sum") -> float:
         """Aggregate a numeric field across all nodes of a given kind.
 
