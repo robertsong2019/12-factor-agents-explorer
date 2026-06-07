@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-567-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-743-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -17,12 +17,20 @@
 - **批量操作** — add_many / link_many / delete_many / batch_reweight 高效批量写入
 - **图算法** — PageRank、中心性（度/介数/特征向量）、社区发现、k-core、三角形计数、聚类系数
 - **图变换** — 反转边、转无向、按标签诱导子图、权重归一化
-- **向量搜索** — sqlite-vec 可选集成，KNN 向量搜索 + 三路 RRF 混合搜索 (文本+向量+图邻居)
+- **BM25 全文搜索** — 内置 FTS5 全文索引，BM25 排序 + 权重提升
+- **向量搜索** — sqlite-vec 可选集成，KNN 向量搜索
+- **三路混合搜索** — Reciprocal Rank Fusion: BM25 文本 + 向量 KNN + 图邻居加权
+- **GraphRAG 检索** — naive/local/global/hybrid 四种检索模式，社区级搜索 + 图扩展
 - **演化追踪** — 记录节点 label/kind 变化历史，支持回滚和合并
 - **快照与恢复** — 一键快照 → 恢复完整图谱状态
 - **去重** — 基于 Levenshtein 距离的模糊标签去重 + 合并
-- **导入导出** — JSON / DOT / GraphML / Cytoscape 格式，支持跨实例迁移
+- **导入导出** — JSON / DOT / GraphML / Cytoscape / Edge List / Adjacency List 六种格式
 - **子图提取** — 聚焦邻域提取，适配 LLM context window
+- **LLM 上下文导出** — to_markdown 图谱转 Markdown + context_window BFS 提取
+- **智能剪枝** — prune_by_relevance 基于 BM25 相关性保留 top-k 节点
+- **社区分析** — 社区发现 + community_summary 密度/成员/标签洞察
+- **结构角色分类** — hub/authority/bridge/isolated/member 五种角色
+- **标签 CRUD** — add_tag/remove_tag/has_tag 单标签管理
 - **差分与合并** — 图差异对比、patch 应用、双图合并
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
@@ -261,6 +269,97 @@ results = mg.recall("Python")
 #### `importance_rank(limit=20, decay_hours=168.0) -> list[dict]`
 
 综合重要性排序：权重(40%) + 度数(30%) + 最近访问(30%)。
+
+#### `search_bm25(query, limit=10, kind=None, tag=None, weight_boost=1.0) -> list[dict]`
+
+FTS5 全文搜索（BM25 排序）。支持按 kind/tag 过滤，权重提升高权重节点。返回 `{node_id, label, kind, score}`。
+
+```python
+results = mg.search_bm25("memory decay", limit=5, kind="concept")
+```
+
+#### `search_hybrid(query, embedding=None, limit=10) -> list[dict]`
+
+三路混合搜索 (Reciprocal Rank Fusion):
+1. **BM25 文本搜索**: label/data/tags/kind 全文匹配
+2. **向量搜索** (可选): embedding KNN
+3. **图邻居加权**: 种子节点的邻居 bonus
+
+返回 `{node_id, label, kind, score, sources}` 按融合分数降序。向量不可用时静默降级。
+
+#### `search_graphrag(query, mode="hybrid", limit=20, depth=2, community=None) -> dict`
+
+GraphRAG 统一检索，四种模式：
+- `"naive"` — 直接 BM25 搜索
+- `"local"` — 搜索 + 邻域图扩展
+- `"global"` — 社区级汇总搜索
+- `"hybrid"` — local + global 结合
+
+返回 `{mode, results, expanded_nodes, communities}`。
+
+#### `search_labels(query, limit=10) -> list[Node]`
+
+仅在 label 字段中搜索（FTS5）。
+
+#### `search_similar(embedding, limit=10) -> list[dict]`
+
+KNN 向量相似度搜索。返回 `{node_id, label, kind, distance, score}` 按距离升序。
+
+#### `search_similar_to_node(node_id, limit=10) -> list[dict]`
+
+基于嵌入向量查找与指定节点最相似的其他节点。排除自身。
+
+#### `search_similar_by_kind(embedding, kind, limit=10) -> list[dict]`
+
+按 kind 过滤的向量搜索。
+
+#### `search_similar_by_tag(embedding, tag, limit=10) -> list[dict]`
+
+按 tag 过滤的向量搜索。
+
+#### `neighbors_filtered(node_id, relation=None, kind=None, tag=None, min_weight=None, direction="both") -> list[Node]`
+
+过滤邻居搜索：按 relation/kind/tag/weight 多条件筛选。
+
+---
+
+### 标签 CRUD
+
+#### `add_tag(node_id, tag) -> Node | None`
+
+为节点添加单个标签。
+
+#### `remove_tag(node_id, tag) -> Node | None`
+
+移除节点的单个标签。
+
+#### `has_tag(node_id, tag) -> bool`
+
+检查节点是否拥有指定标签。
+
+---
+
+### LLM 上下文导出
+
+#### `to_markdown(node_ids=None, max_nodes=50) -> str`
+
+将图谱转为 Markdown 格式（按 kind 分组，含标签/数据/权重/边信息）。适合直接注入 LLM 上下文。
+
+```python
+md = mg.to_markdown(mg.neighbors(center_id, depth=2))
+# ## concept
+# - **Rust** (w: 0.85) #safe #fast
+#   data: {type: systems language}
+#   → contrasts_with → TypeScript
+```
+
+#### `context_window(seed_id, hops=2, max_nodes=30, direction="both") -> str`
+
+BFS 上下文提取：以 seed 为中心，双向扩展，★ 标记种子节点。自动格式化为 Markdown。
+
+#### `prune_by_relevance(query, keep_top=50, fallback_min_weight=0.3) -> dict`
+
+基于 BM25 相关性的智能剪枝。保留与查询最相关的 top-k 节点，不够时用高权重节点补充。自动清理 FTS + 嵌入。
 
 ---
 
@@ -507,6 +606,42 @@ k-core 分解（度数 ≥ k 的节点集合）。
 
 模块度 Q：衡量社区划分质量。`communities = {node_id: community_id}`。
 
+#### `articulation_points() -> list[str]`
+
+关节点（Tarjan 算法）——移除后会增加连通分量的节点。
+
+#### `find_bridges() -> list[tuple]`
+
+桥边（Tarjan 算法）——移除后会增加连通分量的边。
+
+#### `is_bipartite() -> bool`
+
+检测图是否为二部图（BFS 染色法）。
+
+#### `effective_diameter(percentile=0.9) -> int`
+
+有效直径——指定百分位的最大最短距离，比绝对直径更抗异常值。
+
+#### `harmonic_centrality(node_id=None) -> float | dict[str, float]`
+
+调和中心性——倒数距离之和，断连图友好（不依赖最大距离）。
+
+#### `edge_betweenness(normalized=True) -> dict[tuple, float]`
+
+边介数（Brandes 算法）——每条边在最短路径中出现频率。识别关键连接。
+
+#### `community_summary(community_id=None) -> dict`
+
+社区洞察仪表盘：密度、top 成员、标签聚合、kind 分布。社区级快速画像。
+
+#### `node_roles(node_id=None) -> str | dict[str, str]`
+
+结构角色分类：`hub`（高度数）/ `authority`（高入度）/ `bridge`（高介数）/ `isolated`（孤立）/ `member`（普通）。
+
+#### `role_summary() -> dict[str, list[str]]`
+
+全局角色汇总——按角色分类列出所有节点。
+
 ---
 
 ### 节点相似性与链路预测
@@ -614,6 +749,22 @@ data = mg.export_json()
 
 导入图谱。`merge=True` 时与现有数据合并。
 
+#### `import_edgelist(text, default_kind="fact", default_relation="related_to") -> int`
+
+从边列表文本导入（每行 `source\ttarget\t[relation]\t[weight]`），返回导入边数。
+
+#### `import_cytoscape(data, merge=False) -> int`
+
+从 Cytoscape JSON 导入，返回导入节点数。
+
+#### `import_graphml(xml_str, merge=False) -> int`
+
+从 GraphML XML 导入，返回导入节点数。
+
+#### `import_adjacency_list(data, default_relation="related_to") -> int`
+
+从邻接表导入。`data` 为 `{node_label: [{target, relation?, weight?}]}` 或 `{label: [target_label]}`，返回导入边数。
+
 #### `to_adjacency_list() -> dict[str, list[dict]]`
 
 导出邻接表表示 `{node_id: [{"target", "relation", "weight"}]}`。
@@ -621,6 +772,18 @@ data = mg.export_json()
 #### `serialize_dot() -> str`
 
 导出为 Graphviz DOT 格式字符串。
+
+#### `serialize_edgelist() -> str`
+
+导出为边列表格式（TSV: `source_id\ttarget_id\trelation\tweight`）。
+
+#### `serialize_graphml() -> str`
+
+导出为 GraphML XML 格式字符串。
+
+#### `serialize_cytoscape() -> dict`
+
+导出为 Cytoscape JSON 格式。
 
 ```python
 dot = mg.serialize_dot()
@@ -713,26 +876,17 @@ dot = mg.serialize_dot()
 
 批量添加嵌入。`items = [(node_id, embedding), ...]`，返回成功添加数。
 
-#### `search_similar(embedding, limit=10) -> list[dict]`
+#### `update_embedding(node_id, embedding) -> bool`
 
-KNN 向量相似度搜索。返回 `{node_id, label, kind, distance, score}` 按距离升序。
-
-#### `search_similar_to_node(node_id, limit=10) -> list[dict]`
-
-基于嵌入向量查找与指定节点最相似的其他节点。排除自身。
-
-#### `search_hybrid(query, embedding=None, limit=10) -> list[dict]`
-
-三路混合搜索 (Reciprocal Rank Fusion):
-1. **文本搜索**: label/data/tags/kind 匹配
-2. **向量搜索** (可选): embedding KNN
-3. **图邻居加权**: 种子节点的邻居 bonus
-
-返回 `{node_id, label, kind, score, sources}` 按融合分数降序。向量不可用时静默降级。
+更新已有节点的嵌入向量。
 
 #### `remove_embedding(node_id) -> bool`
 
 删除节点的向量嵌入。
+
+#### `remove_embeddings_batch(node_ids) -> int`
+
+批量删除嵌入，返回成功数。
 
 #### `has_embedding(node_id) -> bool`
 
@@ -754,7 +908,7 @@ KNN 向量相似度搜索。返回 `{node_id, label, kind, distance, score}` 按
 python3 -m pytest test_memory_graph.py -q
 ```
 
-567 个测试覆盖所有 API。
+743 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -766,6 +920,8 @@ python3 -m pytest test_memory_graph.py -q
 6. **演化追踪** — 记忆不是静态的，记录概念的演变过程
 7. **快照与恢复** — Agent 实验"如果改变这个记忆会怎样"，然后回滚
 8. **向量搜索** — sqlite-vec 可选集成，三路 RRF 混合搜索 (文本+向量+图) 是 npm/PyPI 唯一三合一方案
+9. **BM25 + GraphRAG** — 全文索引 + 社区级检索，从关键词搜索到知识图谱问答的完整路径
+10. **LLM 适配** — to_markdown + context_window + prune_by_relevance 让图谱直接服务于 LLM 上下文
 
 ## 许可
 
