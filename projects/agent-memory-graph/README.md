@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-743-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-766-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -30,6 +30,7 @@
 - **智能剪枝** — prune_by_relevance 基于 BM25 相关性保留 top-k 节点
 - **社区分析** — 社区发现 + community_summary 密度/成员/标签洞察
 - **结构角色分类** — hub/authority/bridge/isolated/member 五种角色
+- **网络效率分析** — 全局效率、S-metric、有效偏心率，衡量信息传递与拓扑结构
 - **标签 CRUD** — add_tag/remove_tag/has_tag 单标签管理
 - **差分与合并** — 图差异对比、patch 应用、双图合并
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
@@ -642,6 +643,18 @@ k-core 分解（度数 ≥ k 的节点集合）。
 
 全局角色汇总——按角色分类列出所有节点。
 
+#### `effective_eccentricity(node_id, percentile=0.9) -> Optional[float]`
+
+有效偏心率——指定百分位的到其他节点的最短距离。比绝对偏心率更抗异常值，衡量节点信息传播范围。
+
+#### `global_efficiency() -> Optional[float]`
+
+全局效率（Latora-Marchiori）——所有节点对距离倒数之和的归一化值。衡量网络整体信息传递效率，断连图友好（断连对贡献 0 而非无穷）。
+
+#### `s_metric() -> Optional[float]`
+
+S-metric——所有边的度数乘积之和（Σ d(u)·d(v)）。衡量网络的 hub-spoke 结构强度，值越高越倾向于 hub 集中式拓扑。
+
 ---
 
 ### 节点相似性与链路预测
@@ -908,7 +921,7 @@ dot = mg.serialize_dot()
 python3 -m pytest test_memory_graph.py -q
 ```
 
-743 个测试覆盖所有 API。
+766 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -922,6 +935,7 @@ python3 -m pytest test_memory_graph.py -q
 8. **向量搜索** — sqlite-vec 可选集成，三路 RRF 混合搜索 (文本+向量+图) 是 npm/PyPI 唯一三合一方案
 9. **BM25 + GraphRAG** — 全文索引 + 社区级检索，从关键词搜索到知识图谱问答的完整路径
 10. **LLM 适配** — to_markdown + context_window + prune_by_relevance 让图谱直接服务于 LLM 上下文
+11. **网络分析** — global_efficiency + s_metric + effective_eccentricity 量化记忆网络的全局拓扑特性
 
 ## 许可
 
