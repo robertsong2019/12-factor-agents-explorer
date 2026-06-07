@@ -6276,3 +6276,106 @@ class TestCommunitySummary:
         communities = {0: [a.id, b.id]}
         result = mg.community_summary(communities=communities)
         assert result[0]["top_members"][0]["label"] == "High"
+
+
+class TestNodeRoles:
+    """Tests for node_roles and role_summary — structural role classification."""
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.node_roles() == {}
+        assert mg.role_summary() == {}
+
+    def test_all_isolated(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        roles = mg.node_roles()
+        assert roles[a.id] == "isolated"
+        assert roles[b.id] == "isolated"
+
+    def test_hub_classification(self):
+        mg = MemoryGraph()
+        hub = mg.add("Hub")
+        targets = [mg.add(f"T{i}") for i in range(5)]
+        for t in targets:
+            mg.link(hub.id, t.id, "connects")
+        roles = mg.node_roles()
+        assert roles[hub.id] == "hub"
+
+    def test_authority_classification(self):
+        mg = MemoryGraph()
+        authority = mg.add("Authority")
+        sources = [mg.add(f"S{i}") for i in range(5)]
+        for s in sources:
+            mg.link(s.id, authority.id, "cites")
+        roles = mg.node_roles()
+        assert roles[authority.id] == "authority"
+
+    def test_member_classification(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "knows")
+        roles = mg.node_roles()
+        # Both should be member or lower-tier — neither dominates
+        assert roles[a.id] in ("member", "hub", "authority", "bridge")
+        assert roles[b.id] in ("member", "hub", "authority", "bridge")
+
+    def test_bridge_detection(self):
+        """Bridge node connects two clusters."""
+        mg = MemoryGraph()
+        # Cluster A
+        a1 = mg.add("A1")
+        a2 = mg.add("A2")
+        mg.link(a1.id, a2.id, "r")
+        # Bridge
+        bridge = mg.add("Bridge")
+        mg.link(a2.id, bridge.id, "r")
+        # Cluster B
+        b1 = mg.add("B1")
+        b2 = mg.add("B2")
+        mg.link(bridge.id, b1.id, "r")
+        mg.link(b1.id, b2.id, "r")
+        roles = mg.node_roles()
+        # Bridge should be classified as something with high responsibility
+        assert roles[bridge.id] in ("bridge", "hub", "authority")
+
+    def test_role_summary_counts(self):
+        mg = MemoryGraph()
+        # 2 isolated
+        iso1 = mg.add("I1")
+        iso2 = mg.add("I2")
+        # 1 hub with 5 targets
+        hub = mg.add("Hub")
+        targets = [mg.add(f"Target{i}") for i in range(5)]
+        for t in targets:
+            mg.link(hub.id, t.id, "r")
+        roles = mg.node_roles()
+        summary = mg.role_summary()
+        total = sum(summary.values())
+        assert total == 8  # 2 isolated + hub + 5 targets
+        assert summary.get("isolated", 0) >= 2
+        assert summary.get("hub", 0) >= 1
+
+    def test_roles_cover_all_nodes(self):
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(6)]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        roles = mg.node_roles()
+        assert len(roles) == 6
+        for nid in [n.id for n in nodes]:
+            assert nid in roles
+
+    def test_roles_return_valid_values(self):
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        roles = mg.node_roles()
+        valid = {"hub", "authority", "bridge", "isolated", "member"}
+        for role in roles.values():
+            assert role in valid

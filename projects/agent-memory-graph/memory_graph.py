@@ -3101,6 +3101,59 @@ class MemoryGraph:
         results.sort(key=lambda x: x["size"], reverse=True)
         return results
 
+    def node_roles(self, hub_threshold: float = 0.7, authority_threshold: float = 0.7) -> dict[str, str]:
+        """Classify each node's structural role: hub, authority, bridge, isolated, or member.
+
+        - hub: high out-degree (sources many edges)
+        - authority: high in-degree (target of many edges)
+        - bridge: high betweenness relative to others
+        - isolated: degree 0
+        - member: everything else
+
+        Returns {node_id: role}.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return {}
+        node_ids = [r["id"] for r in rows]
+        # Compute in/out degrees
+        out_deg = {}
+        in_deg = {}
+        for r in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            out_deg[r["source"]] = out_deg.get(r["source"], 0) + 1
+            in_deg[r["target"]] = in_deg.get(r["target"], 0) + 1
+        if not out_deg:
+            return {nid: "isolated" for nid in node_ids}
+        max_out = max(out_deg.values()) if out_deg else 1
+        max_in = max(in_deg.values()) if in_deg else 1
+        # Compute approximate betweenness for bridge detection
+        bc = self.betweenness_centrality_approx(samples=min(20, len(node_ids)))
+        max_bc = max(bc.values()) if bc and max(bc.values()) > 0 else 1
+        roles = {}
+        for nid in node_ids:
+            od = out_deg.get(nid, 0)
+            idg = in_deg.get(nid, 0)
+            bc_score = bc.get(nid, 0)
+            if od == 0 and idg == 0:
+                roles[nid] = "isolated"
+            elif od / max_out >= hub_threshold:
+                roles[nid] = "hub"
+            elif idg / max_in >= authority_threshold:
+                roles[nid] = "authority"
+            elif max_bc > 0 and bc_score / max_bc >= 0.6:
+                roles[nid] = "bridge"
+            else:
+                roles[nid] = "member"
+        return roles
+
+    def role_summary(self) -> dict[str, int]:
+        """Count nodes by role. Returns {role: count}."""
+        roles = self.node_roles()
+        summary = {}
+        for role in roles.values():
+            summary[role] = summary.get(role, 0) + 1
+        return summary
+
     def betweenness_centrality_approx(self, samples: int = 20) -> dict[str, float]:
         """近似介数中心性（基于采样 Brandes 算法）。
 
