@@ -3474,6 +3474,38 @@ class MemoryGraph:
                     count += 1
         return count
 
+    def add_tag(self, node_id: str, tag: str) -> bool:
+        """Add a single tag to a node. Returns True if added, False if node not found."""
+        row = self.conn.execute("SELECT tags FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if row is None:
+            return False
+        tags = json.loads(row["tags"])
+        if tag not in tags:
+            tags.append(tag)
+            self.conn.execute("UPDATE nodes SET tags=? WHERE id=?", (json.dumps(tags), node_id))
+            self.conn.commit()
+        return True
+
+    def remove_tag(self, node_id: str, tag: str) -> bool:
+        """Remove a single tag from a node. Returns True if removed, False if node/tag not found."""
+        row = self.conn.execute("SELECT tags FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if row is None:
+            return False
+        tags = json.loads(row["tags"])
+        if tag not in tags:
+            return False
+        tags.remove(tag)
+        self.conn.execute("UPDATE nodes SET tags=? WHERE id=?", (json.dumps(tags), node_id))
+        self.conn.commit()
+        return True
+
+    def has_tag(self, node_id: str, tag: str) -> bool:
+        """Check if a node has a specific tag."""
+        row = self.conn.execute("SELECT tags FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if row is None:
+            return False
+        return tag in json.loads(row["tags"])
+
     def tag_cloud(self, limit: int = 0) -> list[dict]:
         """Return tag frequency as sorted list of {tag, count} dicts.
 

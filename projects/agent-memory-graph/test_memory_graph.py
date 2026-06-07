@@ -1,4 +1,5 @@
 """Tests for Agent Memory Graph."""
+import json
 import math
 import time
 import pytest
@@ -6065,3 +6066,91 @@ class TestPruneByRelevance:
         remaining = {r["label"] for r in mg.conn.execute("SELECT label FROM nodes").fetchall()}
         assert "Python guide" in remaining
         assert "Gardening" in remaining
+
+
+class TestSingleTagOps:
+    """Tests for add_tag, remove_tag, has_tag — single-tag CRUD."""
+
+    def test_add_tag_to_node(self):
+        mg = MemoryGraph()
+        n = mg.add("Node", tags=["existing"])
+        assert mg.add_tag(n.id, "new_tag") is True
+        assert mg.has_tag(n.id, "new_tag")
+        assert mg.has_tag(n.id, "existing")
+
+    def test_add_tag_idempotent(self):
+        mg = MemoryGraph()
+        n = mg.add("Node", tags=["a"])
+        assert mg.add_tag(n.id, "a") is True
+        row = mg.conn.execute("SELECT tags FROM nodes WHERE id=?", (n.id,)).fetchone()
+        assert json.loads(row["tags"]).count("a") == 1
+
+    def test_add_tag_nonexistent_node(self):
+        mg = MemoryGraph()
+        assert mg.add_tag("fake-id", "tag") is False
+
+    def test_add_tag_to_untagged_node(self):
+        mg = MemoryGraph()
+        n = mg.add("CleanNode")
+        assert mg.add_tag(n.id, "first") is True
+        assert mg.has_tag(n.id, "first")
+
+    def test_remove_tag_from_node(self):
+        mg = MemoryGraph()
+        n = mg.add("Node", tags=["keep", "remove"])
+        assert mg.remove_tag(n.id, "remove") is True
+        assert not mg.has_tag(n.id, "remove")
+        assert mg.has_tag(n.id, "keep")
+
+    def test_remove_tag_not_present(self):
+        mg = MemoryGraph()
+        n = mg.add("Node", tags=["a"])
+        assert mg.remove_tag(n.id, "nonexistent") is False
+        assert mg.has_tag(n.id, "a")
+
+    def test_remove_tag_nonexistent_node(self):
+        mg = MemoryGraph()
+        assert mg.remove_tag("fake-id", "tag") is False
+
+    def test_remove_tag_empties_tags(self):
+        mg = MemoryGraph()
+        n = mg.add("Node", tags=["only"])
+        assert mg.remove_tag(n.id, "only") is True
+        assert not mg.has_tag(n.id, "only")
+
+    def test_has_tag_true(self):
+        mg = MemoryGraph()
+        n = mg.add("Node", tags=["yes", "no"])
+        assert mg.has_tag(n.id, "yes") is True
+        assert mg.has_tag(n.id, "no") is True
+
+    def test_has_tag_false(self):
+        mg = MemoryGraph()
+        n = mg.add("Node", tags=["yes"])
+        assert mg.has_tag(n.id, "no") is False
+
+    def test_has_tag_nonexistent_node(self):
+        mg = MemoryGraph()
+        assert mg.has_tag("fake-id", "tag") is False
+
+    def test_has_tag_untagged_node(self):
+        mg = MemoryGraph()
+        n = mg.add("CleanNode")
+        assert mg.has_tag(n.id, "anything") is False
+
+    def test_tag_crud_roundtrip(self):
+        """Add → verify → remove → verify cycle."""
+        mg = MemoryGraph()
+        n = mg.add("RT", tags=[])
+        assert mg.has_tag(n.id, "x") is False
+        mg.add_tag(n.id, "x")
+        assert mg.has_tag(n.id, "x") is True
+        mg.add_tag(n.id, "y")
+        row = mg.conn.execute("SELECT tags FROM nodes WHERE id=?", (n.id,)).fetchone()
+        assert sorted(json.loads(row["tags"])) == ["x", "y"]
+        mg.remove_tag(n.id, "x")
+        assert mg.has_tag(n.id, "x") is False
+        assert mg.has_tag(n.id, "y") is True
+        mg.remove_tag(n.id, "y")
+        row = mg.conn.execute("SELECT tags FROM nodes WHERE id=?", (n.id,)).fetchone()
+        assert json.loads(row["tags"]) == []
