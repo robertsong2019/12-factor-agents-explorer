@@ -6916,3 +6916,129 @@ class TestLeidenCommunityDetection:
         self._build_three_cliques()
         results = self.mg.search_graphrag("A", mode="global", limit=5)
         assert isinstance(results, list)
+
+
+# ── local_efficiency / wiener_index / onion_structure (key-dev-3 loop C) ──
+
+class TestLocalEfficiency:
+    def test_missing_node(self, mg):
+        assert mg.local_efficiency("missing") is None
+
+    def test_single_node(self, mg):
+        a = mg.add("A")
+        assert mg.local_efficiency(a.id) is None
+
+    def test_two_connected(self, mg):
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.local_efficiency(a.id) is None
+
+    def test_triangle_high_efficiency(self, mg):
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        eff = mg.local_efficiency(a.id)
+        assert eff is not None
+        assert abs(eff - 1.0) < 1e-9
+
+    def test_star_center_low(self, mg):
+        a = mg.add("center")
+        leaves = [mg.add(f"L{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(a.id, leaf.id, "r")
+        eff = mg.local_efficiency(a.id)
+        assert eff is not None
+        assert abs(eff) < 1e-9
+
+    def test_line_graph(self, mg):
+        """A-B-C-D: B's neighbors are A,C. Removing B, A and C disconnected → 0."""
+        nodes = [mg.add(str(i)) for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        eff = mg.local_efficiency(nodes[1].id)
+        assert eff is not None
+        assert abs(eff) < 1e-9
+
+
+class TestWienerIndex:
+    def test_empty(self, mg):
+        assert mg.wiener_index() is None
+
+    def test_single(self, mg):
+        mg.add("A")
+        assert mg.wiener_index() is None
+
+    def test_two_connected(self, mg):
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.wiener_index() == 1
+
+    def test_triangle(self, mg):
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        assert mg.wiener_index() == 3
+
+    def test_line_4(self, mg):
+        nodes = [mg.add(str(i)) for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        assert mg.wiener_index() == 10
+
+    def test_disconnected_not_counted(self, mg):
+        a, b = mg.add("A"), mg.add("B")
+        c, d = mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, d.id, "r")
+        assert mg.wiener_index() == 2
+
+
+class TestOnionStructure:
+    def test_empty(self, mg):
+        assert mg.onion_structure() is None
+
+    def test_single_node(self, mg):
+        mg.add("A")
+        result = mg.onion_structure()
+        assert len(result) >= 1
+        assert result[0]["k"] == 1
+
+    def test_triangle(self, mg):
+        """Triangle: all 3 nodes survive k=1 and k=2. Last layer has all 3."""
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        result = mg.onion_structure(n_layers=3)
+        # All 3 nodes survive to the innermost core
+        total = sum(l["count"] for l in result)
+        assert total == 3
+
+    def test_star_peels_outer(self, mg):
+        center = mg.add("C")
+        leaves = [mg.add(f"L{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        result = mg.onion_structure(n_layers=3)
+        assert len(result) >= 1
+
+    def test_returns_layers(self, mg):
+        nodes = [mg.add(str(i)) for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        result = mg.onion_structure(n_layers=3)
+        for layer in result:
+            assert "k" in layer
+            assert "nodes" in layer
+            assert "count" in layer
+            assert "edges" in layer
+
+    def test_total_node_count(self, mg):
+        nodes = [mg.add(str(i)) for i in range(6)]
+        for i in range(6):
+            mg.link(nodes[i].id, nodes[(i + 1) % 6].id, "r")
+        result = mg.onion_structure(n_layers=3)
+        total = sum(l["count"] for l in result)
+        assert total == 6

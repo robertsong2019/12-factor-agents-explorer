@@ -4253,6 +4253,176 @@ class MemoryGraph:
             s += degrees.get(src, 0) * degrees.get(tgt, 0)
         return float(s)
 
+    def local_efficiency(self, node_id: str) -> Optional[float]:
+        """局部效率 — 节点邻居子图的全局效率。
+
+        对于节点 v，取出其所有直接邻居，计算这些邻居构成的
+        子图（不含 v 本身）的全局效率。衡量 v 的邻居在 v 被移除后
+        仍能相互通信的程度。
+
+        范围 [0, 1]。高值 = 鲁棒的局部结构（即使 v 消失，
+        邻居们仍高度互联）。与 clustering_coefficient 互补：
+        后者基于三角形计数，前者基于距离效率。
+
+        References:
+            Latora & Marchiori (2001) — "Efficient Behavior of
+            Small-World Networks"
+
+        Args:
+            node_id: 目标节点 ID
+
+        Returns:
+            float: 局部效率值；节点不存在或邻居不足 2 个返回 None。
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return None
+        # Get direct neighbors (undirected)
+        rows = self.conn.execute(
+            "SELECT target AS nb FROM edges WHERE source=? "
+            "UNION "
+            "SELECT source AS nb FROM edges WHERE target=?",
+            (node_id, node_id)
+        ).fetchall()
+        neighbors = [str(r["nb"]) for r in rows]
+        if len(neighbors) < 2:
+            return None
+        # Standard definition: efficiency among neighbors using paths
+        # that do NOT pass through node_id (induced neighborhood subgraph).
+        # We temporarily remove node_id, compute BFS distances among
+        # neighbors, then restore.
+        n_nb = len(neighbors)
+        total = 0.0
+        # Get edges to temporarily remove
+        removed_edges = self.conn.execute(
+            "SELECT rowid, source, target, relation, weight FROM edges "
+            "WHERE source=? OR target=?",
+            (node_id, node_id)
+        ).fetchall()
+        self.conn.execute("DELETE FROM edges WHERE source=? OR target=?",
+                          (node_id, node_id))
+        try:
+            for nb in neighbors:
+                dists = self._bfs_distances(nb)
+                for other in neighbors:
+                    if other == nb:
+                        continue
+                    d = dists.get(other)
+                    if d and d > 0:
+                        total += 1.0 / d
+        finally:
+            for e in removed_edges:
+                self.conn.execute(
+                    "INSERT INTO edges (source, target, relation, weight) VALUES (?,?,?,?)",
+                    (e["source"], e["target"], e["relation"], e["weight"]))
+        return total / (n_nb * (n_nb - 1))
+
+    def wiener_index(self) -> Optional[int]:
+        """Wiener 指数 — 所有节点对最短路径长度之和。
+
+        W = Σ_{u<v} d(u,v)
+
+        经典图论不变量 (Wiener 1947)，是 average_path_length 的
+        未归一化版本。值越大图越 "分散"。对不可达的节点对，
+        按惯例不计入（与 global_efficiency 的处理方式不同）。
+
+        References:
+            Wiener, H. (1947) "Structural Determination of
+            Paraffin Boiling Points"
+
+        Returns:
+            int: Wiener 指数值；空图或单节点返回 None。
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        total = 0
+        for i, nid in enumerate(node_ids):
+            dists = self._bfs_distances(nid)
+            for other in node_ids[i + 1:]:
+                d = dists.get(other)
+                if d and d > 0:
+                    total += d
+        return total
+
+    def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
+        """洋葱结构 — k-core 分层剖面。
+
+        逐步移除度数 < k 的节点，记录每一层的节点集合和统计信息。
+        比 core_number() 更直观地展示图的 "深度结构"。
+
+        每层返回：
+        - k: 核心度阈值
+        - nodes: 属于该层但在 k+1 层被移除的节点 ID
+        - count: 节点数量
+        - edges: 这些节点之间（在原图中）的边数
+
+        Args:
+            n_layers: 最大层数（默认 3）
+
+        Returns:
+            list[dict]: 各层剖面；空图返回 None。
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return None
+        all_ids = {str(r["id"]) for r in rows}
+        result = []
+        prev_core = set(all_ids)
+        for k in range(1, n_layers + 1):
+            if not prev_core:
+                break
+            # Iteratively remove nodes with degree < k among prev_core
+            changed = True
+            current = set(prev_core)
+            while changed:
+                changed = False
+                to_remove = set()
+                ids_list = list(current)
+                for nid in current:
+                    cnt = self.conn.execute(
+                        "SELECT COUNT(*) FROM edges WHERE source=? AND target IN ({}) "
+                        "UNION ALL "
+                        "SELECT COUNT(*) FROM edges WHERE target=? AND source IN ({})".format(
+                            ",".join("?" * len(ids_list)), ",".join("?" * len(ids_list))
+                        ),
+                        (nid, *ids_list, nid, *ids_list)
+                    ).fetchall()
+                    deg = sum(r[0] for r in cnt)
+                    if deg < k:
+                        to_remove.add(nid)
+                if to_remove:
+                    current -= to_remove
+                    changed = True
+            # Nodes peeled at this level = in prev_core but not in current
+            peeled = prev_core - current
+            if k == n_layers:
+                # Last layer: all remaining nodes (including those surviving k)
+                peeled = prev_core
+            prev_core = current
+            # Count edges among peeled nodes
+            if peeled:
+                p_list = list(peeled)
+                placeholders = ",".join("?" * len(p_list))
+                edge_count = self.conn.execute(
+                    "SELECT COUNT(*) FROM edges WHERE source IN ({}) AND target IN ({})".format(
+                        placeholders, placeholders
+                    ),
+                    (*p_list, *p_list)
+                ).fetchone()[0]
+            else:
+                edge_count = 0
+            result.append({
+                "k": k,
+                "nodes": sorted(peeled),
+                "count": len(peeled),
+                "edges": edge_count
+            })
+            if not current:
+                break
+        return result
+
     # ── 向量搜索 (sqlite-vec 可选集成) ────────────────────
 
     def _ensure_vec_table(self, dims: int):
