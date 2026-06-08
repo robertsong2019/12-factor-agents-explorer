@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-766-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-793-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -607,6 +607,14 @@ k-core 分解（度数 ≥ k 的节点集合）。
 
 模块度 Q：衡量社区划分质量。`communities = {node_id: community_id}`。
 
+#### `community_partition(method="leiden", **kwargs) -> dict[str, int]`
+
+统一社区划分 API。`method` 可选 `"leiden"` 或 `"greedy"`，返回 `{node_id: community_id}`。
+
+#### `community_quality_report(community_id=None) -> dict`
+
+社区质量报告：划分质量指标、各社区统计（节点数/密度/标签）、推荐关注社区。
+
 #### `articulation_points() -> list[str]`
 
 关节点（Tarjan 算法）——移除后会增加连通分量的节点。
@@ -921,7 +929,7 @@ dot = mg.serialize_dot()
 python3 -m pytest test_memory_graph.py -q
 ```
 
-766 个测试覆盖所有 API。
+793 个测试覆盖所有 API。
 
 ## 设计思路
 
