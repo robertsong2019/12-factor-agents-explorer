@@ -470,6 +470,67 @@ export class Tracer {
     );
   }
 
+  /** Get the full ancestor chain from root to the given span (inclusive). */
+  getSpanLineage(spanId: string): Span[] {
+    const chain: Span[] = [];
+    let current = this.spans.find(s => s.spanId === spanId);
+    while (current) {
+      chain.unshift(current);
+      current = current.parentSpanId
+        ? this.spans.find(s => s.spanId === current!.parentSpanId)
+        : undefined;
+    }
+    return chain;
+  }
+
+  /** Walk upstream causal chain to find the root cause error (closest to source). */
+  findRootCause(spanId: string): Span | undefined {
+    const upstream = this.getCausalChain(spanId, 'upstream');
+    const errors = upstream.filter(s => s.status === 'error');
+    if (errors.length === 0) {
+      const span = this.getSpanById(spanId);
+      return span?.status === 'error' ? span : undefined;
+    }
+    // Return the last error in upstream order (= deepest/furthest from span = root cause)
+    return errors[errors.length - 1];
+  }
+
+  /** Aggregate stats of children of a span. */
+  getChildSummary(spanId: string): { count: number; errors: number; totalDurationMs: number; avgDurationMs: number } {
+    const children = this.getChildren(spanId);
+    const completed = children.filter(s => s.endTime !== null);
+    const totalDur = completed.reduce((sum, s) => sum + (s.endTime! - s.startTime), 0);
+    return {
+      count: children.length,
+      errors: children.filter(s => s.status === 'error').length,
+      totalDurationMs: totalDur,
+      avgDurationMs: completed.length > 0 ? totalDur / completed.length : 0,
+    };
+  }
+
+  /** Find the critical path: longest-duration path from root to any leaf. */
+  getCriticalPath(): Span[] {
+    if (this.spans.length === 0) return [];
+    const trees = this.getSpanTree();
+    let longestPath: Span[] = [];
+    let longestDur = 0;
+    const walk = (node: SpanTreeNode, path: Span[]): void => {
+      const currentPath = [...path, node];
+      const dur = node.endTime !== null ? node.endTime - node.startTime : 0;
+      if (node.children.length === 0) {
+        const pathDur = currentPath.reduce((sum, s) => sum + (s.endTime !== null ? s.endTime - s.startTime : 0), 0);
+        if (pathDur > longestDur) {
+          longestDur = pathDur;
+          longestPath = currentPath;
+        }
+      } else {
+        for (const child of node.children) walk(child, currentPath);
+      }
+    };
+    for (const root of trees) walk(root, []);
+    return longestPath;
+  }
+
   /** Return spans sorted by startTime as a timeline */
   getOperationTimeline(): Array<{ spanId: string; operation: string; startMs: number; durationMs: number | null; status: SpanStatus }> {
     return [...this.spans]

@@ -597,4 +597,127 @@ describe('Tracer', () => {
     assert.equal(map.get(root.spanId), 0);
     assert.equal(map.get(child.spanId), 1);
   });
+
+  // --- Cycle: lineage, rootCause, childSummary, criticalPath ---
+
+  it('getSpanLineage returns ancestor chain from root to span', () => {
+    const tracer = new Tracer();
+    const root = tracer.startSpan('agent.run');
+    const mid = tracer.startSpan('llm.call');
+    const leaf = tracer.startSpan('tool.execute');
+    tracer.endSpan(leaf.spanId);
+    tracer.endSpan(mid.spanId);
+    tracer.endSpan(root.spanId);
+    const lineage = tracer.getSpanLineage(leaf.spanId);
+    assert.equal(lineage.length, 3);
+    assert.equal(lineage[0].spanId, root.spanId);
+    assert.equal(lineage[1].spanId, mid.spanId);
+    assert.equal(lineage[2].spanId, leaf.spanId);
+  });
+
+  it('getSpanLineage returns single element for root', () => {
+    const tracer = new Tracer();
+    const root = tracer.startSpan('agent.run');
+    tracer.endSpan(root.spanId);
+    const lineage = tracer.getSpanLineage(root.spanId);
+    assert.equal(lineage.length, 1);
+    assert.equal(lineage[0].spanId, root.spanId);
+  });
+
+  it('getSpanLineage returns empty for non-existent span', () => {
+    const tracer = new Tracer();
+    assert.deepEqual(tracer.getSpanLineage('nope'), []);
+  });
+
+  it('findRootCause returns earliest error in upstream chain', () => {
+    const tracer = new Tracer();
+    const a = tracer.startSpan('agent.run');
+    const b = tracer.startSpan('llm.call');
+    const c = tracer.startSpan('tool.execute');
+    tracer.endSpan(c.spanId, 'error');
+    tracer.endSpan(b.spanId, 'error');
+    tracer.endSpan(a.spanId, 'ok');
+    tracer.linkSpans(a.spanId, b.spanId, 'causal');
+    tracer.linkSpans(b.spanId, c.spanId, 'causal');
+    const rc = tracer.findRootCause(c.spanId);
+    assert.ok(rc);
+    // b is the deepest error in upstream chain (a is ok)
+    assert.equal(rc!.spanId, b.spanId);
+  });
+
+  it('findRootCause returns span itself if it is the error', () => {
+    const tracer = new Tracer();
+    const span = tracer.startSpan('agent.run');
+    tracer.endSpan(span.spanId, 'error');
+    const rc = tracer.findRootCause(span.spanId);
+    assert.ok(rc);
+    assert.equal(rc!.spanId, span.spanId);
+  });
+
+  it('findRootCause returns undefined if no errors', () => {
+    const tracer = new Tracer();
+    const a = tracer.startSpan('agent.run');
+    const b = tracer.startSpan('llm.call');
+    tracer.endSpan(b.spanId, 'ok');
+    tracer.endSpan(a.spanId, 'ok');
+    tracer.linkSpans(a.spanId, b.spanId, 'causal');
+    assert.equal(tracer.findRootCause(b.spanId), undefined);
+  });
+
+  it('getChildSummary aggregates children stats', () => {
+    const tracer = new Tracer();
+    const parent = tracer.startSpan('agent.run');
+    const c1 = tracer.startSpan('tool.execute');
+    tracer.endSpan(c1.spanId, 'ok');
+    const c2 = tracer.startSpan('tool.execute');
+    tracer.endSpan(c2.spanId, 'error');
+    tracer.endSpan(parent.spanId, 'ok');
+    const summary = tracer.getChildSummary(parent.spanId);
+    assert.equal(summary.count, 2);
+    assert.equal(summary.errors, 1);
+    assert.ok(summary.totalDurationMs >= 0);
+    assert.ok(summary.avgDurationMs >= 0);
+  });
+
+  it('getChildSummary returns zeros for leaf span', () => {
+    const tracer = new Tracer();
+    const span = tracer.startSpan('agent.run');
+    tracer.endSpan(span.spanId);
+    const summary = tracer.getChildSummary(span.spanId);
+    assert.equal(summary.count, 0);
+    assert.equal(summary.errors, 0);
+    assert.equal(summary.totalDurationMs, 0);
+  });
+
+  it('getCriticalPath returns longest path through tree', () => {
+    const tracer = new Tracer();
+    const root = tracer.startSpan('agent.run');
+    // Short path
+    const short = tracer.startSpan('tool.execute');
+    tracer.endSpan(short.spanId, 'ok');
+    // Long path - make it last longer
+    tracer.endSpan(root.spanId, 'ok');
+    // Manually create a longer scenario
+    tracer.reset();
+    const r = tracer.startSpan('agent.run');
+    const fast = tracer.startSpan('memory.read');
+    tracer.endSpan(fast.spanId);
+    // simulate slow child by manipulating time
+    const slow = tracer.startSpan('llm.call');
+    // make slow span artificially long
+    const slowSpan = tracer.getSpanById(slow.spanId)!;
+    slowSpan.startTime = 0;
+    slowSpan.endTime = 1000;
+    tracer.endSpan(r.spanId);
+    const crit = tracer.getCriticalPath();
+    assert.ok(crit.length >= 2);
+    assert.equal(crit[0].spanId, r.spanId);
+    // slow span should be on the critical path
+    assert.ok(crit.some(s => s.spanId === slow.spanId));
+  });
+
+  it('getCriticalPath returns empty for empty tracer', () => {
+    const tracer = new Tracer();
+    assert.deepEqual(tracer.getCriticalPath(), []);
+  });
 });
