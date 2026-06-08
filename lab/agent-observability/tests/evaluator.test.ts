@@ -362,4 +362,55 @@ describe('TrendTracker', () => {
     t.reset();
     assert.equal(t.runCount, 0);
   });
+
+  // --- Cycle 3: addBuiltinCheck, hasCheck, getCheckCount, evaluateWithThreshold ---
+
+  it('addBuiltinCheck adds single check by name', () => {
+    const e = new Evaluator();
+    assert.ok(e.addBuiltinCheck('latency'));
+    assert.ok(e.hasCheck('latency'));
+    assert.equal(e.getCheckCount(), 1);
+  });
+
+  it('addBuiltinCheck returns false for unknown name', () => {
+    const e = new Evaluator();
+    assert.ok(!e.addBuiltinCheck('nonexistent'));
+    assert.equal(e.getCheckCount(), 0);
+  });
+
+  it('hasCheck returns false when not registered', () => {
+    const e = new Evaluator();
+    assert.ok(!e.hasCheck('latency'));
+  });
+
+  it('getCheckCount tracks additions and removals', () => {
+    const e = new Evaluator();
+    e.addCheck('a', () => []);
+    e.addCheck('b', () => []);
+    assert.equal(e.getCheckCount(), 2);
+    e.removeCheck('a');
+    assert.equal(e.getCheckCount(), 1);
+  });
+
+  it('evaluateWithThreshold returns pass when score >= threshold', () => {
+    const e = new Evaluator();
+    e.addCheck('quality', () => [{ dimension: 'quality', score: 0.8, reason: 'good' }]);
+    const result = e.evaluateWithThreshold([], 0.5);
+    assert.ok(result.pass);
+    assert.equal(result.score, 0.8);
+  });
+
+  it('evaluateWithThreshold returns fail when score < threshold', () => {
+    const e = new Evaluator();
+    e.addCheck('quality', () => [{ dimension: 'quality', score: 0.3, reason: 'poor' }]);
+    const result = e.evaluateWithThreshold([], 0.5);
+    assert.ok(!result.pass);
+    assert.equal(result.score, 0.3);
+  });
+
+  it('evaluateWithThreshold defaults to 0.5', () => {
+    const e = new Evaluator();
+    e.addCheck('quality', () => [{ dimension: 'quality', score: 0.6, reason: 'ok' }]);
+    assert.ok(e.evaluateWithThreshold([]).pass);
+  });
 });

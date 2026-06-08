@@ -145,6 +145,37 @@ export class Evaluator {
     this.addCheck('cost_efficiency', costEfficiencyCheck, 1.0);
   }
 
+  /** Add a single built-in check by name */
+  addBuiltinCheck(name: string): boolean {
+    const map: Record<string, EvalCheck> = {
+      policy_compliance: policyComplianceCheck,
+      latency: latencyCheck,
+      reliability: reliabilityCheck,
+      cost_efficiency: costEfficiencyCheck,
+    };
+    const fn = map[name];
+    if (!fn) return false;
+    this.addCheck(name, fn, 1.0);
+    return true;
+  }
+
+  /** Check if a check with given name exists */
+  hasCheck(name: string): boolean {
+    return this.checks.some(c => c.name === name);
+  }
+
+  /** Get number of registered checks */
+  getCheckCount(): number {
+    return this.checks.length;
+  }
+
+  /** Evaluate with a score threshold: returns pass/fail + results */
+  evaluateWithThreshold(spans: Span[], threshold = 0.5): { pass: boolean; score: number; results: EvalCheckResult[] } {
+    const results = this.evaluate(spans);
+    const score = this.aggregateScore(results);
+    return { pass: score >= threshold, score, results };
+  }
+
   /** Evaluate spans and return results + aggregate score + markdown report in one call */
   evaluateAndReport(spans: Span[], dimensions?: string[]): {
     results: EvalCheckResult[];
