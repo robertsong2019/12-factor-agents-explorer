@@ -320,6 +320,44 @@ export class Tracer {
     return durs[idx];
   }
 
+  /** Convenience: P50, P95, P99 duration */
+  getPercentiles(): { p50: number; p95: number; p99: number } {
+    return { p50: this.getPercentile(50), p95: this.getPercentile(95), p99: this.getPercentile(99) };
+  }
+
+  /** Error rate: error spans / total spans */
+  getErrorRate(): number {
+    if (this.spans.length === 0) return 0;
+    return this.spans.filter(s => s.status === 'error').length / this.spans.length;
+  }
+
+  /** Deterministic hash of the trace structure (operation sequence + status). */
+  getTraceHash(): string {
+    const parts = this.spans
+      .sort((a, b) => a.startTime - b.startTime)
+      .map(s => `${s.operation}:${s.status}`);
+    // Simple hash
+    let hash = 0;
+    const str = parts.join('|');
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charCodeAt(i);
+      hash = ((hash << 5) - hash + ch) | 0;
+    }
+    return hash.toString(16);
+  }
+
+  /** Find spans that overlap in time with the given span. */
+  getOverlappingSpans(spanId: string): Span[] {
+    const span = this.spans.find(s => s.spanId === spanId);
+    if (!span || span.endTime === null) return [];
+    return this.spans.filter(s =>
+      s.spanId !== spanId &&
+      s.endTime !== null &&
+      s.startTime < span.endTime! &&
+      s.endTime > span.startTime
+    );
+  }
+
   /** Count spans by status */
   spanCountByStatus(): Record<SpanStatus, number> {
     const counts: Record<SpanStatus, number> = { ok: 0, error: 0, unset: 0 };

@@ -720,4 +720,99 @@ describe('Tracer', () => {
     const tracer = new Tracer();
     assert.deepEqual(tracer.getCriticalPath(), []);
   });
+
+  // --- Cycle 2: percentiles, errorRate, traceHash, overlappingSpans ---
+
+  it('getPercentiles returns p50/p95/p99', () => {
+    const tracer = new Tracer();
+    for (let i = 0; i < 10; i++) {
+      const s = tracer.startSpan('tool.execute');
+      s.startTime = i * 100;
+      s.endTime = i * 100 + (i + 1) * 10; // durations: 10,20,...,100
+      tracer.endSpan(s.spanId);
+    }
+    const p = tracer.getPercentiles();
+    assert.ok(p.p50 > 0);
+    assert.ok(p.p95 > 0);
+    assert.ok(p.p99 > 0);
+    assert.ok(p.p95 >= p.p50);
+    assert.ok(p.p99 >= p.p95);
+  });
+
+  it('getPercentiles returns 0s for empty tracer', () => {
+    const tracer = new Tracer();
+    const p = tracer.getPercentiles();
+    assert.equal(p.p50, 0);
+    assert.equal(p.p95, 0);
+    assert.equal(p.p99, 0);
+  });
+
+  it('getErrorRate returns correct ratio', () => {
+    const tracer = new Tracer();
+    const s1 = tracer.startSpan('agent.run');
+    tracer.endSpan(s1.spanId, 'ok');
+    const s2 = tracer.startSpan('agent.run');
+    tracer.endSpan(s2.spanId, 'error');
+    const s3 = tracer.startSpan('agent.run');
+    tracer.endSpan(s3.spanId, 'ok');
+    assert.equal(tracer.getErrorRate(), 1 / 3);
+  });
+
+  it('getErrorRate returns 0 for empty tracer', () => {
+    const tracer = new Tracer();
+    assert.equal(tracer.getErrorRate(), 0);
+  });
+
+  it('getTraceHash is deterministic for same structure', () => {
+    const t1 = new Tracer();
+    t1.startSpan('agent.run');
+    t1.endSpan(t1.getActiveSpan()!.spanId, 'ok');
+    const t2 = new Tracer();
+    t2.startSpan('agent.run');
+    t2.endSpan(t2.getActiveSpan()!.spanId, 'ok');
+    assert.equal(t1.getTraceHash(), t2.getTraceHash());
+  });
+
+  it('getTraceHash differs for different structures', () => {
+    const t1 = new Tracer();
+    t1.startSpan('agent.run');
+    t1.endSpan(t1.getActiveSpan()!.spanId, 'ok');
+    const t2 = new Tracer();
+    t2.startSpan('llm.call');
+    t2.endSpan(t2.getActiveSpan()!.spanId, 'error');
+    assert.notEqual(t1.getTraceHash(), t2.getTraceHash());
+  });
+
+  it('getOverlappingSpans finds concurrent spans', () => {
+    const tracer = new Tracer();
+    const s1 = tracer.startSpan('agent.run');
+    s1.startTime = 0; s1.endTime = 100;
+    tracer.endSpan(s1.spanId);
+    const s2 = tracer.startSpan('llm.call');
+    s2.startTime = 50; s2.endTime = 150;
+    tracer.endSpan(s2.spanId);
+    const s3 = tracer.startSpan('tool.execute');
+    s3.startTime = 200; s3.endTime = 300;
+    tracer.endSpan(s3.spanId);
+    const overlaps = tracer.getOverlappingSpans(s1.spanId);
+    assert.equal(overlaps.length, 1);
+    assert.equal(overlaps[0].spanId, s2.spanId);
+  });
+
+  it('getOverlappingSpans returns empty for non-overlapping', () => {
+    const tracer = new Tracer();
+    const s1 = tracer.startSpan('agent.run');
+    s1.startTime = 0; s1.endTime = 50;
+    tracer.endSpan(s1.spanId);
+    const s2 = tracer.startSpan('llm.call');
+    s2.startTime = 100; s2.endTime = 200;
+    tracer.endSpan(s2.spanId);
+    assert.equal(tracer.getOverlappingSpans(s1.spanId).length, 0);
+  });
+
+  it('getOverlappingSpans returns empty for active span', () => {
+    const tracer = new Tracer();
+    const s = tracer.startSpan('agent.run');
+    assert.equal(tracer.getOverlappingSpans(s.spanId).length, 0);
+  });
 });
