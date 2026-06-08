@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-793-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-811-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -250,6 +250,10 @@ results = mg.recall("Python")
 #### `search_by_data(key, value=None) -> list[Node]`
 
 按 data 字段搜索。`value=None` 时匹配包含 key 的所有节点。
+
+#### `search_by_label(query, limit=10) -> list[Node]`
+
+仅在 label 字段搜索（FTS5 全文索引）。
 
 #### `search_by_tag(tag) -> list[Node]`
 
@@ -659,13 +663,91 @@ k-core 分解（度数 ≥ k 的节点集合）。
 
 全局效率（Latora-Marchiori）——所有节点对距离倒数之和的归一化值。衡量网络整体信息传递效率，断连图友好（断连对贡献 0 而非无穷）。
 
+#### `authority_score(iterations=100) -> dict[str, float]`
+
+HITS authority 得分——衡量节点作为权威信息源的强度。
+
+#### `average_path_length() -> Optional[float]`
+
+平均最短路径长度（所有可达节点对）。
+
+#### `closeness_centrality(node_id) -> float`
+
+接近中心性——到其他节点平均距离的倒数，衡量节点到全图的接近程度。
+
+#### `connected_components() -> list[list[str]]`
+
+`find_components()` 的别名——所有连通分量列表。
+
+#### `core_number() -> dict[str, int]`
+
+核心数——每个节点的最大 k-core 值 (Batagelj-Zaversnik 算法)。
+
+#### `count_triangles() -> int`
+
+全局三角形计数。
+
+#### `local_triangle_count(node_id) -> int`
+
+单节点参与的三角形计数（`triangles()` 的别名）。
+
+#### `detect_communities_leiden(resolution=1.0) -> dict[str, int]`
+
+Leiden 社区检测算法——比标签传播更稳定，返回 `{node_id: community_id}`。
+
+#### `dfs(start_id, max_depth=10) -> list[str]`
+
+深度优先搜索遍历序。
+
+#### `eccentricity(node_id) -> Optional[int]`
+
+偏心率——节点到其他所有可达节点的最大最短距离。
+
+#### `graph_diameter() -> Optional[int]`
+
+图直径——所有节点对最大最短距离。
+
+#### `graph_radius() -> Optional[int]`
+
+图半径——所有节点最小偏心率。
+
+#### `is_connected() -> bool`
+
+图是否连通（单一连通分量）。
+
+#### `node_distance(start_id, end_id) -> Optional[int]`
+
+两节点间最短距离（跳数）。
+
 #### `s_metric() -> Optional[float]`
 
 S-metric——所有边的度数乘积之和（Σ d(u)·d(v)）。衡量网络的 hub-spoke 结构强度，值越高越倾向于 hub 集中式拓扑。
 
+#### `local_efficiency(node_id) -> Optional[float]`
+
+局部效率——节点邻居子图（不含节点本身）的全局效率。衡量节点被移除后邻居间仍能通信的程度。范围 [0, 1]，高值 = 鲁棒的局部结构。与 clustering_coefficient 互补。
+
+References: Latora & Marchiori (2001).
+
+#### `wiener_index() -> Optional[int]`
+
+Wiener 指数——所有节点对最短路径长度之和（W = Σ d(u,v)）。经典图论不变量 (Wiener 1947)，average_path_length 的未归一化版本。不可达对不计入。
+
+#### `onion_structure(n_layers=3) -> Optional[list[dict]]`
+
+洋葱结构——k-core 分层剖面。逐步移除度数 < k 的节点，返回每层的节点集合和统计信息。比 core_number() 更直观展示图的 "深度结构"。每层返回 `{k, nodes, count, edges}`。
+
 ---
 
 ### 节点相似性与链路预测
+
+#### `edge_weight_stats() -> dict`
+
+边权重统计：最小值/最大值/均值/标准差/中位数。
+
+#### `weight_distribution(bins=10) -> list[int]`
+
+权重分布直方图——按区间统计节点数量。
 
 #### `jaccard_similarity(node_id1, node_id2) -> float`
 
@@ -702,6 +784,14 @@ Adamic/Adar 指数 — 共同邻居的 1/log(degree) 之和，用于链路预测
 #### `clear_tags(node_id) -> bool`
 
 清除节点所有标签。
+
+#### `tag_cloud() -> list[dict]`
+
+标签云数据——按使用频率排序，返回 `[{tag, count}]`。
+
+#### `tag_stats() -> dict`
+
+标签统计——总标签数、平均每节点标签数、最常用标签等。
 
 #### `all_tags() -> list[str]`
 
@@ -794,6 +884,10 @@ data = mg.export_json()
 
 导出为 Graphviz DOT 格式字符串。
 
+#### `to_adjacency_matrix(node_ids=None) -> list[list[int]]`
+
+邻接矩阵表示（0/1 矩阵）。`node_ids` 可选指定行/列顺序。
+
 #### `serialize_edgelist() -> str`
 
 导出为边列表格式（TSV: `source_id\ttarget_id\trelation\tweight`）。
@@ -830,6 +924,10 @@ dot = mg.serialize_dot()
 #### `patch(diff, source) -> dict`
 
 应用 `graph_diff()` 的结果同步图谱，返回应用统计。
+
+#### `union(other) -> dict`
+
+`merge_graph(other, strategy="union")` 的快捷方式。
 
 #### `merge_graph(other, strategy="union") -> dict`
 
@@ -929,7 +1027,7 @@ dot = mg.serialize_dot()
 python3 -m pytest test_memory_graph.py -q
 ```
 
-793 个测试覆盖所有 API。
+811 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -943,7 +1041,7 @@ python3 -m pytest test_memory_graph.py -q
 8. **向量搜索** — sqlite-vec 可选集成，三路 RRF 混合搜索 (文本+向量+图) 是 npm/PyPI 唯一三合一方案
 9. **BM25 + GraphRAG** — 全文索引 + 社区级检索，从关键词搜索到知识图谱问答的完整路径
 10. **LLM 适配** — to_markdown + context_window + prune_by_relevance 让图谱直接服务于 LLM 上下文
-11. **网络分析** — global_efficiency + s_metric + effective_eccentricity 量化记忆网络的全局拓扑特性
+11. **网络分析** — global_efficiency + s_metric + effective_eccentricity + local_efficiency + wiener_index + onion_structure 量化记忆网络的全局与局部拓扑特性
 
 ## 许可
 
