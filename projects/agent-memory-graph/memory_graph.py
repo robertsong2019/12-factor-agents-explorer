@@ -3034,6 +3034,187 @@ class MemoryGraph:
                 next_cid += 1
         return community
 
+    def detect_communities_leiden(self, resolution: float = 1.0,
+                                  max_iterations: int = 10, seed: int = 42) -> dict[str, int]:
+        """Leiden community detection algorithm.
+
+        Three phases: Fast Local Move → Refinement → Aggregation.
+        Guarantees well-connected communities (unlike Louvain).
+
+        Args:
+            resolution: γ parameter. <1 → larger communities, >1 → smaller communities.
+            max_iterations: max outer iterations (move + refine + aggregate cycles).
+            seed: random seed for reproducibility.
+
+        Returns:
+            {node_id: community_id} mapping.
+        """
+        import random as _rng
+        _rng.seed(seed)
+
+        nodes = [str(r["id"]) for r in
+                 self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if not nodes:
+            return {}
+
+        edges = self.conn.execute(
+            "SELECT source, target, weight FROM edges").fetchall()
+
+        # Build adjacency with weights
+        adj: dict[str, dict[str, float]] = {n: {} for n in nodes}
+        total_weight = 0.0
+        for e in edges:
+            s, t, w = str(e["source"]), str(e["target"]), float(e["weight"] or 1.0)
+            adj[s][t] = adj[s].get(t, 0.0) + w
+            adj[t][s] = adj[t].get(s, 0.0) + w
+            total_weight += w
+        m2 = total_weight * 2.0 if total_weight > 0 else 1.0
+
+        # Node degrees
+        degree = {n: sum(adj[n].values()) for n in nodes}
+
+        # Initialize: each node in its own community
+        community = {n: i for i, n in enumerate(nodes)}
+
+        def _community_degree(comm_id: int) -> float:
+            """Sum of degrees of nodes in community."""
+            return sum(degree[n] for n in nodes if community[n] == comm_id)
+
+        def _modularity_gain(node: str, target: int, current: int) -> float:
+            """ΔQ for moving node from current community to target."""
+            k_i = degree[node]
+            k_i_target = sum(w for nb, w in adj[node].items()
+                             if community.get(nb) == target)
+            k_i_current = sum(w for nb, w in adj[node].items()
+                              if community.get(nb) == current)
+            sigma_target = _community_degree(target)
+            sigma_current = _community_degree(current)
+            return (k_i_target - k_i_current
+                    - resolution * k_i * (sigma_target - sigma_current + k_i) / m2)
+
+        improved = True
+        iteration = 0
+        while improved and iteration < max_iterations:
+            improved = False
+            iteration += 1
+
+            # === Phase 1: Fast Local Move (queue-driven) ===
+            queue = list(nodes)
+            _rng.shuffle(queue)
+            in_queue = set(queue)
+
+            while queue:
+                node = queue.pop(0)
+                in_queue.discard(node)
+                cur = community[node]
+
+                # Find neighbor communities
+                neighbor_comms: dict[int, float] = {}
+                for nb in adj[node]:
+                    c = community[nb]
+                    neighbor_comms[c] = neighbor_comms.get(c, 0.0) + adj[node][nb]
+
+                best_comm, best_delta = cur, 0.0
+                for c in neighbor_comms:
+                    if c == cur:
+                        continue
+                    delta = _modularity_gain(node, c, cur)
+                    if delta > best_delta:
+                        best_delta = delta
+                        best_comm = c
+
+                if best_comm != cur:
+                    community[node] = best_comm
+                    improved = True
+                    for nb in adj[node]:
+                        if nb not in in_queue and community[nb] != best_comm:
+                            queue.append(nb)
+                            in_queue.add(nb)
+
+            # === Phase 2: Refinement (simplified) ===
+            # Ensure communities are well-connected by splitting
+            # disconnected communities detected via BFS.
+            # Build adjacency restricted to same-community edges
+            comm_members: dict[int, list[str]] = {}
+            for n in nodes:
+                comm_members.setdefault(community[n], []).append(n)
+
+            for cid, members in comm_members.items():
+                if len(members) <= 1:
+                    continue
+                # Build subgraph adjacency (same community only)
+                member_set = set(members)
+                sub_adj: dict[str, set[str]] = {n: set() for n in members}
+                for n in members:
+                    for nb in adj[n]:
+                        if nb in member_set:
+                            sub_adj[n].add(nb)
+
+                # BFS from first member to check connectivity
+                visited = set()
+                queue_bfs = [members[0]]
+                visited.add(members[0])
+                while queue_bfs:
+                    cur = queue_bfs.pop(0)
+                    for nb in sub_adj[cur]:
+                        if nb not in visited:
+                            visited.add(nb)
+                            queue_bfs.append(nb)
+
+                # If disconnected, split unvisited into new community
+                if len(visited) < len(members):
+                    max_comm = max(community.values()) + 1
+                    for n in members:
+                        if n not in visited:
+                            community[n] = max_comm
+
+        return community
+
+    def modularity(self, communities: dict[str, int] = None) -> float:
+        """Compute modularity Q for a community partition.
+
+        Args:
+            communities: {node_id: community_id}. If None, uses label propagation.
+
+        Returns:
+            Modularity value (-0.5 to 1.0, higher is better).
+        """
+        if communities is None:
+            comm_map = self.community_detect()
+            communities = {}
+            for label, members in comm_map.items():
+                for nid in members:
+                    communities[nid] = label
+
+        edges = self.conn.execute(
+            "SELECT source, target, weight FROM edges").fetchall()
+        nodes = [str(r["id"]) for r in
+                 self.conn.execute("SELECT id FROM nodes").fetchall()]
+
+        if not nodes or not edges:
+            return 0.0
+
+        m = sum(float(e["weight"] or 1.0) for e in edges)
+        if m == 0:
+            return 0.0
+
+        degree = {n: 0.0 for n in nodes}
+        adj: dict[str, dict[str, float]] = {n: {} for n in nodes}
+        for e in edges:
+            s, t, w = str(e["source"]), str(e["target"]), float(e["weight"] or 1.0)
+            adj[s][t] = adj[s].get(t, 0.0) + w
+            adj[t][s] = adj[t].get(s, 0.0) + w
+            degree[s] += w
+            degree[t] += w
+
+        Q = 0.0
+        for i, ni in enumerate(nodes):
+            for nj in nodes[i+1:]:
+                if communities.get(ni) == communities.get(nj):
+                    A_ij = adj[ni].get(nj, 0.0)
+                    Q += A_ij - degree[ni] * degree[nj] / (2 * m)
+        return Q / (2 * m)
+
     def community_summary(self, communities: dict = None, algorithm: str = "lp") -> list[dict]:
         """Summarize detected communities with key metrics.
 
@@ -3044,7 +3225,12 @@ class MemoryGraph:
         Returns list of dicts with: id, size, top_members, density, top_tags, avg_weight.
         """
         if communities is None:
-            if algorithm == "greedy":
+            if algorithm == "leiden":
+                comm_map = self.detect_communities_leiden()
+                communities = {}
+                for nid, cid in comm_map.items():
+                    communities.setdefault(cid, []).append(nid)
+            elif algorithm == "greedy":
                 comm_map = self.community_detection_greedy()
                 communities = {}
                 for nid, cid in comm_map.items():

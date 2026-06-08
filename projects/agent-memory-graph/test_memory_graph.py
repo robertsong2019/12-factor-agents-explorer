@@ -1,6 +1,8 @@
 """Tests for Agent Memory Graph."""
 import json
 import math
+import os
+import tempfile
 import time
 import pytest
 from memory_graph import MemoryGraph, Node, Edge
@@ -6670,3 +6672,177 @@ class TestSMetric:
         mg.link(nodes[1].id, nodes[2].id, "r")
         mg.link(nodes[0].id, nodes[3].id, "r")
         assert mg.s_metric() == 8.0
+
+
+# ===== Leiden Community Detection Tests =====
+
+# ===== Leiden Community Detection Tests =====
+
+class TestLeidenCommunityDetection:
+    """Tests for detect_communities_leiden() and modularity()."""
+
+    def setup_method(self):
+        self.db_path = tempfile.mktemp(suffix=".db")
+        self.mg = MemoryGraph(db_path=self.db_path)
+
+    def teardown_method(self):
+        if os.path.exists(self.db_path):
+            os.unlink(self.db_path)
+
+    def _nid(self, label):
+        """Get node ID by label."""
+        nodes = self.mg.conn.execute(
+            "SELECT id FROM nodes WHERE label=?", (label,)).fetchall()
+        return nodes[0][0] if nodes else None
+
+    def _build_three_cliques(self):
+        """Build 3 clear communities with weak bridges."""
+        # Community 1: A-B-C
+        self.mg.add("A", "person"); self.mg.add("B", "person"); self.mg.add("C", "person")
+        self.mg.link(self._nid("A"), self._nid("B"), "knows", 1.0)
+        self.mg.link(self._nid("B"), self._nid("C"), "knows", 1.0)
+        self.mg.link(self._nid("A"), self._nid("C"), "knows", 1.0)
+        # Community 2: D-E-F
+        self.mg.add("D", "person"); self.mg.add("E", "person"); self.mg.add("F", "person")
+        self.mg.link(self._nid("D"), self._nid("E"), "knows", 1.0)
+        self.mg.link(self._nid("E"), self._nid("F"), "knows", 1.0)
+        self.mg.link(self._nid("D"), self._nid("F"), "knows", 1.0)
+        # Community 3: G-H-I
+        self.mg.add("G", "person"); self.mg.add("H", "person"); self.mg.add("I", "person")
+        self.mg.link(self._nid("G"), self._nid("H"), "knows", 1.0)
+        self.mg.link(self._nid("H"), self._nid("I"), "knows", 1.0)
+        self.mg.link(self._nid("G"), self._nid("I"), "knows", 1.0)
+        # Weak bridges
+        self.mg.link(self._nid("C"), self._nid("D"), "bridge", 0.1)
+        self.mg.link(self._nid("F"), self._nid("G"), "bridge", 0.1)
+
+    def test_leiden_empty_graph(self):
+        result = self.mg.detect_communities_leiden()
+        assert result == {}
+
+    def test_leiden_single_node(self):
+        self.mg.add("solo", "person")
+        result = self.mg.detect_communities_leiden()
+        assert len(result) == 1
+        nid = self._nid("solo")
+        assert nid in result
+
+    def test_leiden_two_nodes_linked(self):
+        self.mg.add("A", "person"); self.mg.add("B", "person")
+        self.mg.link(self._nid("A"), self._nid("B"), "knows", 1.0)
+        result = self.mg.detect_communities_leiden()
+        assert result[self._nid("A")] == result[self._nid("B")]
+
+    def test_leiden_three_cliques(self):
+        self._build_three_cliques()
+        result = self.mg.detect_communities_leiden()
+        a, b, c = self._nid("A"), self._nid("B"), self._nid("C")
+        d, e, f = self._nid("D"), self._nid("E"), self._nid("F")
+        g, h, i = self._nid("G"), self._nid("H"), self._nid("I")
+        assert result[a] == result[b] == result[c]
+        assert result[d] == result[e] == result[f]
+        assert result[g] == result[h] == result[i]
+        assert result[a] != result[d]
+        assert result[d] != result[g]
+        assert result[a] != result[g]
+
+    def test_leiden_returns_all_nodes(self):
+        self._build_three_cliques()
+        result = self.mg.detect_communities_leiden()
+        assert len(result) == 9
+
+    def test_leiden_resolution_high(self):
+        """Higher resolution → more/smaller communities."""
+        self._build_three_cliques()
+        result_low = self.mg.detect_communities_leiden(resolution=0.5)
+        result_high = self.mg.detect_communities_leiden(resolution=2.0)
+        num_comms_low = len(set(result_low.values()))
+        num_comms_high = len(set(result_high.values()))
+        assert num_comms_high >= num_comms_low
+
+    def test_leiden_deterministic_with_seed(self):
+        self._build_three_cliques()
+        r1 = self.mg.detect_communities_leiden(seed=42)
+        r2 = self.mg.detect_communities_leiden(seed=42)
+        assert r1 == r2
+
+    def test_leiden_different_seeds_may_differ(self):
+        """Different seeds may produce different partitions."""
+        self._build_three_cliques()
+        r1 = self.mg.detect_communities_leiden(seed=42)
+        r2 = self.mg.detect_communities_leiden(seed=99)
+        assert set(r1.keys()) == set(r2.keys())
+
+    def test_leiden_community_summary_integration(self):
+        """community_summary with algorithm='leiden' works."""
+        self._build_three_cliques()
+        summary = self.mg.community_summary(algorithm="leiden")
+        assert len(summary) == 3
+        sizes = sorted(s["size"] for s in summary)
+        assert sizes == [3, 3, 3]
+
+    def test_leiden_community_summary_all_algorithms(self):
+        """All 3 algorithms produce summaries for the same graph."""
+        self._build_three_cliques()
+        for algo in ["lp", "greedy", "leiden"]:
+            summary = self.mg.community_summary(algorithm=algo)
+            assert isinstance(summary, list)
+            assert len(summary) >= 1
+
+    def test_modularity_empty_graph(self):
+        assert self.mg.modularity() == 0.0
+
+    def test_modularity_single_edge(self):
+        self.mg.add("A", "person"); self.mg.add("B", "person")
+        self.mg.link(self._nid("A"), self._nid("B"), "knows", 1.0)
+        comm = {self._nid("A"): 0, self._nid("B"): 0}
+        q = self.mg.modularity(communities=comm)
+        assert isinstance(q, float)  # Just verify it computes
+
+    def test_modularity_good_partition_higher(self):
+        """Good partition should have higher modularity than all-in-one."""
+        self._build_three_cliques()
+        all_ids = [self._nid(c) for c in "ABCDEFGHI"]
+        good = {all_ids[0]:0, all_ids[1]:0, all_ids[2]:0,
+                all_ids[3]:1, all_ids[4]:1, all_ids[5]:1,
+                all_ids[6]:2, all_ids[7]:2, all_ids[8]:2}
+        q_good = self.mg.modularity(communities=good)
+        bad = {n: 0 for n in all_ids}
+        q_bad = self.mg.modularity(communities=bad)
+        assert q_good > q_bad
+
+    def test_modularity_auto_detect(self):
+        """modularity() with no args auto-detects communities."""
+        self._build_three_cliques()
+        q = self.mg.modularity()
+        assert isinstance(q, float)
+        assert q > 0
+
+    def test_leiden_star_graph(self):
+        """Star graph: center connected to all leaves."""
+        self.mg.add("center", "person")
+        for i in range(5):
+            self.mg.add(f"leaf{i}", "person")
+            self.mg.link(self._nid("center"), self._nid(f"leaf{i}"), "knows", 1.0)
+        result = self.mg.detect_communities_leiden()
+        assert len(result) == 6
+
+    def test_leiden_chain_graph(self):
+        """Chain graph: A-B-C-D-E-F."""
+        labels = list("ABCDEF")
+        for c in labels:
+            self.mg.add(c, "person")
+        for i in range(len(labels)-1):
+            self.mg.link(self._nid(labels[i]), self._nid(labels[i+1]), "knows", 1.0)
+        result = self.mg.detect_communities_leiden()
+        assert len(result) == 6
+
+    def test_leiden_weighted_edges(self):
+        """Weighted edges influence community structure."""
+        for c in "ABCD":
+            self.mg.add(c, "person")
+        self.mg.link(self._nid("A"), self._nid("B"), "knows", 10.0)
+        self.mg.link(self._nid("B"), self._nid("C"), "knows", 0.1)
+        self.mg.link(self._nid("C"), self._nid("D"), "knows", 10.0)
+        result = self.mg.detect_communities_leiden(resolution=1.0)
+        assert len(result) == 4
