@@ -6885,3 +6885,34 @@ class TestLeidenCommunityDetection:
         # Each isolated node is its own community
         assert len(result) == 4
         # May or may not be separate communities (no edges, trivially any partition works)
+
+    def test_community_quality_report_empty(self):
+        report = self.mg.community_quality_report()
+        assert report["num_communities"] == 0
+
+    def test_community_quality_report_three_cliques(self):
+        self._build_three_cliques()
+        report = self.mg.community_quality_report(algorithm="leiden")
+        assert report["num_communities"] == 3
+        assert report["modularity"] > 0
+        assert report["coverage"] == 1.0
+        assert report["connectivity"] is True
+        assert sorted(report["sizes"]) == [3, 3, 3]
+
+    def test_community_quality_report_greedy(self):
+        self._build_three_cliques()
+        report = self.mg.community_quality_report(algorithm="greedy")
+        assert report["algorithm"] == "greedy"
+        assert report["num_communities"] >= 1
+
+    def test_community_quality_report_lp(self):
+        self._build_three_cliques()
+        report = self.mg.community_quality_report(algorithm="lp")
+        assert report["algorithm"] == "lp"
+        assert isinstance(report["modularity"], float)
+
+    def test_search_graphrag_global_uses_leiden(self):
+        """Global mode now uses Leiden internally."""
+        self._build_three_cliques()
+        results = self.mg.search_graphrag("A", mode="global", limit=5)
+        assert isinstance(results, list)

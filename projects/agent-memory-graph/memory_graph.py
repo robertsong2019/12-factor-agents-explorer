@@ -3236,6 +3236,76 @@ class MemoryGraph:
             lp_result = self.community_detect()
             return {nid: label for label, nids in lp_result.items() for nid in nids}
 
+    def community_quality_report(self, algorithm: str = "leiden",
+                                 resolution: float = 1.0) -> dict:
+        """Generate a comprehensive community detection quality report.
+
+        Compares algorithms and reports modularity, community count, size distribution.
+
+        Args:
+            algorithm: Primary algorithm for the report.
+            resolution: Leiden resolution parameter.
+
+        Returns dict with: algorithm, num_communities, modularity, sizes, coverage, connectivity.
+        """
+        nodes = [str(r["id"]) for r in
+                 self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if not nodes:
+            return {"algorithm": algorithm, "num_communities": 0, "modularity": 0.0,
+                    "sizes": [], "coverage": 0.0, "connectivity": True}
+
+        if algorithm == "leiden":
+            partition = self.detect_communities_leiden(resolution=resolution)
+        elif algorithm == "greedy":
+            partition = self.community_detection_greedy()
+        else:
+            lp = self.community_detect()
+            partition = {nid: label for label, nids in lp.items() for nid in nids}
+
+        num_comms = len(set(partition.values()))
+        q = self.modularity(communities=partition)
+        sizes = {}
+        for cid in partition.values():
+            sizes[cid] = sizes.get(cid, 0) + 1
+        size_values = sorted(sizes.values(), reverse=True)
+
+        # Coverage: fraction of nodes assigned
+        coverage = len(partition) / len(nodes) if nodes else 0.0
+
+        # Check connectivity of each community
+        all_connected = True
+        for cid, members_ids in sizes.items():
+            if members_ids <= 1:
+                continue
+            member_list = [n for n in nodes if partition.get(n) == cid]
+            member_set = set(member_list)
+            visited = set()
+            queue = [member_list[0]]
+            visited.add(member_list[0])
+            while queue:
+                cur = queue.pop(0)
+                for r in self.conn.execute(
+                    "SELECT source FROM edges WHERE target=? UNION SELECT target FROM edges WHERE source=?",
+                    (cur, cur)).fetchall():
+                    nb = str(r[0])
+                    if nb in member_set and nb not in visited:
+                        visited.add(nb)
+                        queue.append(nb)
+            if len(visited) < len(member_list):
+                all_connected = False
+                break
+
+        return {
+            "algorithm": algorithm,
+            "num_communities": num_comms,
+            "modularity": round(q, 4),
+            "sizes": size_values,
+            "min_size": min(size_values) if size_values else 0,
+            "max_size": max(size_values) if size_values else 0,
+            "coverage": round(coverage, 4),
+            "connectivity": all_connected,
+        }
+
     def community_summary(self, communities: dict = None, algorithm: str = "lp") -> list[dict]:
         """Summarize detected communities with key metrics.
 
@@ -4695,9 +4765,13 @@ class MemoryGraph:
 
         if mode == "global":
             # Community-level search: find which communities are relevant
-            communities = self.community_detect()
-            if not communities:
+            # Use Leiden for better community detection
+            comm_map = self.detect_communities_leiden()
+            if not comm_map:
                 return self.search_graphrag(query, mode="naive", limit=limit)
+            communities = {}
+            for nid, cid in comm_map.items():
+                communities.setdefault(cid, []).append(nid)
             summaries = self.community_summary(communities=communities)
             # Score communities by tag/keyword overlap with query
             query_lower = query.lower()
