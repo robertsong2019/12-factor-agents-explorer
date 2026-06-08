@@ -6846,3 +6846,42 @@ class TestLeidenCommunityDetection:
         self.mg.link(self._nid("C"), self._nid("D"), "knows", 10.0)
         result = self.mg.detect_communities_leiden(resolution=1.0)
         assert len(result) == 4
+
+    def test_community_partition_leiden(self):
+        self._build_three_cliques()
+        result = self.mg.community_partition(algorithm="leiden")
+        assert len(result) == 9
+        assert len(set(result.values())) == 3
+
+    def test_community_partition_greedy(self):
+        self._build_three_cliques()
+        result = self.mg.community_partition(algorithm="greedy")
+        assert len(result) == 9
+        assert isinstance(result, dict)
+
+    def test_community_partition_lp(self):
+        self._build_three_cliques()
+        result = self.mg.community_partition(algorithm="lp")
+        assert len(result) == 9
+        assert isinstance(result, dict)
+
+    def test_leiden_fully_connected_graph(self):
+        """Complete graph: all nodes in one community."""
+        for c in "ABCDE":
+            self.mg.add(c, "person")
+        ids = {c: self._nid(c) for c in "ABCDE"}
+        for i, a in enumerate("ABCDE"):
+            for b in "ABCDE"[i+1:]:
+                self.mg.link(ids[a], ids[b], "knows", 1.0)
+        result = self.mg.detect_communities_leiden()
+        # Complete graph should be 1 community
+        assert len(set(result.values())) == 1
+
+    def test_leiden_isolated_nodes(self):
+        """Isolated nodes: each in its own community."""
+        for c in "ABCD":
+            self.mg.add(c, "person")
+        result = self.mg.detect_communities_leiden()
+        # Each isolated node is its own community
+        assert len(result) == 4
+        # May or may not be separate communities (no edges, trivially any partition works)

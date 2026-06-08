@@ -2372,7 +2372,7 @@ class MemoryGraph:
                             triangles += 1
         return triangles / triplets if triplets > 0 else 0.0
 
-    def modularity(self, communities: dict[str, int]) -> float:
+    def _modularity_simple(self, communities: dict[str, int]) -> float:
         """模块度 Q: 衡量社区划分质量。communities = {node_id: community_id}。"""
         rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
         if not rows:
@@ -3214,6 +3214,27 @@ class MemoryGraph:
                     A_ij = adj[ni].get(nj, 0.0)
                     Q += A_ij - degree[ni] * degree[nj] / (2 * m)
         return Q / (2 * m)
+
+    def community_partition(self, algorithm: str = "leiden", resolution: float = 1.0,
+                             seed: int = 42) -> dict[str, int]:
+        """Detect communities and return {node_id: community_id} mapping.
+
+        Args:
+            algorithm: "leiden", "greedy", or "lp" (label propagation).
+            resolution: Leiden resolution parameter (only for leiden).
+            seed: Random seed (only for leiden).
+
+        Returns:
+            {node_id: community_id} dict.
+        """
+        if algorithm == "leiden":
+            return self.detect_communities_leiden(resolution=resolution, seed=seed)
+        elif algorithm == "greedy":
+            return self.community_detection_greedy()
+        else:
+            # Label propagation returns {label: [nodes]}, invert to {node: label}
+            lp_result = self.community_detect()
+            return {nid: label for label, nids in lp_result.items() for nid in nids}
 
     def community_summary(self, communities: dict = None, algorithm: str = "lp") -> list[dict]:
         """Summarize detected communities with key metrics.
