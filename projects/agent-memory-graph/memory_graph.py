@@ -5079,6 +5079,156 @@ class MemoryGraph:
 
         return abs(eigenvalue)
 
+    # ── 谱分析（代数连通度 + Fiedler 向量）────────────────
+
+    def algebraic_connectivity(self) -> float | None:
+        """计算图的代数连通度（Fiedler value）——拉普拉斯矩阵的第二小特征值。
+
+        代数连通度衡量图的整体连通强度:
+        - 0 = 图不连通
+        - 大值 = 强连通（移除少量边不会断开图）
+        - 小正数 = 脆弱连通
+
+        Returns:
+            代数连通度，或 None（空图/单节点）
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return None
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        degree = [0] * n
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                adj_sym[i].add(j)
+                adj_sym[j].add(i)
+                degree[i] += 1
+                degree[j] += 1
+
+        # 构建拉普拉斯矩阵 L = D - A
+        L = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            L[i][i] = float(degree[i])
+            for j in adj_sym[i]:
+                L[i][j] = -1.0
+
+        eigenvalues = self._sym_eigenvalues(L)
+        eigenvalues.sort()
+        # 代数连通度 = 第二小特征值
+        # 连通图: 第二小 > 0; 不连通图: 第二小 = 0
+        if len(eigenvalues) < 2:
+            return None
+        return max(0.0, eigenvalues[1])
+
+    def _sym_eigenvalues(self, M: list[list[float]], max_iter: int = 300) -> list[float]:
+        """雅可比旋转求实对称矩阵全部特征值。"""
+        n = len(M)
+        A = [row[:] for row in M]
+        for _ in range(max_iter):
+            p, q = 0, 1
+            max_val = abs(A[0][1])
+            for i in range(n):
+                for j in range(i + 1, n):
+                    if abs(A[i][j]) > max_val:
+                        max_val = abs(A[i][j])
+                        p, q = i, j
+            if max_val < 1e-12:
+                break
+            if abs(A[p][p] - A[q][q]) < 1e-15:
+                theta = math.pi / 4
+            else:
+                theta = 0.5 * math.atan2(2 * A[p][q], A[p][p] - A[q][q])
+            c, s = math.cos(theta), math.sin(theta)
+            for i in range(n):
+                if i == p or i == q:
+                    continue
+                aip, aiq = A[i][p], A[i][q]
+                A[i][p] = c * aip + s * aiq; A[p][i] = A[i][p]
+                A[i][q] = -s * aip + c * aiq; A[q][i] = A[i][q]
+            app, aqq, apq = A[p][p], A[q][q], A[p][q]
+            A[p][p] = c*c*app + 2*s*c*apq + s*s*aqq
+            A[q][q] = s*s*app - 2*s*c*apq + c*c*aqq
+            A[p][q] = 0.0; A[q][p] = 0.0
+        return [A[i][i] for i in range(n)]
+
+    def fiedler_vector(self) -> list[float] | None:
+        """计算 Fiedler 向量——对应代数连通度的特征向量。
+
+        Fiedler 向量可用于:
+        - 谱二分（正/负分两组）
+        - 节点排序（与连通性的关系）
+        - 图嵌入（1D 谱嵌入）
+
+        Returns:
+            与 node_ids 顺序对应的 Fiedler 向量，或 None
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return None
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        degree = [0] * n
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                adj_sym[i].add(j); adj_sym[j].add(i)
+                degree[i] += 1; degree[j] += 1
+
+        L = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            L[i][i] = float(degree[i])
+            for j in adj_sym[i]:
+                L[i][j] = -1.0
+
+        import random; random.seed(123)
+        v = [random.random() - 0.5 for _ in range(n)]
+        mean = sum(v) / n
+        v = [x - mean for x in v]
+        norm = math.sqrt(sum(x * x for x in v)) or 1e-15
+        v = [x / norm for x in v]
+
+        eps = 1e-6
+        for _ in range(500):
+            x = self._cg_solve(L, v, eps)
+            if x is None: break
+            mean_x = sum(x) / n
+            x = [xi - mean_x for xi in x]
+            norm_x = math.sqrt(sum(xi * xi for xi in x)) or 1e-15
+            x = [xi / norm_x for xi in x]
+            diff = sum((x[i] - v[i]) ** 2 for i in range(n))
+            v = x
+            if diff < 1e-14: break
+        return v
+
+    def _cg_solve(self, L: list[list[float]], b: list[float], eps: float) -> list[float] | None:
+        """共轭梯度法求解 (L + eps*I)x = b。"""
+        n = len(b)
+        def Mx(v: list[float]) -> list[float]:
+            return [sum(L[i][j] * v[j] for j in range(n)) + eps * v[i] for i in range(n)]
+        x = [0.0] * n
+        r = b[:]
+        p = r[:]
+        rs_old = sum(r[i] * r[i] for i in range(n))
+        if rs_old < 1e-30: return x
+        for _ in range(n * 3):
+            Mp = Mx(p)
+            pMp = sum(p[i] * Mp[i] for i in range(n))
+            if abs(pMp) < 1e-30: break
+            alpha = rs_old / pMp
+            x = [x[i] + alpha * p[i] for i in range(n)]
+            r = [r[i] - alpha * Mp[i] for i in range(n)]
+            rs_new = sum(r[i] * r[i] for i in range(n))
+            if rs_new < 1e-20: break
+            beta = rs_new / rs_old
+            p = [r[i] + beta * p[i] for i in range(n)]
+            rs_old = rs_new
+        return x
+
     # ── LLM 上下文导出 ────────────────────────────────────
 
     def to_markdown(self, node_ids: list[str] | None = None, max_nodes: int = 50,

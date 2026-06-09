@@ -7147,3 +7147,87 @@ class TestSpectralRadius:
         mg.add("B")
         assert mg.spectral_radius() < 0.001
 
+
+class TestAlgebraicConnectivity:
+    """代数连通度（Fiedler value）测试。"""
+
+    def test_complete_graph(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(4)]
+        for i in range(4):
+            for j in range(i+1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "edge")
+        result = mg.algebraic_connectivity()
+        assert result is not None
+        assert abs(result - 4.0) < 0.5
+
+    def test_path_graph(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i+1].id, "edge")
+        result = mg.algebraic_connectivity()
+        assert result is not None
+        expected = 2 * (1 - math.cos(math.pi / 4))
+        assert abs(result - expected) < 0.1
+        assert result > 0
+
+    def test_disconnected_zero(self, mg):
+        a, b = mg.add("a","n"), mg.add("b","n")
+        c, d = mg.add("c","n"), mg.add("d","n")
+        mg.link(a.id, b.id, "e"); mg.link(c.id, d.id, "e")
+        assert abs(mg.algebraic_connectivity()) < 0.01
+
+    def test_single_node_none(self, mg):
+        mg.add("a", "node")
+        assert mg.algebraic_connectivity() is None
+
+    def test_two_nodes(self, mg):
+        a, b = mg.add("a","n"), mg.add("b","n")
+        mg.link(a.id, b.id, "e")
+        assert abs(mg.algebraic_connectivity() - 2.0) < 0.5
+
+    def test_star_graph(self, mg):
+        center = mg.add("center", "node")
+        spokes = [mg.add(f"l{i}", "node") for i in range(3)]
+        for s in spokes:
+            mg.link(center.id, s.id, "edge")
+        result = mg.algebraic_connectivity()
+        assert result is not None
+        assert abs(result - 1.0) < 0.3
+
+
+class TestFiedlerVector:
+    """Fiedler 向量测试。"""
+
+    def test_path_orthogonal(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i+1].id, "edge")
+        fv = mg.fiedler_vector()
+        assert fv is not None
+        assert len(fv) == 4
+        assert abs(sum(fv)) < 0.01
+
+    def test_normalization(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "edge")
+        fv = mg.fiedler_vector()
+        norm = math.sqrt(sum(x * x for x in fv))
+        assert abs(norm - 1.0) < 0.01
+
+    def test_spectral_bipartition(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(4)]
+        for i in range(4):
+            for j in range(i+1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "edge")
+        fv = mg.fiedler_vector()
+        assert fv is not None
+        # K4 has degenerate eigenvalue, Fiedler vector may vary
+        # Just check it's unit length and roughly orthogonal to [1,1,1,1]
+        assert abs(sum(fv)) < 0.5  # relaxed for degenerate case
+        norm = math.sqrt(sum(x*x for x in fv))
+        assert abs(norm - 1.0) < 0.05
+
+    def test_single_node_none(self, mg):
+        mg.add("a", "node")
+        assert mg.fiedler_vector() is None
