@@ -7231,3 +7231,83 @@ class TestFiedlerVector:
     def test_single_node_none(self, mg):
         mg.add("a", "node")
         assert mg.fiedler_vector() is None
+
+class TestNodeConnectivity:
+    """节点连通度测试。"""
+
+    def test_complete_graph(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(4)]
+        for i in range(4):
+            for j in range(i+1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "e")
+        assert mg.node_connectivity() == 3
+
+    def test_cycle_graph(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(5)]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[(i+1)%5].id, "e")
+        assert mg.node_connectivity() == 2
+
+    def test_path_graph(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i+1].id, "e")
+        assert mg.node_connectivity() == 1
+
+    def test_disconnected(self, mg):
+        a, b = mg.add("a","n"), mg.add("b","n")
+        c = mg.add("c","n")
+        mg.link(a.id, b.id, "e")
+        assert mg.node_connectivity() == 0
+
+    def test_single_node(self, mg):
+        mg.add("a", "node")
+        assert mg.node_connectivity() == 0
+
+    def test_two_nodes(self, mg):
+        a, b = mg.add("a","n"), mg.add("b","n")
+        mg.link(a.id, b.id, "e")
+        assert mg.node_connectivity() == 1
+
+
+class TestEdgeConnectivity:
+    """边连通度测试。"""
+
+    def test_complete_graph(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(4)]
+        for i in range(4):
+            for j in range(i+1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "e")
+        assert mg.edge_connectivity() == 3
+
+    def test_cycle_graph(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(5)]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[(i+1)%5].id, "e")
+        assert mg.edge_connectivity() == 2
+
+    def test_path_graph(self, mg):
+        nodes = [mg.add(f"n{i}", "node") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i+1].id, "e")
+        assert mg.edge_connectivity() == 1
+
+    def test_disconnected(self, mg):
+        a, b = mg.add("a","n"), mg.add("b","n")
+        c = mg.add("c","n")
+        mg.link(a.id, b.id, "e")
+        assert mg.edge_connectivity() == 0
+
+    def test_bridge_graph(self, mg):
+        t1 = [mg.add(f"t1_{i}", "node") for i in range(3)]
+        for i in range(3):
+            mg.link(t1[i].id, t1[(i+1)%3].id, "e")
+        t2 = [mg.add(f"t2_{i}", "node") for i in range(3)]
+        for i in range(3):
+            mg.link(t2[i].id, t2[(i+1)%3].id, "e")
+        mg.link(t1[0].id, t2[0].id, "bridge")
+        assert mg.edge_connectivity() == 1
+
+    def test_single_node(self, mg):
+        mg.add("a", "node")
+        assert mg.edge_connectivity() == 0

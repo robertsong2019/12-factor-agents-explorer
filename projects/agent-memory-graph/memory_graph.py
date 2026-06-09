@@ -5229,6 +5229,170 @@ class MemoryGraph:
             rs_old = rs_new
         return x
 
+    # ── 连通性分析（node/edge connectivity）─────────────────
+
+    def node_connectivity(self) -> int:
+        """计算图的节点连通度 κ(G)——使图不连通所需移除的最少节点数。
+
+        使用 Menger 定理：κ(G) = min over all (s,t) of max node-disjoint paths。
+        实现基于节点分裂最大流。
+
+        Returns:
+            节点连通度（0 = 不连通/单节点/空图）
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return 0
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                adj_sym[i].add(j); adj_sym[j].add(i)
+
+        # BFS 连通性检查
+        visited = {0}; queue = [0]
+        while queue:
+            u = queue.pop(0)
+            for v in adj_sym[u]:
+                if v not in visited:
+                    visited.add(v); queue.append(v)
+        if len(visited) < n:
+            return 0
+
+        # 优化: 只从度最小节点 s 出发
+        degrees = [len(adj_sym[i]) for i in range(n)]
+        s = min(range(n), key=lambda i: degrees[i])
+        min_cut = n
+
+        for t in range(n):
+            if t == s: continue
+            flow = self._node_split_maxflow(s, t, n, adj_sym)
+            if flow < min_cut:
+                min_cut = flow
+                if min_cut == 0: break
+
+        return min_cut
+
+    def _node_split_maxflow(self, s: int, t: int, n: int,
+                            adj_sym: dict[int, set[int]]) -> int:
+        """节点分裂法求 s-t 最小节点割（Edmonds-Karp with bottleneck）。"""
+        INF = n + 1
+        source = s * 2 + 1  # s_out
+        sink = t * 2        # t_in
+
+        cap: dict[tuple[int,int], int] = {}
+        for i in range(n):
+            if i not in (s, t):
+                cap[(i*2, i*2+1)] = 1
+            for j in adj_sym[i]:
+                # Direct s→t edge counts as 1 internally vertex-disjoint path
+                if (i == s and j == t) or (i == t and j == s):
+                    if i*2+1 not in [k for k,_v in [(a,b) for (a,b) in cap]]:
+                        pass  # handled below
+                cap[(i*2+1, j*2)] = INF
+        # Override direct s_out→t_in to cap=1
+        cap[(s*2+1, t*2)] = 1
+
+        total_flow = 0
+        while True:
+            visited = {source}; parent = {}; queue = [source]
+            while queue and sink not in visited:
+                u = queue.pop(0)
+                for (a, b), c in cap.items():
+                    if a == u and b not in visited and c > 0:
+                        visited.add(b); parent[b] = u; queue.append(b)
+            if sink not in visited: break
+
+            # Compute bottleneck
+            bottleneck = INF
+            v = sink
+            while v in parent:
+                u = parent[v]
+                bottleneck = min(bottleneck, cap.get((u, v), 0))
+                v = u
+
+            total_flow += bottleneck
+            if total_flow >= INF: break
+
+            v = sink
+            while v in parent:
+                u = parent[v]
+                cap[(u, v)] -= bottleneck
+                cap[(v, u)] = cap.get((v, u), 0) + bottleneck
+                v = u
+
+        return total_flow
+
+    def edge_connectivity(self) -> int:
+        """计算图的边连通度 λ(G)——使图不连通所需移除的最少边数。
+
+        Returns:
+            边连通度（0 = 不连通/单节点/空图）
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return 0
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                adj_sym[i].add(j); adj_sym[j].add(i)
+
+        # 连通性
+        visited = {0}; queue = [0]
+        while queue:
+            u = queue.pop(0)
+            for v in adj_sym[u]:
+                if v not in visited:
+                    visited.add(v); queue.append(v)
+        if len(visited) < n:
+            return 0
+
+        degrees = [len(adj_sym[i]) for i in range(n)]
+        s = min(range(n), key=lambda i: degrees[i])
+        min_cut = degrees[s]
+
+        for t in range(n):
+            if t == s: continue
+            flow = self._ek_unit(s, t, n, adj_sym)
+            if flow < min_cut:
+                min_cut = flow
+                if min_cut == 0: break
+
+        return min_cut
+
+    def _ek_unit(self, s: int, t: int, n: int,
+                 adj_sym: dict[int, set[int]]) -> int:
+        """单位容量图 Edmonds-Karp。"""
+        residual: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+        for u in range(n):
+            for v in adj_sym[u]:
+                residual[u][v] = 1
+
+        total_flow = 0
+        while True:
+            visited = {s}; parent = {}; queue = [s]
+            while queue and t not in visited:
+                u = queue.pop(0)
+                for v in range(n):
+                    if v not in visited and residual[u][v] > 0:
+                        visited.add(v); parent[v] = u; queue.append(v)
+            if t not in visited: break
+            total_flow += 1
+            v = t
+            while v in parent:
+                u = parent[v]
+                residual[u][v] -= 1
+                residual[v][u] += 1
+                v = u
+        return total_flow
+
     # ── LLM 上下文导出 ────────────────────────────────────
 
     def to_markdown(self, node_ids: list[str] | None = None, max_nodes: int = 50,
