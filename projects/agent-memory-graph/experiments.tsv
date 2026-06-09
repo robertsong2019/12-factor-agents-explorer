@@ -71,3 +71,10 @@ timestamp	commit	metric	value	status	description
 2026-06-08T21:05	d5cf619	test_pass_rate	783/783	keep	Leiden community detection + modularity (+17)
 2026-06-08T21:10	49ce59d	test_pass_rate	788/788	keep	community_partition() unified API (+5)
 2026-06-08T21:15	a2609df	test_pass_rate	793/793	keep	community_quality_report + GraphRAG global→Leiden (+5)
+2026-06-08T23:05	2831f70	test_pass_rate	793/793	keep	README sync: badges 766→793, add community_partition/community_quality_report docs, fix homepage URL. Build dist 1.0.0. Zero regressions. 110th consecutive day.
+2026-06-09T01:00+08:00	c4258f8	test_count	793→811	keep	local_efficiency+wiener_index+onion_structure — per-node local efficiency (Latora-Marchiori, induced subgraph), Wiener index (sum of all-pairs shortest paths, Wiener 1947), k-core onion decomposition profile. +18 tests (793→811). Zero regressions. 111th consecutive day.
+2026-06-09T19:30+08:00	44cf67a	test_count	824/824	keep	closeness_vitality + spectral_radius — node criticality via Wiener index delta on node removal + adjacency matrix spectral radius (power iteration on A², handles negative eigenvalues). +13 tests (811→824). Zero regressions. 112th consecutive day.
+2026-06-09T21:05+08:00	e2220e0	test_count	824→834	keep	algebraic_connectivity + fiedler_vector — Laplacian eigenvalues (Jacobi) + inverse iteration + CG solver. +10 tests. 113th day.
+2026-06-09T21:25+08:00	51981a7	test_count	834→846	keep	node_connectivity + edge_connectivity — min-cut via node-split max-flow + Edmonds-Karp with bottleneck. +12 tests. 113th day.
+2026-06-09T21:40+08:00	5b62c0f	test_count	846→851	keep	percolation_centrality — information percolation importance with Brandes-like accumulation. +5 tests. 113th day.
+2026-06-09T21:55+08:00	5733c4d	test_count	851→858	keep	resistance_distance + _sym_eigenvectors — effective resistance via Laplacian pseudoinverse. +7 tests. 113th day.
