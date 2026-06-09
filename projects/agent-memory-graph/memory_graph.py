@@ -5477,6 +5477,114 @@ class MemoryGraph:
 
         return {node_ids[i]: result[i] / max_result for i in range(n)}
 
+    def resistance_distance(self, id_a: str, id_b: str) -> float | None:
+        """计算两节点间的电阻距离（effective resistance）。
+
+        电阻距离基于拉普拉斯矩阵伪逆: R(i,j) = L⁺ᵢᵢ + L⁺ⱼⱼ - 2L⁺ᵢⱼ。
+        低电阻距离 = 节点间有多条路径（冗余连接）。
+        高电阻距离 = 节点间依赖少数路径（脆弱连接）。
+
+        Returns:
+            电阻距离，或 None（节点不存在/不连通）
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if id_a not in node_ids or id_b not in node_ids:
+            return None
+        if id_a == id_b:
+            return 0.0
+        if n < 2:
+            return None
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        a, b = idx[id_a], idx[id_b]
+
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                adj_sym[i].add(j); adj_sym[j].add(i)
+
+        # Check connectivity (BFS from a)
+        visited = {a}; queue = [a]
+        while queue:
+            u = queue.pop(0)
+            for v in adj_sym[u]:
+                if v not in visited: visited.add(v); queue.append(v)
+        if b not in visited:
+            return float('inf')
+
+        # Build Laplacian and compute pseudoinverse via eigenvalues
+        degree = [0] * n
+        for i in range(n):
+            degree[i] = len(adj_sym[i])
+
+        L = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            L[i][i] = float(degree[i])
+            for j in adj_sym[i]:
+                L[i][j] = -1.0
+
+        # Pseudoinverse via eigenvalue decomposition
+        eigenvalues = self._sym_eigenvalues(L)
+        # We also need eigenvectors — use Jacobi with eigenvector tracking
+        eigvecs = self._sym_eigenvectors(L)
+
+        # L⁺ = sum over k: (1/λ_k) * v_k * v_k^T (skip λ=0)
+        # R(a,b) = L⁺[a,a] + L⁺[b,b] - 2*L⁺[a,b]
+        # = sum_k (1/λ_k) * (v_k[a]² + v_k[b]² - 2*v_k[a]*v_k[b])
+        # = sum_k (1/λ_k) * (v_k[a] - v_k[b])²
+
+        r = 0.0
+        for k in range(n):
+            if eigenvalues[k] > 1e-10:
+                diff = eigvecs[k][a] - eigvecs[k][b]
+                r += (diff * diff) / eigenvalues[k]
+
+        return max(0.0, r)
+
+    def _sym_eigenvectors(self, M: list[list[float]], max_iter: int = 300) -> list[list[float]]:
+        """雅可比旋转求实对称矩阵全部特征值和特征向量。返回 eigvecs[k] = 第k个特征向量。"""
+        n = len(M)
+        A = [row[:] for row in M]
+        V = [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+
+        for _ in range(max_iter):
+            p, q = 0, 1
+            max_val = abs(A[0][1])
+            for i in range(n):
+                for j in range(i + 1, n):
+                    if abs(A[i][j]) > max_val:
+                        max_val = abs(A[i][j]); p, q = i, j
+            if max_val < 1e-12:
+                break
+            if abs(A[p][p] - A[q][q]) < 1e-15:
+                theta = math.pi / 4
+            else:
+                theta = 0.5 * math.atan2(2 * A[p][q], A[p][p] - A[q][q])
+            c, s = math.cos(theta), math.sin(theta)
+
+            # Rotate A
+            for i in range(n):
+                if i == p or i == q: continue
+                aip, aiq = A[i][p], A[i][q]
+                A[i][p] = c * aip + s * aiq; A[p][i] = A[i][p]
+                A[i][q] = -s * aip + c * aiq; A[q][i] = A[i][q]
+            app, aqq, apq = A[p][p], A[q][q], A[p][q]
+            A[p][p] = c*c*app + 2*s*c*apq + s*s*aqq
+            A[q][q] = s*s*app - 2*s*c*apq + c*c*aqq
+            A[p][q] = 0.0; A[q][p] = 0.0
+
+            # Rotate V (accumulate eigenvectors)
+            for i in range(n):
+                vip, viq = V[i][p], V[i][q]
+                V[i][p] = c * vip + s * viq
+                V[i][q] = -s * vip + c * viq
+
+        # V columns are eigenvectors, A diagonal has eigenvalues
+        # Return as list of column vectors
+        return [[V[i][k] for i in range(n)] for k in range(n)]
+
     # ── LLM 上下文导出 ────────────────────────────────────
 
     def to_markdown(self, node_ids: list[str] | None = None, max_nodes: int = 50,

@@ -7360,3 +7360,54 @@ class TestPercolationCentrality:
         mg.add("a", "node")
         pc = mg.percolation_centrality()
         assert len(pc) == 1
+
+class TestResistanceDistance:
+    """电阻距离测试。"""
+
+    def test_same_node_zero(self, mg):
+        a = mg.add("a", "node")
+        assert mg.resistance_distance(a.id, a.id) == 0.0
+
+    def test_two_nodes(self, mg):
+        """K2: 电阻距离 = 1。"""
+        a, b = mg.add("a","n"), mg.add("b","n")
+        mg.link(a.id, b.id, "e")
+        result = mg.resistance_distance(a.id, b.id)
+        assert result is not None
+        assert abs(result - 1.0) < 0.1
+
+    def test_parallel_paths_lower(self, mg):
+        """并联路径降低电阻距离。"""
+        a, b = mg.add("a","n"), mg.add("b","n")
+        mg.link(a.id, b.id, "e")  # direct: R=1
+        c = mg.add("c","n")
+        mg.link(a.id, c.id, "e"); mg.link(c.id, b.id, "e")  # via c: R=2
+        # Parallel: 1/(1/1 + 1/2) = 2/3
+        result = mg.resistance_distance(a.id, b.id)
+        assert result is not None
+        assert abs(result - 2.0/3.0) < 0.2
+
+    def test_disconnected_infinite(self, mg):
+        a, b = mg.add("a","n"), mg.add("b","n")
+        assert mg.resistance_distance(a.id, b.id) == float('inf')
+
+    def test_nonexistent_none(self, mg):
+        a = mg.add("a", "node")
+        assert mg.resistance_distance(a.id, "nonexistent") is None
+
+    def test_triangle(self, mg):
+        """三角形: R(a,b) = 2/3。"""
+        a, b, c = mg.add("a","n"), mg.add("b","n"), mg.add("c","n")
+        mg.link(a.id, b.id, "e"); mg.link(b.id, c.id, "e"); mg.link(a.id, c.id, "e")
+        result = mg.resistance_distance(a.id, b.id)
+        assert result is not None
+        assert abs(result - 2.0/3.0) < 0.15
+
+    def test_symmetry(self, mg):
+        """电阻距离是对称的。"""
+        nodes = [mg.add(f"n{i}", "node") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i+1].id, "e")
+        r_ab = mg.resistance_distance(nodes[0].id, nodes[3].id)
+        r_ba = mg.resistance_distance(nodes[3].id, nodes[0].id)
+        assert abs(r_ab - r_ba) < 0.01
