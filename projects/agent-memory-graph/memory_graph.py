@@ -5393,6 +5393,90 @@ class MemoryGraph:
                 v = u
         return total_flow
 
+    def percolation_centrality(self, states: dict[str, float] | None = None) -> dict[str, float]:
+        """计算渗透中心性（percolation centrality）。
+
+        渗透中心性衡量节点在"渗透"过程中传播信息的重要性。
+        每个节点有一个渗透状态 x ∈ [0,1]（默认用 degree/max_degree）。
+        渗透中心性 = sum over (s,t): σ_st(v)/σ_st * x_s*x_t / sum(x_s*x_t)
+
+        Args:
+            states: 可选的 {node_id: state} 映射，默认用归一化度数
+
+        Returns:
+            {node_id: percolation_centrality} 字典
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n < 3:
+            return {nid: 0.0 for nid in node_ids}
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                adj_sym[i].add(j); adj_sym[j].add(i)
+
+        # Default states = normalized degree
+        if states is None:
+            degrees = [len(adj_sym[i]) for i in range(n)]
+            max_deg = max(degrees) if degrees else 1
+            x = [d / max_deg for d in degrees]
+        else:
+            x = [states.get(nid, 0.0) for nid in node_ids]
+
+        # BFS shortest paths for all pairs (unweighted)
+        # σ[s][t] = number of shortest paths from s to t
+        # σ_through[v][s][t] = 1 if v is on some shortest s-t path
+        import collections
+        sigma = [[0]*n for _ in range(n)]
+        pred = [[[] for _ in range(n)] for _ in range(n)]
+        dist = [[float('inf')]*n for _ in range(n)]
+
+        for s in range(n):
+            sigma[s][s] = 1; dist[s][s] = 0
+            queue = collections.deque([s])
+            while queue:
+                u = queue.popleft()
+                for v in adj_sym[u]:
+                    if dist[s][v] == float('inf'):
+                        dist[s][v] = dist[s][u] + 1
+                        queue.append(v)
+                    if dist[s][v] == dist[s][u] + 1:
+                        sigma[s][v] += sigma[s][u]
+                        pred[s][v].append(u)
+
+        # For each node v, compute percolation centrality
+        # p(v) = (1/(n-2)) * sum_{s≠v≠t} σ_sv(v)/σ_sv * x_s*x_t / (sum_{s<t} x_s*x_t)
+        # Simplified: skip normalization denominator, use relative values
+
+        # First compute dependency: δ[v] = sum_{s<t: v on s-t path} x_s * x_t / σ_st * σ_st(v)
+        # Using Brandes-like accumulation
+        delta = [[0.0]*n for _ in range(n)]  # delta[s][v]
+        result = [0.0] * n
+
+        for s in range(n):
+            # Process nodes in reverse BFS order from s
+            order = sorted(range(n), key=lambda v: -dist[s][v] if dist[s][v] != float('inf') else 0)
+            for t in order:
+                if t == s or dist[s][t] == float('inf'):
+                    continue
+                for w in pred[s][t]:
+                    ratio = sigma[s][w] / sigma[s][t] if sigma[s][t] > 0 else 0
+                    delta[s][w] += ratio * (x[t] + delta[s][t])
+
+            for v in range(n):
+                if v != s:
+                    result[v] += x[s] * delta[s][v]
+
+        # Normalize to [0, 1]
+        max_result = max(result) if result else 1
+        if max_result == 0:
+            max_result = 1
+
+        return {node_ids[i]: result[i] / max_result for i in range(n)}
+
     # ── LLM 上下文导出 ────────────────────────────────────
 
     def to_markdown(self, node_ids: list[str] | None = None, max_nodes: int = 50,

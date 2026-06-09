@@ -7311,3 +7311,52 @@ class TestEdgeConnectivity:
     def test_single_node(self, mg):
         mg.add("a", "node")
         assert mg.edge_connectivity() == 0
+
+class TestPercolationCentrality:
+    """渗透中心性测试。"""
+
+    def test_star_center_highest(self, mg):
+        """星形图中心节点渗透中心性最高。"""
+        center = mg.add("center", "node")
+        spokes = [mg.add(f"s{i}", "node") for i in range(4)]
+        for s in spokes:
+            mg.link(center.id, s.id, "e")
+        pc = mg.percolation_centrality()
+        assert pc[center.id] == 1.0  # normalized max
+        for s in spokes:
+            assert pc[s.id] < pc[center.id]
+
+    def test_path_middle_highest(self, mg):
+        """路径图中间节点渗透中心性最高。"""
+        nodes = [mg.add(f"n{i}", "node") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "e")
+        pc = mg.percolation_centrality()
+        # Middle node (index 2) should have highest centrality
+        mid_id = nodes[2].id
+        for nid, val in pc.items():
+            if nid != mid_id:
+                assert pc[mid_id] >= val
+
+    def test_custom_states(self, mg):
+        """自定义渗透状态。"""
+        nodes = [mg.add(f"n{i}", "node") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i+1].id, "e")
+        # Set high state on endpoints
+        states = {nodes[0].id: 1.0, nodes[3].id: 1.0,
+                  nodes[1].id: 0.0, nodes[2].id: 0.0}
+        pc = mg.percolation_centrality(states=states)
+        # All nodes should have values
+        assert len(pc) == 4
+        for v in pc.values():
+            assert v >= 0
+
+    def test_empty_graph(self, mg):
+        pc = mg.percolation_centrality()
+        assert pc == {}
+
+    def test_single_node(self, mg):
+        mg.add("a", "node")
+        pc = mg.percolation_centrality()
+        assert len(pc) == 1
