@@ -7411,3 +7411,85 @@ class TestResistanceDistance:
         r_ab = mg.resistance_distance(nodes[0].id, nodes[3].id)
         r_ba = mg.resistance_distance(nodes[3].id, nodes[0].id)
         assert abs(r_ab - r_ba) < 0.01
+
+
+# ── MST (Minimum Spanning Tree) Tests ────────────────────────────────
+
+class TestMST:
+    """minimum_spanning_tree + mst_weight tests."""
+
+    def test_simple_chain(self, mg):
+        """3-node chain: MST = chain itself."""
+        a, b, c = mg.add("a","n"), mg.add("b","n"), mg.add("c","n")
+        mg.link(a.id, b.id, "e", 1.0)
+        mg.link(b.id, c.id, "e", 2.0)
+        mst = mg.minimum_spanning_tree()
+        assert mst is not None
+        assert len(mst) == 2
+        assert mg.mst_weight() == 3.0
+
+    def test_triangle_picks_cheapest(self, mg):
+        """Triangle: MST drops the heaviest edge."""
+        a, b, c = mg.add("a","n"), mg.add("b","n"), mg.add("c","n")
+        mg.link(a.id, b.id, "e", 1.0)
+        mg.link(b.id, c.id, "e", 2.0)
+        mg.link(a.id, c.id, "e", 5.0)  # heaviest → excluded
+        mst = mg.minimum_spanning_tree()
+        assert len(mst) == 2
+        assert mg.mst_weight() == 3.0
+        # a-c edge should not be in MST
+        mst_pairs = {(e["source"], e["target"]) for e in mst}
+        assert ("a", "c") not in mst_pairs and ("c", "a") not in mst_pairs
+
+    def test_empty_graph(self, mg):
+        assert mg.minimum_spanning_tree() is None
+        assert mg.mst_weight() is None
+
+    def test_single_node(self, mg):
+        mg.add("a", "n")
+        assert mg.minimum_spanning_tree() is None
+
+    def test_two_nodes(self, mg):
+        a, b = mg.add("a","n"), mg.add("b","n")
+        mg.link(a.id, b.id, "e", 3.5)
+        mst = mg.minimum_spanning_tree()
+        assert len(mst) == 1
+        assert mg.mst_weight() == 3.5
+
+    def test_disconnected_returns_none(self, mg):
+        a, b, c, d = mg.add("a","n"), mg.add("b","n"), mg.add("c","n"), mg.add("d","n")
+        mg.link(a.id, b.id, "e")
+        # c-d disconnected from a-b
+        assert mg.minimum_spanning_tree() is None
+
+    def test_directed_edges_treated_undirected(self, mg):
+        """MST treats directed edges as undirected."""
+        a, b, c = mg.add("a","n"), mg.add("b","n"), mg.add("c","n")
+        mg.link(a.id, b.id, "e", 1.0)
+        mg.link(c.id, b.id, "e", 2.0)  # directed c→b
+        mst = mg.minimum_spanning_tree()
+        assert mst is not None
+        assert len(mst) == 2
+
+    def test_parallel_edges_keeps_cheapest(self, mg):
+        """Multiple edges between same pair: keep cheapest."""
+        a, b, c = mg.add("a","n"), mg.add("b","n"), mg.add("c","n")
+        mg.link(a.id, b.id, "e", 1.0)
+        mg.link(a.id, b.id, "e2", 0.1)  # cheaper parallel edge
+        mg.link(b.id, c.id, "e", 1.0)
+        mst = mg.minimum_spanning_tree()
+        assert mg.mst_weight() == pytest.approx(1.1)
+
+    def test_larger_graph(self, mg):
+        """5-node graph with known MST weight."""
+        nodes = [mg.add(f"n{i}", "n") for i in range(5)]
+        # K5 with weights
+        weights = [(0,1,2), (0,2,1), (0,3,4), (0,4,3),
+                   (1,2,5), (1,3,2), (1,4,6),
+                   (2,3,3), (2,4,1),
+                   (3,4,2)]
+        for i, j, w in weights:
+            mg.link(nodes[i].id, nodes[j].id, "e", float(w))
+        # MST: 0-2(1), 2-4(1), 0-1(2), 1-3(2) = 6
+        assert mg.mst_weight() == pytest.approx(6.0)
+        assert len(mg.minimum_spanning_tree()) == 4

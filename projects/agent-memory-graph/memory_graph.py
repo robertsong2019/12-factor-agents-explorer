@@ -5079,6 +5079,80 @@ class MemoryGraph:
 
         return abs(eigenvalue)
 
+    def minimum_spanning_tree(self) -> list[dict] | None:
+        """使用 Kruskal 算法计算最小生成树（MST）。
+
+        对无向图（忽略边的方向）执行 Kruskal 算法，返回权重最小的生成树边集。
+        使用 Union-Find（路径压缩 + 按秩合并）实现高效连通分量检测。
+
+        Returns:
+            MST 边列表 [{source, target, relation, weight}, ...]，按权重升序；
+            None（图空或不连通）
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return None
+
+        # 收集所有边（无向化：保留 source < target 的唯一边，取最小权重）
+        raw_edges = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges ORDER BY weight ASC"
+        ).fetchall()
+
+        edge_map: dict[tuple, dict] = {}
+        for e in raw_edges:
+            key = (min(e["source"], e["target"]), max(e["source"], e["target"]))
+            if key not in edge_map or e["weight"] < edge_map[key]["weight"]:
+                edge_map[key] = dict(source=e["source"], target=e["target"],
+                                     relation=e["relation"], weight=e["weight"])
+
+        edges_sorted = sorted(edge_map.values(), key=lambda e: e["weight"])
+
+        # Union-Find
+        parent = {nid: nid for nid in node_ids}
+        rank = {nid: 0 for nid in node_ids}
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]  # path compression
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra == rb:
+                return False
+            if rank[ra] < rank[rb]:
+                ra, rb = rb, ra
+            parent[rb] = ra
+            if rank[ra] == rank[rb]:
+                rank[ra] += 1
+            return True
+
+        mst = []
+        for e in edges_sorted:
+            if union(e["source"], e["target"]):
+                mst.append(e)
+                if len(mst) == n - 1:
+                    break
+
+        # 检查连通性
+        if len(mst) < n - 1:
+            return None
+
+        return mst
+
+    def mst_weight(self) -> float | None:
+        """计算最小生成树的总权重。
+
+        Returns:
+            MST 总权重，或 None（图空或不连通）
+        """
+        mst = self.minimum_spanning_tree()
+        if mst is None:
+            return None
+        return sum(e["weight"] for e in mst)
+
     # ── 谱分析（代数连通度 + Fiedler 向量）────────────────
 
     def algebraic_connectivity(self) -> float | None:
