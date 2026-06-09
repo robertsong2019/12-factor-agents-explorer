@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-811-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-867-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -737,6 +737,46 @@ Wiener 指数——所有节点对最短路径长度之和（W = Σ d(u,v)）。
 
 洋葱结构——k-core 分层剖面。逐步移除度数 < k 的节点，返回每层的节点集合和统计信息。比 core_number() 更直观展示图的 "深度结构"。每层返回 `{k, nodes, count, edges}`。
 
+#### `minimum_spanning_tree() -> Optional[list[dict]]`
+
+最小生成树（Kruskal 算法 + Union-Find 路径压缩 + 按秩合并）。返回权重最小的生成树边集，按权重升序排列。用于识别记忆网络的核心骨架。
+
+#### `mst_weight() -> Optional[float]`
+
+最小生成树总权重。`minimum_spanning_tree()` 的快捷方式。
+
+#### `resistance_distance(id_a, id_b) -> Optional[float]`
+
+电阻距离（effective resistance）——基于拉普拉斯矩阵伪逆。低值 = 节点间有多条冗余路径；高值 = 依赖少数脆弱路径。
+
+#### `algebraic_connectivity() -> Optional[float]`
+
+代数连通度（Fiedler value）——拉普拉斯矩阵第二小特征值。0 = 不连通；大值 = 强连通。衡量图整体连通强度。
+
+#### `fiedler_vector() -> Optional[list[float]]`
+
+Fiedler 向量——对应代数连通度的特征向量。可用于谱二分（正/负分两组）和 1D 谱嵌入。
+
+#### `spectral_radius() -> Optional[float]`
+
+邻接矩阵的谱半径（幂迭代法）。高值 = 强连通、hub-hub 连接多；低值 = 稀疏链状结构。
+
+#### `edge_connectivity() -> int`
+
+边连通度 λ(G)——使图不连通所需移除的最少边数。
+
+#### `node_connectivity() -> int`
+
+节点连通度 κ(G)——使图不连通所需移除的最少节点数（基于 Menger 定理 + 节点分裂最大流）。
+
+#### `closeness_vitality(node_id) -> Optional[float]`
+
+节点删除后 Wiener 指数的变化量。正值 = 节点对连通性重要；负值 = 节点是瓶颈。
+
+#### `percolation_centrality(states=None) -> dict[str, float]`
+
+渗透中心性——衡量节点在信息渗透过程中的传播重要性。默认用归一化度数作为渗透状态。
+
 ---
 
 ### 节点相似性与链路预测
@@ -1041,7 +1081,7 @@ python3 -m pytest test_memory_graph.py -q
 8. **向量搜索** — sqlite-vec 可选集成，三路 RRF 混合搜索 (文本+向量+图) 是 npm/PyPI 唯一三合一方案
 9. **BM25 + GraphRAG** — 全文索引 + 社区级检索，从关键词搜索到知识图谱问答的完整路径
 10. **LLM 适配** — to_markdown + context_window + prune_by_relevance 让图谱直接服务于 LLM 上下文
-11. **网络分析** — global_efficiency + s_metric + effective_eccentricity + local_efficiency + wiener_index + onion_structure 量化记忆网络的全局与局部拓扑特性
+11. **网络分析** — global_efficiency + s_metric + effective_eccentricity + local_efficiency + wiener_index + onion_structure + minimum_spanning_tree + resistance_distance + algebraic_connectivity + spectral_radius 量化记忆网络的全局与局部拓扑特性
 
 ## 许可
 
