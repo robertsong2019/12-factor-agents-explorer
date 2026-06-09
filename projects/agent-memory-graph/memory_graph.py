@@ -4981,6 +4981,104 @@ class MemoryGraph:
         # Unknown mode: fallback to hybrid
         return self.search_graphrag(query, mode="hybrid", embedding=embedding, limit=limit)
 
+    # ── 高级图分析 ────────────────────────────────────────
+
+    def closeness_vitality(self, node_id: str) -> float | None:
+        """计算节点删除后 Wiener 指数的变化量。
+
+        closeness_vitality = W(G\{v}) - W(G)
+        正值表示该节点对图连通性重要（删除后距离增加），
+        负值表示该节点是瓶颈（删除后图更紧凑或断裂）。
+
+        Args:
+            node_id: 节点 ID
+
+        Returns:
+            Wiener 指数变化量，或 None（节点不存在）
+        """
+        if not self.has_node(node_id):
+            return None
+
+        # W(G)
+        w_before = self.wiener_index() or 0
+
+        # W(G\{v}) — 临时删除节点
+        node_row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
+        edges_out = self.conn.execute("SELECT * FROM edges WHERE source=?", (node_id,)).fetchall()
+        edges_in = self.conn.execute("SELECT * FROM edges WHERE target=?", (node_id,)).fetchall()
+
+        self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
+        self.conn.execute("DELETE FROM edges WHERE source=? OR target=?", (node_id, node_id))
+        self.conn.commit()
+
+        w_after = self.wiener_index() or 0
+
+        # 恢复
+        self.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            (node_row["id"], node_row["label"], node_row["kind"], node_row["data"],
+             node_row["created"], node_row["accessed"], node_row["weight"], node_row["tags"]))
+        for e in edges_out + edges_in:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO edges (source,target,relation,weight) VALUES (?,?,?,?)",
+                (e["source"], e["target"], e["relation"], e["weight"]))
+        self.conn.commit()
+
+        return w_after - w_before
+
+    def spectral_radius(self) -> float | None:
+        """计算邻接矩阵的谱半径（最大特征值的绝对值）。
+
+        使用幂迭代法（power iteration）求最大特征值。
+        谱半径反映了图的"活跃程度":
+        - 高谱半径 = 强连通、hub-hub 连接多
+        - 低谱半径 = 稀疏、长链状结构
+
+        Returns:
+            谱半径，或 None（空图）
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n == 0:
+            return None
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+
+        # 构建对称邻接表（无向处理）
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                adj_sym[i].add(j)
+                adj_sym[j].add(i)
+
+        # 幂迭代（Power Iteration on A²）
+        # 使用 A² 避免负特征值导致的振荡
+        import random
+        random.seed(42)
+        v = [random.random() for _ in range(n)]
+        norm = math.sqrt(sum(x * x for x in v)) or 1.0
+        v = [x / norm for x in v]
+
+        eigenvalue = 0.0
+        for _ in range(300):
+            # v_new = A² @ v (两步)
+            w = [sum(v[j] for j in adj_sym[i]) for i in range(n)]
+            v_new = [sum(w[j] for j in adj_sym[i]) for i in range(n)]
+
+            norm_new = math.sqrt(sum(x * x for x in v_new)) or 1e-15
+            # 特征值估计 = ||A²v|| / ||v|| 的平方根
+            new_eigenvalue = math.sqrt(norm_new)  # sqrt(||A²v||) ≈ |λ_max|
+            v_new = [x / norm_new for x in v_new]
+
+            if abs(new_eigenvalue - eigenvalue) < 1e-9:
+                eigenvalue = new_eigenvalue
+                break
+            eigenvalue = new_eigenvalue
+            v = v_new
+
+        return abs(eigenvalue)
+
     # ── LLM 上下文导出 ────────────────────────────────────
 
     def to_markdown(self, node_ids: list[str] | None = None, max_nodes: int = 50,

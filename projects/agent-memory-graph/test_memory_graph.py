@@ -7042,3 +7042,108 @@ class TestOnionStructure:
         result = mg.onion_structure(n_layers=3)
         total = sum(l["count"] for l in result)
         assert total == 6
+
+
+class TestClosenessVitality:
+    def test_missing_node(self, mg):
+        assert mg.closeness_vitality("nonexist") is None
+
+    def test_single_node(self, mg):
+        n = mg.add("A")
+        # Single node: wiener_index returns 0 for single/empty
+        # Removing makes empty, both 0
+        assert mg.closeness_vitality(n.id) == 0
+
+    def test_chain_center_important(self, mg):
+        """In A-B-C, removing B disconnects the graph."""
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        v = mg.closeness_vitality(b.id)
+        # Removing B: W(G\{B})=0 (disconnected), W(G)=2 (A-B=1, B-C=1, A-C=2)
+        # vitality = 0 - 4 = -4
+        assert v == -4
+
+    def test_leaf_removal(self, mg):
+        """Removing a leaf from A-B-C."""
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        v = mg.closeness_vitality(a.id)
+        # After removing A: only B-C left, W=1
+        # Before: W=1+1+2=4
+        # vitality = 1 - 4 = -3
+        assert v == -3
+
+    def test_node_preserved_after_vitality(self, mg):
+        """Node should be restored after computing vitality."""
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        mg.closeness_vitality(a.id)
+        assert mg.has_node(a.id)
+        assert mg.has_node(b.id)
+        edges = mg.conn.execute("SELECT COUNT(*) as c FROM edges").fetchone()["c"]
+        assert edges == 1
+
+    def test_triangle(self, mg):
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        v = mg.closeness_vitality(a.id)
+        # Before: W=3 (all pairs distance 1)
+        # After removing A: B-C, W=1
+        # vitality = 1 - 3 = -2
+        assert v == -2
+
+
+class TestSpectralRadius:
+    def test_empty(self, mg):
+        assert mg.spectral_radius() is None
+
+    def test_single_node(self, mg):
+        mg.add("A")
+        assert mg.spectral_radius() < 0.001
+
+    def test_path_p3(self, mg):
+        """P3 spectral radius = sqrt(2) ~ 1.414."""
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        sr = mg.spectral_radius()
+        assert abs(sr - 1.4142) < 0.01
+
+    def test_complete_k4(self, mg):
+        """K4 spectral radius = 3."""
+        nodes = [mg.add(str(i)) for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+                mg.link(nodes[j].id, nodes[i].id, "r")
+        sr = mg.spectral_radius()
+        assert abs(sr - 3.0) < 0.01
+
+    def test_path_p5(self, mg):
+        """P5 spectral radius = 2*cos(pi/6) = sqrt(3) ~ 1.732."""
+        nodes = [mg.add(str(i)) for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        sr = mg.spectral_radius()
+        assert abs(sr - 1.7321) < 0.01
+
+    def test_star_graph(self, mg):
+        """Star K_{1,4} spectral radius = sqrt(4) = 2."""
+        center = mg.add("C")
+        leaves = [mg.add(f"L{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+            mg.link(leaf.id, center.id, "r")
+        sr = mg.spectral_radius()
+        assert abs(sr - 2.0) < 0.01
+
+    def test_two_isolated_nodes(self, mg):
+        """Two nodes with no edges: spectral radius ≈ 0."""
+        mg.add("A")
+        mg.add("B")
+        assert mg.spectral_radius() < 0.001
+
