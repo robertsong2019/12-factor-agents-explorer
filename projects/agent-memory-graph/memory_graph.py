@@ -5613,6 +5613,83 @@ class MemoryGraph:
         # 移除全零条目（已排除）
         return {k: v for k, v in census.items() if v >= 0}
 
+    def average_neighbor_degree(self) -> dict[str, float]:
+        """计算每个节点的平均邻居度数。
+
+        k_nn(i) = (1/k_i) * sum(k_j for j in neighbors(i))
+        高值 = 邻居是高度节点(hub连接), 低值 = 邻居是低度节点。
+
+        Returns:
+            dict: {node_id: average_neighbor_degree}，孤立节点不包含。
+        """
+        rows = self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall()
+
+        # 构建无向邻接表和度数
+        neighbors_map = {}
+        for s, t in rows:
+            neighbors_map.setdefault(s, set()).add(t)
+            neighbors_map.setdefault(t, set()).add(s)
+
+        degree = {nid: len(nbrs) for nid, nbrs in neighbors_map.items()}
+        result = {}
+        all_nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        for (nid,) in all_nodes:
+            k = degree.get(nid, 0)
+            if k == 0:
+                continue
+            nbrs = neighbors_map.get(nid, set())
+            if not nbrs:
+                continue
+            knn = sum(degree.get(n, 0) for n in nbrs) / k
+            result[nid] = round(knn, 6)
+        return result
+
+    def degree_correlation(self) -> float | None:
+        """计算度-度相关系数(Newman assortativity coefficient)。
+
+        基于边端点度数的 Pearson 相关系数。
+        r > 0: 同配(高度节点连接高度节点)
+        r < 0: 异配(高度节点连接低度节点)
+        r ≈ 0: 无相关
+
+        Returns:
+            float | None: 相关系数，无边图返回 None。
+        """
+        rows = self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall()
+        if not rows:
+            return None
+
+        # 构建无向度数
+        degree = {}
+        for s, t in rows:
+            degree[s] = degree.get(s, 0) + 1
+            degree[t] = degree.get(t, 0) + 1
+
+        M = len(rows)
+        # sum(j*k), sum(j+k), sum(j^2+k^2)
+        sum_jk = 0.0
+        sum_jpk = 0.0
+        sum_j2k2 = 0.0
+        for s, t in rows:
+            j = degree.get(s, 0)
+            k = degree.get(t, 0)
+            sum_jk += j * k
+            sum_jpk += j + k
+            sum_j2k2 += j * j + k * k
+
+        # Newman's formula
+        # r = (M^-1 sum(jk) - [0.5 M^-1 sum(j+k)]^2) / (0.5 M^-1 sum(j^2+k^2) - [0.5 M^-1 sum(j+k)]^2)
+        numerator = sum_jk / M - (sum_jpk / (2 * M)) ** 2
+        denominator = sum_j2k2 / (2 * M) - (sum_jpk / (2 * M)) ** 2
+
+        if abs(denominator) < 1e-12:
+            return 0.0
+        return round(numerator / denominator, 6)
+
     def resistance_distance(self, id_a: str, id_b: str) -> float | None:
         """计算两节点间的电阻距离（effective resistance）。
 

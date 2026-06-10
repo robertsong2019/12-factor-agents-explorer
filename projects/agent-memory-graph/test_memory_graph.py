@@ -7610,3 +7610,104 @@ class TestTriadCensus:
         assert sum(census.values()) == 6
         types_with_edges = sum(1 for v in census.values() if v > 0)
         assert types_with_edges >= 1
+
+
+class TestAverageNeighborDegree:
+    """average_neighbor_degree — per-node k_nn metric."""
+
+    def test_empty_graph(self, mg):
+        assert mg.average_neighbor_degree() == {}
+
+    def test_single_edge(self, mg):
+        a, b = mg.add("a", "n"), mg.add("b", "n")
+        mg.link(a.id, b.id, "e")
+        result = mg.average_neighbor_degree()
+        # a has degree 1, neighbor b has degree 1 → k_nn(a) = 1
+        assert result[a.id] == 1.0
+        assert result[b.id] == 1.0
+
+    def test_star_hub(self, mg):
+        """Star: hub has low k_nn, leaves have high k_nn."""
+        center = mg.add("center", "n")
+        leaves = [mg.add(f"l{i}", "n") for i in range(4)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "e")
+        result = mg.average_neighbor_degree()
+        # Hub degree=4, neighbors all degree=1 → k_nn = 4*(1/4) = 1.0
+        assert result[center.id] == 1.0
+        # Each leaf degree=1, neighbor hub degree=4 → k_nn = 4.0
+        for leaf in leaves:
+            assert result[leaf.id] == 4.0
+
+    def test_isolated_node_excluded(self, mg):
+        a, b, c = mg.add("a", "n"), mg.add("b", "n"), mg.add("c", "n")
+        mg.link(a.id, b.id, "e")
+        result = mg.average_neighbor_degree()
+        assert c.id not in result
+
+    def test_triangle(self, mg):
+        """Complete triangle: all degree 2, all k_nn = 2."""
+        nodes = [mg.add(f"n{i}", "n") for i in range(3)]
+        mg.link(nodes[0].id, nodes[1].id, "e")
+        mg.link(nodes[1].id, nodes[2].id, "e")
+        mg.link(nodes[2].id, nodes[0].id, "e")
+        result = mg.average_neighbor_degree()
+        for n in nodes:
+            assert result[n.id] == 2.0
+
+
+class TestDegreeCorrelation:
+    """degree_correlation — Newman assortativity coefficient."""
+
+    def test_empty_graph(self, mg):
+        assert mg.degree_correlation() is None
+
+    def test_single_edge(self, mg):
+        a, b = mg.add("a", "n"), mg.add("b", "n")
+        mg.link(a.id, b.id, "e")
+        # Both degree 1, r is trivially 0 (or very close)
+        r = mg.degree_correlation()
+        assert r is not None
+
+    def test_star_disassortative(self, mg):
+        """Star graph is disassortative (r < 0)."""
+        center = mg.add("center", "n")
+        leaves = [mg.add(f"l{i}", "n") for i in range(5)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "e")
+        r = mg.degree_correlation()
+        assert r < 0
+
+    def test_regular_graph_neutral(self, mg):
+        """Regular graph (all same degree) → r ≈ 0 or undefined."""
+        nodes = [mg.add(f"n{i}", "n") for i in range(4)]
+        # Cycle: all degree 2
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[(i+1) % 4].id, "e")
+        r = mg.degree_correlation()
+        # All edges connect degree-2 to degree-2, variance is 0
+        assert abs(r) < 0.01 or r == 0.0
+
+    def test_clique_assortative(self, mg):
+        """Complete graph: trivially assortative (all same degree)."""
+        nodes = [mg.add(f"n{i}", "n") for i in range(4)]
+        for i in range(4):
+            for j in range(i+1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "e")
+        r = mg.degree_correlation()
+        # All degree 3, r should be ~0 (no variance)
+        assert r is not None
+        assert abs(r) < 0.01 or r == 0.0
+
+    def test_hub_spoke_mixed(self, mg):
+        """Graph with clear degree heterogeneity."""
+        nodes = [mg.add(f"n{i}", "n") for i in range(5)]
+        # Two hubs connected, each with spokes
+        mg.link(nodes[0].id, nodes[1].id, "e")  # hub-hub
+        for i in range(2, 5):
+            mg.link(nodes[0].id, nodes[i].id, "e")  # hub0 spokes
+            mg.link(nodes[1].id, nodes[i].id, "e")  # hub1 spokes
+        r = mg.degree_correlation()
+        # Hub-hub edge + hub-spoke edges → slight assortativity possible
+        assert r is not None
+        assert -1 <= r <= 1
