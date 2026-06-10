@@ -777,6 +777,22 @@ Fiedler 向量——对应代数连通度的特征向量。可用于谱二分（
 
 渗透中心性——衡量节点在信息渗透过程中的传播重要性。默认用归一化度数作为渗透状态。
 
+#### `triad_census() -> dict[str, int]`
+
+有向三元组普查（16-type, MaaS convention）——统计所有可能的有向三元组类型。编码：0=无边, 1=i→j, 2=j→i, 3=双向，三元组编码 (ij)(ik)(jk)。
+
+#### `average_neighbor_degree() -> dict[str, float]`
+
+平均邻居度数 k_nn(i) = (1/k_i) × Σk_j。高值 = 邻居是 hub 节点；低值 = 邻居是低度节点。
+
+#### `degree_correlation() -> Optional[float]`
+
+Newman 度-度相关系数（assortativity）。r>0 同配（hub 连 hub）；r<0 异配（hub 连低度）；r≈0 无相关。
+
+#### `node_similarity(id_a, id_b, mode="jaccard") -> float`
+
+节点结构相似度。`mode="jaccard"` 为 Jaccard 系数，`mode="overlap"` 为 Szymkiewicz–Simpson 重叠系数。返回 0.0~1.0。
+
 ---
 
 ### 节点相似性与链路预测
@@ -1081,7 +1097,7 @@ python3 -m pytest test_memory_graph.py -q
 8. **向量搜索** — sqlite-vec 可选集成，三路 RRF 混合搜索 (文本+向量+图) 是 npm/PyPI 唯一三合一方案
 9. **BM25 + GraphRAG** — 全文索引 + 社区级检索，从关键词搜索到知识图谱问答的完整路径
 10. **LLM 适配** — to_markdown + context_window + prune_by_relevance 让图谱直接服务于 LLM 上下文
-11. **网络分析** — global_efficiency + s_metric + effective_eccentricity + local_efficiency + wiener_index + onion_structure + minimum_spanning_tree + resistance_distance + algebraic_connectivity + spectral_radius 量化记忆网络的全局与局部拓扑特性
+11. **网络分析** — global_efficiency + s_metric + effective_eccentricity + local_efficiency + wiener_index + onion_structure + minimum_spanning_tree + resistance_distance + algebraic_connectivity + spectral_radius + triad_census + average_neighbor_degree + degree_correlation + node_similarity 量化记忆网络的全局与局部拓扑特性
 
 ## 许可
 
