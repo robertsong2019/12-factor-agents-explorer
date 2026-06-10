@@ -7711,3 +7711,60 @@ class TestDegreeCorrelation:
         # Hub-hub edge + hub-spoke edges → slight assortativity possible
         assert r is not None
         assert -1 <= r <= 1
+
+
+class TestNodeSimilarity:
+    """node_similarity — structural similarity between two nodes."""
+
+    def test_same_node(self, mg):
+        a = mg.add("a", "n")
+        assert mg.node_similarity(a.id, a.id) == 1.0
+
+    def test_nonexistent_node(self, mg):
+        a = mg.add("a", "n")
+        assert mg.node_similarity(a.id, "nonexistent") == 0.0
+
+    def test_no_neighbors_no_overlap(self, mg):
+        a, b = mg.add("a", "n"), mg.add("b", "n")
+        # Both isolated → Jaccard = 1.0 (empty sets are equal)
+        assert mg.node_similarity(a.id, b.id) == 1.0
+
+    def test_one_neighbor_each(self, mg):
+        a, b, c = mg.add("a", "n"), mg.add("b", "n"), mg.add("c", "n")
+        mg.link(a.id, c.id, "e")
+        mg.link(b.id, c.id, "e")
+        # a's neighbors: {c}, b's neighbors: {c} → Jaccard = 1.0
+        assert mg.node_similarity(a.id, b.id) == 1.0
+
+    def test_partial_overlap(self, mg):
+        a, b = mg.add("a", "n"), mg.add("b", "n")
+        c, d, e = mg.add("c", "n"), mg.add("d", "n"), mg.add("e", "n")
+        mg.link(a.id, c.id, "e")
+        mg.link(a.id, d.id, "e")
+        mg.link(b.id, d.id, "e")
+        mg.link(b.id, e.id, "e")
+        # a's nbrs: {c,d}, b's nbrs: {d,e} → intersection={d}, union={c,d,e}
+        # Jaccard = 1/3
+        assert mg.node_similarity(a.id, b.id, mode="jaccard") == pytest.approx(1/3)
+        # Overlap = 1/2 (min(2,2)=2)
+        assert mg.node_similarity(a.id, b.id, mode="overlap") == pytest.approx(0.5)
+
+    def test_no_overlap(self, mg):
+        a, b = mg.add("a", "n"), mg.add("b", "n")
+        c, d = mg.add("c", "n"), mg.add("d", "n")
+        mg.link(a.id, c.id, "e")
+        mg.link(b.id, d.id, "e")
+        assert mg.node_similarity(a.id, b.id) == 0.0
+
+    def test_invalid_mode(self, mg):
+        a, b = mg.add("a", "n"), mg.add("b", "n")
+        with pytest.raises(ValueError):
+            mg.node_similarity(a.id, b.id, mode="invalid")
+
+    def test_directed_edges_treated_undirected(self, mg):
+        """Similarity uses undirected neighbor sets."""
+        a, b, c = mg.add("a", "n"), mg.add("b", "n"), mg.add("c", "n")
+        mg.link(a.id, c.id, "e")  # a→c
+        mg.link(c.id, b.id, "e")  # c→b
+        # a's undirected nbrs: {c}, b's undirected nbrs: {c}
+        assert mg.node_similarity(a.id, b.id) == 1.0

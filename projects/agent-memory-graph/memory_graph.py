@@ -5690,6 +5690,46 @@ class MemoryGraph:
             return 0.0
         return round(numerator / denominator, 6)
 
+    def node_similarity(self, id_a: str, id_b: str, mode: str = "jaccard") -> float:
+        """计算两个节点的结构相似度。
+
+        基于邻居集合的重叠程度。
+
+        Args:
+            id_a, id_b: 节点ID。
+            mode: "jaccard" (Jaccard系数) 或 "overlap" (重叠系数/Szymkiewicz–Simpson)。
+
+        Returns:
+            float: 0.0~1.0 的相似度，任一节点不存在返回 0.0。
+        """
+        if not self.has_node(id_a) or not self.has_node(id_b):
+            return 0.0
+        if id_a == id_b:
+            return 1.0
+
+        # Build undirected neighbor sets from edges table
+        def undirected_nbrs(nid):
+            rows = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+                (nid, nid)
+            ).fetchall()
+            return {r[0] for r in rows}
+
+        nbrs_a = undirected_nbrs(id_a)
+        nbrs_b = undirected_nbrs(id_b)
+
+        if mode == "jaccard":
+            union = nbrs_a | nbrs_b
+            if not union:
+                return 1.0 if not nbrs_a and not nbrs_b else 0.0
+            return len(nbrs_a & nbrs_b) / len(union)
+        elif mode == "overlap":
+            min_size = min(len(nbrs_a), len(nbrs_b))
+            if min_size == 0:
+                return 1.0 if not nbrs_a and not nbrs_b else 0.0
+            return len(nbrs_a & nbrs_b) / min_size
+        raise ValueError(f"Unknown mode: {mode}. Use 'jaccard' or 'overlap'.")
+
     def resistance_distance(self, id_a: str, id_b: str) -> float | None:
         """计算两节点间的电阻距离（effective resistance）。
 
