@@ -78,3 +78,8 @@ timestamp	commit	metric	value	status	description
 2026-06-09T21:25+08:00	51981a7	test_count	834→846	keep	node_connectivity + edge_connectivity — min-cut via node-split max-flow + Edmonds-Karp with bottleneck. +12 tests. 113th day.
 2026-06-09T21:40+08:00	5b62c0f	test_count	846→851	keep	percolation_centrality — information percolation importance with Brandes-like accumulation. +5 tests. 113th day.
 2026-06-09T21:55+08:00	5733c4d	test_count	851→858	keep	resistance_distance + _sym_eigenvectors — effective resistance via Laplacian pseudoinverse. +7 tests. 113th day.
+2026-06-09T23:00+08:00	38edcf8	test_count	858→867	keep	minimum_spanning_tree + mst_weight — Kruskal with Union-Find (path compression + rank). +9 tests. 113th day.
+2026-06-10T19:15+08:00	97ea547	test_count	877/877	keep	triad_census() — 16-type directed triad census (MaaS convention, edge coding 0/1/2/3). Counts all possible directed triad configurations. +10 tests (867→877). Zero regressions. 114th consecutive day.
+2026-06-10T19:30+08:00	e06a7ac	test_count	888/888	keep	average_neighbor_degree + degree_correlation — per-node k_nn (average neighbor degree) + Newman degree assortativity coefficient. +11 tests (877→888). Zero regressions. 114th consecutive day.
+2026-06-10T19:45+08:00	102be5a	test_count	896/896	keep	node_similarity — Jaccard + overlap/Szymkiewicz-Simpson coefficient for node pair structural similarity. Undirected neighbor sets. +8 tests (888→896). Zero regressions. 114th consecutive day.
+2026-06-10T23:00	83c7370	test_pass_rate	896/896	keep	update README badge, rebuild dist v1.0.0 (203 APIs). PyPI publish blocked: no .pypirc credentials
