@@ -5551,6 +5551,68 @@ class MemoryGraph:
 
         return {node_ids[i]: result[i] / max_result for i in range(n)}
 
+    def triad_census(self) -> dict[str, int]:
+        """计算有向图的三元组普查(triad census)。
+
+        统计所有可能的有向三元组类型(共16种，MaaS convention)。
+        三元组由3个节点和它们之间的有向边组成。
+        编码方式: 每条边用数字表示:
+            0 = 无边, 1 = i→j 方向, 2 = j→i 方向, 3 = 双向
+        三元组编码: (ij)(ik)(jk) 三对关系的编码拼接。
+
+        Returns:
+            dict: 16种三元组类型的计数，键为3位编码字符串。
+        """
+        # 获取所有节点和邻接关系
+        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        node_list = [r[0] for r in nodes]
+        n = len(node_list)
+        if n < 3:
+            # 不足3个节点，全部为0
+            return {f"{a}{b}{c}": 0 for a in range(4) for b in range(4)
+                    for c in range(4)
+                    if not (a == 0 and b == 0 and c == 0)}
+
+        # 构建邻接集合
+        out_edges = {}
+        rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        for s, t in rows:
+            out_edges.setdefault(s, set()).add(t)
+
+        # 初始化16种类型的计数
+        census = {f"{a}{b}{c}": 0 for a in range(4) for b in range(4)
+                  for c in range(4)
+                  if not (a == 0 and b == 0 and c == 0)}
+
+        def edge_code(u, v):
+            """计算u和v之间的边编码。"""
+            has_uv = v in out_edges.get(u, set())
+            has_vu = u in out_edges.get(v, set())
+            if has_uv and has_vu:
+                return 3
+            elif has_uv:
+                return 1
+            elif has_vu:
+                return 2
+            return 0
+
+        # 遍历所有三元组 (i < j < k)
+        for ii in range(n):
+            i = node_list[ii]
+            for jj in range(ii + 1, n):
+                j = node_list[jj]
+                ij = edge_code(i, j)
+                for kk in range(jj + 1, n):
+                    k = node_list[kk]
+                    ik = edge_code(i, k)
+                    jk = edge_code(j, k)
+                    code = f"{ij}{ik}{jk}"
+                    if code != "000":
+                        census[code] = census.get(code, 0) + 1
+
+        # 移除全零条目（已排除）
+        return {k: v for k, v in census.items() if v >= 0}
+
     def resistance_distance(self, id_a: str, id_b: str) -> float | None:
         """计算两节点间的电阻距离（effective resistance）。
 

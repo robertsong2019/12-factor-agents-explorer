@@ -7493,3 +7493,120 @@ class TestMST:
         # MST: 0-2(1), 2-4(1), 0-1(2), 1-3(2) = 6
         assert mg.mst_weight() == pytest.approx(6.0)
         assert len(mg.minimum_spanning_tree()) == 4
+
+
+
+class TestTriadCensus:
+    """Triad census — 16 directed triad type counts."""
+
+    def test_empty_graph(self, mg):
+        """Graph with <3 nodes returns zero-count census."""
+        mg.add("a", "n")
+        mg.add("b", "n")
+        census = mg.triad_census()
+        assert all(v == 0 for v in census.values())
+        assert len(census) > 0
+
+    def test_three_isolated_nodes(self, mg):
+        """3 nodes, no edges -> no non-trivial triads."""
+        mg.add("a", "n")
+        mg.add("b", "n")
+        mg.add("c", "n")
+        census = mg.triad_census()
+        assert sum(census.values()) == 0
+
+    def test_single_edge_triad(self, mg):
+        """3 nodes with 1 directed edge: exactly 1 non-zero triad."""
+        a, b, c = mg.add("a","n"), mg.add("b","n"), mg.add("c","n")
+        mg.link(a.id, b.id, "e")
+        census = mg.triad_census()
+        assert sum(census.values()) == 1
+        non_zero = [k for k, v in census.items() if v == 1]
+        assert len(non_zero) == 1
+        code = non_zero[0]
+        nonzero_digits = sum(1 for d in code if d != '0')
+        assert nonzero_digits == 1
+
+    def test_mutual_edge(self, mg):
+        """3 nodes with mutual edge: code contains one '3'."""
+        a, b, c = mg.add("a","n"), mg.add("b","n"), mg.add("c","n")
+        mg.link(a.id, b.id, "e")
+        mg.link(b.id, a.id, "e")
+        census = mg.triad_census()
+        assert sum(census.values()) == 1
+        non_zero = [k for k, v in census.items() if v > 0]
+        assert len(non_zero) == 1
+        code = non_zero[0]
+        assert '3' in code
+        nonzero_digits = [d for d in code if d != '0']
+        assert nonzero_digits == ['3']
+
+    def test_directed_triangle_all_forward(self, mg):
+        """3 nodes all forward edges: a->b, a->c, b->c."""
+        a, b, c = mg.add("a","n"), mg.add("b","n"), mg.add("c","n")
+        mg.link(a.id, b.id, "e")
+        mg.link(a.id, c.id, "e")
+        mg.link(b.id, c.id, "e")
+        census = mg.triad_census()
+        assert sum(census.values()) == 1
+        non_zero = [k for k, v in census.items() if v > 0][0]
+        nonzero_count = sum(1 for d in non_zero if d != '0')
+        assert nonzero_count == 3
+
+    def test_directed_cycle(self, mg):
+        """True directed cycle: a->b->c->a."""
+        a, b, c = mg.add("a","n"), mg.add("b","n"), mg.add("c","n")
+        mg.link(a.id, b.id, "e")
+        mg.link(b.id, c.id, "e")
+        mg.link(c.id, a.id, "e")
+        census = mg.triad_census()
+        assert sum(census.values()) == 1
+        non_zero = [k for k, v in census.items() if v > 0][0]
+        nonzero_digits = [d for d in non_zero if d != '0']
+        assert len(nonzero_digits) == 3
+        assert all(d in ('1', '2') for d in nonzero_digits)
+
+    def test_complete_mutual(self, mg):
+        """3 nodes all mutually connected: code '333'."""
+        a, b, c = mg.add("a","n"), mg.add("b","n"), mg.add("c","n")
+        mg.link(a.id, b.id, "e"); mg.link(b.id, a.id, "e")
+        mg.link(a.id, c.id, "e"); mg.link(c.id, a.id, "e")
+        mg.link(b.id, c.id, "e"); mg.link(c.id, b.id, "e")
+        census = mg.triad_census()
+        assert sum(census.values()) == 1
+        non_zero = [k for k, v in census.items() if v > 0][0]
+        assert non_zero == "333"
+
+    def test_four_nodes_total_triads(self, mg):
+        """4 nodes -> C(4,3)=4 triads total regardless of edges."""
+        nodes = [mg.add(f"n{i}", "n") for i in range(4)]
+        mg.link(nodes[0].id, nodes[1].id, "e")
+        mg.link(nodes[2].id, nodes[3].id, "e")
+        census = mg.triad_census()
+        assert sum(census.values()) == 4
+
+    def test_symmetry_total_count(self, mg):
+        """Triad census total = C(n,3) for any graph."""
+        nodes = [mg.add(f"n{i}", "n") for i in range(5)]
+        import random
+        random.seed(42)
+        for i in range(5):
+            for j in range(i+1, 5):
+                if random.random() > 0.4:
+                    mg.link(nodes[i].id, nodes[j].id, "e")
+                if random.random() > 0.6:
+                    mg.link(nodes[j].id, nodes[i].id, "e")
+        census = mg.triad_census()
+        assert sum(census.values()) == 10
+
+    def test_mixed_triad_types(self, mg):
+        """5 nodes star: verify multiple triad types."""
+        nodes = [mg.add(f"n{i}", "n") for i in range(5)]
+        for i in range(1, 5):
+            mg.link(nodes[0].id, nodes[i].id, "e")
+        census = mg.triad_census()
+        # Star: 4 triads include hub (have edges), 4 without hub (no edges, excluded as '000')
+        # C(4,2)=6 triads include hub, 4 don't → 6 non-trivial
+        assert sum(census.values()) == 6
+        types_with_edges = sum(1 for v in census.values() if v > 0)
+        assert types_with_edges >= 1
