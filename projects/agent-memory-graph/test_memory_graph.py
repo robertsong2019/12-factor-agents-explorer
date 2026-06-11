@@ -7853,3 +7853,52 @@ class TestPreferentialAttachment:
     def test_isolated(self, mg):
         a, b = mg.add("a", "n"), mg.add("b", "n")
         assert mg.preferential_attachment(a.id, b.id) == 0
+
+
+class TestResourceAllocationIndex:
+    def test_basic(self, mg):
+        a, b, c, d = mg.add("a", "n"), mg.add("b", "n"), mg.add("c", "n"), mg.add("d", "n")
+        mg.link(a.id, c.id, "e"); mg.link(b.id, c.id, "e")
+        mg.link(a.id, d.id, "e"); mg.link(b.id, d.id, "e")
+        # c and d are common neighbors, both degree 2
+        # RA = 1/2 + 1/2 = 1.0
+        assert mg.resource_allocation_index(a.id, b.id) == 1.0
+
+    def test_no_common(self, mg):
+        a, b = mg.add("a", "n"), mg.add("b", "n")
+        assert mg.resource_allocation_index(a.id, b.id) == 0.0
+
+    def test_nonexistent(self, mg):
+        a = mg.add("a", "n")
+        assert mg.resource_allocation_index(a.id, "nope") is None
+
+
+class TestDegreePrestige:
+    def test_full_prestige(self, mg):
+        a, b, c = mg.add("a", "n"), mg.add("b", "n"), mg.add("c", "n")
+        mg.link(b.id, a.id, "e"); mg.link(c.id, a.id, "e")
+        assert mg.degree_prestige(a.id) == 1.0  # 2 in-edges / (3-1)
+
+    def test_zero_prestige(self, mg):
+        a, b = mg.add("a", "n"), mg.add("b", "n")
+        assert mg.degree_prestige(a.id) == 0.0
+
+    def test_nonexistent(self, mg):
+        assert mg.degree_prestige("nope") is None
+
+    def test_single_node(self, mg):
+        a = mg.add("a", "n")
+        assert mg.degree_prestige(a.id) == 0.0
+
+
+class TestCoreRatio:
+    def test_empty(self, mg):
+        assert mg.core_ratio(1) == 0.0
+
+    def test_basic(self, mg):
+        # Triangle: all nodes in 2-core
+        a, b, c = mg.add("a", "n"), mg.add("b", "n"), mg.add("c", "n")
+        mg.link(a.id, b.id, "e"); mg.link(b.id, c.id, "e"); mg.link(c.id, a.id, "e")
+        # Need to compute core_number first
+        ratio = mg.core_ratio(2)
+        assert ratio == 1.0  # All 3 in 2-core

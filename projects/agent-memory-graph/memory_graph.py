@@ -6114,7 +6114,77 @@ class MemoryGraph:
         return "\n".join(lines)
 
 
-# ── 演示 ──────────────────────────────────────────────────
+
+    def resource_allocation_index(self, id_a: str, id_b: str) -> float | None:
+        """计算两节点间的资源分配指数（链路预测）。
+        RA(i,j) = Σ 1/|Γ(z)| for z ∈ Γ(i) ∩ Γ(j)
+        共同邻居的度数越小权重越高（稀有共同邻居更有价值）。
+        比 Adamic/Adar 更惩罚高度共同邻居。
+        Args:
+            id_a, id_b: 节点 ID。
+        Returns:
+            float: RA 分数，≥ 0。节点不存在返回 None。
+        """
+        if not self.has_node(id_a) or not self.has_node(id_b):
+            return None
+        def undirected_nbrs(nid):
+            rows = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+                (nid, nid)
+            ).fetchall()
+            return {r[0] for r in rows}
+        nbrs_a = undirected_nbrs(id_a)
+        nbrs_b = undirected_nbrs(id_b)
+        common = nbrs_a & nbrs_b
+        if not common:
+            return 0.0
+        score = 0.0
+        for z in common:
+            deg_z = self.conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE source=? OR target=?",
+                (z, z)
+            ).fetchone()[0]
+            if deg_z > 0:
+                score += 1.0 / deg_z
+        return score
+    def degree_prestige(self, node_id: str) -> float | None:
+        """计算节点的度声望 = 入度 / (n-1)。
+        有向图中被多少比例的节点指向，衡量"知名度"。
+        无向图中退化为归一化度数。
+        Args:
+            node_id: 节点 ID。
+        Returns:
+            float: [0, 1] 归一化声望，节点不存在返回 None。
+        """
+        if not self.has_node(node_id):
+            return None
+        n = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        if n <= 1:
+            return 0.0
+        in_deg = self.conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE target=?",
+            (node_id,)
+        ).fetchone()[0]
+        return in_deg / (n - 1)
+    def core_ratio(self, k: int) -> float:
+        """计算 k-core 占总节点的比例。
+        衡量图的核密度：高比例意味着大部分节点高度互联。
+        依赖 core_number() 的结果。
+        Args:
+            k: core 阶数。
+        Returns:
+            float: [0, 1] 比例，空图返回 0.0。
+        """
+        n = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        if n == 0:
+            return 0.0
+        cores = self.core_number()
+        in_core = sum(1 for v in cores.values() if v >= k)
+        return in_core / n
+
+    # ── 演示 ──────────────────────────────────────────────────
+
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
@@ -6166,7 +6236,8 @@ def demo():
     mg.decay_all()
     print(mg.visualize_ascii())
 
-    print("\n✅ Done. 这是一个 Agent 记忆管理的概念原型。")
+
+
 
 
 if __name__ == "__main__":
