@@ -7768,3 +7768,88 @@ class TestNodeSimilarity:
         mg.link(c.id, b.id, "e")  # c→b
         # a's undirected nbrs: {c}, b's undirected nbrs: {c}
         assert mg.node_similarity(a.id, b.id) == 1.0
+
+
+class TestEgoGraph:
+    def test_order_1(self, mg):
+        a = mg.add("center", "n")
+        b, c, d = mg.add("b", "n"), mg.add("c", "n"), mg.add("d", "n")
+        e = mg.add("e", "n")  # disconnected
+        mg.link(a.id, b.id, "e")
+        mg.link(a.id, c.id, "e")
+        mg.link(b.id, d.id, "e")
+        result = mg.ego_graph(a.id, order=1)
+        assert result["center"] == a.id
+        assert set(result["nodes"]) == {a.id, b.id, c.id}
+        assert len(result["edges"]) == 2  # a-b, a-c
+        assert result["radius"] == 1
+
+    def test_order_2(self, mg):
+        a = mg.add("center", "n")
+        b, c, d = mg.add("b", "n"), mg.add("c", "n"), mg.add("d", "n")
+        mg.link(a.id, b.id, "e")
+        mg.link(b.id, c.id, "e")
+        mg.link(c.id, d.id, "e")
+        result = mg.ego_graph(a.id, order=2)
+        assert set(result["nodes"]) == {a.id, b.id, c.id}
+        assert len(result["edges"]) == 2  # a-b, b-c (c-d excluded, d outside ego)
+
+    def test_nonexistent_node(self, mg):
+        result = mg.ego_graph("nope", order=1)
+        assert result["nodes"] == []
+
+    def test_isolated_node(self, mg):
+        a = mg.add("alone", "n")
+        result = mg.ego_graph(a.id, order=1)
+        assert result["nodes"] == [a.id]
+        assert result["edges"] == []
+
+
+class TestTransitivity:
+    def test_triangle(self, mg):
+        a, b, c = mg.add("a", "n"), mg.add("b", "n"), mg.add("c", "n")
+        mg.link(a.id, b.id, "e")
+        mg.link(b.id, c.id, "e")
+        mg.link(c.id, a.id, "e")
+        assert mg.transitivity() == 1.0
+
+    def test_no_triangles(self, mg):
+        a, b, c, d = mg.add("a", "n"), mg.add("b", "n"), mg.add("c", "n"), mg.add("d", "n")
+        mg.link(a.id, b.id, "e")
+        mg.link(b.id, c.id, "e")
+        mg.link(c.id, d.id, "e")
+        assert mg.transitivity() == 0.0
+
+    def test_empty_graph(self, mg):
+        assert mg.transitivity() == 0.0
+
+    def test_partial(self, mg):
+        # Square with one diagonal: 2 triangles, 4 triples
+        a, b, c, d = mg.add("a", "n"), mg.add("b", "n"), mg.add("c", "n"), mg.add("d", "n")
+        mg.link(a.id, b.id, "e"); mg.link(b.id, c.id, "e")
+        mg.link(c.id, d.id, "e"); mg.link(d.id, a.id, "e")
+        mg.link(a.id, c.id, "e")  # diagonal
+        # Triangles: abc, acd → 2
+        # Triples: a(b,c,d)=3, b(a,c)=1, c(a,b,d)=3, d(a,c)=1 → 8 total undirected triples = 8/2=... 
+        # Actually triples = sum of C(deg,2) per node
+        # deg: a=3, b=2, c=3, d=2 → C(3,2)+C(2,2)+C(3,2)+C(2,2) = 3+1+3+1 = 8
+        # Each triangle counted 3 times → 2*3=6 triangles found
+        t = mg.transitivity()
+        assert 0 < t <= 1.0
+
+
+class TestPreferentialAttachment:
+    def test_basic(self, mg):
+        a, b, c = mg.add("a", "n"), mg.add("b", "n"), mg.add("c", "n")
+        mg.link(a.id, b.id, "e")
+        mg.link(a.id, c.id, "e")
+        # a has degree 2, b has degree 1
+        assert mg.preferential_attachment(a.id, b.id) == 2 * 1
+
+    def test_nonexistent(self, mg):
+        a = mg.add("a", "n")
+        assert mg.preferential_attachment(a.id, "nope") is None
+
+    def test_isolated(self, mg):
+        a, b = mg.add("a", "n"), mg.add("b", "n")
+        assert mg.preferential_attachment(a.id, b.id) == 0

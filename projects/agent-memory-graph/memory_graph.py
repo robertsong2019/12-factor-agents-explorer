@@ -5838,6 +5838,113 @@ class MemoryGraph:
         # Return as list of column vectors
         return [[V[i][k] for i in range(n)] for k in range(n)]
 
+    def ego_graph(self, node_id: str, order: int = 1) -> dict:
+        """提取以指定节点为中心的 ego graph（自我网络）。
+
+        返回中心节点及其 order-hop 邻域内的所有节点和边。
+        ego graph 是社会网络分析的基本单元，也用于 GraphRAG local search。
+
+        Args:
+            node_id: 中心节点 ID。
+            order: 邻域半径（默认 1 = 直接邻居）。
+
+        Returns:
+            {"center": node_id, "nodes": [...], "edges": [...], "radius": order}
+            节点不存在返回空结果。
+        """
+        if not self.has_node(node_id):
+            return {"center": node_id, "nodes": [], "edges": [], "radius": order}
+
+        # BFS to collect nodes within `order` hops
+        visited = {node_id}
+        frontier = {node_id}
+        for _ in range(order):
+            next_frontier = set()
+            for nid in frontier:
+                rows = self.conn.execute(
+                    "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+                    (nid, nid)
+                ).fetchall()
+                for r in rows:
+                    if r[0] not in visited:
+                        next_frontier.add(r[0])
+            visited |= next_frontier
+            frontier = next_frontier
+
+        # Collect edges within the ego graph (both endpoints in visited)
+        placeholders = ",".join("?" for _ in visited)
+        params = list(visited)
+        edge_rows = self.conn.execute(
+            f"SELECT source, target, weight, relation FROM edges WHERE source IN ({placeholders}) AND target IN ({placeholders})",
+            params + params
+        ).fetchall()
+
+        edges = [{"source": r[0], "target": r[1], "weight": r[2], "relation": r[3]} for r in edge_rows]
+        return {"center": node_id, "nodes": sorted(visited), "edges": edges, "radius": order}
+
+    def transitivity(self) -> float:
+        """计算全局传递性（聚类系数）= 3 × 三角形数 / 三元组数。
+
+        传递性衡量网络中"朋友的朋友也是朋友"的程度。
+        值域 [0, 1]，0 = 无三角形，1 = 完全图。
+
+        Returns:
+            float: 传递性，孤立或无三元组返回 0.0。
+        """
+        node_ids = [r[0] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if len(node_ids) < 3:
+            return 0.0
+
+        # Build undirected adjacency
+        adj = {nid: set() for nid in node_ids}
+        for r in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if r[0] in adj and r[1] in adj:
+                adj[r[0]].add(r[1])
+                adj[r[1]].add(r[0])
+
+        triangles = 0
+        triples = 0
+        for nid in node_ids:
+            k = len(adj[nid])
+            if k >= 2:
+                triples += k * (k - 1) // 2
+                # Count triangles including nid
+                nbrs = list(adj[nid])
+                for i in range(len(nbrs)):
+                    for j in range(i + 1, len(nbrs)):
+                        if nbrs[j] in adj[nbrs[i]]:
+                            triangles += 1
+
+        if triples == 0:
+            return 0.0
+        # Each triangle counted 3 times (once per vertex)
+        return triangles / triples  # Already normalized: 3*triangles/3 / triples
+
+    def preferential_attachment(self, id_a: str, id_b: str) -> int | None:
+        """计算两节点间的优先链接分数 = deg(A) × deg(B)。
+
+        用于链路预测：度数高的节点对更可能连接。
+        是 Adamic/Adar 和 Jaccard 的简化替代。
+
+        Args:
+            id_a, id_b: 节点 ID。
+
+        Returns:
+            int: 度数乘积，节点不存在返回 None。
+        """
+        if not self.has_node(id_a) or not self.has_node(id_b):
+            return None
+
+        deg_a = self.conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE source=? OR target=?",
+            (id_a, id_a)
+        ).fetchone()[0]
+        deg_b = self.conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE source=? OR target=?",
+            (id_b, id_b)
+        ).fetchone()[0]
+        return deg_a * deg_b
+
     # ── LLM 上下文导出 ────────────────────────────────────
 
     def to_markdown(self, node_ids: list[str] | None = None, max_nodes: int = 50,
