@@ -3340,6 +3340,95 @@ class MemoryGraph:
             "connectivity": all_connected,
         }
 
+    def community_hierarchy(self, resolutions: list[float] = None,
+                            seed: int = 42) -> list[dict]:
+        """Detect communities at multiple resolution levels for hierarchical analysis.
+
+        Runs Leiden at different γ values to build a multi-granularity view.
+        Lower γ → fewer/larger communities; higher γ → more/smaller communities.
+
+        Args:
+            resolutions: list of γ values. Default: [0.3, 0.5, 1.0, 1.5, 2.0].
+            seed: random seed for reproducibility.
+
+        Returns list of dicts (one per resolution) with:
+            resolution, communities {node: cid}, num_communities, modularity, sizes.
+        """
+        if resolutions is None:
+            resolutions = [0.3, 0.5, 1.0, 1.5, 2.0]
+
+        results = []
+        for gamma in resolutions:
+            partition = self.detect_communities_leiden(
+                resolution=gamma, seed=seed)
+            num_c = len(set(partition.values()))
+            q = self.modularity(partition)
+            sizes = {}
+            for cid in partition.values():
+                sizes[cid] = sizes.get(cid, 0) + 1
+            results.append({
+                "resolution": gamma,
+                "communities": partition,
+                "num_communities": num_c,
+                "modularity": round(q, 4),
+                "sizes": sorted(sizes.values(), reverse=True),
+            })
+        return results
+
+    def incremental_modularity(self, node_id: str, target_community: int,
+                                communities: dict[str, int] = None,
+                                resolution: float = 1.0) -> float:
+        """Compute the modularity gain ΔQ for moving a node to a different community.
+
+        Useful for evaluating community assignments without executing the move.
+
+        Args:
+            node_id: node to evaluate.
+            target_community: community ID to move to.
+            communities: {node_id: community_id} mapping. If None, auto-detects via Leiden.
+            resolution: γ parameter.
+
+        Returns:
+            ΔQ value. Positive = beneficial move, negative = harmful.
+        """
+        if communities is None:
+            communities = self.detect_communities_leiden(resolution=resolution)
+
+        if node_id not in communities:
+            return 0.0
+
+        current = communities[node_id]
+        if current == target_community:
+            return 0.0
+
+        edges = self.conn.execute(
+            "SELECT source, target, weight FROM edges").fetchall()
+
+        adj: dict[str, dict[str, float]] = defaultdict(dict)
+        degree: dict[str, float] = defaultdict(float)
+        total_weight = 0.0
+        for e in edges:
+            s, t, w = str(e["source"]), str(e["target"]), float(e["weight"] or 1.0)
+            adj[s][t] = adj[s].get(t, 0.0) + w
+            adj[t][s] = adj[t].get(s, 0.0) + w
+            degree[s] += w
+            degree[t] += w
+            total_weight += w
+
+        m2 = total_weight * 2.0 if total_weight > 0 else 1.0
+
+        k_i = degree.get(node_id, 0.0)
+        k_i_in_target = sum(w for nb, w in adj.get(node_id, {}).items()
+                            if communities.get(nb) == target_community)
+        k_i_in_current = sum(w for nb, w in adj.get(node_id, {}).items()
+                             if communities.get(nb) == current)
+
+        sigma_target = sum(degree[n] for n, c in communities.items() if c == target_community)
+        sigma_current = sum(degree[n] for n, c in communities.items() if c == current)
+
+        return ((k_i_in_target - k_i_in_current)
+                - resolution * k_i * (sigma_target - sigma_current + k_i) / m2)
+
     def community_summary(self, communities: dict = None, algorithm: str = "lp") -> list[dict]:
         """Summarize detected communities with key metrics.
 

@@ -8051,3 +8051,153 @@ class TestLeidenAggregation:
         # Higher resolution tends to produce more communities
         assert len(set(high_res.values())) >= len(set(low_res.values()))
 
+
+class TestCommunityHierarchy:
+    """Tests for community_hierarchy() multi-resolution analysis."""
+
+    @pytest.fixture
+    def mg(self):
+        return MemoryGraph(":memory:")
+
+    def test_hierarchy_default_resolutions(self, mg):
+        """Default should return 5 resolution levels."""
+        nodes = [mg.add(f"n{i}", "N") for i in range(4)]
+        mg.link(nodes[0].id, nodes[1].id, "e")
+        mg.link(nodes[1].id, nodes[2].id, "e")
+        mg.link(nodes[2].id, nodes[3].id, "e")
+        hierarchy = mg.community_hierarchy()
+        assert len(hierarchy) == 5
+        for entry in hierarchy:
+            assert "resolution" in entry
+            assert "communities" in entry
+            assert "num_communities" in entry
+            assert "modularity" in entry
+            assert "sizes" in entry
+
+    def test_hierarchy_custom_resolutions(self, mg):
+        """Custom resolution list should be respected."""
+        nodes = [mg.add(f"x{i}", "X") for i in range(6)]
+        for i in range(6):
+            mg.link(nodes[i].id, nodes[(i + 1) % 6].id, "e")
+        hierarchy = mg.community_hierarchy(resolutions=[0.5, 2.0])
+        assert len(hierarchy) == 2
+        assert hierarchy[0]["resolution"] == 0.5
+        assert hierarchy[1]["resolution"] == 2.0
+
+    def test_hierarchy_empty_graph(self, mg):
+        """Empty graph should return entries with 0 communities."""
+        hierarchy = mg.community_hierarchy()
+        assert len(hierarchy) == 5
+        for entry in hierarchy:
+            assert entry["num_communities"] == 0
+
+    def test_hierarchy_sizes_sorted(self, mg):
+        """Size list should be sorted descending."""
+        cliques = []
+        for label in ["a", "b", "c"]:
+            nodes = [mg.add(f"{label}{i}", label) for i in range(3)]
+            for i in range(3):
+                for j in range(i + 1, 3):
+                    mg.link(nodes[i].id, nodes[j].id, "e")
+            cliques.append(nodes)
+        mg.link(cliques[0][0].id, cliques[1][0].id, "bridge", 0.1)
+        mg.link(cliques[1][1].id, cliques[2][0].id, "bridge", 0.1)
+
+        hierarchy = mg.community_hierarchy()
+        for entry in hierarchy:
+            if entry["sizes"]:
+                assert entry["sizes"] == sorted(entry["sizes"], reverse=True)
+
+    def test_hierarchy_all_nodes_present(self, mg):
+        """Every node should appear in each resolution's partition."""
+        nodes = [mg.add(f"p{i}", "P") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i + 1].id, "e")
+        hierarchy = mg.community_hierarchy()
+        for entry in hierarchy:
+            assert len(entry["communities"]) == 5
+
+    def test_hierarchy_modularity_decreases_with_resolution(self, mg):
+        """For well-separated communities, lower resolution tends to have
+        higher modularity (closer to optimal)."""
+        groups = []
+        for g in range(3):
+            group = [mg.add(f"g{g}n{i}", f"G{g}") for i in range(5)]
+            for i in range(5):
+                for j in range(i + 1, 5):
+                    mg.link(group[i].id, group[j].id, "intra", 1.0)
+            groups.append(group)
+        mg.link(groups[0][0].id, groups[1][0].id, "inter", 0.01)
+        mg.link(groups[1][1].id, groups[2][0].id, "inter", 0.01)
+
+        hierarchy = mg.community_hierarchy(resolutions=[0.5, 1.0, 2.0])
+        # At least one lower-res should have >= modularity than higher-res
+        assert hierarchy[0]["modularity"] >= hierarchy[-1]["modularity"] - 0.1
+
+
+class TestIncrementalModularity:
+    """Tests for incremental_modularity() ΔQ calculation."""
+
+    @pytest.fixture
+    def mg(self):
+        return MemoryGraph(":memory:")
+
+    def test_zero_move_to_same_community(self, mg):
+        """ΔQ should be 0 when target == current."""
+        a, b = mg.add("a", "X"), mg.add("b", "X")
+        mg.link(a.id, b.id, "e")
+        communities = {a.id: 0, b.id: 0}
+        delta = mg.incremental_modularity(a.id, 0, communities)
+        assert delta == 0.0
+
+    def test_positive_for_good_move(self, mg):
+        """ΔQ should be positive for a beneficial move."""
+        # Two triangles connected weakly
+        a1, a2, a3 = mg.add("a1", "A"), mg.add("a2", "A"), mg.add("a3", "A")
+        b1, b2, b3 = mg.add("b1", "B"), mg.add("b2", "B"), mg.add("b3", "B")
+        for pair in [(a1,a2),(a2,a3),(a1,a3),(b1,b2),(b2,b3),(b1,b3)]:
+            mg.link(pair[0].id, pair[1].id, "close", 1.0)
+        mg.link(a1.id, b1.id, "bridge", 0.1)
+        # Bad partition: a1 with B group
+        communities = {a1.id: 0, a2.id: 1, a3.id: 1, b1.id: 0, b2.id: 0, b3.id: 0}
+        # Moving a1 from 0→1 should be positive
+        delta = mg.incremental_modularity(a1.id, 1, communities)
+        assert delta > 0, f"Moving a1 to its clique should be positive, got {delta}"
+
+    def test_negative_for_bad_move(self, mg):
+        """ΔQ should be negative for a harmful move."""
+        # Triangle + single node
+        a1, a2, a3 = mg.add("a1", "A"), mg.add("a2", "A"), mg.add("a3", "A")
+        d = mg.add("d", "D")
+        mg.link(a1.id, a2.id, "e", 1.0)
+        mg.link(a2.id, a3.id, "e", 1.0)
+        mg.link(a1.id, a3.id, "e", 1.0)
+        mg.link(a3.id, d.id, "weak", 0.1)
+        # Good partition
+        communities = {a1.id: 0, a2.id: 0, a3.id: 0, d.id: 1}
+        # Moving a3 from its triangle to join d should be negative
+        delta = mg.incremental_modularity(a3.id, 1, communities)
+        assert delta < 0, f"Moving a3 away from triangle should be negative, got {delta}"
+
+    def test_nonexistent_node(self, mg):
+        """Nonexistent node should return 0.0."""
+        a = mg.add("a", "X")
+        mg.link(a.id, a.id, "self", 1.0)  # self-loop to avoid empty
+        delta = mg.incremental_modularity("nonexistent", 0)
+        assert delta == 0.0
+
+    def test_empty_graph(self, mg):
+        """Empty graph should return 0.0."""
+        delta = mg.incremental_modularity("any", 0)
+        assert delta == 0.0
+
+    def test_auto_detect_communities(self, mg):
+        """Should work without explicit communities (auto-detect via Leiden)."""
+        a, b, c = mg.add("a", "X"), mg.add("b", "X"), mg.add("c", "X")
+        mg.link(a.id, b.id, "e")
+        mg.link(b.id, c.id, "e")
+        # Should not crash with auto-detection
+        delta = mg.incremental_modularity(a.id, 999)
+        # Moving to non-existent community should still compute
+        assert isinstance(delta, float)
+
