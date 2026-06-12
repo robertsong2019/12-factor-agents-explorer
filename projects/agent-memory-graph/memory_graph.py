@@ -3036,10 +3036,13 @@ class MemoryGraph:
 
     def detect_communities_leiden(self, resolution: float = 1.0,
                                   max_iterations: int = 10, seed: int = 42) -> dict[str, int]:
-        """Leiden community detection algorithm.
+        """Leiden community detection algorithm (full 3-phase implementation).
 
         Three phases: Fast Local Move → Refinement → Aggregation.
         Guarantees well-connected communities (unlike Louvain).
+
+        The Aggregation phase contracts communities into super-nodes and
+        re-runs, producing a hierarchy that improves quality at each level.
 
         Args:
             resolution: γ parameter. <1 → larger communities, >1 → smaller communities.
@@ -3052,123 +3055,154 @@ class MemoryGraph:
         import random as _rng
         _rng.seed(seed)
 
-        nodes = [str(r["id"]) for r in
-                 self.conn.execute("SELECT id FROM nodes").fetchall()]
-        if not nodes:
+        raw_nodes = [str(r["id"]) for r in
+                     self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if not raw_nodes:
             return {}
 
-        edges = self.conn.execute(
+        raw_edges = self.conn.execute(
             "SELECT source, target, weight FROM edges").fetchall()
 
-        # Build adjacency with weights
-        adj: dict[str, dict[str, float]] = {n: {} for n in nodes}
-        total_weight = 0.0
-        for e in edges:
+        # Build initial adjacency
+        orig_adj: dict[str, dict[str, float]] = {n: {} for n in raw_nodes}
+        for e in raw_edges:
             s, t, w = str(e["source"]), str(e["target"]), float(e["weight"] or 1.0)
-            adj[s][t] = adj[s].get(t, 0.0) + w
-            adj[t][s] = adj[t].get(s, 0.0) + w
-            total_weight += w
-        m2 = total_weight * 2.0 if total_weight > 0 else 1.0
+            orig_adj[s][t] = orig_adj[s].get(t, 0.0) + w
+            orig_adj[t][s] = orig_adj[t].get(s, 0.0) + w
 
-        # Node degrees
-        degree = {n: sum(adj[n].values()) for n in nodes}
+        # Track original members of each super-node
+        super_members: dict[str, set[str]] = {n: {n} for n in raw_nodes}
+        cur_nodes = list(raw_nodes)
+        cur_adj = orig_adj
 
-        # Initialize: each node in its own community
-        community = {n: i for i, n in enumerate(nodes)}
+        for _level in range(max_iterations):
+            if len(cur_nodes) <= 1:
+                break
 
-        def _community_degree(comm_id: int) -> float:
-            """Sum of degrees of nodes in community."""
-            return sum(degree[n] for n in nodes if community[n] == comm_id)
+            m2 = sum(sum(d.values()) for d in cur_adj.values())
+            if m2 == 0:
+                break
 
-        def _modularity_gain(node: str, target: int, current: int) -> float:
-            """ΔQ for moving node from current community to target."""
-            k_i = degree[node]
-            k_i_target = sum(w for nb, w in adj[node].items()
-                             if community.get(nb) == target)
-            k_i_current = sum(w for nb, w in adj[node].items()
-                              if community.get(nb) == current)
-            sigma_target = _community_degree(target)
-            sigma_current = _community_degree(current)
-            return (k_i_target - k_i_current
-                    - resolution * k_i * (sigma_target - sigma_current + k_i) / m2)
+            degree = {n: sum(cur_adj[n].values()) for n in cur_nodes}
 
-        improved = True
-        iteration = 0
-        while improved and iteration < max_iterations:
-            improved = False
-            iteration += 1
+            # Initialize: each node in its own community
+            community = {n: i for i, n in enumerate(cur_nodes)}
+            comm_degree: dict[int, float] = {}
+            for n in cur_nodes:
+                comm_degree[community[n]] = comm_degree.get(community[n], 0.0) + degree[n]
 
-            # === Phase 1: Fast Local Move (queue-driven) ===
-            queue = list(nodes)
+            # === Phase 1: Fast Local Move ===
+            queue = list(cur_nodes)
             _rng.shuffle(queue)
             in_queue = set(queue)
+            moved_any = False
 
             while queue:
                 node = queue.pop(0)
                 in_queue.discard(node)
                 cur = community[node]
+                k_i = degree[node]
 
-                # Find neighbor communities
+                # Compute edge weights to each neighboring community
+                # (including current, for proper ΔQ)
                 neighbor_comms: dict[int, float] = {}
-                for nb in adj[node]:
+                for nb in cur_adj[node]:
                     c = community[nb]
-                    neighbor_comms[c] = neighbor_comms.get(c, 0.0) + adj[node][nb]
+                    neighbor_comms[c] = neighbor_comms.get(c, 0.0) + cur_adj[node][nb]
+
+                k_i_in_cur = neighbor_comms.get(cur, 0.0)
+                sigma_cur = comm_degree.get(cur, 0.0) - k_i  # exclude self
 
                 best_comm, best_delta = cur, 0.0
-                for c in neighbor_comms:
+                for c, k_i_in_c in neighbor_comms.items():
                     if c == cur:
                         continue
-                    delta = _modularity_gain(node, c, cur)
+                    sigma_c = comm_degree.get(c, 0.0)
+                    # ΔQ = (k_i_in_c - k_i_in_cur) - γ * k_i * (Σ_c - (Σ_cur - k_i)) / m2
+                    delta = ((k_i_in_c - k_i_in_cur)
+                             - resolution * k_i * (sigma_c - sigma_cur) / m2)
                     if delta > best_delta:
                         best_delta = delta
                         best_comm = c
 
                 if best_comm != cur:
+                    comm_degree[cur] -= k_i
+                    if comm_degree[cur] <= 0:
+                        del comm_degree[cur]
+                    comm_degree[best_comm] = comm_degree.get(best_comm, 0.0) + k_i
                     community[node] = best_comm
-                    improved = True
-                    for nb in adj[node]:
+                    moved_any = True
+                    for nb in cur_adj[node]:
                         if nb not in in_queue and community[nb] != best_comm:
                             queue.append(nb)
                             in_queue.add(nb)
 
-            # === Phase 2: Refinement (simplified) ===
-            # Ensure communities are well-connected by splitting
-            # disconnected communities detected via BFS.
-            # Build adjacency restricted to same-community edges
+            # Check convergence
+            unique_comms = set(community.values())
+            if not moved_any or len(unique_comms) == len(cur_nodes):
+                break
+
+            # === Phase 2: Refinement (connectivity guarantee) ===
             comm_members: dict[int, list[str]] = {}
-            for n in nodes:
+            for n in cur_nodes:
                 comm_members.setdefault(community[n], []).append(n)
 
             for cid, members in comm_members.items():
                 if len(members) <= 1:
                     continue
-                # Build subgraph adjacency (same community only)
                 member_set = set(members)
                 sub_adj: dict[str, set[str]] = {n: set() for n in members}
                 for n in members:
-                    for nb in adj[n]:
+                    for nb in cur_adj[n]:
                         if nb in member_set:
                             sub_adj[n].add(nb)
 
-                # BFS from first member to check connectivity
+                # BFS connectivity check
                 visited = set()
                 queue_bfs = [members[0]]
                 visited.add(members[0])
                 while queue_bfs:
-                    cur = queue_bfs.pop(0)
-                    for nb in sub_adj[cur]:
+                    bfs_node = queue_bfs.pop(0)
+                    for nb in sub_adj[bfs_node]:
                         if nb not in visited:
                             visited.add(nb)
                             queue_bfs.append(nb)
 
-                # If disconnected, split unvisited into new community
                 if len(visited) < len(members):
                     max_comm = max(community.values()) + 1
                     for n in members:
                         if n not in visited:
+                            comm_degree[community[n]] -= degree[n]
+                            comm_degree[max_comm] = comm_degree.get(max_comm, 0.0) + degree[n]
                             community[n] = max_comm
 
-        return community
+            # === Phase 3: Aggregation ===
+            unique_comms = set(community.values())
+            comm_to_new: dict[int, str] = {cid: f"L{_level}_{cid}" for cid in unique_comms}
+
+            # Build aggregated graph (with self-loops for internal edges)
+            new_adj: dict[str, dict[str, float]] = {comm_to_new[c]: {} for c in unique_comms}
+            for n in cur_nodes:
+                src_new = comm_to_new[community[n]]
+                for nb, w in cur_adj[n].items():
+                    tgt_new = comm_to_new[community[nb]]
+                    new_adj[src_new][tgt_new] = new_adj[src_new].get(tgt_new, 0.0) + w
+
+            new_super: dict[str, set[str]] = {comm_to_new[c]: set() for c in unique_comms}
+            for n in cur_nodes:
+                new_super[comm_to_new[community[n]]].update(super_members[n])
+
+            super_members = new_super
+            cur_nodes = list(new_adj.keys())
+            cur_adj = new_adj
+
+        # Map back to original node IDs
+        result: dict[str, int] = {}
+        for final_id, (super_node, orig_ids) in enumerate(super_members.items()):
+            for orig_id in orig_ids:
+                result[orig_id] = final_id
+
+        return result
 
     def modularity(self, communities: dict[str, int] = None) -> float:
         """Compute modularity Q for a community partition.

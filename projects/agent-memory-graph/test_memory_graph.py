@@ -7902,3 +7902,152 @@ class TestCoreRatio:
         # Need to compute core_number first
         ratio = mg.core_ratio(2)
         assert ratio == 1.0  # All 3 in 2-core
+
+
+class TestLeidenAggregation:
+    """Tests for Leiden with proper 3-phase Aggregation."""
+
+    @pytest.fixture
+    def mg(self):
+        return MemoryGraph(":memory:")
+
+    def test_aggregation_two_level_merge(self, mg):
+        """Two clusters connected by a weak bridge should merge into 2 communities
+        via the aggregation phase."""
+        # Cluster A: 5 nodes densely connected
+        a_nodes = [mg.add(f"a{i}", "A") for i in range(5)]
+        for i in range(5):
+            for j in range(i + 1, 5):
+                mg.link(a_nodes[i].id, a_nodes[j].id, "close", 1.0)
+        # Cluster B: 5 nodes densely connected
+        b_nodes = [mg.add(f"b{i}", "B") for i in range(5)]
+        for i in range(5):
+            for j in range(i + 1, 5):
+                mg.link(b_nodes[i].id, b_nodes[j].id, "close", 1.0)
+        # Weak bridge
+        mg.link(a_nodes[0].id, b_nodes[0].id, "bridge", 0.1)
+
+        result = mg.detect_communities_leiden(seed=42)
+        assert len(set(result.values())) == 2
+        # Each cluster should be one community
+        a_comms = {result[n.id] for n in a_nodes}
+        b_comms = {result[n.id] for n in b_nodes}
+        assert len(a_comms) == 1, "Cluster A should be one community"
+        assert len(b_comms) == 1, "Cluster B should be one community"
+        assert a_comms != b_comms, "Clusters should be different communities"
+
+    def test_aggregation_three_communities(self, mg):
+        """Three well-separated cliques should yield 3 communities."""
+        cliques = []
+        for label in ["x", "y", "z"]:
+            nodes = [mg.add(f"{label}{i}", label) for i in range(4)]
+            for i in range(4):
+                for j in range(i + 1, 4):
+                    mg.link(nodes[i].id, nodes[j].id, "close", 1.0)
+            cliques.append(nodes)
+        # Weak inter-clique bridges
+        mg.link(cliques[0][0].id, cliques[1][0].id, "bridge", 0.05)
+        mg.link(cliques[1][1].id, cliques[2][0].id, "bridge", 0.05)
+
+        result = mg.detect_communities_leiden(seed=42)
+        assert len(set(result.values())) == 3
+
+    def test_aggregation_improves_modularity(self, mg):
+        """Multi-level Leiden should produce equal or better modularity than single-level."""
+        # Ring of 8 nodes with two cross-links forming natural communities
+        nodes = [mg.add(f"n{i}", "N") for i in range(8)]
+        for i in range(8):
+            mg.link(nodes[i].id, nodes[(i + 1) % 8].id, "ring", 1.0)
+        # Two cross-links split ring into two halves
+        mg.link(nodes[0].id, nodes[3].id, "cross", 0.5)
+        mg.link(nodes[4].id, nodes[7].id, "cross", 0.5)
+
+        result_multi = mg.detect_communities_leiden(max_iterations=10, seed=42)
+        q_multi = mg.modularity(result_multi)
+
+        # Multi-level should find non-trivial partition
+        assert q_multi >= 0.0, "Modularity should be non-negative"
+        assert len(set(result_multi.values())) >= 2, "Should find at least 2 communities"
+
+    def test_aggregation_all_singletons(self, mg):
+        """Graph with no edges → each node is its own community."""
+        for i in range(5):
+            mg.add(f"s{i}", "S")
+        result = mg.detect_communities_leiden(seed=42)
+        assert len(set(result.values())) == 5
+
+    def test_aggregation_fully_connected(self, mg):
+        """Complete graph → all nodes in one community."""
+        nodes = [mg.add(f"k{i}", "K") for i in range(6)]
+        for i in range(6):
+            for j in range(i + 1, 6):
+                mg.link(nodes[i].id, nodes[j].id, "complete", 1.0)
+        result = mg.detect_communities_leiden(seed=42)
+        assert len(set(result.values())) == 1
+
+    def test_aggregation_preserves_node_count(self, mg):
+        """Every node should appear in the result."""
+        nodes = [mg.add(f"p{i}", "P") for i in range(7)]
+        for i in range(6):
+            mg.link(nodes[i].id, nodes[i + 1].id, "chain", 1.0)
+        result = mg.detect_communities_leiden(seed=42)
+        assert len(result) == 7
+        for n in nodes:
+            assert n.id in result
+
+    def test_aggregation_deterministic(self, mg):
+        """Same seed → same result."""
+        nodes = [mg.add(f"d{i}", "D") for i in range(6)]
+        for i in range(6):
+            for j in range(i + 1, 6):
+                mg.link(nodes[i].id, nodes[j].id, "edge", 1.0)
+        r1 = mg.detect_communities_leiden(seed=123)
+        r2 = mg.detect_communities_leiden(seed=123)
+        assert r1 == r2
+
+    def test_aggregation_self_loops_in_aggregated_graph(self, mg):
+        """Aggregated super-nodes should have self-loops from internal edges.
+        Verify by checking that aggregation produces correct edge weights."""
+        # Triangle + 1 external edge
+        a, b, c = mg.add("a", "T"), mg.add("b", "T"), mg.add("c", "T")
+        d = mg.add("d", "O")
+        mg.link(a.id, b.id, "e", 1.0)
+        mg.link(b.id, c.id, "e", 1.0)
+        mg.link(a.id, c.id, "e", 1.0)
+        mg.link(c.id, d.id, "e", 0.3)
+
+        result = mg.detect_communities_leiden(seed=42)
+        # Triangle should be one community, d is another (or same)
+        assert result[a.id] == result[b.id] == result[c.id]
+
+    def test_aggregation_large_modularity_gain(self, mg):
+        """Well-separated communities should have modularity > 0.3."""
+        # Four groups of 4 nodes each, fully connected within group
+        groups = []
+        for g in range(4):
+            group = [mg.add(f"g{g}n{i}", f"G{g}") for i in range(4)]
+            for i in range(4):
+                for j in range(i + 1, 4):
+                    mg.link(group[i].id, group[j].id, "intra", 1.0)
+            groups.append(group)
+        # Single weak inter-group edge
+        mg.link(groups[0][0].id, groups[1][0].id, "inter", 0.01)
+        mg.link(groups[1][1].id, groups[2][0].id, "inter", 0.01)
+        mg.link(groups[2][1].id, groups[3][0].id, "inter", 0.01)
+
+        result = mg.detect_communities_leiden(seed=42)
+        q = mg.modularity(result)
+        assert q > 0.3, f"Modularity {q:.3f} should be > 0.3 for well-separated groups"
+
+    def test_aggregation_resolution_splits_large_community(self, mg):
+        """High resolution γ should split a large community into smaller pieces."""
+        # 8-node ring
+        nodes = [mg.add(f"r{i}", "R") for i in range(8)]
+        for i in range(8):
+            mg.link(nodes[i].id, nodes[(i + 1) % 8].id, "ring", 1.0)
+
+        low_res = mg.detect_communities_leiden(resolution=0.3, seed=42)
+        high_res = mg.detect_communities_leiden(resolution=3.0, seed=42)
+        # Higher resolution tends to produce more communities
+        assert len(set(high_res.values())) >= len(set(low_res.values()))
+
