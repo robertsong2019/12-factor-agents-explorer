@@ -477,6 +477,55 @@ def test_memory_persistence_with_update():
         os.unlink(path)
 
 
+def test_memory_search_empty_query():
+    """空查询字符串匹配所有条目"""
+    m = Memory()
+    m.add("hello world")
+    m.add("another entry")
+    results = m.search("")
+    assert len(results) == 2
+    print("✅ 空查询匹配所有条目测试通过")
+
+
+def test_memory_search_limit_zero():
+    """limit=0 返回所有匹配"""
+    m = Memory()
+    for i in range(10):
+        m.add(f"item {i}")
+    results = m.search("item", limit=0)
+    assert len(results) == 10
+    print("✅ limit=0 返回全部测试通过")
+
+
+def test_memory_get_recent_negative():
+    """get_recent 负数返回空列表"""
+    m = Memory()
+    m.add("test")
+    assert m.get_recent(-1) == []
+    print("✅ get_recent 负数测试通过")
+
+
+def test_memory_to_context_with_tags():
+    """to_context 包含带标签的记忆"""
+    m = Memory()
+    m.add("tagged entry", tags=["important"])
+    ctx = m.to_context()
+    assert "tagged entry" in ctx
+    print("✅ to_context 含标签测试通过")
+
+
+def test_memory_count_after_overflow():
+    """超过 max_entries 后计数正确"""
+    m = Memory(max_entries=3)
+    m.add("a")
+    m.add("b")
+    m.add("c")
+    m.add("d")
+    assert m.count() == 3
+    assert m.get_all()[0].content == "b"
+    print("✅ 溢出后计数测试通过")
+
+
     print("=" * 60)
     print("🧪 Nano-Agent 高级测试")
     print("=" * 60)
