@@ -6560,6 +6560,53 @@ class MemoryGraph:
             return 0.0
         return 1.0 / len(path)
 
+    def assortativity_degree(self) -> float:
+        """计算度同配系数 (Newman assortativity coefficient)。
+
+        衡量图中节点是否倾向于连接度数相似的节点。
+        r > 0: 同配网络（高连高、低连低）
+        r < 0: 异配网络（高连低）
+        r ≈ 0: 无明显相关性
+        值域 [-1, 1]。
+        """
+        rows = self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall()
+        m = len(rows)
+        if m < 2:
+            return 0.0
+        # Build undirected degree map
+        deg: dict[str, int] = {}
+        for r in rows:
+            s, t = str(r["source"]), str(r["target"])
+            deg[s] = deg.get(s, 0) + 1
+            deg[t] = deg.get(t, 0) + 1
+        # Newman's formula: each edge contributes two terms (j,k) and (k,j)
+        # M = 2 * num_edges (standard undirected normalization)
+        two_m = 2 * m
+        sum_jk = 0.0
+        sum_j = 0.0
+        sum_k = 0.0
+        sum_j2 = 0.0
+        sum_k2 = 0.0
+        for r in rows:
+            j = deg[str(r["source"])]
+            k = deg[str(r["target"])]
+            # Both (j,k) and (k,j)
+            sum_jk += j * k + k * j
+            sum_j += j + k
+            sum_k += k + j
+            sum_j2 += j * j + k * k
+            sum_k2 += k * k + j * j
+        numerator = (sum_jk / two_m) - ((sum_j / two_m) * (sum_k / two_m))
+        denominator = (
+            (sum_j2 + sum_k2) / (2 * two_m)
+            - ((sum_j + sum_k) / (2 * two_m)) ** 2
+        )
+        if denominator == 0:
+            return 0.0
+        return numerator / denominator
+
 
 
 def demo():

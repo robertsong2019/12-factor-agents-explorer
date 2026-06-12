@@ -8510,3 +8510,84 @@ class TestEfficiency:
         for i in range(3):
             mg.link(nodes[i].id, nodes[i + 1].id, "r")
         assert abs(mg.efficiency(nodes[0].id, nodes[3].id) - 0.25) < 1e-9
+
+
+class TestAssortativityDegree:
+    """F131: assortativity_degree() — Newman degree assortativity coefficient."""
+
+    def test_empty_graph(self, mg):
+        """No edges: assortativity = 0.0 (undefined, returns 0)."""
+        assert mg.assortativity_degree() == 0.0
+
+    def test_single_edge(self, mg):
+        """One edge: denominator is zero (no variance), returns 0.0."""
+        a = mg.add("A", "t")
+        b = mg.add("B", "t")
+        mg.link(a.id, b.id, "r")
+        assert mg.assortativity_degree() == 0.0
+
+    def test_star_graph_negative(self, mg):
+        """Star graph: hub connects to leaves. Should be negatively assortative.
+
+        Hub has degree 4, leaves have degree 1 each.
+        All edges are (4,1) pairs → strong disassortativity.
+        """
+        center = mg.add("Hub", "t")
+        leaves = [mg.add(f"L{i}", "t") for i in range(4)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        r = mg.assortativity_degree()
+        assert r < 0, f"Star graph should be disassortative, got r={r}"
+
+    def test_assortative_graph_positive(self, mg):
+        """Two hubs connected + two leaves connected: positive assortativity.
+
+        Edges: A-B (both degree 2), C-D (both degree 1... but we need to ensure
+        degrees differ across edge endpoints).
+
+        Better construction: clique of high-degree nodes + clique of low-degree nodes
+        with one bridge edge.
+        """
+        # High-degree clique (triangle): each has degree 2 within clique
+        hi = [mg.add(f"H{i}", "t") for i in range(3)]
+        mg.link(hi[0].id, hi[1].id, "r")
+        mg.link(hi[1].id, hi[2].id, "r")
+        mg.link(hi[2].id, hi[0].id, "r")
+        # Low-degree pair: each has degree 1
+        lo1 = mg.add("L1", "t")
+        lo2 = mg.add("L2", "t")
+        mg.link(lo1.id, lo2.id, "r")
+        # Now edges are (2,2), (2,2), (2,2), (1,1) → perfect assortative
+        r = mg.assortativity_degree()
+        assert r > 0.5, f"Assortative graph should have high r, got {r}"
+
+    def test_path_graph(self, mg):
+        """Path A-B-C: B has degree 2, A and C have degree 1.
+        Edges: (2,1), (2,1) → negative assortativity.
+        """
+        nodes = [mg.add(c, "t") for c in "ABC"]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        r = mg.assortativity_degree()
+        assert r < 0, f"Path graph should be disassortative, got r={r}"
+
+    def test_value_range(self, mg):
+        """Assortativity must be in [-1, 1]."""
+        nodes = [mg.add(c, "t") for c in "ABCDEF"]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        r = mg.assortativity_degree()
+        assert -1.0 <= r <= 1.0
+
+    def test_regular_graph_zero(self, mg):
+        """All nodes same degree → numerator and denominator both zero → 0.0.
+
+        Ring: A→B→C→A. Each node has degree 2 (in+out undirected = 2).
+        All edges connect (2,2) → variance is zero → returns 0.0.
+        """
+        nodes = [mg.add(c, "t") for c in "ABC"]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[0].id, "r")
+        # All degree 2, all edges (2,2) → denominator = 0
+        assert mg.assortativity_degree() == 0.0
