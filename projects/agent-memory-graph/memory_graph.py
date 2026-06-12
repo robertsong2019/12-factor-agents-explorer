@@ -3562,6 +3562,60 @@ class MemoryGraph:
 
         return result
 
+    def community_cohesion_score(self, communities: dict[str, int] = None) -> dict[int, float]:
+        """Compute a cohesion score for each community.
+
+        Cohesion = internal_edge_density × avg_internal_weight × size_factor.
+        Higher = more tightly-knit community.
+
+        Args:
+            communities: {node_id: community_id}. If None, auto-detects.
+
+        Returns:
+            {community_id: score 0..1}.
+        """
+        if communities is None:
+            communities = self.detect_communities_leiden()
+
+        if not communities:
+            return {}
+
+        edges = self.conn.execute(
+            "SELECT source, target, weight FROM edges").fetchall()
+
+        # Group nodes by community
+        comm_nodes: dict[int, set[str]] = {}
+        for nid, cid in communities.items():
+            comm_nodes.setdefault(cid, set()).add(nid)
+
+        # Count internal edges and weights per community
+        internal_edges: dict[int, float] = defaultdict(float)
+        internal_weight: dict[int, float] = defaultdict(float)
+        for e in edges:
+            s, t, w = str(e["source"]), str(e["target"]), float(e["weight"] or 1.0)
+            if communities.get(s) == communities.get(t) and s != t:
+                cid = communities[s]
+                internal_edges[cid] += 1
+                internal_weight[cid] += w
+
+        scores: dict[int, float] = {}
+        for cid, members in comm_nodes.items():
+            n = len(members)
+            if n <= 1:
+                scores[cid] = 0.0
+                continue
+            max_edges = n * (n - 1) / 2
+            density = internal_edges.get(cid, 0.0) / max_edges if max_edges > 0 else 0.0
+            avg_w = (internal_weight.get(cid, 0.0) / internal_edges.get(cid, 1.0))
+            # Normalize avg_w to 0..1 (assume weights typically 0..2)
+            avg_w_norm = min(avg_w / 2.0, 1.0)
+            # Size factor: log-scaled, rewards larger cohesive groups
+            import math
+            size_factor = math.log(n + 1) / math.log(21) if n <= 20 else 1.0
+            scores[cid] = round(density * avg_w_norm * size_factor, 4)
+
+        return scores
+
     def community_summary(self, communities: dict = None, algorithm: str = "lp") -> list[dict]:
         """Summarize detected communities with key metrics.
 
@@ -6439,6 +6493,56 @@ class MemoryGraph:
         return in_core / n
 
     # ── 演示 ──────────────────────────────────────────────────
+
+
+
+    def eccentricity(self, node_id: str) -> int | None:
+        """计算节点的离心率：从该节点到所有其他可达节点的最大最短距离。
+
+        在不连通图中，仅考虑可达节点。如果节点不存在或无其他可达节点，返回 None。
+        """
+        if not self.has_node(node_id):
+            return None
+        distances = self._bfs_distances(node_id)
+        other_dists = [d for nid, d in distances.items() if nid != node_id]
+        if not other_dists:
+            return None
+        return max(other_dists)
+
+    def diameter(self) -> int | None:
+        """计算图的直径：所有节点对之间最大最短路径长度。
+
+        在不连通图中，取各连通分量内部最大值。空图或单节点图返回 None。
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if len(node_ids) < 2:
+            return None
+        best = 0
+        for nid in node_ids:
+            distances = self._bfs_distances(nid)
+            for target, d in distances.items():
+                if target != nid and d > best:
+                    best = d
+        return best if best > 0 else None
+
+    def radius(self) -> int | None:
+        """计算图的半径：所有节点离心率的最小值。
+
+        在不连通图中，仅考虑有至少一个可达邻居的节点。
+        空图或单节点图返回 None。
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if len(node_ids) < 2:
+            return None
+        eccs = []
+        for nid in node_ids:
+            distances = self._bfs_distances(nid)
+            other_dists = [d for t, d in distances.items() if t != nid]
+            if other_dists:
+                eccs.append(max(other_dists))
+        if not eccs:
+            return None
+        return min(eccs)
 
 
 

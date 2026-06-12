@@ -8306,3 +8306,72 @@ class TestCommunityMergeSplit:
         split = mg.community_split(comm_ids[0], merged)
         assert len(set(split.values())) >= 2
 
+
+class TestCommunityCohesionScore:
+    """Tests for community_cohesion_score()."""
+
+    @pytest.fixture
+    def mg(self):
+        return MemoryGraph(":memory:")
+
+    def test_dense_community_scores_higher(self, mg):
+        """A tightly connected community should score higher than a loose one."""
+        # Dense clique A (4 nodes, all connected)
+        a_nodes = [mg.add(f"a{i}", "A") for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(a_nodes[i].id, a_nodes[j].id, "e", 1.0)
+        # Sparse chain B (4 nodes, only 3 edges)
+        b_nodes = [mg.add(f"b{i}", "B") for i in range(4)]
+        for i in range(3):
+            mg.link(b_nodes[i].id, b_nodes[i + 1].id, "e", 1.0)
+
+        communities = {n.id: 0 for n in a_nodes}
+        communities.update({n.id: 1 for n in b_nodes})
+        scores = mg.community_cohesion_score(communities)
+        assert scores[0] > scores[1], "Dense clique should be more cohesive"
+
+    def test_empty_graph(self, mg):
+        """Empty graph → empty dict."""
+        scores = mg.community_cohesion_score()
+        assert scores == {}
+
+    def test_single_node_community(self, mg):
+        """Single-node communities get score 0."""
+        a = mg.add("a", "X")
+        scores = mg.community_cohesion_score({a.id: 0})
+        assert scores[0] == 0.0
+
+    def test_score_range_0_to_1(self, mg):
+        """All scores should be in [0, 1]."""
+        nodes = [mg.add(f"n{i}", "N") for i in range(6)]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[i + 1].id, "e", 1.0)
+        communities = {n.id: 0 for n in nodes}
+        scores = mg.community_cohesion_score(communities)
+        for score in scores.values():
+            assert 0.0 <= score <= 1.0
+
+    def test_auto_detect_communities(self, mg):
+        """Should auto-detect via Leiden if no communities provided."""
+        nodes = [mg.add(f"x{i}", "X") for i in range(5)]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[(i + 1) % 5].id, "e", 1.0)
+        scores = mg.community_cohesion_score()
+        assert isinstance(scores, dict)
+        assert len(scores) >= 1
+
+    def test_weighted_edges_affect_score(self, mg):
+        """Higher-weight edges should produce higher cohesion."""
+        # Two triangles with different weights
+        a_nodes = [mg.add(f"a{i}", "A") for i in range(3)]
+        b_nodes = [mg.add(f"b{i}", "B") for i in range(3)]
+        for pair in [(a_nodes[0],a_nodes[1]),(a_nodes[1],a_nodes[2]),(a_nodes[0],a_nodes[2])]:
+            mg.link(pair[0].id, pair[1].id, "strong", 2.0)
+        for pair in [(b_nodes[0],b_nodes[1]),(b_nodes[1],b_nodes[2]),(b_nodes[0],b_nodes[2])]:
+            mg.link(pair[0].id, pair[1].id, "weak", 0.1)
+        communities = {n.id: 0 for n in a_nodes}
+        communities.update({n.id: 1 for n in b_nodes})
+        scores = mg.community_cohesion_score(communities)
+        assert scores[0] > scores[1], "Strong-weight triangle should be more cohesive"
+
