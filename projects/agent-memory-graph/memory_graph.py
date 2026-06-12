@@ -6496,53 +6496,69 @@ class MemoryGraph:
 
 
 
-    def eccentricity(self, node_id: str) -> int | None:
-        """计算节点的离心率：从该节点到所有其他可达节点的最大最短距离。
+    def density(self) -> float:
+        """计算图的密度：实际边数 / 最大可能边数。
 
-        在不连通图中，仅考虑可达节点。如果节点不存在或无其他可达节点，返回 None。
+        density = m / (n*(n-1))  for directed
+        density = 2m / (n*(n-1))  for undirected (standard analysis)
+
+        完全图密度=1.0，空图=0.0。使用无向语义（与图分析惯例一致）。
+        """
+        n = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        if n < 2:
+            return 0.0
+        m = self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        return (2.0 * m) / (n * (n - 1))
+
+    def local_clustering(self, node_id: str) -> float | None:
+        """计算节点的局部聚类系数。
+
+        C(v) = 2 * E(neighbors) / (deg(v) * (deg(v) - 1))
+
+        衡量该节点的邻居之间互连的程度。值域 [0, 1]。
+        节点不存在或度数 < 2 时返回 None（无法计算）。
         """
         if not self.has_node(node_id):
             return None
-        distances = self._bfs_distances(node_id)
-        other_dists = [d for nid, d in distances.items() if nid != node_id]
-        if not other_dists:
+        # Get neighbors (undirected)
+        nbrs = set()
+        for r in self.conn.execute(
+            "SELECT target AS nb FROM edges WHERE source=? "
+            "UNION "
+            "SELECT source AS nb FROM edges WHERE target=?",
+            (node_id, node_id)
+        ).fetchall():
+            nbrs.add(str(r["nb"]))
+        k = len(nbrs)
+        if k < 2:
             return None
-        return max(other_dists)
+        # Count edges among neighbors
+        nbr_list = list(nbrs)
+        edges_among = 0
+        for i in range(len(nbr_list)):
+            for j in range(i + 1, len(nbr_list)):
+                cnt = self.conn.execute(
+                    "SELECT COUNT(*) FROM edges WHERE "
+                    "(source=? AND target=?) OR (source=? AND target=?)",
+                    (nbr_list[i], nbr_list[j], nbr_list[j], nbr_list[i])
+                ).fetchone()[0]
+                if cnt > 0:
+                    edges_among += 1
+        return (2.0 * edges_among) / (k * (k - 1))
 
-    def diameter(self) -> int | None:
-        """计算图的直径：所有节点对之间最大最短路径长度。
+    def efficiency(self, id_a: str, id_b: str) -> float:
+        """计算两节点之间的效率：1 / 最短路径长度。
 
-        在不连通图中，取各连通分量内部最大值。空图或单节点图返回 None。
+        效率越高表示两节点通信越高效。不可达时返回 0.0。
         """
-        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
-        if len(node_ids) < 2:
-            return None
-        best = 0
-        for nid in node_ids:
-            distances = self._bfs_distances(nid)
-            for target, d in distances.items():
-                if target != nid and d > best:
-                    best = d
-        return best if best > 0 else None
-
-    def radius(self) -> int | None:
-        """计算图的半径：所有节点离心率的最小值。
-
-        在不连通图中，仅考虑有至少一个可达邻居的节点。
-        空图或单节点图返回 None。
-        """
-        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
-        if len(node_ids) < 2:
-            return None
-        eccs = []
-        for nid in node_ids:
-            distances = self._bfs_distances(nid)
-            other_dists = [d for t, d in distances.items() if t != nid]
-            if other_dists:
-                eccs.append(max(other_dists))
-        if not eccs:
-            return None
-        return min(eccs)
+        if not self.has_node(id_a) or not self.has_node(id_b):
+            return 0.0
+        if id_a == id_b:
+            return 1.0
+        path = self.shortest_path(id_a, id_b)
+        if path is None:
+            return 0.0
+        return 1.0 / len(path)
 
 
 

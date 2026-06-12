@@ -8375,3 +8375,138 @@ class TestCommunityCohesionScore:
         scores = mg.community_cohesion_score(communities)
         assert scores[0] > scores[1], "Strong-weight triangle should be more cohesive"
 
+
+
+
+
+# ── Round 32: density / local_clustering / efficiency ──────────────────
+
+class TestDensity:
+    """F128: density() — actual edges / maximum possible edges (undirected)."""
+
+    def test_empty_graph(self, mg):
+        assert mg.density() == 0.0
+
+    def test_single_node(self, mg):
+        mg.add("solo", "t")
+        assert mg.density() == 0.0
+
+    def test_no_edges(self, mg):
+        for c in "ABCD":
+            mg.add(c, "t")
+        assert mg.density() == 0.0
+
+    def test_path_graph(self, mg):
+        """Path A-B-C-D: 3 edges, density = 2*3/(4*3) = 0.5."""
+        nodes = [mg.add(c, "t") for c in "ABCD"]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        assert mg.density() == 0.5
+
+    def test_complete_graph(self, mg):
+        """Complete K4: 6 edges, density = 2*6/(4*3) = 1.0."""
+        nodes = [mg.add(c, "t") for c in "ABCD"]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        assert mg.density() == 1.0
+
+    def test_range_0_to_1(self, mg):
+        """Density should always be in [0, 1]."""
+        nodes = [mg.add(c, "t") for c in "ABCDEF"]
+        import random
+        random.seed(42)
+        for i in range(5):
+            a, b = random.sample(nodes, 2)
+            mg.link(a.id, b.id, "r")
+        d = mg.density()
+        assert 0.0 <= d <= 1.0
+
+
+class TestLocalClustering:
+    """F129: local_clustering(node_id) — fraction of neighbor pairs that are connected."""
+
+    def test_triangle(self, mg):
+        """Triangle: all 3 neighbor pairs connected → C=1.0."""
+        nodes = [mg.add(c, "t") for c in "ABC"]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[(i + 1) % 3].id, "r")
+        assert mg.local_clustering(nodes[0].id) == 1.0
+
+    def test_open_triad(self, mg):
+        """Open triad A-B, A-C (B-C not connected) → C=0.0."""
+        a = mg.add("A", "t")
+        b = mg.add("B", "t")
+        c = mg.add("C", "t")
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        assert mg.local_clustering(a.id) == 0.0
+
+    def test_degree_one_returns_none(self, mg):
+        """Node with degree 1 returns None (can't compute)."""
+        a = mg.add("A", "t")
+        b = mg.add("B", "t")
+        mg.link(a.id, b.id, "r")
+        assert mg.local_clustering(a.id) is None
+
+    def test_isolated_node_returns_none(self, mg):
+        """Isolated node returns None."""
+        a = mg.add("A", "t")
+        assert mg.local_clustering(a.id) is None
+
+    def test_nonexistent_node(self, mg):
+        """Nonexistent node returns None."""
+        assert mg.local_clustering("nonexistent") is None
+
+    def test_partial_clustering(self, mg):
+        """5 neighbors with 2 connected pairs out of 6 possible → 2/6 ≈ 0.333."""
+        center = mg.add("C", "t")
+        nbrs = [mg.add(f"N{i}", "t") for i in range(5)]
+        for n in nbrs:
+            mg.link(center.id, n.id, "r")
+        # Connect 2 pairs among neighbors
+        mg.link(nbrs[0].id, nbrs[1].id, "r")
+        mg.link(nbrs[2].id, nbrs[3].id, "r")
+        result = mg.local_clustering(center.id)
+        assert result is not None
+        assert abs(result - (2.0 / 10.0)) < 1e-9  # 2*2/(5*4) = 0.2
+
+
+class TestEfficiency:
+    """F130: efficiency(a, b) — 1 / shortest_path_length."""
+
+    def test_direct_neighbors(self, mg):
+        """Direct edge: efficiency = 1/2 = 0.5."""
+        a = mg.add("A", "t")
+        b = mg.add("B", "t")
+        mg.link(a.id, b.id, "r")
+        assert mg.efficiency(a.id, b.id) == 0.5
+
+    def test_two_hop_path(self, mg):
+        """A-B-C: efficiency(A,C) = 1/3."""
+        nodes = [mg.add(c, "t") for c in "ABC"]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        assert abs(mg.efficiency(nodes[0].id, nodes[2].id) - 1.0 / 3.0) < 1e-9
+
+    def test_same_node(self, mg):
+        """Same node: efficiency = 1.0."""
+        a = mg.add("A", "t")
+        assert mg.efficiency(a.id, a.id) == 1.0
+
+    def test_unreachable(self, mg):
+        """Disconnected nodes: efficiency = 0.0."""
+        a = mg.add("A", "t")
+        b = mg.add("B", "t")
+        assert mg.efficiency(a.id, b.id) == 0.0
+
+    def test_nonexistent_nodes(self, mg):
+        """Nonexistent nodes: efficiency = 0.0."""
+        assert mg.efficiency("x", "y") == 0.0
+
+    def test_longer_path(self, mg):
+        """Path A-B-C-D: efficiency(A,D) = 1/4."""
+        nodes = [mg.add(c, "t") for c in "ABCD"]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        assert abs(mg.efficiency(nodes[0].id, nodes[3].id) - 0.25) < 1e-9
