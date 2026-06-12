@@ -8201,3 +8201,108 @@ class TestIncrementalModularity:
         # Moving to non-existent community should still compute
         assert isinstance(delta, float)
 
+
+class TestCommunityMergeSplit:
+    """Tests for community_merge() and community_split()."""
+
+    @pytest.fixture
+    def mg(self):
+        return MemoryGraph(":memory:")
+
+    def test_merge_two_communities(self, mg):
+        """Merging two communities should reduce count by 1."""
+        a_nodes = [mg.add(f"a{i}", "A") for i in range(3)]
+        b_nodes = [mg.add(f"b{i}", "B") for i in range(3)]
+        for pair in [(a_nodes[0],a_nodes[1]),(a_nodes[1],a_nodes[2]),(a_nodes[0],a_nodes[2])]:
+            mg.link(pair[0].id, pair[1].id, "e")
+        for pair in [(b_nodes[0],b_nodes[1]),(b_nodes[1],b_nodes[2]),(b_nodes[0],b_nodes[2])]:
+            mg.link(pair[0].id, pair[1].id, "e")
+        mg.link(a_nodes[0].id, b_nodes[0].id, "bridge", 0.1)
+
+        communities = mg.detect_communities_leiden(seed=42)
+        initial_count = len(set(communities.values()))
+        assert initial_count >= 2
+
+        comm_ids = list(set(communities.values()))
+        merged = mg.community_merge(comm_ids[0], comm_ids[1], communities)
+        assert len(set(merged.values())) == initial_count - 1
+
+    def test_merge_same_community(self, mg):
+        """Merging a community with itself should be a no-op."""
+        a, b = mg.add("a", "X"), mg.add("b", "X")
+        mg.link(a.id, b.id, "e")
+        communities = {a.id: 0, b.id: 0}
+        result = mg.community_merge(0, 0, communities)
+        assert result == communities
+
+    def test_merge_auto_detect(self, mg):
+        """Should work without explicit communities arg."""
+        a_nodes = [mg.add(f"a{i}", "A") for i in range(3)]
+        b_nodes = [mg.add(f"b{i}", "B") for i in range(3)]
+        for i in range(3):
+            mg.link(a_nodes[i].id, a_nodes[(i+1)%3].id, "e")
+            mg.link(b_nodes[i].id, b_nodes[(i+1)%3].id, "e")
+        mg.link(a_nodes[0].id, b_nodes[0].id, "bridge", 0.1)
+        # Should auto-detect then merge
+        communities = mg.detect_communities_leiden(seed=42)
+        comm_ids = list(set(communities.values()))
+        merged = mg.community_merge(comm_ids[0], comm_ids[-1])
+        assert len(set(merged.values())) < len(comm_ids)
+
+    def test_split_disconnected_community(self, mg):
+        """A community with two disconnected components should split."""
+        # Two separate edges (4 nodes, 2 components)
+        a, b = mg.add("a", "X"), mg.add("b", "X")
+        c, d = mg.add("c", "X"), mg.add("d", "X")
+        mg.link(a.id, b.id, "e")
+        mg.link(c.id, d.id, "e")
+        # All in same community (manually)
+        communities = {a.id: 0, b.id: 0, c.id: 0, d.id: 0}
+        result = mg.community_split(0, communities)
+        # Should split into 2 communities
+        assert len(set(result.values())) == 2
+
+    def test_split_connected_community(self, mg):
+        """A connected community should still be splittable via degree seeds."""
+        # 6-node dense graph
+        nodes = [mg.add(f"n{i}", "N") for i in range(6)]
+        for i in range(6):
+            for j in range(i + 1, 6):
+                mg.link(nodes[i].id, nodes[j].id, "e")
+        communities = {n.id: 0 for n in nodes}
+        result = mg.community_split(0, communities)
+        # Should produce 2 sub-communities
+        assert len(set(result.values())) == 2
+
+    def test_split_single_node_community(self, mg):
+        """Splitting a single-node community should be a no-op."""
+        a = mg.add("a", "X")
+        communities = {a.id: 0}
+        result = mg.community_split(0, communities)
+        assert result == communities
+
+    def test_merge_then_split_roundtrip(self, mg):
+        """Merge then split should recover original structure."""
+        # Two triangles
+        a_nodes = [mg.add(f"a{i}", "A") for i in range(3)]
+        b_nodes = [mg.add(f"b{i}", "B") for i in range(3)]
+        for pair in [(a_nodes[0],a_nodes[1]),(a_nodes[1],a_nodes[2]),(a_nodes[0],a_nodes[2])]:
+            mg.link(pair[0].id, pair[1].id, "e")
+        for pair in [(b_nodes[0],b_nodes[1]),(b_nodes[1],b_nodes[2]),(b_nodes[0],b_nodes[2])]:
+            mg.link(pair[0].id, pair[1].id, "e")
+        mg.link(a_nodes[0].id, b_nodes[0].id, "bridge", 0.1)
+
+        original = mg.detect_communities_leiden(seed=42)
+        orig_count = len(set(original.values()))
+
+        # Merge all into one
+        comm_ids = list(set(original.values()))
+        merged = original
+        for cid in comm_ids[1:]:
+            merged = mg.community_merge(comm_ids[0], cid, merged)
+        assert len(set(merged.values())) == 1
+
+        # Split should recover structure
+        split = mg.community_split(comm_ids[0], merged)
+        assert len(set(split.values())) >= 2
+
