@@ -1,6 +1,6 @@
 # API Reference — OpenClaw MCP Server
 
-Complete reference for all 16 tools exposed by the MCP Server.
+Complete reference for all 18 tools exposed by the MCP Server.
 
 > **Base path**: All file operations are sandboxed to `OPENCLAW_WORKSPACE` (default: `cwd`).
 > Paths are resolved relative to the workspace root; traversal (`../`) is blocked.
@@ -258,6 +258,54 @@ Get file metadata. Optionally compute SHA-256 hash.
   "success": true, "type": "file", "size": 1024, "sizeHuman": "1.0KB",
   "created": "2026-01-15T...", "modified": "2026-05-01T...",
   "permissions": "644", "sha256": "a1b2c3..."
+}
+```
+
+### `head`
+
+Read the first N lines of a text file. Useful for previewing large files without loading them entirely.
+
+```json
+{ "path": "large-log.txt", "lines": 20 }
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `path` | string | ✅ | — | File path relative to workspace |
+| `lines` | number | — | `10` | Number of lines from the beginning |
+
+**Response:**
+```json
+{
+  "tool": "head", "path": "large-log.txt",
+  "requestedLines": 20, "totalLines": 1500, "returnedLines": 20,
+  "content": "first 20 lines..."
+}
+```
+
+Returns fewer lines than requested if the file is shorter.
+
+---
+
+### `tail`
+
+Read the last N lines of a text file. Useful for checking the end of log files or large files.
+
+```json
+{ "path": "app.log", "lines": 50 }
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `path` | string | ✅ | — | File path relative to workspace |
+| `lines` | number | — | `10` | Number of lines from the end |
+
+**Response:**
+```json
+{
+  "tool": "tail", "path": "app.log",
+  "requestedLines": 50, "totalLines": 1200, "returnedLines": 50,
+  "content": "last 50 lines..."
 }
 ```
 
