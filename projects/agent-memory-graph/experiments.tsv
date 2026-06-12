@@ -87,3 +87,9 @@ timestamp	commit	metric	value	status	description
 2026-06-11T19:25+08:00	1a56685	test_count	907→916	keep	resource_allocation_index + degree_prestige + core_ratio — RA link prediction (rare common neighbor boost), normalized in-degree prestige, k-core density ratio. +9 tests. Zero regressions. 115th day.
 2026-06-11T23:05+08:00	423c9cd	test_count	907/907	keep	ego_graph + transitivity + preferential_attachment — ego network BFS, global clustering, degree product link prediction. +11 tests (896→907). 115th day.
 2026-06-11T23:05+08:00	1a56685	test_count	916/916	keep	resource_allocation_index + degree_prestige + core_ratio — RA link prediction, normalized in-degree prestige, k-core density ratio. +9 tests (907→916). 115th day.
+2026-06-11	b560e42	test_count	916/916	keep	badge 896→916 + experiments.tsv sync + dist rebuild verified. Build passes (sdist+wheel). PyPI publish ready (needs credentials). 115th day.
+2026-06-12T21:10+08:00	0a9fce2	test_count	916→926	keep	leiden aggregation v2: full 3-phase (local move + refinement + aggregation) with community degree caching + self-loops. +10 tests. Zero regressions. 116th day.
+2026-06-12T21:20+08:00	e3e933a	test_count	926→938	keep	community_hierarchy (5 resolution levels) + incremental_modularity (standalone ΔQ). +12 tests. Zero regressions. 116th day.
+2026-06-12T21:30+08:00	0f03405	test_count	938→945	keep	community_merge + community_split — merge two comms, split via components or degree seeds. +7 tests. Zero regressions. 116th day.
+2026-06-12T21:55+08:00	8a15300	test_count	945→951	keep	community_cohesion_score — density×weight×size composite. +6 tests. Zero regressions. 116th day.
+2026-06-12T22:10+08:00	75b81fa	test_count	951→969	keep	Round 32: density (F128), local_clustering (F129), efficiency (F130) — 18 new tests. density=m/(n*(n-1)/2), local_clustering=2E/(k*(k-1)), efficiency=1/path_len. Zero regressions. 116th day.
