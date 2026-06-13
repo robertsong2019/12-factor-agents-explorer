@@ -3616,6 +3616,150 @@ class MemoryGraph:
 
         return scores
 
+    def lazy_community_detect(self, seed_nodes: list[str], hops: int = 1,
+                             resolution: float = 1.0) -> dict:
+        """LazyGraphRAG-style community detection around seed nodes only.
+
+        Instead of running full Leiden on the entire graph, this extracts a
+        subgraph around the seed nodes (BFS to *hops* levels), then runs
+        community detection only on that subgraph.  Dramatically cheaper for
+        large graphs where only a local region is relevant (ICLR 2026
+        LazyGraphRAG: ~1000× cost reduction vs full GraphRAG).
+
+        Args:
+            seed_nodes: node IDs to start BFS expansion from.
+            hops: BFS depth (1 = direct neighbours, 2 = neighbours-of-neighbours).
+            resolution: Leiden γ parameter controlling community granularity.
+
+        Returns:
+            dict with keys:
+              - communities: {node_id: community_id}
+              - num_communities: int
+              - modularity: float (on the subgraph)
+              - subgraph_size: int (number of nodes examined)
+              - seed_coverage: float (fraction of seeds that found communities)
+        """
+        import math
+
+        # --- 1. BFS expansion from seeds (only seeds that exist) ---
+        visited: set[str] = set()
+        existing_ids = {row[0] for row in self.conn.execute(
+            "SELECT id FROM nodes").fetchall()}
+        frontier = set(n for n in seed_nodes if n in existing_ids)
+        for _ in range(hops + 1):
+            next_frontier = set()
+            for nid in frontier:
+                if nid in visited:
+                    continue
+                visited.add(nid)
+                # Get neighbours from DB
+                rows = self.conn.execute(
+                    "SELECT target FROM edges WHERE source = ?"
+                    " UNION "
+                    "SELECT source FROM edges WHERE target = ?",
+                    (nid, nid)).fetchall()
+                for r in rows:
+                    nb = str(r[0]) if not isinstance(r[0], str) else r[0]
+                    if nb not in visited:
+                        next_frontier.add(nb)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        if not visited:
+            return {"communities": {}, "num_communities": 0, "modularity": 0.0,
+                    "subgraph_size": 0, "seed_coverage": 0.0}
+
+        # --- 2. Build adjacency for subgraph ---
+        visited_list = list(visited)
+        visited_set = set(visited)
+        placeholders = ",".join("?" * len(visited_list))
+        rows = self.conn.execute(
+            f"SELECT source, target, weight FROM edges WHERE source IN ({placeholders}) "
+            f"AND target IN ({placeholders})",
+            visited_list + visited_list).fetchall()
+
+        adj: dict[str, dict[str, float]] = defaultdict(dict)
+        degree: dict[str, float] = defaultdict(float)
+        total_w = 0.0
+        for r in rows:
+            s, t, w = str(r["source"]), str(r["target"]), float(r["weight"] or 1.0)
+            adj[s][t] = adj[s].get(t, 0.0) + w
+            adj[t][s] = adj[t].get(s, 0.0) + w
+            degree[s] += w
+            degree[t] += w
+            total_w += w
+
+        m2 = total_w * 2.0 if total_w > 0 else 1.0
+
+        # --- 3. Label initialisation (each node its own community) ---
+        comm = {n: i for i, n in enumerate(visited_list)}
+
+        # --- 4. Fast local move (Leiden-inspired) ---
+        improved = True
+        iterations = 0
+        max_iterations = 15
+        while improved and iterations < max_iterations:
+            improved = False
+            iterations += 1
+            for nid in visited_list:
+                k_i = degree.get(nid, 0.0)
+                if k_i == 0:
+                    continue
+
+                # Count links to each community
+                comm_links: dict[int, float] = defaultdict(float)
+                for nb, w in adj.get(nid, {}).items():
+                    if nb in comm:
+                        comm_links[comm[nb]] += w
+
+                best_comm = comm[nid]
+                best_gain = 0.0
+
+                # Community degree
+                comm_degree: dict[int, float] = defaultdict(float)
+                for n2, c2 in comm.items():
+                    comm_degree[c2] += degree.get(n2, 0.0)
+
+                for cid, link_w in comm_links.items():
+                    if cid == comm[nid]:
+                        continue
+                    # ΔQ = 2*(link_w - γ*k_i*σ_c/(2m))
+                    gain = 2.0 * (link_w - resolution * k_i * comm_degree[cid] / m2)
+                    if gain > best_gain:
+                        best_gain = gain
+                        best_comm = cid
+
+                if best_comm != comm[nid]:
+                    comm[nid] = best_comm
+                    improved = True
+
+        # --- 5. Compute modularity on subgraph ---
+        q = 0.0
+        comm_set = set(comm.values())
+        for cid in comm_set:
+            nodes_in = [n for n, c in comm.items() if c == cid]
+            in_w = sum(adj.get(n, {}).get(n2, 0.0)
+                       for i, n in enumerate(nodes_in)
+                       for n2 in nodes_in[i + 1:]) * 2.0
+            tot_deg = sum(degree.get(n, 0.0) for n in nodes_in)
+            q += (in_w / m2) - resolution * (tot_deg / m2) ** 2
+
+        # Remap community IDs to 0..k-1
+        unique = sorted(set(comm.values()))
+        remap = {old: new for new, old in enumerate(unique)}
+        comm = {n: remap[c] for n, c in comm.items()}
+
+        seeds_found = sum(1 for s in seed_nodes if s in comm)
+
+        return {
+            "communities": comm,
+            "num_communities": len(unique),
+            "modularity": round(q, 4),
+            "subgraph_size": len(visited_list),
+            "seed_coverage": round(seeds_found / len(seed_nodes), 4) if seed_nodes else 0.0,
+        }
+
     def community_summary(self, communities: dict = None, algorithm: str = "lp") -> list[dict]:
         """Summarize detected communities with key metrics.
 

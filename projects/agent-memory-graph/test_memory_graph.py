@@ -8591,3 +8591,101 @@ class TestAssortativityDegree:
         mg.link(nodes[2].id, nodes[0].id, "r")
         # All degree 2, all edges (2,2) → denominator = 0
         assert mg.assortativity_degree() == 0.0
+
+
+class TestLazyCommunityDetect:
+    """LazyGraphRAG-style local community detection."""
+
+    def test_basic_detection(self, mg):
+        """Two connected clusters → lazy detect should find communities from seeds."""
+        a = [mg.add(f"a{i}", "person") for i in range(4)]
+        for i in range(3):
+            mg.link(a[i].id, a[i + 1].id, "friend")
+        b = [mg.add(f"b{i}", "person") for i in range(4)]
+        for i in range(3):
+            mg.link(b[i].id, b[i + 1].id, "friend")
+        mg.link(a[0].id, b[0].id, "acquaintance")
+
+        seeds = [a[0].id, b[0].id]
+        r = mg.lazy_community_detect(seeds, hops=1)
+        assert r["num_communities"] >= 1
+        assert r["subgraph_size"] >= 4
+        assert r["seed_coverage"] == 1.0
+        assert "modularity" in r
+        assert isinstance(r["communities"], dict)
+
+    def test_empty_seeds(self, mg):
+        """Empty seed list → empty result."""
+        r = mg.lazy_community_detect([], hops=1)
+        assert r["num_communities"] == 0
+        assert r["subgraph_size"] == 0
+        assert r["communities"] == {}
+
+    def test_single_seed_hops1(self, mg):
+        """Single seed with hops=1 finds seed + direct neighbours."""
+        nodes = [mg.add(c, "t") for c in "ABCDE"]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[0].id, nodes[2].id, "r")
+        mg.link(nodes[3].id, nodes[4].id, "r")
+
+        r = mg.lazy_community_detect([nodes[0].id], hops=1)
+        assert nodes[0].id in r["communities"]
+        assert nodes[1].id in r["communities"]
+        assert nodes[2].id in r["communities"]
+        assert nodes[3].id not in r["communities"]
+        assert r["subgraph_size"] == 3
+
+    def test_hops2_reaches_farther(self, mg):
+        """hops=2 reaches more nodes than hops=1."""
+        nodes = [mg.add(c, "t") for c in "ABCDE"]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        mg.link(nodes[3].id, nodes[4].id, "r")
+
+        r1 = mg.lazy_community_detect([nodes[0].id], hops=1)
+        r2 = mg.lazy_community_detect([nodes[0].id], hops=2)
+        assert r2["subgraph_size"] > r1["subgraph_size"]
+
+    def test_disconnected_seeds(self, mg):
+        """Two disconnected components: seeds in each get found."""
+        a = [mg.add(f"a{i}", "t") for i in range(3)]
+        b = [mg.add(f"b{i}", "t") for i in range(3)]
+        for i in range(2):
+            mg.link(a[i].id, a[i + 1].id, "r")
+            mg.link(b[i].id, b[i + 1].id, "r")
+
+        r = mg.lazy_community_detect([a[0].id, b[0].id], hops=1)
+        assert r["seed_coverage"] == 1.0
+        for n in a[:2]:
+            assert n.id in r["communities"]
+        for n in b[:2]:
+            assert n.id in r["communities"]
+
+    def test_resolution_granularity(self, mg):
+        """Higher resolution → finer (more) communities."""
+        nodes = [mg.add(c, "t") for c in "ABCDEF"]
+        for i in range(6):
+            mg.link(nodes[i].id, nodes[(i + 1) % 6].id, "r")
+        mg.link(nodes[0].id, nodes[3].id, "r")
+
+        low = mg.lazy_community_detect([nodes[0].id], hops=2, resolution=0.3)
+        high = mg.lazy_community_detect([nodes[0].id], hops=2, resolution=2.0)
+        assert high["num_communities"] >= low["num_communities"]
+
+    def test_modularity_nonnegative_connected(self, mg):
+        """A connected ring should have non-negative modularity."""
+        a = [mg.add(f"a{i}", "t") for i in range(5)]
+        for i in range(4):
+            mg.link(a[i].id, a[i + 1].id, "r")
+        mg.link(a[0].id, a[4].id, "r")
+
+        r = mg.lazy_community_detect([a[0].id], hops=2)
+        assert r["modularity"] >= 0.0
+
+    def test_seed_not_in_graph(self, mg):
+        """Non-existent seed → gracefully returns empty."""
+        mg.add("A", "t")
+        r = mg.lazy_community_detect(["nonexistent_id"], hops=1)
+        assert r["subgraph_size"] == 0
+        assert r["seed_coverage"] == 0.0
