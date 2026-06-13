@@ -673,4 +673,14 @@ function getStatusIcon(task) {
   }
 }
 
-program.parse();
+// Exports for testing
+export {
+  buildExecutionPlan,
+  validateOrchestrator,
+  generateMarkdownReport,
+  getStatusIcon
+};
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  program.parse();
+}
