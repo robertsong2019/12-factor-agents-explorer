@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-916-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1020-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -694,6 +694,50 @@ HITS authority 得分——衡量节点作为权威信息源的强度。
 #### `detect_communities_leiden(resolution=1.0) -> dict[str, int]`
 
 Leiden 社区检测算法——比标签传播更稳定，返回 `{node_id: community_id}`。
+
+#### `lazy_community_detect(seed_nodes, hops=1, max_nodes=50) -> dict[str, int]`
+
+LazyGraphRAG 风格的局部社区发现——从种子节点出发，仅扩展 N 跳邻域，在局部子图上运行标签传播。适合增量式社区分析和大图的局部探索。
+
+```python
+communities = mg.lazy_community_detect(["node-1", "node-5"], hops=2)
+# => {"node-1": 0, "node-2": 0, "node-5": 1, ...}
+```
+
+#### `community_fit_scores(communities=None) -> dict[str, float]`
+
+计算节点的社区适应度分数——衡量节点与所在社区的契合度（邻居中同社区比例）。`communities` 为 `{node_id: community_id}` 映射，默认使用 `community_detect()` 结果。
+
+```python
+scores = mg.community_fit_scores()
+# => {"node-1": 0.85, "node-2": 0.92, "node-3": 0.30}
+# 低分节点可能是跨社区桥梁或异类节点
+```
+
+#### `bridge_nodes(communities=None, threshold=0.4) -> list[dict]`
+
+识别跨社区桥梁节点——社区适应度低于 threshold 的节点，其邻居横跨多个社区。返回 `[{"node_id": ..., "score": ..., "communities": [0, 1, 2]}]`。
+
+#### `community_outliers(communities=None, threshold=0.3) -> list[str]`
+
+识别社区异常点——社区适应度极低的节点（孤岛、噪声、跨域异类）。先计算 `community_fit_scores`，再筛出低于 threshold 的节点。
+
+```python
+outliers = mg.community_outliers(threshold=0.2)
+# => ["node-42", "node-87"]  # 这些节点不属于任何明确社区
+```
+
+#### `smart_query_route(query, embedding=None) -> dict`
+
+智能查询路由——自动分析查询特征，选择最优 GraphRAG 检索模式。根据查询中的实体/关系/社区关键词，动态决定使用 `local`、`global` 还是 `hybrid` 模式。
+
+```python
+route = mg.smart_query_route("和 Rust 相关的概念有哪些")
+# => {"mode": "local", "reason": "entity-centric query", "entities": ["Rust"]}
+
+route = mg.smart_query_route("整个知识库的主要主题是什么")
+# => {"mode": "global", "reason": "broad thematic query"}
+```
 
 #### `dfs(start_id, max_depth=10) -> list[str]`
 
