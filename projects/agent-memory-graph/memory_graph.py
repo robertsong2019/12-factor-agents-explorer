@@ -3832,6 +3832,146 @@ class MemoryGraph:
         results.sort(key=lambda x: x["size"], reverse=True)
         return results
 
+    def community_fit_scores(self, communities: dict[str, int] = None) -> dict[str, float]:
+        """Score how well each node fits its assigned community.
+
+        For each node, computes the ratio of internal edges (to same-community
+        neighbours) vs total edges.  A score near 1.0 means the node is deeply
+        embedded in its community; near 0.0 means it's a bridge or outlier.
+
+        Args:
+            communities: {node_id: community_id}. If None, auto-detects via Leiden.
+
+        Returns:
+            {node_id: fit_score} where fit_score ∈ [0.0, 1.0].
+        """
+        if communities is None:
+            communities = self.detect_communities_leiden()
+        if not communities:
+            return {}
+
+        edges = self.conn.execute(
+            "SELECT source, target FROM edges").fetchall()
+        internal: dict[str, int] = defaultdict(int)
+        external: dict[str, int] = defaultdict(int)
+
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            cs = communities.get(s)
+            ct = communities.get(t)
+            if cs is not None and ct is not None:
+                if cs == ct:
+                    internal[s] += 1
+                    internal[t] += 1
+                else:
+                    external[s] += 1
+                    external[t] += 1
+            elif s in communities:
+                external[s] += 1
+            elif t in communities:
+                external[t] += 1
+
+        scores = {}
+        for nid in communities:
+            total = internal[nid] + external[nid]
+            scores[nid] = round(internal[nid] / total, 4) if total > 0 else 0.0
+        return scores
+
+    def bridge_nodes(self, communities: dict[str, int] = None,
+                     min_cross_edges: int = 2) -> list[dict]:
+        """Find nodes that bridge multiple communities.
+
+        Bridge nodes have edges to members of different communities.  These are
+        structurally important for information flow and cross-cutting themes in
+        Agent memory graphs.
+
+        Args:
+            communities: {node_id: community_id}. If None, auto-detects via Leiden.
+            min_cross_edges: minimum inter-community edges to qualify as a bridge.
+
+        Returns:
+            list of dicts sorted by cross-community edge count:
+              [{node_id, label, community, cross_edges, cross_communities}]
+        """
+        if communities is None:
+            communities = self.detect_communities_leiden()
+        if not communities:
+            return []
+
+        edges = self.conn.execute(
+            "SELECT source, target FROM edges").fetchall()
+
+        cross_count: dict[str, int] = defaultdict(int)
+        cross_comms: dict[str, set] = defaultdict(set)
+
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            cs = communities.get(s)
+            ct = communities.get(t)
+            if cs is not None and ct is not None and cs != ct:
+                cross_count[s] += 1
+                cross_count[t] += 1
+                cross_comms[s].add(ct)
+                cross_comms[t].add(cs)
+
+        # Filter and enrich
+        bridges = []
+        for nid, cnt in cross_count.items():
+            if cnt >= min_cross_edges:
+                row = self.conn.execute(
+                    "SELECT label FROM nodes WHERE id = ?", (nid,)).fetchone()
+                bridges.append({
+                    "node_id": nid,
+                    "label": row["label"] if row else "",
+                    "community": communities[nid],
+                    "cross_edges": cnt,
+                    "cross_communities": sorted(cross_comms[nid]),
+                })
+
+        bridges.sort(key=lambda x: x["cross_edges"], reverse=True)
+        return bridges
+
+    def community_outliers(self, communities: dict[str, int] = None,
+                           threshold: float = 0.2) -> list[dict]:
+        """Find nodes with low community fit scores (potential misassignments).
+
+        These nodes might be better suited in a different community or might
+        represent cross-cutting concepts that don't belong to any single group.
+
+        Args:
+            communities: {node_id: community_id}. If None, auto-detects via Leiden.
+            threshold: fit score below this → outlier (default 0.2).
+
+        Returns:
+            list of dicts: [{node_id, label, community, fit_score, degree}]
+        """
+        scores = self.community_fit_scores(communities)
+        if not scores:
+            return []
+
+        edges = self.conn.execute(
+            "SELECT source FROM edges").fetchall()
+        degree = defaultdict(int)
+        for e in edges:
+            degree[str(e["source"])] += 1
+
+        outliers = []
+        for nid, score in scores.items():
+            if score < threshold and degree[nid] > 0:
+                row = self.conn.execute(
+                    "SELECT label FROM nodes WHERE id = ?", (nid,)).fetchone()
+                comm = communities.get(nid) if communities else None
+                outliers.append({
+                    "node_id": nid,
+                    "label": row["label"] if row else "",
+                    "community": comm,
+                    "fit_score": score,
+                    "degree": degree[nid],
+                })
+
+        outliers.sort(key=lambda x: x["fit_score"])
+        return outliers
+
     def node_roles(self, hub_threshold: float = 0.7, authority_threshold: float = 0.7) -> dict[str, str]:
         """Classify each node's structural role: hub, authority, bridge, isolated, or member.
 

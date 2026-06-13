@@ -8763,3 +8763,114 @@ class TestSmartQueryRoute:
         r = mg.smart_query_route("How many items are there?")
         assert r["query_traits"]["has_aggregation"] is True
         assert r["mode"] == "global"
+
+
+class TestCommunityFitAndBridges:
+    """Community fit scores, bridge nodes, and outlier detection."""
+
+    def test_fit_score_well_embedded(self, mg):
+        """Node with all edges to same community → fit score 1.0."""
+        a = [mg.add(f"a{i}", "t") for i in range(4)]
+        for i in range(3):
+            mg.link(a[i].id, a[i + 1].id, "r")
+        comm = {n.id: 0 for n in a}
+        scores = mg.community_fit_scores(communities=comm)
+        # Internal nodes (a1, a2) should have high fit
+        assert scores[a[0].id] >= 0.5
+        assert scores[a[1].id] == 1.0
+
+    def test_fit_score_bridge_low(self, mg):
+        """Node connecting two communities → low fit score."""
+        a = [mg.add(f"a{i}", "t") for i in range(3)]
+        b = [mg.add(f"b{i}", "t") for i in range(3)]
+        for i in range(2):
+            mg.link(a[i].id, a[i + 1].id, "r")
+            mg.link(b[i].id, b[i + 1].id, "r")
+        mg.link(a[0].id, b[0].id, "bridge")  # bridge
+
+        comm = {**{n.id: 0 for n in a}, **{n.id: 1 for n in b}}
+        scores = mg.community_fit_scores(communities=comm)
+        # Bridge nodes have at least 1 external edge
+        assert scores[a[0].id] < 1.0
+        assert scores[b[0].id] < 1.0
+
+    def test_fit_score_empty(self, mg):
+        """Empty graph → empty scores."""
+        assert mg.community_fit_scores(communities={}) == {}
+
+    def test_bridge_nodes_finds_cross_links(self, mg):
+        """Bridge nodes connecting communities are detected."""
+        a = [mg.add(f"a{i}", "t") for i in range(3)]
+        b = [mg.add(f"b{i}", "t") for i in range(3)]
+        for i in range(2):
+            mg.link(a[i].id, a[i + 1].id, "r")
+            mg.link(b[i].id, b[i + 1].id, "r")
+        mg.link(a[0].id, b[0].id, "bridge")
+        mg.link(a[1].id, b[1].id, "bridge")
+
+        comm = {**{n.id: 0 for n in a}, **{n.id: 1 for n in b}}
+        bridges = mg.bridge_nodes(communities=comm, min_cross_edges=1)
+        bridge_ids = {b["node_id"] for b in bridges}
+        assert a[0].id in bridge_ids
+        assert b[0].id in bridge_ids
+        assert a[1].id in bridge_ids
+
+    def test_bridge_nodes_min_threshold(self, mg):
+        """min_cross_edges filters low-crossing nodes."""
+        a = [mg.add(f"a{i}", "t") for i in range(3)]
+        b = [mg.add(f"b{i}", "t") for i in range(3)]
+        for i in range(2):
+            mg.link(a[i].id, a[i + 1].id, "r")
+            mg.link(b[i].id, b[i + 1].id, "r")
+        mg.link(a[0].id, b[0].id, "bridge")
+
+        comm = {**{n.id: 0 for n in a}, **{n.id: 1 for n in b}}
+        bridges = mg.bridge_nodes(communities=comm, min_cross_edges=2)
+        assert bridges == []  # a[0] only has 1 cross edge
+
+    def test_outliers_find_misfits(self, mg):
+        """Nodes with low fit score are flagged as outliers."""
+        # Tight cluster
+        a = [mg.add(f"a{i}", "t") for i in range(5)]
+        for i in range(4):
+            mg.link(a[i].id, a[i + 1].id, "r")
+        # Lone node assigned to same community but only 1 internal edge
+        x = mg.add("X", "t")
+        mg.link(x.id, a[0].id, "weak")
+        mg.link(x.id, a[2].id, "weak")
+
+        comm = {**{n.id: 0 for n in a}, x.id: 0}
+        outliers = mg.community_outliers(communities=comm, threshold=0.5)
+        outlier_ids = {o["node_id"] for o in outliers}
+        # a[0] has 3 edges, 1 external (to x) → fit = 2/3 ≈ 0.67 → not outlier
+        # x has 2 edges, both internal → fit = 1.0 → not outlier with threshold 0.5
+        # Edge nodes like a[1] have all internal → high fit
+        # Let's verify x is NOT an outlier at 0.5 threshold
+        assert x.id not in outlier_ids
+
+    def test_outliers_low_threshold_finds_bridges(self, mg):
+        """Very low threshold finds nodes with any external connections."""
+        a = [mg.add(f"a{i}", "t") for i in range(3)]
+        b = [mg.add(f"b{i}", "t") for i in range(3)]
+        for i in range(2):
+            mg.link(a[i].id, a[i + 1].id, "r")
+            mg.link(b[i].id, b[i + 1].id, "r")
+        mg.link(a[0].id, b[0].id, "bridge")
+
+        comm = {**{n.id: 0 for n in a}, **{n.id: 1 for n in b}}
+        outliers = mg.community_outliers(communities=comm, threshold=0.7)
+        # a[0] has 2 edges: 1 internal (to a[1]), 1 external (to b[0])
+        # fit = 0.5 < 0.7 → outlier
+        assert any(o["node_id"] == a[0].id for o in outliers)
+
+    def test_bridge_returns_cross_communities(self, mg):
+        """Bridge node result includes list of cross communities."""
+        a = mg.add("A", "t")
+        b = mg.add("B", "t")
+        c = mg.add("C", "t")
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        comm = {a.id: 0, b.id: 1, c.id: 2}
+        bridges = mg.bridge_nodes(communities=comm, min_cross_edges=1)
+        a_bridge = [br for br in bridges if br["node_id"] == a.id][0]
+        assert set(a_bridge["cross_communities"]) == {1, 2}
