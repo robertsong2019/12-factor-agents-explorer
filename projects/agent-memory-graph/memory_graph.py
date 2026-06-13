@@ -5435,6 +5435,89 @@ class MemoryGraph:
         # Unknown mode: fallback to hybrid
         return self.search_graphrag(query, mode="hybrid", embedding=embedding, limit=limit)
 
+    def smart_query_route(self, query: str, embedding: list[float] = None,
+                          limit: int = 10) -> dict:
+        """Automatically choose the best GraphRAG mode based on query analysis.
+
+        Heuristics (based on ICLR 2026 GraphRAG-Bench findings):
+        - Single-entity lookups → naive (RAG beats GraphRAG on simple tasks)
+        - Multi-entity / relational → local (graph expansion helps)
+        - Aggregation / "all" / "every" → global (community-level)
+        - Complex / multi-hop with embedding → hybrid (RRF fusion)
+
+        Returns:
+            dict with keys:
+              - mode: chosen mode (naive/local/global/hybrid)
+              - results: list of result dicts
+              - reason: explanation for the routing decision
+              - query_traits: analysed query characteristics
+        """
+        import re
+
+        q_lower = query.lower().strip()
+        traits = {
+            "word_count": len(query.split()),
+            "has_multiple_entities": False,
+            "has_aggregation": False,
+            "has_temporal": False,
+            "has_relational": False,
+        }
+
+        # Aggregation cues
+        agg_patterns = ["all", "every", "summary", "summarize", "overview",
+                        "how many", "count", "total", "list all", "which.*all"]
+        traits["has_aggregation"] = any(re.search(p, q_lower) for p in agg_patterns)
+
+        # Temporal cues
+        temporal_patterns = ["when", "latest", "oldest", "recent", "before",
+                             "after", "since", "until", "timeline", "history"]
+        traits["has_temporal"] = any(re.search(p, q_lower) for p in temporal_patterns)
+
+        # Relational cues
+        rel_patterns = ["relate", "connect", "link", "between", "path",
+                        "neighbor", "influence", "depend", "parent", "child",
+                        "cause", "effect"]
+        traits["has_relational"] = any(re.search(p, q_lower) for p in rel_patterns)
+
+        # Multi-entity: capitalised words or quoted strings as entity hints
+        cap_words = re.findall(r'\b[A-Z][a-z]+\b', query)
+        quoted = re.findall(r'["\']([^"\']+)["\']', query)
+        entities = cap_words + quoted
+        traits["has_multiple_entities"] = len(set(e.lower() for e in entities)) >= 2
+
+        # --- Routing decision (priority order) ---
+        if traits["has_aggregation"]:
+            mode = "global"
+            reason = "Aggregation cue detected → community-level search"
+        elif traits["has_multiple_entities"] and traits["has_relational"]:
+            mode = "local"
+            reason = "Multi-entity + relational cues → graph expansion"
+        elif embedding is not None and (
+            traits["has_temporal"] or traits["has_multiple_entities"]
+            or traits["word_count"] > 8
+        ):
+            mode = "hybrid"
+            reason = "Complex query + embedding available → RRF fusion"
+        elif traits["word_count"] <= 3 and not traits["has_relational"]:
+            mode = "naive"
+            reason = "Short lookup query → direct text search"
+        elif traits["has_relational"]:
+            mode = "local"
+            reason = "Relational cue → graph expansion"
+        else:
+            mode = "hybrid" if embedding is not None else "naive"
+            reason = f"Default → {mode} (embedding {'available' if embedding else 'absent'})"
+
+        results = self.search_graphrag(
+            query, mode=mode, embedding=embedding, limit=limit)
+
+        return {
+            "mode": mode,
+            "results": results,
+            "reason": reason,
+            "query_traits": traits,
+        }
+
     # ── 高级图分析 ────────────────────────────────────────
 
     def closeness_vitality(self, node_id: str) -> float | None:

@@ -8689,3 +8689,77 @@ class TestLazyCommunityDetect:
         r = mg.lazy_community_detect(["nonexistent_id"], hops=1)
         assert r["subgraph_size"] == 0
         assert r["seed_coverage"] == 0.0
+
+
+class TestSmartQueryRoute:
+    """Auto-routing GraphRAG mode selection based on query analysis."""
+
+    def test_short_lookup_routes_naive(self, mg):
+        """Short 1-2 word query without relational cues → naive."""
+        mg.add("Python", "skill")
+        r = mg.smart_query_route("Python")
+        assert r["mode"] == "naive"
+        assert "lookup" in r["reason"].lower() or "naive" in r["reason"].lower()
+        assert r["query_traits"]["word_count"] <= 3
+
+    def test_aggregation_routes_global(self, mg):
+        """Aggregation cues (all/summary/overview) → global."""
+        for name in ["Alice", "Bob", "Carol"]:
+            mg.add(name, "person")
+        r = mg.smart_query_route("Give me an overview of all people")
+        assert r["mode"] == "global"
+        assert r["query_traits"]["has_aggregation"] is True
+
+    def test_relational_routes_local(self, mg):
+        """Relational cues (connect/link/between) → local."""
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "colleague")
+        r = mg.smart_query_route("How are Alice and Bob connected?")
+        assert r["mode"] == "local"
+        assert r["query_traits"]["has_relational"] is True
+
+    def test_multi_entity_relational_routes_local(self, mg):
+        """Multi-entity + relational → local (before hybrid check)."""
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "colleague")
+        r = mg.smart_query_route("What links Alice and Bob?")
+        assert r["mode"] == "local"
+        assert r["query_traits"]["has_multiple_entities"] is True
+
+    def test_complex_with_embedding_routes_hybrid(self, mg):
+        """Long complex query + embedding → hybrid."""
+        mg.add("Python", "skill")
+        emb = [0.1] * 10
+        r = mg.smart_query_route(
+            "Find recent discussions about Python performance optimization",
+            embedding=emb)
+        assert r["mode"] == "hybrid"
+        assert "fusion" in r["reason"].lower() or "hybrid" in r["reason"].lower()
+
+    def test_temporal_with_embedding_routes_hybrid(self, mg):
+        """Temporal cues + embedding → hybrid."""
+        mg.add("Python", "skill")
+        emb = [0.1] * 10
+        r = mg.smart_query_route(
+            "What is the history of Python?", embedding=emb)
+        assert r["mode"] == "hybrid"
+        assert r["query_traits"]["has_temporal"] is True
+
+    def test_returns_results_and_traits(self, mg):
+        """Result dict should have mode, results, reason, query_traits."""
+        mg.add("Python", "skill")
+        r = mg.smart_query_route("Python")
+        assert set(r.keys()) == {"mode", "results", "reason", "query_traits"}
+        assert isinstance(r["results"], list)
+        assert isinstance(r["query_traits"], dict)
+        assert "word_count" in r["query_traits"]
+
+    def test_count_query_is_aggregation(self, mg):
+        """'how many' triggers aggregation routing."""
+        for n in ["a", "b", "c"]:
+            mg.add(n, "item")
+        r = mg.smart_query_route("How many items are there?")
+        assert r["query_traits"]["has_aggregation"] is True
+        assert r["mode"] == "global"
