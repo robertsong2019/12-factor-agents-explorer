@@ -9111,3 +9111,107 @@ class TestLearnableMemoryManager:
             nid = result["detail"]["node_id"]
             tags_result = mg.all_tags()
             assert any("important" in t for t in tags_result)
+
+
+class TestMemoryAuditAndFiFA:
+    """全局记忆审计 + 有界遗忘 (FiFA) + 压缩。"""
+
+    def test_memory_audit_empty_graph(self):
+        """空图审计返回满分。"""
+        mg = MemoryGraph()
+        audit = mg.memory_audit()
+        assert audit["health_score"] == 100
+        assert audit["total_nodes"] == 0
+
+    def test_memory_audit_healthy_graph(self):
+        """正常图的审计。"""
+        mg = MemoryGraph()
+        mg.add("Python", "skill")
+        mg.add("AI research", "concept")
+        audit = mg.memory_audit()
+        assert audit["total_nodes"] == 2
+        assert audit["health_score"] >= 70
+        assert isinstance(audit["suggestions"], list)
+
+    def test_memory_audit_detects_stale(self):
+        """检测陈旧节点。"""
+        import time
+        mg = MemoryGraph()
+        mg.add("old fact", "fact")
+        # 设置 accessed 为很久以前
+        mg.conn.execute("UPDATE nodes SET accessed = ?", (time.time() - 86400 * 60,))
+        mg.conn.commit()
+        audit = mg.memory_audit(staleness_days=30)
+        assert audit["stale_nodes"] >= 1
+        assert any("staleness" in s.lower() or "prune" in s.lower() for s in audit["suggestions"])
+
+    def test_memory_audit_detects_redundancy(self):
+        """检测冗余节点对。"""
+        mg = MemoryGraph()
+        mg.add("machine learning", "concept")
+        mg.add("machine learning", "concept")
+        audit = mg.memory_audit()
+        assert audit["redundant_pairs"] >= 1
+
+    def test_fifa_forget_removes_low_weight(self):
+        """FiFA 删除低重要性节点。"""
+        mg = MemoryGraph()
+        n1 = mg.add("important", "concept")
+        n2 = mg.add("trivial", "concept")
+        mg.update_node(n2.id, weight=0.01)
+        result = mg.fifa_forget(budget=5, min_importance=0.5)
+        assert result["removed"] >= 1
+        assert mg.stats()["nodes"] == 1
+
+    def test_fifa_forget_preserves_high_weight(self):
+        """FiFA 保留高权重节点。"""
+        mg = MemoryGraph()
+        n1 = mg.add("keep me", "concept")
+        mg.update_node(n1.id, weight=0.9)
+        result = mg.fifa_forget(budget=10, min_importance=0.5)
+        assert result["removed"] == 0
+        assert mg.stats()["nodes"] == 1
+
+    def test_fifa_forget_empty_graph(self):
+        """空图 FiFA 返回零删除。"""
+        mg = MemoryGraph()
+        result = mg.fifa_forget()
+        assert result["removed"] == 0
+
+    def test_memory_compact_merges_similar(self):
+        """记忆压缩合并高相似度节点。"""
+        mg = MemoryGraph()
+        mg.add("machine learning basics", "concept")
+        mg.add("machine learning basics", "concept")
+        result = mg.memory_compact(similarity_threshold=0.5)
+        assert result["merged_count"] >= 1
+        assert mg.stats()["nodes"] == 1
+
+    def test_memory_compact_no_similar(self):
+        """无相似节点时不合并。"""
+        mg = MemoryGraph()
+        mg.add("Python", "skill")
+        mg.add("cooking", "hobby")
+        result = mg.memory_compact(similarity_threshold=0.9)
+        assert result["merged_count"] == 0
+        assert mg.stats()["nodes"] == 2
+
+    def test_memory_audit_max_nodes_warning(self):
+        """超过 max_nodes 时建议修剪。"""
+        mg = MemoryGraph()
+        for i in range(5):
+            mg.add(f"node_{i}", "concept")
+        audit = mg.memory_audit(max_nodes=3)
+        assert any("prune" in s.lower() or "exceed" in s.lower() for s in audit["suggestions"])
+
+    def test_fifa_forget_details_structure(self):
+        """FiFA 返回正确的 details 结构。"""
+        mg = MemoryGraph()
+        n = mg.add("low weight item", "concept")
+        mg.update_node(n.id, weight=0.01)
+        result = mg.fifa_forget(budget=5, min_importance=0.5)
+        if result["details"]:
+            d = result["details"][0]
+            assert "id" in d
+            assert "label" in d
+            assert "weight" in d

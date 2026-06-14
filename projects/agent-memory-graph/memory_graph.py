@@ -7253,6 +7253,152 @@ class MemoryGraph:
             log.append({"content": item[:60], **d})
         return log
 
+    def memory_audit(self, max_nodes: int = 500, staleness_days: int = 30) -> dict:
+        """全局记忆审计: 健康评分 + 冗余分析 + 过期检测。
+
+        MemoryArena (ICLR 2026) 启发的评估维度。
+
+        Returns:
+            {health_score, total_nodes, redundant_pairs, stale_nodes,
+             avg_importance, noop_ratio, suggestions}
+        """
+        import time
+        stats = self.stats()
+        total = stats.get("nodes", 0)
+        if total == 0:
+            return {"health_score": 100, "total_nodes": 0, "redundant_pairs": 0,
+                    "stale_nodes": 0, "avg_importance": 0, "noop_ratio": 0,
+                    "suggestions": ["Empty graph"]}
+
+        # 过期节点 (staleness)
+        now = time.time()
+        stale_cutoff = now - staleness_days * 86400
+        stale_nodes = self.conn.execute(
+            "SELECT COUNT(*) as c FROM nodes WHERE accessed < ?", (stale_cutoff,)
+        ).fetchone()["c"]
+
+        # 平均重要性 (weight)
+        avg_w = self.conn.execute(
+            "SELECT AVG(weight) as w FROM nodes"
+        ).fetchone()["w"] or 0.0
+
+        # 冗余分析: 对每对同 kind 的节点计算相似度
+        all_nodes = self.conn.execute(
+            "SELECT id, label, kind FROM nodes ORDER BY kind LIMIT ?", (max_nodes,)
+        ).fetchall()
+        redundant_count = 0
+        by_kind: dict[str, list] = defaultdict(list)
+        for row in all_nodes:
+            by_kind[row["kind"]].append(row)
+        for kind, nodes in by_kind.items():
+            for i in range(len(nodes)):
+                for j in range(i + 1, min(i + 20, len(nodes))):
+                    sim = self._content_similarity(nodes[i]["label"], nodes[j]["label"])
+                    if sim > 0.6:
+                        redundant_count += 1
+
+        # NOOP ratio (通过最近操作统计)
+        noop_ratio = stale_nodes / total if total > 0 else 0
+
+        # 健康评分 (0-100)
+        health = 100
+        if total > max_nodes:
+            health -= min(20, (total - max_nodes) / max_nodes * 20)
+        health -= min(15, stale_nodes / max(total, 1) * 30)
+        health -= min(15, redundant_count / max(total, 1) * 30)
+        health -= min(10, max(0, (0.3 - avg_w) / 0.3 * 10)) if avg_w < 0.3 else 0
+        health = max(0, int(health))
+
+        suggestions = []
+        if stale_nodes > total * 0.3:
+            suggestions.append(f"High staleness: {stale_nodes} nodes untouched in {staleness_days}d. Consider prune().")
+        if redundant_count > total * 0.1:
+            suggestions.append(f"{redundant_count} redundant pairs detected. Consider dedup_nodes().")
+        if avg_w < 0.3:
+            suggestions.append("Low average weight. Consider importance_rank() review.")
+        if total > max_nodes:
+            suggestions.append(f"Graph exceeds {max_nodes} nodes. Consider prune_by_relevance().")
+        if not suggestions:
+            suggestions.append("Graph is healthy.")
+
+        return {
+            "health_score": health,
+            "total_nodes": total,
+            "redundant_pairs": redundant_count,
+            "stale_nodes": stale_nodes,
+            "avg_importance": round(avg_w, 3),
+            "noop_ratio": round(noop_ratio, 3),
+            "suggestions": suggestions,
+        }
+
+    def fifa_forget(self, budget: int = 50, min_importance: float = 0.1) -> dict:
+        """FiFA (Find-and-Forget): 有界遗忘策略。
+
+        删除 budget 个最低重要性 + 最陈旧的节点, 保留高价值记忆。
+        MemoryArena 启发: selective forgetting 是核心能力。
+
+        Returns:
+            {removed, kept, details}
+        """
+        import time
+        all_nodes = self.conn.execute(
+            "SELECT id, label, kind, weight, accessed FROM nodes ORDER BY weight ASC, accessed ASC LIMIT ?",
+            (budget,)
+        ).fetchall()
+
+        removed = []
+        for row in all_nodes:
+            if row["weight"] < min_importance:
+                self.delete_node(row["id"])
+                removed.append({"id": row["id"], "label": row["label"],
+                               "weight": row["weight"]})
+
+        remaining = self.stats().get("nodes", 0)
+        return {
+            "removed": len(removed),
+            "kept": remaining,
+            "details": removed[:10],  # 前10个详情
+        }
+
+    def memory_compact(self, similarity_threshold: float = 0.7,
+                       max_merge_per_pass: int = 20) -> dict:
+        """记忆压缩: 合并高相似度节点, 减少冗余。
+
+        Returns:
+            {merged_count, freed_edges, details}
+        """
+        all_nodes = self.conn.execute(
+            "SELECT id, label, kind FROM nodes ORDER BY kind"
+        ).fetchall()
+
+        merged = 0
+        details = []
+        by_kind: dict[str, list] = defaultdict(list)
+        for row in all_nodes:
+            by_kind[row["kind"]].append(dict(row))
+
+        for kind, nodes in by_kind.items():
+            skip = set()
+            for i in range(min(len(nodes), max_merge_per_pass)):
+                if i in skip or merged >= max_merge_per_pass:
+                    break
+                for j in range(i + 1, len(nodes)):
+                    if j in skip or merged >= max_merge_per_pass:
+                        break
+                    sim = self._content_similarity(nodes[i]["label"], nodes[j]["label"])
+                    if sim >= similarity_threshold:
+                        # Merge j into i
+                        self.merge_nodes(nodes[j]["id"], nodes[i]["id"])
+                        skip.add(j)
+                        merged += 1
+                        details.append({
+                            "merged": nodes[j]["label"][:30],
+                            "into": nodes[i]["label"][:30],
+                            "similarity": round(sim, 3),
+                        })
+
+        return {"merged_count": merged, "details": details}
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
