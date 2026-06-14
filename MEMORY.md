@@ -228,7 +228,14 @@ Autoresearch 方法论实践 - **连续119天零回滚率** 🏆。06-13 晚: st
 
 ## Next Actions (Updated 2026-06-14)
 
-### [06-14 新研究] Adaptive Fusion: Self-Tuning Multi-Modal Retrieval
+### [06-14 新研究] RL-Trained Agent Memory Management
+- [x] **RL-Trained Memory Management 深度研究** ✅ 2026-06-14 — [笔记](catalyst-research/exploration-notes/2026-06-14-rl-trained-memory-management.md) ✅ 含可运行 TypeScript (LearnableMemoryManager, 5/5 assertions pass)
+  - **5核心概念**: Memory-R1 (ACL 2026, RL训练 ADD/UPDATE/DELETE/NOOP); AgeMem (统一 STM/LTM 策略学习, step-wise GRPO); Mem-T (MoT-GRPO 树搜索 + hindsight credit assignment); MemFactory (统一推理+训练框架); MemoryArena (ICLR 2026, 多会话依赖 benchmark)
+  - **5关键洞察**: RL训练的记忆策略显著优于启发式(4条独立路线验证); NOOP是最重要操作(大部分轮次不该动记忆); Mem-T将hindsight从轨迹回放扩展到记忆操作归因(Hindsight Mini进化方向); MemoryArena揭示多会话依赖是最大弱点(LoCoMo饱和模型骤降到40-60%); FiFA有界遗忘应成为AMS默认策略
+  - **实现路径**: 评分函数+阈值路由(零RL) → 反馈调阈(在线学习) → (可选)离线RL训练
+  - **下一步**: agent-context-store 添加 LearnableMemoryManager (+15 tests); AMS autoMaintain增加NOOP比率+budget; Hindsight Mini增加Audit操作
+
+### [06-14 早期研究] Adaptive Fusion: Self-Tuning Multi-Modal Retrieval
 - [x] **Adaptive Fusion 深度研究** ✅ 2026-06-14 — [笔记](catalyst-research/exploration-notes/2026-06-14-adaptive-fusion-self-tuning-retrieval.md) ✅ 含可运行 TypeScript (7 种自适应融合策略 + NDCG@5 评估 + 3/3 assertions pass)
   - **5核心概念**: QDAP (query embedding→α预测, MDPI 2025); Entropy-Based Reweighting (Shannon熵迭代, ICML VecDB 2025); Exp4Fuse (route weights + consensus bonus); WRRF (confidence-weighted RRF, CCNC 2026); Adaptive RAG 4-node routing
   - **5关键洞察**: 轻量级 query 分类可替代 LLM-in-the-loop 成本降99%; Entropy 是唯一不需外部信号的纯数学自适应; Exp4Fuse 共识奖励是三路融合免费午餐; WRRF 解决 RRF 丢弃分数信息缺陷; Adaptive+三路=npm生态独占位置
