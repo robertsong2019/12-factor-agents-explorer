@@ -5219,7 +5219,89 @@ class MemoryGraph:
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:limit]
 
-    def search_hybrid(self, query: str, embedding: list[float] = None, limit: int = 10) -> list[dict]:
+    @staticmethod
+    def _classify_query(query: str, known_labels: list[str] = None) -> dict:
+        """QDAP-Lite: 轻量级查询分类,预测最优融合权重。
+
+        基于 query 特征(长度, 标识符匹配, 关系词)做 per-query 权重预测。
+        参考: Hsu et al. MDPI 2025 QDAP 思想的简化版。
+
+        Returns:
+            {type, weights: [bm25_w, vector_w, graph_w], k}
+        """
+        q = query.lower().strip()
+        known_labels = known_labels or []
+
+        # 特征提取
+        has_identifier = any(
+            label.lower() in q
+            for label in known_labels
+            if len(label) >= 3
+        ) or any(token.isidentifier() and len(token) >= 4 for token in q.split())
+        is_short = len(q.split()) <= 3
+        relation_kw = sum(
+            1 for kw in ("relation", "connect", "link", "path", "between",
+                         "neighbor", "edge", "关联", "连接", "路径", "邻居")
+            if kw in q
+        )
+
+        # Relational queries take priority (even with identifiers)
+        if relation_kw > 0:
+            return {"type": "relational", "weights": [0.20, 0.25, 0.55], "k": 20}
+        if has_identifier and is_short:
+            return {"type": "exact", "weights": [0.55, 0.20, 0.25], "k": 10}
+        return {"type": "semantic", "weights": [0.25, 0.50, 0.25], "k": 20}
+
+    @staticmethod
+    def _entropy_refine(rankings: list[list[str]], initial_weights: list[float],
+                        max_iter: int = 3) -> list[float]:
+        """Entropy-based 权重修正 (Perez et al. ICML VecDB 2025)。
+
+        分析每路检索结果的分数分布熵,低熵=高置信→增加权重。
+        Blend: 70% QDAP + 30% Entropy。
+        """
+        import math
+        weights = list(initial_weights)
+        n_routes = len(rankings)
+        if n_routes < 2:
+            return weights
+
+        for _ in range(max_iter):
+            # 计算每路的 Shannon 熵 (用排名位置作为概率代理)
+            entropies = []
+            for ranking in rankings:
+                n = len(ranking)
+                if n == 0:
+                    entropies.append(1.0)  # 空列表=最大不确定
+                    continue
+                if n == 1:
+                    entropies.append(0.0)  # 单结果=零熵=完全确信
+                    continue
+                probs = [1.0 / (i + 1) for i in range(n)]
+                total = sum(probs)
+                probs = [p / total for p in probs]
+                h = -sum(p * math.log2(p) for p in probs if p > 0)
+                h_norm = h / math.log2(n)
+                entropies.append(h_norm)
+
+            # 低熵 → 高置信 → 增加权重
+            confidences = [1.0 - h for h in entropies]
+            total_conf = sum(confidences)
+            if total_conf > 0:
+                entropy_weights = [c / total_conf for c in confidences]
+            else:
+                entropy_weights = [1.0 / n_routes] * n_routes
+
+            # Blend
+            new_weights = [0.7 * w + 0.3 * ew for w, ew in zip(weights, entropy_weights)]
+            if max(abs(n - o) for n, o in zip(new_weights, weights)) < 0.01:
+                break
+            weights = new_weights
+
+        return weights
+
+    def search_hybrid(self, query: str, embedding: list[float] = None,
+                      limit: int = 10, fusion: str = "adaptive") -> list[dict]:
         """混合搜索: 文本 + 向量(可选) + 图邻居 RRF 融合。
 
         三路融合策略:
@@ -5227,19 +5309,34 @@ class MemoryGraph:
         2. 向量搜索 (可选): embedding KNN
         3. 图邻居加权: 邻居节点 bonus
 
-        使用 Reciprocal Rank Fusion (RRF) 合并排名, k=60.
+        支持三种融合模式:
+        - "rrf": 经典 Reciprocal Rank Fusion, k=60 (向后兼容)
+        - "adaptive": QDAP-Lite 查询分类 + 共识奖励 + 小 k 值 (默认)
+        - "wrrf": Weighted RRF, 用归一化分数置信度加权
 
         Args:
             query: 文本查询
             embedding: 可选查询向量
             limit: 返回数量上限
+            fusion: 融合模式 ("adaptive" | "rrf" | "wrrf")
 
         Returns:
             list of {node_id, label, kind, score, sources} 按融合分数降序
         """
-        K = 60  # RRF 常数
+        # 收集已知标签用于查询分类
+        known_labels = [r[0] for r in self.conn.execute(
+            "SELECT DISTINCT label FROM nodes LIMIT 200"
+        ).fetchall()]
+
+        # QDAP-Lite 查询分类
+        profile = self._classify_query(query, known_labels)
+        w_bm25, w_vec, w_graph = profile["weights"]
+        K = profile["k"] if fusion == "adaptive" else 60
+
         rrf_scores: dict[str, float] = defaultdict(float)
         sources_map: dict[str, set] = defaultdict(set)
+        route_rankings: list[list[str]] = []  # 用于 entropy 修正
+        route_scores: list[dict[str, float]] = []  # 用于 WRRF
 
         # 路1: BM25 文本搜索 (fallback 到 search_unified)
         text_results = self.search_bm25(query, limit=limit * 3)
@@ -5250,30 +5347,89 @@ class MemoryGraph:
                  "matched_fields": r["matched_fields"]}
                 for r in self.search_unified(query, limit=limit * 3)
             ]
+        text_ranking = [item["node_id"] for item in text_results]
+        route_rankings.append(text_ranking)
+        text_raw_scores = {item["node_id"]: item.get("score", 0.0) for item in text_results}
+        route_scores.append(text_raw_scores)
         for rank, item in enumerate(text_results):
             nid = item["node_id"]
-            rrf_scores[nid] += 1.0 / (K + rank + 1)
+            rrf_scores[nid] += w_bm25 / (K + rank + 1)
             sources_map[nid].add("bm25" if "bm25" in item.get("matched_fields", []) else "text")
 
         # 路2: 向量搜索 (可选)
+        vec_ranking = []
         if embedding is not None:
             try:
                 vec_results = self.search_similar(embedding, limit=limit * 3)
+                vec_ranking = [item["node_id"] for item in vec_results]
+                vec_raw_scores = {item["node_id"]: item.get("score", item.get("distance", 0.0))
+                                  for item in vec_results}
+                route_rankings.append(vec_ranking)
+                route_scores.append(vec_raw_scores)
                 for rank, item in enumerate(vec_results):
                     nid = item["node_id"]
-                    rrf_scores[nid] += 1.0 / (K + rank + 1)
+                    rrf_scores[nid] += w_vec / (K + rank + 1)
                     sources_map[nid].add("vector")
             except (ImportError, ValueError):
-                pass  # 向量不可用时静默跳过
+                route_rankings.append([])
+                route_scores.append({})
+        else:
+            route_rankings.append([])
+            route_scores.append({})
 
         # 路3: 图邻居加权 (以文本搜索 top 结果为种子)
+        graph_ranking = []
         if text_results:
             seed_id = text_results[0]["node_id"]
             if self.has_node(seed_id):
-                for rank, neighbor in enumerate(self.neighbors(seed_id)):
+                neighbors = list(self.neighbors(seed_id))
+                graph_ranking = [n.id for n in neighbors]
+                route_rankings.append(graph_ranking)
+                for rank, neighbor in enumerate(neighbors):
                     nid = neighbor.id
-                    rrf_scores[nid] += 0.5 / (K + rank + 1)  # 权重较低
+                    rrf_scores[nid] += w_graph * 0.5 / (K + rank + 1)  # 权重较低
                     sources_map[nid].add("graph")
+            else:
+                route_rankings.append([])
+                route_scores.append({})
+        else:
+            route_rankings.append([])
+            route_scores.append({})
+
+        # Adaptive: entropy 权重修正
+        if fusion == "adaptive" and len(route_rankings) >= 2:
+            refined = self._entropy_refine(route_rankings, [w_bm25, w_vec, w_graph])
+            # 重新计算 rrf_scores 用修正后的权重 (仅在权重变化显著时)
+            if max(abs(r - o) for r, o in zip(refined, [w_bm25, w_vec, w_graph])) > 0.05:
+                rrf_scores = defaultdict(float)
+                for rank, nid in enumerate(text_ranking):
+                    rrf_scores[nid] += refined[0] / (K + rank + 1)
+                if embedding is not None and vec_ranking:
+                    for rank, nid in enumerate(vec_ranking):
+                        rrf_scores[nid] += refined[1] / (K + rank + 1)
+                if graph_ranking:
+                    for rank, nid in enumerate(graph_ranking):
+                        rrf_scores[nid] += refined[2] * 0.5 / (K + rank + 1)
+
+        # WRRF: 置信度加权 (用归一化原始分数)
+        if fusion == "wrrf":
+            rrf_scores = defaultdict(float)
+            for route_idx, raw_scores in enumerate(route_scores):
+                if not raw_scores:
+                    continue
+                max_s = max(raw_scores.values()) if raw_scores else 1.0
+                if max_s <= 0:
+                    continue
+                for rank, nid in enumerate(route_rankings[route_idx]):
+                    conf = raw_scores.get(nid, 0.0) / max_s
+                    rrf_scores[nid] += conf / (K + rank + 1)
+
+        # 共识奖励 (Exp4Fuse 启发): 多路同时检索到的节点加分
+        if fusion in ("adaptive", "wrrf"):
+            for nid in list(rrf_scores.keys()):
+                n_sources = len(sources_map[nid])
+                if n_sources > 1:
+                    rrf_scores[nid] *= (1.0 + 0.15 * (n_sources - 1))
 
         # 排序并构建结果
         ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
@@ -5287,6 +5443,7 @@ class MemoryGraph:
                     "kind": node.kind,
                     "score": round(score, 6),
                     "sources": sorted(sources_map[nid]),
+                    "query_type": profile["type"] if fusion == "adaptive" else None,
                 })
         return results
 

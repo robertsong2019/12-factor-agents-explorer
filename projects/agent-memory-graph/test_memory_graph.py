@@ -4717,6 +4717,131 @@ class TestSearchHybrid:
         results = mg.search_hybrid("test", embedding=[0.1, 0.2])
         assert len(results) > 0  # 文本搜索仍工作
 
+    def test_search_hybrid_adaptive_default_mode(self):
+        """adaptive 是默认融合模式, 结果包含 query_type。"""
+        mg = MemoryGraph()
+        mg.add("Python programming language", "skill")
+        results = mg.search_hybrid("Python")
+        assert len(results) > 0
+        assert results[0].get("query_type") is not None
+        assert results[0]["query_type"] in ("exact", "semantic", "relational")
+
+    def test_search_hybrid_rrf_backward_compat(self):
+        """fusion='rrf' 向后兼容: 无 query_type 字段。"""
+        mg = MemoryGraph()
+        mg.add("Python programming", "skill")
+        results = mg.search_hybrid("Python", fusion="rrf")
+        assert len(results) > 0
+        assert results[0].get("query_type") is None
+
+    def test_search_hybrid_wrrf_mode(self):
+        """WRRF 模式: 置信度加权融合。"""
+        mg = MemoryGraph()
+        n1 = mg.add("AI research", "concept")
+        n2 = mg.add("AI deployment", "concept")
+        mg.add_embedding(n1.id, [0.9, 0.1])
+        mg.add_embedding(n2.id, [0.8, 0.2])
+        results = mg.search_hybrid("AI", embedding=[0.9, 0.1], fusion="wrrf")
+        assert len(results) > 0
+        assert results[0]["node_id"] == n1.id
+
+    def test_search_hybrid_consensus_bonus(self):
+        """共识奖励: 三路同时命中的节点分数应高于单路。"""
+        mg = MemoryGraph()
+        n1 = mg.add("AI ML", "concept")
+        n2 = mg.add("AI", "concept")
+        mg.link(n1.id, n2.id, "related")
+        mg.add_embedding(n1.id, [0.9, 0.1])
+        mg.add_embedding(n2.id, [0.1, 0.9])
+        # n1 同时被 text + vector + graph 命中
+        results = mg.search_hybrid("AI", embedding=[0.9, 0.1])
+        top = results[0]
+        assert len(top["sources"]) >= 2  # 至少两路命中
+
+    def test_classify_query_exact(self):
+        """QDAP-Lite: 短查询含已知标识符 → exact 类型。"""
+        result = MemoryGraph._classify_query("Python", ["Python", "Rust", "machine learning"])
+        assert result["type"] == "exact"
+        assert result["k"] == 10
+        assert result["weights"][0] > result["weights"][1]  # bm25 权重最高
+
+    def test_classify_query_relational(self):
+        """QDAP-Lite: 含关系词 → relational 类型。"""
+        result = MemoryGraph._classify_query("connection between AI and ML", [])
+        assert result["type"] == "relational"
+        assert result["weights"][2] > result["weights"][0]  # graph 权重最高
+
+    def test_classify_query_semantic(self):
+        """QDAP-Lite: 一般查询 → semantic 类型。"""
+        result = MemoryGraph._classify_query("how does deep learning work", [])
+        assert result["type"] == "semantic"
+        assert result["weights"][1] > result["weights"][0]  # vector 权重最高
+
+    def test_entropy_refine_increases_confident_route(self):
+        """Entropy 修正: 确信的路(短排名)应获得相对更高权重。"""
+        # 路1有1个结果(低熵=高置信), 路2有10个结果(高熵=低置信)
+        rankings = [["a"], list("bcdefghijk")]
+        initial = [0.5, 0.5]
+        refined = MemoryGraph._entropy_refine(rankings, initial)
+        # 路1置信度 > 路2置信度
+        assert refined[0] > refined[1]
+
+    def test_entropy_refine_single_route_unchanged(self):
+        """Entropy 修正: 单路时不做调整。"""
+        refined = MemoryGraph._entropy_refine([["a", "b"]], [1.0])
+        assert refined == [1.0]
+
+    def test_search_hybrid_adaptive_with_relation_keyword(self):
+        """adaptive 模式: 关系词查询分类为 relational。"""
+        mg = MemoryGraph()
+        n1 = mg.add("Core", "concept")
+        n2 = mg.add("connection", "concept")
+        mg.link(n1.id, n2.id, "connect")
+        # 'connection' 触发 relation 关键词, 且也是节点标签
+        results = mg.search_hybrid("connection")
+        assert len(results) > 0
+        assert results[0]["query_type"] == "relational"
+
+
+class TestAdaptiveFusionExtras:
+    """Adaptive Fusion 额外功能测试。"""
+
+    def test_classify_query_chinese_relational(self):
+        """中文关系词也正确分类。"""
+        result = MemoryGraph._classify_query("节点之间的连接路径", [])
+        assert result["type"] == "relational"
+
+    def test_classify_query_empty(self):
+        """空查询默认为 semantic。"""
+        result = MemoryGraph._classify_query("", [])
+        assert result["type"] == "semantic"
+
+    def test_search_hybrid_adaptive_adapts_k(self):
+        """adaptive 模式 k 值小于经典 RRF k=60。"""
+        mg = MemoryGraph()
+        mg.add("Python", "skill")
+        results_adaptive = mg.search_hybrid("Python", fusion="adaptive")
+        results_rrf = mg.search_hybrid("Python", fusion="rrf")
+        # 两模式都应返回结果
+        assert len(results_adaptive) > 0
+        assert len(results_rrf) > 0
+        # adaptive 分数可能不同 (不同 k 值)
+        assert results_adaptive[0]["score"] != results_rrf[0]["score"]
+
+    def test_search_hybrid_consensus_bonus_ordering(self):
+        """共识奖励: 多路命中节点 source 数更多。"""
+        mg = MemoryGraph()
+        n1 = mg.add("test alpha", "concept")
+        n2 = mg.add("test beta", "concept")
+        mg.add_embedding(n1.id, [0.95, 0.05])
+        mg.add_embedding(n2.id, [0.5, 0.5])
+        mg.link(n1.id, n2.id, "related")
+        # n1 同时被 text+vector+graph 命中
+        results = mg.search_hybrid("test", embedding=[0.95, 0.05])
+        top = results[0]
+        # 多路命中的节点至少两路
+        assert len(top["sources"]) >= 2
+
 
 class TestVectorBatchOps:
     """测试向量批量操作和工具。"""
