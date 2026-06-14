@@ -8999,3 +8999,115 @@ class TestCommunityFitAndBridges:
         bridges = mg.bridge_nodes(communities=comm, min_cross_edges=1)
         a_bridge = [br for br in bridges if br["node_id"] == a.id][0]
         assert set(a_bridge["cross_communities"]) == {1, 2}
+
+
+class TestLearnableMemoryManager:
+    """Memory-R1 / AgeMem 启发的可学习记忆管理。"""
+
+    def test_score_memory_ops_add_new_info(self):
+        """全新信息: ADD 分数最高。"""
+        mg = MemoryGraph()
+        scores = mg.score_memory_ops("quantum computing breakthrough")
+        top = scores[0]
+        assert top["op"] == "ADD"
+        assert top["score"] > 0.5
+
+    def test_score_memory_ops_update_existing(self):
+        """与已有节点高度相似: UPDATE 有候选。"""
+        mg = MemoryGraph()
+        mg.add("machine learning model", "concept")
+        scores = mg.score_memory_ops("machine learning model")
+        update_score = next(s for s in scores if s["op"] == "UPDATE")
+        assert update_score["score"] > 0
+
+    def test_score_memory_ops_returns_all_four(self):
+        """返回 ADD/UPDATE/DELETE/NOOP 四种操作评分。"""
+        mg = MemoryGraph()
+        scores = mg.score_memory_ops("test content")
+        ops = {s["op"] for s in scores}
+        assert ops == {"ADD", "UPDATE", "DELETE", "NOOP"}
+
+    def test_score_memory_ops_noop_bias(self):
+        """noop_bias 提高 NOOP 分数。"""
+        mg = MemoryGraph()
+        low_bias = mg.score_memory_ops("test", noop_bias=0.05)
+        high_bias = mg.score_memory_ops("test", noop_bias=0.50)
+        noop_low = next(s for s in low_bias if s["op"] == "NOOP")
+        noop_high = next(s for s in high_bias if s["op"] == "NOOP")
+        assert noop_high["score"] > noop_low["score"]
+
+    def test_decide_memory_op_returns_best(self):
+        """decide 返回最高分操作。"""
+        mg = MemoryGraph()
+        mg.add("Python", "skill")
+        decision = mg.decide_memory_op("Python programming")
+        assert decision["op"] in ("ADD", "UPDATE", "NOOP")
+        assert "score" in decision
+        assert "reason" in decision
+
+    def test_decide_memory_op_threshold_fallback(self):
+        """ADD 分数低于阈值时退回 NOOP。"""
+        mg = MemoryGraph()
+        mg.add("test duplicate content", "concept")
+        decision = mg.decide_memory_op("test duplicate content", threshold=0.99)
+        assert decision["op"] in ("NOOP", "UPDATE")
+
+    def test_execute_memory_op_add(self):
+        """执行 ADD: 创建新节点。"""
+        mg = MemoryGraph()
+        result = mg.execute_memory_op("brand new fact", kind="fact")
+        assert result["op"] == "ADD"
+        assert result["result"] == "created"
+        assert mg.stats()["nodes"] == 1
+
+    def test_execute_memory_op_noop(self):
+        """执行 NOOP: 不修改图。"""
+        mg = MemoryGraph()
+        result = mg.execute_memory_op("x", threshold=0.99)
+        assert result["op"] == "NOOP"
+        assert mg.stats()["nodes"] == 0
+
+    def test_execute_memory_op_update_merges(self):
+        """执行 UPDATE: 合并到已有节点。"""
+        mg = MemoryGraph()
+        mg.add("AI research", "concept")
+        result = mg.execute_memory_op("AI research latest")
+        if result["op"] == "UPDATE":
+            assert result["result"] == "merged"
+            assert "+" in result["detail"]["new"]
+
+    def test_memory_decision_log_batch(self):
+        """批量决策日志: 不执行, 只建议。"""
+        mg = MemoryGraph()
+        mg.add("existing", "concept")
+        items = ["existing updated", "brand new", "another new"]
+        log = mg.memory_decision_log(items)
+        assert len(log) == 3
+        assert all("op" in entry for entry in log)
+        assert all("content" in entry for entry in log)
+
+    def test_content_similarity_identical(self):
+        """相同文本相似度=1.0。"""
+        assert MemoryGraph._content_similarity("hello world", "hello world") == 1.0
+
+    def test_content_similarity_different(self):
+        """完全不同文本相似度≈0。"""
+        assert MemoryGraph._content_similarity("abcdef", "xyzwvu") < 0.1
+
+    def test_score_memory_ops_with_existing_keys(self):
+        """指定 existing_keys 缩小搜索范围。"""
+        mg = MemoryGraph()
+        n1 = mg.add("Python", "skill")
+        mg.add("Rust", "skill")
+        scores = mg.score_memory_ops("Python", existing_keys=[n1.id])
+        update_entry = next(s for s in scores if s["op"] == "UPDATE")
+        assert update_entry.get("target_key") == n1.id
+
+    def test_execute_with_tags(self):
+        """execute_memory_op ADD 时添加标签。"""
+        mg = MemoryGraph()
+        result = mg.execute_memory_op("tagged fact", kind="fact", tags=["important"])
+        if result["op"] == "ADD":
+            nid = result["detail"]["node_id"]
+            tags_result = mg.all_tags()
+            assert any("important" in t for t in tags_result)

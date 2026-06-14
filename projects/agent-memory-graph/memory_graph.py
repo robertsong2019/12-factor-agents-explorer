@@ -7133,6 +7133,126 @@ class MemoryGraph:
 
 
 
+    # ===================================================================
+    # Learnable Memory Management (Memory-R1 / AgeMem inspired)
+    # ===================================================================
+
+    @staticmethod
+    def _content_similarity(text_a: str, text_b: str) -> float:
+        """简易内容相似度: trigram Jaccard 系数。"""
+        def trigrams(s: str) -> set:
+            s = s.lower().strip()
+            return {s[i:i+3] for i in range(len(s) - 2)} if len(s) >= 3 else {s}
+        a, b = trigrams(text_a), trigrams(text_b)
+        if not a or not b:
+            return 0.0
+        return len(a & b) / len(a | b)
+
+    def score_memory_ops(self, content: str, existing_keys: list[str] = None,
+                         noop_bias: float = 0.15) -> list[dict]:
+        """对新信息评分 4 种操作 (ADD/UPDATE/DELETE/NOOP), Memory-R1 启发。"""
+        existing_keys = existing_keys or []
+        scores = []
+
+        best_match = None
+        best_sim = 0.0
+        if existing_keys:
+            for kid in existing_keys:
+                node = self.get_node(kid)
+                if node:
+                    sim = self._content_similarity(content, node.label)
+                    if sim > best_sim:
+                        best_sim = sim
+                        best_match = kid
+        else:
+            results = self.search_unified(content, limit=5)
+            for r in results:
+                sim = self._content_similarity(content, r["node"].label)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_match = r["node"].id
+
+        novelty = 1.0 - best_sim
+        add_score = novelty * (1.0 - noop_bias)
+        scores.append({
+            "op": "ADD",
+            "score": round(add_score, 4),
+            "reason": f"novelty={novelty:.2f}" + (f", best_match_sim={best_sim:.2f}" if best_match else ", no match"),
+        })
+
+        if best_match and best_sim > 0.3:
+            update_score = best_sim * (1.0 - noop_bias)
+            scores.append({
+                "op": "UPDATE",
+                "score": round(update_score, 4),
+                "reason": f"similarity={best_sim:.2f} to existing node",
+                "target_key": best_match,
+            })
+        else:
+            scores.append({"op": "UPDATE", "score": 0.0,
+                           "reason": "no similar existing entry"})
+
+        scores.append({"op": "DELETE", "score": 0.0,
+                       "reason": "DELETE only for contradictions/staleness (manual)"})
+
+        noop_score = noop_bias + (best_sim * 0.3)
+        scores.append({
+            "op": "NOOP",
+            "score": round(min(noop_score, 1.0), 4),
+            "reason": "conservative default" + (f", high overlap={best_sim:.2f}" if best_sim > 0.5 else ""),
+        })
+
+        return sorted(scores, key=lambda x: x["score"], reverse=True)
+
+    def decide_memory_op(self, content: str, threshold: float = 0.5,
+                         noop_bias: float = 0.15) -> dict:
+        """决策: 对新信息选择最优记忆操作。"""
+        scores = self.score_memory_ops(content, noop_bias=noop_bias)
+        best = scores[0]
+        if best["op"] == "ADD" and best["score"] < threshold:
+            return {"op": "NOOP", "score": best["score"],
+                    "reason": f"ADD score {best['score']:.2f} < threshold {threshold}"}
+        return best
+
+    def execute_memory_op(self, content: str, kind: str = "fact",
+                          threshold: float = 0.5, noop_bias: float = 0.15,
+                          tags: list[str] = None) -> dict:
+        """端到端: 决策 + 执行记忆操作。"""
+        decision = self.decide_memory_op(content, threshold=threshold, noop_bias=noop_bias)
+        op = decision["op"]
+
+        if op == "ADD":
+            node = self.add(content, kind)
+            if tags:
+                for t in tags:
+                    self.tag_nodes(t, [node.id])
+            return {"op": "ADD", "result": "created",
+                    "detail": {"node_id": node.id, "label": content[:80]}}
+
+        if op == "UPDATE" and decision.get("target_key"):
+            kid = decision["target_key"]
+            node = self.get_node(kid)
+            if node:
+                new_label = f"{node.label} + {content[:50]}"
+                self.update_node(kid, label=new_label)
+                return {"op": "UPDATE", "result": "merged",
+                        "detail": {"node_id": kid, "old": node.label, "new": new_label}}
+
+        if op == "DELETE":
+            return {"op": "DELETE", "result": "skipped",
+                    "detail": "DELETE requires explicit confirmation"}
+
+        return {"op": "NOOP", "result": "no_action",
+                "detail": decision["reason"]}
+
+    def memory_decision_log(self, items: list[str], threshold: float = 0.5) -> list[dict]:
+        """批量决策日志: 对多条信息生成操作建议 (不执行)。"""
+        log = []
+        for item in items:
+            d = self.decide_memory_op(item, threshold=threshold)
+            log.append({"content": item[:60], **d})
+        return log
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
@@ -7182,9 +7302,6 @@ def demo():
     mg.conn.commit()
     mg.decay_all()
     print(mg.visualize_ascii())
-
-
-
 
 
 if __name__ == "__main__":
