@@ -7399,6 +7399,90 @@ class MemoryGraph:
 
         return {"merged_count": merged, "details": details}
 
+    def memory_feedback(self, corrections: list[dict]) -> dict:
+        """从反馈数据学习调整阈值 (AgeMem 在线学习启发)。
+
+        corrections: [{content, correct_op, chosen_op, was_correct}]
+
+        Returns:
+            {adjusted_threshold, adjustments, samples}
+        """
+        if not corrections:
+            return {"adjusted_threshold": 0.5, "adjustments": 0, "samples": 0}
+
+        # 统计误判模式
+        false_adds = sum(1 for c in corrections
+                         if c.get("chosen_op") == "ADD"
+                         and not c.get("was_correct", True))
+        missed_adds = sum(1 for c in corrections
+                          if c.get("correct_op") == "ADD"
+                          and c.get("chosen_op") != "ADD")
+
+        total = len(corrections)
+        # 如果 ADD 误判多 → 提高阈值
+        # 如果 ADD 遗漏多 → 降低阈值
+        delta = (false_adds - missed_adds) / total * 0.2  # 最大调整 0.2
+        new_threshold = max(0.1, min(0.9, 0.5 + delta))
+
+        return {
+            "adjusted_threshold": round(new_threshold, 3),
+            "adjustments": delta != 0,
+            "samples": total,
+            "false_adds": false_adds,
+            "missed_adds": missed_adds,
+        }
+
+    def memory_stats_summary(self) -> dict:
+        """记忆概览仪表盘: 类型分布 + 权重分布 + 时间跨度。
+
+        Returns:
+            {total, by_kind, weight_dist, time_span, top_weighted}
+        """
+        import time
+        stats = self.stats()
+        total = stats.get("nodes", 0)
+
+        if total == 0:
+            return {"total": 0, "by_kind": {}, "weight_dist": {},
+                    "time_span": 0, "top_weighted": []}
+
+        # 类型分布
+        by_kind = self.count_by_kind()
+
+        # 权重分布
+        rows = self.conn.execute(
+            "SELECT weight FROM nodes ORDER BY weight DESC"
+        ).fetchall()
+        weights = [r["weight"] for r in rows]
+        weight_dist = {
+            "high": sum(1 for w in weights if w >= 0.7),
+            "medium": sum(1 for w in weights if 0.3 <= w < 0.7),
+            "low": sum(1 for w in weights if w < 0.3),
+            "avg": round(sum(weights) / len(weights), 3),
+        }
+
+        # 时间跨度
+        times = self.conn.execute(
+            "SELECT MIN(created) as min_t, MAX(created) as max_t FROM nodes"
+        ).fetchone()
+        time_span = (times["max_t"] - times["min_t"]) if times["min_t"] else 0
+
+        # Top weighted
+        top_rows = self.conn.execute(
+            "SELECT id, label, kind, weight FROM nodes ORDER BY weight DESC LIMIT 5"
+        ).fetchall()
+        top_weighted = [{"id": r["id"], "label": r["label"],
+                         "kind": r["kind"], "weight": r["weight"]}
+                        for r in top_rows]
+
+        return {
+            "total": total,
+            "by_kind": dict(by_kind),
+            "weight_dist": weight_dist,
+            "time_span_days": round(time_span / 86400, 1),
+            "top_weighted": top_weighted,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

@@ -9215,3 +9215,109 @@ class TestMemoryAuditAndFiFA:
             assert "id" in d
             assert "label" in d
             assert "weight" in d
+
+
+class TestFeedbackLearningAndStats:
+    """反馈学习 + 记忆统计概览。"""
+
+    def test_memory_feedback_no_corrections(self):
+        """空反馈返回默认阈值。"""
+        mg = MemoryGraph()
+        result = mg.memory_feedback([])
+        assert result["adjusted_threshold"] == 0.5
+        assert result["samples"] == 0
+
+    def test_memory_feedback_raises_on_false_adds(self):
+        """过多误 ADD → 提高阈值。"""
+        mg = MemoryGraph()
+        corrections = [
+            {"content": "a", "chosen_op": "ADD", "was_correct": False},
+            {"content": "b", "chosen_op": "ADD", "was_correct": False},
+            {"content": "c", "chosen_op": "ADD", "was_correct": False},
+            {"content": "d", "chosen_op": "NOOP", "was_correct": True},
+        ]
+        result = mg.memory_feedback(corrections)
+        assert result["adjusted_threshold"] > 0.5
+        assert result["false_adds"] == 3
+
+    def test_memory_feedback_lowers_on_missed_adds(self):
+        """过多遗漏 ADD → 降低阈值。"""
+        mg = MemoryGraph()
+        corrections = [
+            {"content": "a", "correct_op": "ADD", "chosen_op": "NOOP",
+             "was_correct": False},
+            {"content": "b", "correct_op": "ADD", "chosen_op": "NOOP",
+             "was_correct": False},
+            {"content": "c", "chosen_op": "NOOP", "was_correct": True},
+            {"content": "d", "chosen_op": "NOOP", "was_correct": True},
+        ]
+        result = mg.memory_feedback(corrections)
+        assert result["adjusted_threshold"] < 0.5
+        assert result["missed_adds"] == 2
+
+    def test_memory_feedback_balanced_no_change(self):
+        """误判与遗漏相等 → 阈值不变。"""
+        mg = MemoryGraph()
+        corrections = [
+            {"content": "a", "chosen_op": "ADD", "was_correct": False},
+            {"content": "b", "correct_op": "ADD", "chosen_op": "NOOP",
+             "was_correct": False},
+        ]
+        result = mg.memory_feedback(corrections)
+        assert result["adjusted_threshold"] == 0.5
+
+    def test_memory_stats_summary_empty(self):
+        """空图统计概览。"""
+        mg = MemoryGraph()
+        s = mg.memory_stats_summary()
+        assert s["total"] == 0
+        assert s["top_weighted"] == []
+
+    def test_memory_stats_summary_populated(self):
+        """有数据的图统计概览。"""
+        mg = MemoryGraph()
+        n1 = mg.add("Important", "concept")
+        mg.update_node(n1.id, weight=0.9)
+        n2 = mg.add("Medium", "skill")
+        mg.update_node(n2.id, weight=0.5)
+        n3 = mg.add("Trivial", "fact")
+        mg.update_node(n3.id, weight=0.1)
+        s = mg.memory_stats_summary()
+        assert s["total"] == 3
+        assert "concept" in s["by_kind"]
+        assert s["weight_dist"]["high"] == 1
+        assert s["weight_dist"]["medium"] == 1
+        assert s["weight_dist"]["low"] == 1
+        assert len(s["top_weighted"]) == 3
+        assert s["top_weighted"][0]["label"] == "Important"
+
+    def test_memory_stats_summary_time_span(self):
+        """统计包含时间跨度。"""
+        import time
+        mg = MemoryGraph()
+        mg.add("old", "concept")
+        mg.conn.execute("UPDATE nodes SET created = ?", (time.time() - 86400 * 10,))
+        mg.conn.commit()
+        mg.add("new", "concept")
+        s = mg.memory_stats_summary()
+        assert s["time_span_days"] >= 9
+
+    def test_memory_feedback_threshold_bounds(self):
+        """阈值始终在 [0.1, 0.9] 范围内。"""
+        mg = MemoryGraph()
+        # 极端情况: 全部误 ADD
+        corrections = [{"chosen_op": "ADD", "was_correct": False}
+                       for _ in range(20)]
+        result = mg.memory_feedback(corrections)
+        assert result["adjusted_threshold"] <= 0.9
+        assert result["adjusted_threshold"] >= 0.1
+
+    def test_memory_stats_summary_avg_weight(self):
+        """统计包含平均权重。"""
+        mg = MemoryGraph()
+        n1 = mg.add("a", "concept")
+        n2 = mg.add("b", "concept")
+        mg.update_node(n1.id, weight=0.4)
+        mg.update_node(n2.id, weight=0.6)
+        s = mg.memory_stats_summary()
+        assert abs(s["weight_dist"]["avg"] - 0.5) < 0.01
