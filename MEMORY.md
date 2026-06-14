@@ -15,10 +15,10 @@
 
 ---
 
-## Current Focus (2026-06-13)
+## Current Focus (2026-06-14)
 
 ### Active Theme
-Autoresearch 方法论实践 - **连续118天零回滚率** 🏆。06-13 晚: structured-output-toolkit 178→242 (+64, **质量分析工具链**: confidenceScore + temperatureSchedule + validationSummary + diffResults)。06-12~13: agent-context-store 931→963 (+32, fingerprint toolkit 闭环); structured-output-toolkit 123→178 (+55, **完整可靠性栈**)。**最高优先级**: README → npm publish (两项目均已远超发布门槛: 963+916=1879 tests, structured-output-toolkit 242 tests)。
+Autoresearch 方法论实践 - **连续119天零回滚率** 🏆。06-13 晚: structured-output-toolkit 178→273 (+95, 5 cycles, **完整质量分析与聚合工具链**: confidenceScore + temperatureSchedule + validationSummary + diffResults + aggregateReport); agent-task-cli Round 33 (783→805, Cache.copy + EventBus.before + Storage.avg); 两项新深度研究 (Trust Propagation Algorithms + Hybrid Retrieval Beyond RRF)。06-12~13: agent-context-store 931→963 (+32, fingerprint toolkit 闭环); structured-output-toolkit 123→178 (+55, **完整可靠性栈**)。**最高优先级**: README → npm publish (三项目均已远超发布门槛: agent-context-store 963 + agent-memory-graph 916 + structured-output-toolkit 273 = 2152 tests)。
 
 ### 🔑 最新关键洞察 (06-12~13)
 - **Agent Memory 标准化正在发生**: memorywire (arXiv:2606.01138) 5 ops × 4 types, 计划提交 MCP-WG + IETF at v0.5。Agent File (.af) = "Docker for stateful agents"。**图记忆是 memorywire + .af 都不覆盖的空白** — agent-memory-graph 正好填补。
@@ -36,6 +36,7 @@ Autoresearch 方法论实践 - **连续118天零回滚率** 🏆。06-13 晚: st
 
 ### Next Actions
 - [ ] **[06-13 新研究] agent-memory-graph: Adaptive Fusion 策略** — [笔记](catalyst-research/exploration-notes/2026-06-13-hybrid-retrieval-fusion-beyond-rrf.md) ✅ 6种融合算法对比+3/3 assertions pass。核心发现: k=60对小语料次优(k=20 gap是k=60的3-5x); CombMNZ共识奖励天然适合三路; Weaviate已从RRF切到RSF; Adaptive是差异化机会(无系统同时做adaptive+三路)。下一步: k值自适应+共识奖励(~30行) → adaptive查询路由(~80行) → Graph路weighted bonus重设计
+- [ ] **[06-13 新研究] a2a-trust-prototype: Trust Propagation Algorithms 集成** — [笔记](catalyst-research/exploration-notes/2026-06-13-trust-propagation-algorithms.md) ✅ EigenTrust幂迭代+BetaTrust贝叶斯+FIRE多源融合 ~200行可运行TS代码已验证。核心发现: 直接经验信任>纯声誉15-20%但冷启动必须用EigenTrust; A2A协议无内置信任层=市场机会; PBFT容忍上限1/3恶意; memorywire缺少trust字段=标准化空白。下一步: 集成3算法到TrustEngine + Trust-tagged Agent Cards + memorywire trust扩展
 - [x] **agent-memory-graph: sqlite-vec 集成** ✅ 2026-06-06 — 10 vector APIs (add_embedding, search_similar, search_hybrid RRF, batch ops, filtered search, stats), 537→627 tests。三路融合 BM25+Vector+Graph 已实现。
   - [三路融合研究笔记](catalyst-research/exploration-notes/2026-06-06-three-way-hybrid-search-bm25-vector-graph.md)
   - [嵌入策略研究笔记](catalyst-research/exploration-notes/2026-06-06-embedding-strategies-sqlite-vec-agent-memory.md)
@@ -64,7 +65,7 @@ Autoresearch 方法论实践 - **连续118天零回滚率** 🏆。06-13 晚: st
 - [ ] **openclaw-langgraph-bridge: 实现 supervisor() 工厂函数** — 基于 LangGraph.js subgraph + Command API，目标 5+ tests — [研究笔记](catalyst-research/exploration-notes/2026-05-26-langgraph-bridge-patterns.md) ✅ 含可运行路由代码
 - [ ] **openclaw-langgraph-bridge: 添加 Command + interrupt() 支持** — 适配 OpenClaw /approve 审批流
 - [ ] **openclaw-langgraph-bridge: 实现 fanOut() + aggregate()** — 基于 Send 的 Map-Reduce 模式
-- [ ] **structured-output-toolkit: README + npm publish** — 242 tests, 1284→2185 lines src。ConsensusGenerator + ValidationSandwich + ErrorRecoveryAgent + confidenceScore + temperatureSchedule + validationSummary + diffResults。**完整质量分析工具链**。定位: "TypeScript structured output reliability toolkit (validation + consensus + recovery + scoring)"
+- [ ] **structured-output-toolkit: README + npm publish** — 273 tests, 2185+ lines src。ConsensusGenerator + ValidationSandwich + ErrorRecoveryAgent + confidenceScore + temperatureSchedule + validationSummary + diffResults + aggregateReport。**完整质量分析与聚合工具链 (5 cycles in one evening)**。定位: "TypeScript structured output reliability toolkit (validation + consensus + recovery + scoring + aggregation)"
   - **[新研究 05-29]** 跨 Provider Schema 适配层 — [笔记](catalyst-research/exploration-notes/2026-05-29-structured-output-cross-provider.md) ✅ 含可运行 SchemaAdapterFactory (OpenAI/Gemini/Anthropic)
   - 核心发现: Schema Fragmentation 是真实生产痛点; Anthropic Tool Use 间接路径有隐藏成本; `additionalProperties` 语义跨 Provider 不同
   - **下一步**: 将 SchemaAdapterFactory 集成到 lab 项目 + 添加 Provider 响应解析器 + Schema 兼容性测试矩阵
@@ -225,7 +226,15 @@ Autoresearch 方法论实践 - **连续118天零回滚率** 🏆。06-13 晚: st
 
 ---
 
-## Next Actions (Updated 2026-06-12)
+## Next Actions (Updated 2026-06-14)
+
+### [06-14 新研究] Adaptive Fusion: Self-Tuning Multi-Modal Retrieval
+- [x] **Adaptive Fusion 深度研究** ✅ 2026-06-14 — [笔记](catalyst-research/exploration-notes/2026-06-14-adaptive-fusion-self-tuning-retrieval.md) ✅ 含可运行 TypeScript (7 种自适应融合策略 + NDCG@5 评估 + 3/3 assertions pass)
+  - **5核心概念**: QDAP (query embedding→α预测, MDPI 2025); Entropy-Based Reweighting (Shannon熵迭代, ICML VecDB 2025); Exp4Fuse (route weights + consensus bonus); WRRF (confidence-weighted RRF, CCNC 2026); Adaptive RAG 4-node routing
+  - **5关键洞察**: 轻量级 query 分类可替代 LLM-in-the-loop 成本降99%; Entropy 是唯一不需外部信号的纯数学自适应; Exp4Fuse 共识奖励是三路融合免费午餐; WRRF 解决 RRF 丢弃分数信息缺陷; Adaptive+三路=npm生态独占位置
+  - **实现路径**: Step1 共识奖励+小k值(5行) → Step2 QDAP-Lite分类(~40行) → Step3 Entropy修正(~30行) → Step4 WRRF模式(~20行)。总~100行, 预期NDCG@5 +20-35%
+  - **前序研究**: [06-13 Hybrid Retrieval Beyond RRF](catalyst-research/exploration-notes/2026-06-13-hybrid-retrieval-fusion-beyond-rrf.md) ✅
+  - **下一步**: 在 agent-memory-graph 实现 Step1+Step2 (共识奖励 + QDAP-Lite 分类), ~50行代码
 
 ### [06-12 晚间新研究] GraphRAG + Leiden 集成策略
 - [x] **GraphRAG + Leiden Integration Strategy** ✅ 2026-06-12 晚 — [笔记](catalyst-research/exploration-notes/2026-06-12-graphrag-leiden-integration-strategy.md) ✅ 含可运行 TypeScript (LeidenAdapter + IncrementalModularity, 已验证)
@@ -574,6 +583,19 @@ curl -X POST "https://api.tavily.com/search" \
   - content_stats_batch+content_slugify+content_repeat (+9, commit 450995f)
   - **API总量: 284+ methods**
 - 连续100→101天零回滚率 🏆
+
+### 2026-06-13
+- ✅ **Trust Propagation Algorithms 深度研究** — EigenTrust幂迭代 + BetaTrust贝叶斯 + FIRE多源融合, ~200行可运行TS代码已验证。关键: 直接经验>纯声誉15-20%但冷启动必须用EigenTrust; A2A协议无内置信任层=市场机会; PBFT容忍上限1/3恶意; memorywire缺少trust字段=标准化空白 — [笔记](catalyst-research/exploration-notes/2026-06-13-trust-propagation-algorithms.md) ✅
+- ✅ **Hybrid Retrieval Beyond RRF 深度研究** — 6种融合算法对比(RRF/Weighted/CombSUM/CombMNZ/RSF/Adaptive) + Tensor Rank Fusion前沿 + Weaviate产业信号。~250行可运行TS代码, 3/3 assertions pass。关键: k=60对小语料次优(k=20 gap是k=60的3-5x); CombMNZ共识奖励天然适合三路; Adaptive是差异化机会 — [笔记](catalyst-research/exploration-notes/2026-06-13-hybrid-retrieval-fusion-beyond-rrf.md) ✅
+- ✅ **structured-output-toolkit 5-cycle evening marathon** — 178→273 (+95, 5 cycles, 5 keep, 零回滚)
+  - confidenceScore (ef48bbd): 多因子质量评分(0-1), syntax/schema/semantic/consensus/recovery加权, 14 tests
+  - temperatureSchedule (f5159f8): 自适应重试温度策略, 语义失败需降温而非升温, 16 tests
+  - validationSummary (63a7c88): 人类可读报告格式(Markdown+plain), 13 tests
+  - diffResults (0615718): 深度结构化差异(嵌套对象/数组/相似度/多候选), 21 tests
+  - aggregateReport (0479932): 统一质量仪表盘, 单入口聚合所有模块, 31 tests
+  - **质量分析工具链完整闭环**: score → schedule → summarize → diff → aggregate
+- ✅ **agent-task-cli Round 33** — 783→805 tests (+22)。Cache.copy(可选TTL) + EventBus.before(pre-emit hook) + Storage.avg(数值平均)
+- 连续119天零回滚率 🏆
 
 ### 2026-06-12
 - ✅ **agent-context-store 指纹+向量+标签 4-cycle marathon** — 931→963 (+32, 4 cycles, 4 keep, 零回滚)
@@ -1172,5 +1194,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-06-13 02:00*
-*Next review: 2026-06-14*
+*Last updated: 2026-06-14 02:00*
+*Next review: 2026-06-15*
