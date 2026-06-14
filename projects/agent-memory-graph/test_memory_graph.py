@@ -9321,3 +9321,277 @@ class TestFeedbackLearningAndStats:
         mg.update_node(n2.id, weight=0.6)
         s = mg.memory_stats_summary()
         assert abs(s["weight_dist"]["avg"] - 0.5) < 0.01
+
+
+# ── memorywire 互操作测试 ──────────────────────────────
+
+class TestMemorywireExport:
+    """to_memorywire / from_memorywire 互操作性。"""
+
+    def test_to_memorywire_empty(self):
+        """空图导出。"""
+        mg = MemoryGraph()
+        result = mg.to_memorywire()
+        assert result["version"] == "0.1"
+        assert result["memories"] == []
+        assert result["agent_id"] == "default"
+
+    def test_to_memorywire_basic(self):
+        """基本导出：节点 → memorywire remember 操作。"""
+        mg = MemoryGraph()
+        mg.add("User likes TypeScript", "fact", tags=["preference"])
+        result = mg.to_memorywire(agent_id="agent-001")
+        assert len(result["memories"]) == 1
+        mem = result["memories"][0]
+        assert mem["operation"] == "remember"
+        assert mem["agent_id"] == "agent-001"
+        assert mem["type"] == "semantic"  # fact → semantic
+        assert mem["content"] == "User likes TypeScript"
+        assert mem["confidence"] == 1.0
+        assert mem["source"] == "preference"
+
+    def test_to_memorywire_type_mapping(self):
+        """内部 kind → memorywire type 映射。"""
+        mg = MemoryGraph()
+        mg.add("concept-1", "concept")     # → semantic
+        mg.add("event-1", "event")         # → episodic
+        mg.add("skill-1", "skill")         # → procedural
+        mg.add("emo-1", "emotion")         # → emotional
+        result = mg.to_memorywire()
+        types = {m["content"]: m["type"] for m in result["memories"]}
+        assert types["concept-1"] == "semantic"
+        assert types["event-1"] == "episodic"
+        assert types["skill-1"] == "procedural"
+        assert types["emo-1"] == "emotional"
+
+    def test_to_memorywire_with_edges(self):
+        """导出包含关系（边）信息。"""
+        mg = MemoryGraph()
+        n1 = mg.add("Python", "concept")
+        n2 = mg.add("Programming", "concept")
+        mg.link(n1.id, n2.id, "is_a", 0.8)
+        result = mg.to_memorywire()
+        mem = next(m for m in result["memories"] if m["content"] == "Python")
+        assert "relationships" in mem["metadata"]
+        assert len(mem["metadata"]["relationships"]) == 1
+        assert mem["metadata"]["relationships"][0]["target"] == n2.id
+        assert mem["metadata"]["relationships"][0]["relation"] == "is_a"
+
+    def test_to_memorywire_selected_nodes(self):
+        """导出指定节点子集。"""
+        mg = MemoryGraph()
+        n1 = mg.add("keep-me", "fact")
+        mg.add("skip-me", "fact")
+        result = mg.to_memorywire(node_ids=[n1.id])
+        assert len(result["memories"]) == 1
+        assert result["memories"][0]["content"] == "keep-me"
+
+    def test_to_memorywire_weight_as_confidence(self):
+        """节点 weight 映射为 memorywire confidence。"""
+        mg = MemoryGraph()
+        n = mg.add("weighted", "fact")
+        mg.update_node(n.id, weight=0.42)
+        result = mg.to_memorywire()
+        mem = result["memories"][0]
+        assert abs(mem["confidence"] - 0.42) < 0.01
+
+    def test_to_memorywire_json_serializable(self):
+        """导出结果可 JSON 序列化。"""
+        import json as _json
+        mg = MemoryGraph()
+        mg.add("test", "fact", data={"key": "val"}, tags=["t1"])
+        result = mg.to_memorywire()
+        _json.dumps(result)  # should not raise
+
+
+class TestMemorywireImport:
+    """from_memorywire 导入。"""
+
+    def test_from_memorywire_basic(self):
+        """基本导入：memorywire → 图节点。"""
+        mg = MemoryGraph()
+        wire = {
+            "version": "0.1",
+            "agent_id": "a1",
+            "memories": [
+                {
+                    "operation": "remember",
+                    "agent_id": "a1",
+                    "type": "semantic",
+                    "content": "User prefers dark mode",
+                    "confidence": 0.9,
+                    "source": "ui",
+                    "metadata": {},
+                }
+            ]
+        }
+        count = mg.from_memorywire(wire)
+        assert count == 1
+        node = mg.search_by_label("User prefers dark mode")[0]
+        assert node.kind == "fact"  # semantic → fact
+        assert abs(node.weight - 0.9) < 0.01
+
+    def test_from_memorywire_type_reverse_mapping(self):
+        """memorywire type → 内部 kind 反向映射。"""
+        mg = MemoryGraph()
+        wire = {
+            "version": "0.1",
+            "memories": [
+                {"operation": "remember", "type": "semantic",
+                 "content": "s1", "metadata": {}},
+                {"operation": "remember", "type": "episodic",
+                 "content": "e1", "metadata": {}},
+                {"operation": "remember", "type": "procedural",
+                 "content": "p1", "metadata": {}},
+                {"operation": "remember", "type": "emotional",
+                 "content": "em1", "metadata": {}},
+            ]
+        }
+        mg.from_memorywire(wire)
+        nodes = {n.label: n.kind for n in mg.search_by_label("")}
+        # search_by_label with empty pattern might not work, use all
+        all_nodes = mg.conn.execute("SELECT label, kind FROM nodes").fetchall()
+        kind_map = {r["label"]: r["kind"] for r in all_nodes}
+        assert kind_map["s1"] == "fact"
+        assert kind_map["e1"] == "event"
+        assert kind_map["p1"] == "skill"
+        assert kind_map["em1"] == "emotion"
+
+    def test_from_memorywire_preserves_node_id(self):
+        """导入时保留原始 node_id。"""
+        mg = MemoryGraph()
+        wire = {
+            "version": "0.1",
+            "memories": [{
+                "operation": "remember", "type": "semantic",
+                "content": "test", "confidence": 1.0,
+                "metadata": {"node_id": "custom-id-123"},
+            }]
+        }
+        mg.from_memorywire(wire)
+        node = mg.get_node("custom-id-123")
+        assert node is not None
+        assert node.label == "test"
+
+    def test_from_memorywire_restores_edges(self):
+        """导入时恢复边关系。"""
+        mg = MemoryGraph()
+        wire = {
+            "version": "0.1",
+            "memories": [
+                {
+                    "operation": "remember", "type": "semantic",
+                    "content": "node-a", "confidence": 1.0,
+                    "metadata": {
+                        "node_id": "node-a",
+                        "relationships": [
+                            {"target": "node-b", "relation": "rel", "weight": 0.5}
+                        ],
+                    },
+                },
+                {
+                    "operation": "remember", "type": "semantic",
+                    "content": "node-b", "confidence": 1.0,
+                    "metadata": {"node_id": "node-b"},
+                },
+            ]
+        }
+        mg.from_memorywire(wire)
+        neighbors = mg.neighbors("node-a")
+        assert any(n.id == "node-b" for n in neighbors)
+
+    def test_from_memorywire_skips_non_remember(self):
+        """非 remember 操作被跳过。"""
+        mg = MemoryGraph()
+        wire = {
+            "version": "0.1",
+            "memories": [
+                {"operation": "recall", "query": "test"},
+                {"operation": "forget", "ids": ["x"]},
+            ]
+        }
+        count = mg.from_memorywire(wire)
+        assert count == 0
+
+    def test_from_memorywire_source_as_tag(self):
+        """source 字段自动加入 tags。"""
+        mg = MemoryGraph()
+        wire = {
+            "version": "0.1",
+            "memories": [{
+                "operation": "remember", "type": "semantic",
+                "content": "test", "source": "experiment-1",
+                "metadata": {},
+            }]
+        }
+        mg.from_memorywire(wire)
+        rows = mg.conn.execute("SELECT tags FROM nodes").fetchall()
+        tags = json.loads(rows[0]["tags"])
+        assert "experiment-1" in tags
+
+
+class TestMemorywireRoundTrip:
+    """导出 → 导入 往返一致性。"""
+
+    def test_round_trip_preserves_data(self):
+        """导出后导入到新图，数据保持一致。"""
+        mg1 = MemoryGraph()
+        n1 = mg1.add("TypeScript rocks", "fact", data={"lang": "ts"},
+                     tags=["dev"])
+        n2 = mg1.add("Run tests daily", "skill", tags=["ci"])
+        mg1.link(n1.id, n2.id, "related", 0.6)
+        mg1.update_node(n1.id, weight=0.85)
+
+        wire = mg1.to_memorywire(agent_id="rt-test")
+
+        mg2 = MemoryGraph()
+        mg2.from_memorywire(wire)
+
+        # Same node count
+        assert mg1.stats()["nodes"] == mg2.stats()["nodes"]
+
+        # Same content
+        n1_copy = mg2.get_node(n1.id)
+        assert n1_copy is not None
+        assert n1_copy.label == "TypeScript rocks"
+        assert abs(n1_copy.weight - 0.85) < 0.01
+
+        # Same edges
+        neighbors = mg2.neighbors(n1.id)
+        assert any(nd.id == n2.id for nd in neighbors)
+
+    def test_round_trip_empty(self):
+        """空图往返。"""
+        mg1 = MemoryGraph()
+        wire = mg1.to_memorywire()
+        mg2 = MemoryGraph()
+        count = mg2.from_memorywire(wire)
+        assert count == 0
+        assert mg2.stats()["nodes"] == 0
+
+
+class TestNoScopeDeleteGuard:
+    """delete_many no-scope-mass-delete 保护。"""
+
+    def test_delete_many_empty_rejected(self):
+        """空列表被拒绝。"""
+        mg = MemoryGraph()
+        mg.add("node1", "fact")
+        with pytest.raises(ValueError, match="no-scope-mass-delete"):
+            mg.delete_many([])
+
+    def test_delete_many_force_allows_empty(self):
+        """force=True 可绕过保护。"""
+        mg = MemoryGraph()
+        mg.add("node1", "fact")
+        result = mg.delete_many([], force=True)
+        assert result == 0
+
+    def test_delete_many_normal_works(self):
+        """正常删除不受影响。"""
+        mg = MemoryGraph()
+        n1 = mg.add("node1", "fact")
+        n2 = mg.add("node2", "fact")
+        count = mg.delete_many([n1.id, n2.id])
+        assert count == 2
+        assert mg.stats()["nodes"] == 0

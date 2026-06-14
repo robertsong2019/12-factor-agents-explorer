@@ -193,8 +193,19 @@ class MemoryGraph:
         self.conn.commit()
         return count
 
-    def delete_many(self, node_ids: list[str]) -> int:
-        """Batch-delete nodes with edge cleanup. Returns count of nodes deleted."""
+    def delete_many(self, node_ids: list[str], *, force: bool = False) -> int:
+        """Batch-delete nodes with edge cleanup. Returns count of nodes deleted.
+
+        Args:
+            node_ids: List of node IDs to delete. Must be non-empty.
+            force: If True, bypass the no-scope-delete guard.
+                   (no-scope-mass-delete protection per memorywire spec)
+        """
+        if not node_ids and not force:
+            raise ValueError(
+                "delete_many requires non-empty node_ids "
+                "(no-scope-mass-delete protection). Pass force=True to override."
+            )
         count = 0
         for nid in node_ids:
             row = self.conn.execute("SELECT id FROM nodes WHERE id=?", (nid,)).fetchone()
@@ -7482,6 +7493,145 @@ class MemoryGraph:
             "time_span_days": round(time_span / 86400, 1),
             "top_weighted": top_weighted,
         }
+
+    # ── memorywire 互操作 ──────────────────────────────────
+    # memorywire v0.1 wire format: 5 ops × 4 types
+    # Ops: remember, recall, forget, merge, expire
+    # Types: semantic, episodic, procedural, emotional
+    # See: https://arxiv.org/abs/2606.01138
+
+    # Map internal kinds ↔ memorywire types
+    _MW_TYPE_MAP = {
+        "fact": "semantic",
+        "concept": "semantic",
+        "event": "episodic",
+        "person": "episodic",
+        "skill": "procedural",
+        "emotion": "emotional",
+    }
+    _MW_TYPE_REVERSE = {
+        "semantic": "fact",
+        "episodic": "event",
+        "procedural": "skill",
+        "emotional": "emotion",
+    }
+
+    def to_memorywire(self, agent_id: str = "default",
+                      node_ids: list[str] | None = None) -> dict:
+        """Export graph memories to memorywire v0.1 wire format.
+
+        Produces a JSON-serializable dict of 'remember' operations that
+        can be replayed into any memorywire-compatible backend.
+
+        Args:
+            agent_id: Agent identifier for the exported memories.
+            node_ids: Optional list of specific nodes to export.
+                      If None, exports all nodes.
+
+        Returns:
+            {"version": "0.1", "agent_id": ..., "memories": [...]}
+        """
+        if node_ids is None:
+            rows = self.conn.execute("SELECT * FROM nodes").fetchall()
+        else:
+            placeholders = ",".join("?" * len(node_ids))
+            rows = self.conn.execute(
+                f"SELECT * FROM nodes WHERE id IN ({placeholders})", node_ids
+            ).fetchall()
+
+        # Also export edges as relationship metadata
+        edge_map: dict[str, list[dict]] = {}
+        for r in rows:
+            linked = self.conn.execute(
+                "SELECT target, relation, weight FROM edges WHERE source=?",
+                (r["id"],)
+            ).fetchall()
+            if linked:
+                edge_map[r["id"]] = [
+                    {"target": l["target"], "relation": l["relation"],
+                     "weight": l["weight"]}
+                    for l in linked
+                ]
+
+        memories = []
+        for r in rows:
+            tags = json.loads(r["tags"])
+            mw_type = self._MW_TYPE_MAP.get(r["kind"], "semantic")
+            entry = {
+                "operation": "remember",
+                "agent_id": agent_id,
+                "type": mw_type,
+                "content": r["label"],
+                "confidence": round(r["weight"], 4),
+                "source": tags[0] if tags else None,
+                "metadata": {
+                    "node_id": r["id"],
+                    "kind": r["kind"],
+                    "data": json.loads(r["data"]),
+                    "tags": tags,
+                    "created": r["created"],
+                    "accessed": r["accessed"],
+                },
+                "expires_at": None,
+                "approval_required": False,
+            }
+            if r["id"] in edge_map:
+                entry["metadata"]["relationships"] = edge_map[r["id"]]
+            memories.append(entry)
+
+        return {"version": "0.1", "agent_id": agent_id, "memories": memories}
+
+    def from_memorywire(self, wire_data: dict) -> int:
+        """Import memorywire v0.1 wire format into this graph.
+
+        Accepts the output of to_memorywire() or any memorywire-compatible
+        'remember' operation list. Creates nodes and edges accordingly.
+
+        Args:
+            wire_data: Dict with 'memories' key containing a list of
+                       remember operation dicts.
+
+        Returns:
+            Number of nodes imported.
+        """
+        memories = wire_data.get("memories", [])
+        count = 0
+        for mem in memories:
+            if mem.get("operation") != "remember":
+                continue
+
+            mw_type = mem.get("type", "semantic")
+            kind = self._MW_TYPE_REVERSE.get(mw_type, "fact")
+            content = mem.get("content", "")
+            meta = mem.get("metadata", {})
+
+            # Preserve original node_id if present
+            node_id = meta.get("node_id") or uuid.uuid4().hex[:12]
+            tags = meta.get("tags", [])
+            if mem.get("source") and mem["source"] not in tags:
+                tags.insert(0, mem["source"])
+
+            now = time.time()
+            self.conn.execute(
+                "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                (node_id, content, kind,
+                 json.dumps(meta.get("data", {})),
+                 meta.get("created", now), meta.get("accessed", now),
+                 mem.get("confidence", 1.0), json.dumps(tags))
+            )
+            self._fts_sync_node(node_id)
+
+            # Restore edges if present
+            for rel in meta.get("relationships", []):
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO edges VALUES (?,?,?,?)",
+                    (node_id, rel["target"], rel["relation"],
+                     rel.get("weight", 1.0))
+                )
+            count += 1
+
+        self.conn.commit()
+        return count
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
