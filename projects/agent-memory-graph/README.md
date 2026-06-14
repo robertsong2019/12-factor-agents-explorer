@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-1020-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1064-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -33,6 +33,8 @@
 - **网络效率分析** — 全局效率、S-metric、有效偏心率，衡量信息传递与拓扑结构
 - **标签 CRUD** — add_tag/remove_tag/has_tag 单标签管理
 - **差分与合并** — 图差异对比、patch 应用、双图合并
+- **可学习记忆管理** — Memory-R1/AgeMem 启发的自动 CRUD 决策 + 审计 + FiFA 有界遗忘 + 反馈学习
+- **memorywire 互操作** — to_memorywire/from_memorywire 跨后端记忆交换 (semantic/episodic/procedural/emotional)
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## 安装
@@ -1121,13 +1123,116 @@ dot = mg.serialize_dot()
 
 ---
 
+### 可学习记忆管理 (Memory-R1 / AgeMem 启发)
+
+> 自动决策新信息的记忆操作：新增、更新、忽略，并支持审计、有界遗忘和反馈学习。
+
+#### `score_memory_ops(content, existing_keys=None, noop_bias=0.15) -> list[dict]`
+
+对新信息评分 4 种操作 (ADD/UPDATE/DELETE/NOOP)，返回按分数降序排列的操作建议列表。
+基于内容新颖度和与现有记忆的 trigram Jaccard 相似度计算。Memory-R1 启发。
+
+```python
+scores = mg.score_memory_ops("Python 是解释型语言")
+# [{'op': 'ADD', 'score': 0.85, 'reason': 'novelty=1.00'}, ...]
+```
+
+#### `decide_memory_op(content, threshold=0.5, noop_bias=0.15) -> dict`
+
+选择最优记忆操作。若 ADD 分数低于 threshold，降级为 NOOP。
+
+#### `execute_memory_op(content, kind="fact", threshold=0.5, noop_bias=0.15, tags=None) -> dict`
+
+端到端：决策 + 执行记忆操作。ADD 时创建节点，UPDATE 时合并到现有节点。
+
+#### `memory_decision_log(items, threshold=0.5) -> list[dict]`
+
+批量决策日志：对多条信息生成操作建议（不执行）。
+
+#### `memory_audit(max_nodes=500, staleness_days=30) -> dict`
+
+全局记忆审计：健康评分 (0-100) + 冗余分析 + 过期检测 + 平均重要性 + 改进建议。
+MemoryArena (ICLR 2026) 启发的评估维度。
+
+```python
+audit = mg.memory_audit()
+# {'health_score': 85, 'total_nodes': 120, 'redundant_pairs': 3,
+#  'stale_nodes': 12, 'avg_importance': 0.72, 'noop_ratio': 0.1,
+#  'suggestions': ['12 nodes untouched in 30d. Consider prune().']}
+```
+
+#### `fifa_forget(budget=50, min_importance=0.1) -> dict`
+
+FiFA (Find-and-Forget) 有界遗忘策略：删除 budget 个最低重要性 + 最陈旧的节点。
+选择性遗忘是 MemoryArena 核心能力。返回 `{removed, kept, details}`。
+
+#### `memory_compact(similarity_threshold=0.7, max_merge_per_pass=20) -> dict`
+
+记忆压缩：合并高相似度节点，减少冗余。返回 `{merged_count, details}`。
+
+#### `memory_feedback(corrections) -> dict`
+
+从反馈数据学习调整阈值 (AgeMem 在线学习启发)。
+`corrections = [{content, correct_op, chosen_op, was_correct}, ...]`
+返回 `{adjusted_threshold, adjustments, samples, false_adds, missed_adds}`。
+
+#### `memory_stats_summary() -> dict`
+
+记忆概览仪表盘：类型分布 + 权重分布 (高/中/低) + 时间跨度 + Top 5 加权节点。
+
+```python
+summary = mg.memory_stats_summary()
+# {'total': 120, 'by_kind': {'fact': 80, 'event': 30, ...},
+#  'weight_dist': {'high': 45, 'medium': 50, 'low': 25, 'avg': 0.58},
+#  'time_span_days': 45.2, 'top_weighted': [...]}
+```
+
+---
+
+### memorywire 互操作
+
+> [memorywire v0.1](https://arxiv.org/abs/2606.01138) 跨后端记忆交换格式。
+> 5 种操作 (remember/recall/forget/merge/expire) × 4 种类型 (semantic/episodic/procedural/emotional)。
+
+内部 kind 与 memorywire type 自动映射：
+
+| 内部 kind | memorywire type |
+|-----------|----------------|
+| fact, concept | semantic |
+| event, person | episodic |
+| skill | procedural |
+| emotion | emotional |
+
+#### `to_memorywire(agent_id="default", node_ids=None) -> dict`
+
+导出图谱记忆为 memorywire v0.1 wire format。生成 JSON 可序列化的 `remember` 操作列表，
+可重放到任何 memorywire 兼容后端。包含节点数据、标签、关系和元数据。
+
+```python
+wire = mg.to_memorywire(agent_id="catalyst")
+# {"version": "0.1", "agent_id": "catalyst",
+#  "memories": [{"operation": "remember", "type": "semantic", ...}]}
+```
+
+#### `from_memorywire(wire_data) -> int`
+
+导入 memorywire v0.1 格式数据到当前图谱。接受 `to_memorywire()` 输出或任何
+memorywire 兼容的 `remember` 操作列表。自动创建节点和边。返回导入节点数。
+
+```python
+mg2 = MemoryGraph(":memory:")
+mg2.from_memorywire(wire)  # → 120 (imported nodes)
+```
+
+---
+
 ## 测试
 
 ```bash
 python3 -m pytest test_memory_graph.py -q
 ```
 
-811 个测试覆盖所有 API。
+1064 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -1142,6 +1247,8 @@ python3 -m pytest test_memory_graph.py -q
 9. **BM25 + GraphRAG** — 全文索引 + 社区级检索，从关键词搜索到知识图谱问答的完整路径
 10. **LLM 适配** — to_markdown + context_window + prune_by_relevance 让图谱直接服务于 LLM 上下文
 11. **网络分析** — global_efficiency + s_metric + effective_eccentricity + local_efficiency + wiener_index + onion_structure + minimum_spanning_tree + resistance_distance + algebraic_connectivity + spectral_radius + triad_census + average_neighbor_degree + degree_correlation + node_similarity 量化记忆网络的全局与局部拓扑特性
+12. **可学习记忆管理** — Memory-R1/AgeMem 启发的自动 CRUD 决策 + MemoryArena 审计 + FiFA 有界遗忘 + 反馈学习，让 Agent 自主管理记忆生命周期
+13. **memorywire 互操作** — to_memorywire/from_memorywire 实现跨后端记忆交换，标准化语义/情景/程序/情感四种记忆类型的导入导出
 
 ## 许可
 
