@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-1064-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1076-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -35,6 +35,8 @@
 - **差分与合并** — 图差异对比、patch 应用、双图合并
 - **可学习记忆管理** — Memory-R1/AgeMem 启发的自动 CRUD 决策 + 审计 + FiFA 有界遗忘 + 反馈学习
 - **memorywire 互操作** — to_memorywire/from_memorywire 跨后端记忆交换 (semantic/episodic/procedural/emotional)
+- **图探索与采样** — 加权随机游走 (random walk with restart) + BFS/DFS/random_walk 三策略子图采样
+- **鲁棒社区检测** — Leiden 启发的随机化迭代 + 模块度回退，避免对称图标签级联
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## 安装
@@ -290,9 +292,9 @@ results = mg.search_bm25("memory decay", limit=5, kind="concept")
 三路混合搜索 (Reciprocal Rank Fusion):
 1. **BM25 文本搜索**: label/data/tags/kind 全文匹配
 2. **向量搜索** (可选): embedding KNN
-3. **图邻居加权**: 种子节点的邻居 bonus
+3. **图邻居加权**: 种子节点的邻居按边权重排序（edge-weight-sorted ranking），边权重越大排名越高
 
-返回 `{node_id, label, kind, score, sources}` 按融合分数降序。向量不可用时静默降级。
+WRRF 融合模式下，图路由使用边权重归一化后的原始分数作为置信度。返回 `{node_id, label, kind, score, sources}` 按融合分数降序。向量不可用时静默降级。
 
 #### `search_graphrag(query, mode="hybrid", limit=20, depth=2, community=None) -> dict`
 
@@ -432,6 +434,35 @@ sg = mg.subgraph(node.id, depth=2)
 #### `descendant_graph(node_id, max_depth=10) -> list[str]`
 
 返回所有后代节点 ID（正向 BFS）。
+
+#### `random_walk(start_id, steps=10, restart_prob=0.0, weight_key=None) -> list[str]`
+
+从指定节点出发在图上进行随机游走。每一步以边权重为概率选择下一个邻居（无 `weight_key` 时均匀随机）。以 `restart_prob` 概率传送回起点（PageRank-style random walk with restart）。
+
+适用场景：
+- 图采样（node2vec / DeepWalk 嵌入预处理）
+- 个性化 PageRank 近似
+- GraphRAG 局部探索
+
+```python
+path = mg.random_walk("node-1", steps=20, restart_prob=0.15)
+# => ["node-1", "node-3", "node-7", "node-1", "node-2", ...]
+```
+
+#### `graph_sample(start_id, max_nodes=50, strategy="bfs") -> list[str]`
+
+提取代表性子图样本，支持三种策略：
+
+| 策略 | 描述 |
+|------|------|
+| `"bfs"` | 广度优先扩展（默认） |
+| `"dfs"` | 深度优先扩展 |
+| `"random_walk"` | 随机游走采样（以更少节点保留结构特征） |
+
+```python
+sample = mg.graph_sample("node-1", max_nodes=30, strategy="random_walk")
+# => ["node-1", "node-3", "node-7", "node-12", ...]  # ≤30 nodes
+```
 
 ---
 
@@ -700,6 +731,8 @@ Leiden 社区检测算法——比标签传播更稳定，返回 `{node_id: comm
 #### `lazy_community_detect(seed_nodes, hops=1, max_nodes=50) -> dict[str, int]`
 
 LazyGraphRAG 风格的局部社区发现——从种子节点出发，仅扩展 N 跳邻域，在局部子图上运行标签传播。适合增量式社区分析和大图的局部探索。
+
+内部实现采用 Leiden 启发的快速局部移动算法，每轮迭代随机化节点顺序（防止对称图上的标签级联），并计算模块度 Q 值。若分区结果劣于单一社区（Q < 0），自动回退为单社区方案。
 
 ```python
 communities = mg.lazy_community_detect(["node-1", "node-5"], hops=2)
@@ -1232,7 +1265,7 @@ mg2.from_memorywire(wire)  # → 120 (imported nodes)
 python3 -m pytest test_memory_graph.py -q
 ```
 
-1064 个测试覆盖所有 API。
+1076 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -1249,6 +1282,8 @@ python3 -m pytest test_memory_graph.py -q
 11. **网络分析** — global_efficiency + s_metric + effective_eccentricity + local_efficiency + wiener_index + onion_structure + minimum_spanning_tree + resistance_distance + algebraic_connectivity + spectral_radius + triad_census + average_neighbor_degree + degree_correlation + node_similarity 量化记忆网络的全局与局部拓扑特性
 12. **可学习记忆管理** — Memory-R1/AgeMem 启发的自动 CRUD 决策 + MemoryArena 审计 + FiFA 有界遗忘 + 反馈学习，让 Agent 自主管理记忆生命周期
 13. **memorywire 互操作** — to_memorywire/from_memorywire 实现跨后端记忆交换，标准化语义/情景/程序/情感四种记忆类型的导入导出
+14. **图探索与采样** — random_walk（带重启的加权随机游走）+ graph_sample（BFS/DFS/random_walk 三策略子图采样），服务于图嵌入预处理和 GraphRAG 局部探索
+15. **鲁棒社区检测** — lazy_community_detect 采用 Leiden 启发的随机化节点迭代 + 模块度回退机制，避免对称图上的标签级联问题
 
 ## 许可
 
