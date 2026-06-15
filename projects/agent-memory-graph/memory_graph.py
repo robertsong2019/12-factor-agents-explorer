@@ -5413,17 +5413,28 @@ class MemoryGraph:
             route_rankings.append([])
             route_scores.append({})
 
-        # 路3: 图邻居加权 (以文本搜索 top 结果为种子)
+        # 路3: 图邻居加权 (以文本搜索 top 结果为种子, edge-weight-sorted)
         graph_ranking = []
+        graph_raw_scores = {}
         if text_results:
             seed_id = text_results[0]["node_id"]
             if self.has_node(seed_id):
-                neighbors = list(self.neighbors(seed_id))
-                graph_ranking = [n.id for n in neighbors]
+                # Weighted bonus: sort neighbors by edge weight (stronger = higher rank)
+                neighbor_rows = self.conn.execute(
+                    "SELECT n.id, e.weight as ew FROM nodes n"
+                    " JOIN edges e ON n.id=e.target WHERE e.source=?"
+                    " ORDER BY e.weight DESC",
+                    (seed_id,)
+                ).fetchall()
+                graph_ranking = [r["id"] for r in neighbor_rows]
+                max_ew = max((float(r["ew"] or 1.0) for r in neighbor_rows), default=1.0)
+                graph_raw_scores = {
+                    r["id"]: float(r["ew"] or 1.0) / max_ew for r in neighbor_rows
+                }
                 route_rankings.append(graph_ranking)
-                for rank, neighbor in enumerate(neighbors):
-                    nid = neighbor.id
-                    rrf_scores[nid] += w_graph * 0.5 / (K + rank + 1)  # 权重较低
+                route_scores.append(graph_raw_scores)
+                for rank, nid in enumerate(graph_ranking):
+                    rrf_scores[nid] += w_graph / (K + rank + 1)
                     sources_map[nid].add("graph")
             else:
                 route_rankings.append([])
@@ -5445,7 +5456,7 @@ class MemoryGraph:
                         rrf_scores[nid] += refined[1] / (K + rank + 1)
                 if graph_ranking:
                     for rank, nid in enumerate(graph_ranking):
-                        rrf_scores[nid] += refined[2] * 0.5 / (K + rank + 1)
+                        rrf_scores[nid] += refined[2] / (K + rank + 1)
 
         # WRRF: 置信度加权 (用归一化原始分数)
         if fusion == "wrrf":

@@ -4843,6 +4843,38 @@ class TestAdaptiveFusionExtras:
         assert len(top["sources"]) >= 2
 
 
+    def test_search_hybrid_graph_weighted_bonus_ordering(self):
+        """Weighted bonus: edge weight 高的邻居排名应高于 weight 低的。"""
+        mg = MemoryGraph()
+        n1 = mg.add("hub", "concept")
+        n2 = mg.add("strong_link", "concept")
+        n3 = mg.add("weak_link", "concept")
+        mg.link(n1.id, n2.id, "related", weight=5.0)
+        mg.link(n1.id, n3.id, "related", weight=0.1)
+        results = mg.search_hybrid("hub")
+        # strong_link 应出现在 weak_link 之前（edge weight 排序）
+        labels = [r["label"] for r in results]
+        if "strong_link" in labels and "weak_link" in labels:
+            assert labels.index("strong_link") < labels.index("weak_link")
+
+    def test_search_hybrid_graph_wrrf_uses_edge_weights(self):
+        """WRRF 模式: graph 路应使用 edge weight 作为 confidence。"""
+        mg = MemoryGraph()
+        n1 = mg.add("root", "concept")
+        n2 = mg.add("heavy", "concept")
+        n3 = mg.add("light", "concept")
+        mg.link(n1.id, n2.id, "related", weight=10.0)
+        mg.link(n1.id, n3.id, "related", weight=0.01)
+        mg.add_embedding(n1.id, [0.9, 0.1])
+        mg.add_embedding(n2.id, [0.85, 0.15])
+        mg.add_embedding(n3.id, [0.5, 0.5])
+        results = mg.search_hybrid("root", embedding=[0.9, 0.1], fusion="wrrf")
+        labels = [r["label"] for r in results]
+        # heavy 应排在 light 之前（更高 edge weight = 更高 confidence）
+        if "heavy" in labels and "light" in labels:
+            assert labels.index("heavy") < labels.index("light")
+
+
 class TestVectorBatchOps:
     """测试向量批量操作和工具。"""
 
