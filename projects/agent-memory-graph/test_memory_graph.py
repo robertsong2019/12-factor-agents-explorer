@@ -8816,6 +8816,97 @@ class TestLazyCommunityDetect:
         assert r["seed_coverage"] == 0.0
 
 
+class TestRandomWalk:
+    """Random walk and graph sampling utilities."""
+
+    def test_basic_walk(self, mg):
+        """Random walk visits nodes connected to start."""
+        nodes = [mg.add(f"n{i}", "t") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        walk = mg.random_walk(nodes[0].id, steps=3)
+        assert len(walk) == 4  # start + 3 steps
+        assert walk[0] == nodes[0].id
+
+    def test_missing_start(self, mg):
+        """Non-existent start returns empty."""
+        assert mg.random_walk("nonexistent", steps=5) == []
+
+    def test_dead_end(self, mg):
+        """Walk stops at nodes with no neighbors."""
+        a = mg.add("solo", "t")
+        walk = mg.random_walk(a.id, steps=10)
+        assert len(walk) == 1
+
+    def test_restart_probability(self, mg):
+        """With restart_prob=1.0, always returns to start."""
+        nodes = [mg.add(f"n{i}", "t") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        walk = mg.random_walk(nodes[0].id, steps=5, restart_prob=1.0)
+        assert all(n == nodes[0].id for n in walk)
+
+    def test_deterministic_with_seed(self, mg):
+        """Same graph → same walk (seeded RNG)."""
+        nodes = [mg.add(f"n{i}", "t") for i in range(6)]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        walk1 = mg.random_walk(nodes[0].id, steps=5)
+        walk2 = mg.random_walk(nodes[0].id, steps=5)
+        assert walk1 == walk2
+
+    def test_walk_stays_in_graph(self, mg):
+        """All visited nodes exist in the graph."""
+        nodes = [mg.add(chr(65 + i), "t") for i in range(6)]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        mg.link(nodes[0].id, nodes[5].id, "r")  # close the ring
+        walk = mg.random_walk(nodes[0].id, steps=15)
+        valid_ids = {n.id for n in nodes}
+        assert all(n in valid_ids for n in walk)
+
+
+class TestGraphSample:
+    """Graph sampling strategies."""
+
+    def test_bfs_sample(self, mg):
+        """BFS sampling expands from seed."""
+        nodes = [mg.add(f"n{i}", "t") for i in range(10)]
+        for i in range(9):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        sample = mg.graph_sample(nodes[0].id, max_nodes=5, strategy="bfs")
+        assert len(sample) <= 5
+        assert nodes[0].id in sample
+
+    def test_dfs_sample(self, mg):
+        """DFS sampling reaches distant nodes."""
+        nodes = [mg.add(f"n{i}", "t") for i in range(8)]
+        for i in range(7):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        sample = mg.graph_sample(nodes[0].id, max_nodes=4, strategy="dfs")
+        assert len(sample) <= 4
+        assert nodes[0].id in sample
+
+    def test_random_walk_sample(self, mg):
+        """Random walk sampling collects unique nodes."""
+        nodes = [mg.add(f"n{i}", "t") for i in range(6)]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        mg.link(nodes[0].id, nodes[5].id, "r")
+        sample = mg.graph_sample(nodes[0].id, max_nodes=4, strategy="random_walk")
+        assert len(sample) <= 4
+        assert nodes[0].id in sample
+
+    def test_respects_max_nodes(self, mg):
+        """Never exceeds max_nodes."""
+        nodes = [mg.add(f"n{i}", "t") for i in range(20)]
+        for i in range(19):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        for strategy in ["bfs", "dfs", "random_walk"]:
+            sample = mg.graph_sample(nodes[0].id, max_nodes=5, strategy=strategy)
+            assert len(sample) <= 5
+
+
 class TestSmartQueryRoute:
     """Auto-routing GraphRAG mode selection based on query analysis."""
 

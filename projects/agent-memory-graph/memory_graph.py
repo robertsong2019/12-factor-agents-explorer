@@ -5768,6 +5768,142 @@ class MemoryGraph:
         # Unknown mode: fallback to hybrid
         return self.search_graphrag(query, mode="hybrid", embedding=embedding, limit=limit)
 
+    def random_walk(self, start_id: str, steps: int = 10,
+                    restart_prob: float = 0.0,
+                    weight_key: str = None) -> list[str]:
+        """Random walk on the graph from *start_id*.
+
+        At each step, move to a random neighbor (weighted by edge weight
+        if *weight_key* given).  With probability *restart_prob*, teleport
+        back to the start node (PageRank-style random walk with restart).
+
+        Useful for:
+          - Graph sampling (node2vec / DeepWalk embedding prep)
+          - Personalized PageRank approximation
+          - GraphRAG local exploration
+
+        Args:
+            start_id: Starting node ID.
+            steps: Number of steps to take.
+            restart_prob: Probability of teleporting back to start (0-1).
+            weight_key: Edge property key for weighted random selection.
+                        If None, uniform random.
+
+        Returns:
+            List of visited node IDs (length ≤ steps + 1).
+            Empty list if start_id not found.
+        """
+        import random as _rng
+        _r = _rng.Random(42)
+
+        existing = self.conn.execute(
+            "SELECT id FROM nodes WHERE id = ?", (start_id,)).fetchone()
+        if not existing:
+            return []
+
+        path = [start_id]
+        current = start_id
+
+        for _ in range(steps):
+            if restart_prob > 0 and _r.random() < restart_prob:
+                current = start_id
+                path.append(current)
+                continue
+
+            rows = self.conn.execute(
+                "SELECT target, weight FROM edges WHERE source = ? "
+                "UNION "
+                "SELECT source, weight FROM edges WHERE target = ?",
+                (current, current)).fetchall()
+
+            if not rows:
+                break
+
+            if weight_key and weight_key != "weight":
+                # Look up custom property
+                neighbors = []
+                for r in rows:
+                    props = self.get_edge_properties(
+                        str(r["target"]) if str(r["target"]) != current else str(r["source"]),
+                        current)
+                    w = props.get(weight_key, float(r["weight"] or 1.0))
+                    nb = str(r["target"]) if str(r["target"]) != current else str(r["source"])
+                    neighbors.append((nb, w))
+            else:
+                neighbors = [(str(r["target"]) if str(r["target"]) != current
+                             else str(r["source"]),
+                             float(r["weight"] or 1.0)) for r in rows]
+
+            total_w = sum(w for _, w in neighbors)
+            if total_w <= 0:
+                break
+
+            pick = _r.random() * total_w
+            cumulative = 0.0
+            for nb, w in neighbors:
+                cumulative += w
+                if cumulative >= pick:
+                    current = nb
+                    break
+            else:
+                current = neighbors[-1][0]
+
+            path.append(current)
+
+        return path
+
+    def graph_sample(self, start_id: str, max_nodes: int = 50,
+                     strategy: str = "bfs") -> list[str]:
+        """Extract a representative subgraph sample.
+
+        Strategies:
+          - ``bfs``: Breadth-first expansion from start_id.
+          - ``dfs``: Depth-first expansion.
+          - ``random_walk``: Random walk sampling (good for preserving
+            structural properties with fewer nodes).
+
+        Args:
+            start_id: Seed node for sampling.
+            max_nodes: Maximum nodes to include.
+            strategy: Sampling strategy.
+
+        Returns:
+            List of node IDs in the sample (including start_id).
+        """
+        if strategy == "bfs":
+            visited = []
+            seen = {start_id}
+            queue = [start_id]
+            while queue and len(visited) < max_nodes:
+                nid = queue.pop(0)
+                if nid in seen and nid not in visited:
+                    pass
+                if nid not in visited:
+                    visited.append(nid)
+                rows = self.conn.execute(
+                    "SELECT target FROM edges WHERE source = ? "
+                    "UNION SELECT source FROM edges WHERE target = ?",
+                    (nid, nid)).fetchall()
+                for r in rows:
+                    nb = str(r[0])
+                    if nb not in seen:
+                        seen.add(nb)
+                        queue.append(nb)
+            return visited[:max_nodes]
+
+        elif strategy == "dfs":
+            return self.dfs_order(start_id, max_depth=max_nodes)[:max_nodes]
+
+        else:  # random_walk
+            walk = self.random_walk(start_id, steps=max_nodes * 3)
+            seen = []
+            for nid in walk:
+                if nid not in seen:
+                    seen.append(nid)
+                if len(seen) >= max_nodes:
+                    break
+            return seen
+
     def smart_query_route(self, query: str, embedding: list[float] = None,
                           limit: int = 10) -> dict:
         """Automatically choose the best GraphRAG mode based on query analysis.
