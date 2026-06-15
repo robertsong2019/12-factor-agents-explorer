@@ -3627,6 +3627,20 @@ class MemoryGraph:
 
         return scores
 
+    @staticmethod
+    def _compute_modularity(adj: dict, degree: dict, comm: dict,
+                            m2: float, resolution: float) -> float:
+        """Compute modularity Q for a given community assignment."""
+        q = 0.0
+        for cid in set(comm.values()):
+            nodes_in = [n for n, c in comm.items() if c == cid]
+            in_w = sum(adj.get(n, {}).get(n2, 0.0)
+                       for i, n in enumerate(nodes_in)
+                       for n2 in nodes_in[i + 1:]) * 2.0
+            tot_deg = sum(degree.get(n, 0.0) for n in nodes_in)
+            q += (in_w / m2) - resolution * (tot_deg / m2) ** 2
+        return q
+
     def lazy_community_detect(self, seed_nodes: list[str], hops: int = 1,
                              resolution: float = 1.0) -> dict:
         """LazyGraphRAG-style community detection around seed nodes only.
@@ -3707,13 +3721,22 @@ class MemoryGraph:
         comm = {n: i for i, n in enumerate(visited_list)}
 
         # --- 4. Fast local move (Leiden-inspired) ---
+        # Randomize node order each iteration to avoid cascading on
+        # symmetric graphs (rings, cliques).  Standard Louvain/Leiden
+        # practice — without this, fixed order causes label waves on
+        # rings that never converge to a good partition.
+        import random as _rnd
+        _rng = _rnd.Random(42)
+
         improved = True
         iterations = 0
         max_iterations = 15
         while improved and iterations < max_iterations:
             improved = False
             iterations += 1
-            for nid in visited_list:
+            _order = visited_list[:]
+            _rng.shuffle(_order)
+            for nid in _order:
                 k_i = degree.get(nid, 0.0)
                 if k_i == 0:
                     continue
@@ -3746,15 +3769,17 @@ class MemoryGraph:
                     improved = True
 
         # --- 5. Compute modularity on subgraph ---
-        q = 0.0
-        comm_set = set(comm.values())
-        for cid in comm_set:
-            nodes_in = [n for n, c in comm.items() if c == cid]
-            in_w = sum(adj.get(n, {}).get(n2, 0.0)
-                       for i, n in enumerate(nodes_in)
-                       for n2 in nodes_in[i + 1:]) * 2.0
-            tot_deg = sum(degree.get(n, 0.0) for n in nodes_in)
-            q += (in_w / m2) - resolution * (tot_deg / m2) ** 2
+        q = self._compute_modularity(adj, degree, comm, m2, resolution)
+
+        # Fallback: if the partition is worse than a single community,
+        # merge everything into one (connected graphs always yield Q ≥ 0).
+        if q < 0 and len(visited_list) > 1:
+            single_comm = {n: 0 for n in visited_list}
+            q_single = self._compute_modularity(
+                adj, degree, single_comm, m2, resolution)
+            if q_single >= q:
+                comm = single_comm
+                q = q_single
 
         # Remap community IDs to 0..k-1
         unique = sorted(set(comm.values()))
