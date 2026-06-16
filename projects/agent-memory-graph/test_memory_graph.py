@@ -9831,3 +9831,106 @@ class TestNetworkSummary:
         assert result["components"] == 2
         assert result["largest_component_size"] == 3
         assert result["largest_component_ratio"] == 0.5  # 3/6
+
+
+class TestKHopNeighbors:
+    """k_hop_neighbors BFS 层次遍历。"""
+
+    def test_nonexistent_node(self):
+        mg = MemoryGraph()
+        assert mg.k_hop_neighbors("ghost", k=2) == {}
+
+    def test_single_node(self):
+        """无连接节点的 k-hop。"""
+        mg = MemoryGraph()
+        n = mg.add("solo", "fact")
+        result = mg.k_hop_neighbors(n.id, k=3)
+        assert result == {0: [n.id]}
+
+    def test_two_hop(self):
+        """A -> B -> C 链式图。"""
+        mg = MemoryGraph()
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        c = mg.add("C", "fact")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        result = mg.k_hop_neighbors(a.id, k=2)
+        assert result[0] == [a.id]
+        assert result[1] == [b.id]
+        assert result[2] == [c.id]
+
+    def test_star_graph_k2(self):
+        """星形图 center->leafs, k=2 到达 leafs 的邻居 (即只有 center)。"""
+        mg = MemoryGraph()
+        center = mg.add("center", "fact")
+        l1 = mg.add("l1", "fact")
+        l2 = mg.add("l2", "fact")
+        l3 = mg.add("l3", "fact")
+        mg.link(center.id, l1.id, "rel")
+        mg.link(center.id, l2.id, "rel")
+        mg.link(center.id, l3.id, "rel")
+        # From leaf1, k=1: center; k=2: l2, l3
+        result = mg.k_hop_neighbors(l1.id, k=2)
+        assert result[0] == [l1.id]
+        assert result[1] == [center.id]
+        assert sorted(result[2]) == sorted([l2.id, l3.id])
+
+    def test_no_repeats(self):
+        """节点不重复出现。"""
+        mg = MemoryGraph()
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, a.id, "rel2")  # 双向边
+        result = mg.k_hop_neighbors(a.id, k=5)
+        all_nodes = []
+        for hop_nodes in result.values():
+            all_nodes.extend(hop_nodes)
+        assert len(all_nodes) == len(set(all_nodes))  # No duplicates
+
+
+class TestCommonNeighbors:
+    """common_neighbors 交集计算。"""
+
+    def test_nonexistent_nodes(self):
+        mg = MemoryGraph()
+        assert mg.common_neighbors("ghost_a", "ghost_b") == []
+
+    def test_no_common(self):
+        """无共同邻居。"""
+        mg = MemoryGraph()
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        c = mg.add("C", "fact")
+        d = mg.add("D", "fact")
+        mg.link(a.id, c.id, "rel")
+        mg.link(b.id, d.id, "rel")
+        assert mg.common_neighbors(a.id, b.id) == []
+
+    def test_shared_neighbor(self):
+        """三角形: A-C, B-C, C 是共同邻居。"""
+        mg = MemoryGraph()
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        c = mg.add("C", "fact")
+        mg.link(a.id, c.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        common = mg.common_neighbors(a.id, b.id)
+        assert common == [c.id]
+
+    def test_multiple_common(self):
+        """多个共同邻居。"""
+        mg = MemoryGraph()
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        x = mg.add("X", "fact")
+        y = mg.add("Y", "fact")
+        z = mg.add("Z", "fact")
+        mg.link(a.id, x.id, "rel")
+        mg.link(a.id, y.id, "rel")
+        mg.link(a.id, z.id, "rel")
+        mg.link(b.id, x.id, "rel")
+        mg.link(b.id, y.id, "rel")
+        common = mg.common_neighbors(a.id, b.id)
+        assert set(common) == {x.id, y.id}

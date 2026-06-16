@@ -7398,6 +7398,64 @@ class MemoryGraph:
             "largest_component_ratio": round(largest_cc / n, 4) if n > 0 else 0.0,
         }
 
+    def k_hop_neighbors(self, node_id: str, k: int = 2) -> dict[int, list[str]]:
+        """获取节点 k 跳范围内的所有邻居。
+
+        BFS 层次遍历，返回 {hop: [node_ids]} 字典。
+        hop=0 为节点自身，hop=1 为直接邻居，hop=2 为二跳邻居，以此类推。
+        已访问的节点不会重复出现。
+        """
+        if not self.has_node(node_id):
+            return {}
+        visited = {node_id}
+        result = {0: [node_id]}
+        frontier = [node_id]
+        for hop in range(1, k + 1):
+            next_frontier = []
+            for cur in frontier:
+                for r in self.conn.execute(
+                    "SELECT target AS nb FROM edges WHERE source=? "
+                    "UNION "
+                    "SELECT source AS nb FROM edges WHERE target=?",
+                    (cur, cur)
+                ).fetchall():
+                    nb = str(r["nb"])
+                    if nb not in visited:
+                        visited.add(nb)
+                        next_frontier.append(nb)
+            if next_frontier:
+                result[hop] = sorted(next_frontier)
+                frontier = next_frontier
+            else:
+                break
+        return result
+
+    def common_neighbors(self, node_id_a: str, node_id_b: str) -> list[str]:
+        """返回两个节点的共同邻居（交集）。
+
+        使用集合交集，复杂度 O(min(deg_a, deg_b))。
+        对于链接预测、推荐系统和图分析有用。
+        """
+        if not self.has_node(node_id_a) or not self.has_node(node_id_b):
+            return []
+        nbrs_a = set()
+        for r in self.conn.execute(
+            "SELECT target AS nb FROM edges WHERE source=? "
+            "UNION "
+            "SELECT source AS nb FROM edges WHERE target=?",
+            (node_id_a, node_id_a)
+        ).fetchall():
+            nbrs_a.add(str(r["nb"]))
+        nbrs_b = set()
+        for r in self.conn.execute(
+            "SELECT target AS nb FROM edges WHERE source=? "
+            "UNION "
+            "SELECT source AS nb FROM edges WHERE target=?",
+            (node_id_b, node_id_b)
+        ).fetchall():
+            nbrs_b.add(str(r["nb"]))
+        return sorted(nbrs_a & nbrs_b)
+
 
 
     # ===================================================================
