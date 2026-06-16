@@ -9992,3 +9992,100 @@ class TestNeighborhoodCensus:
         assert census[a.id]["degree"] == 0
         assert census[a.id]["weighted_degree"] == 0.0
         assert census[a.id]["neighbors"] == []
+
+
+# ── CRDT Multi-Agent Merge ─────────────────────────────────────────────
+
+class TestMergeCRDT:
+    def _make_other(self):
+        """Create a simple graph and export it."""
+        mg = MemoryGraph()
+        mg.add("Alpha", "fact", {"v": 1})
+        mg.add("Beta", "fact", {"v": 2})
+        return mg.export_json()
+
+    def test_lww_new_nodes(self, mg):
+        other = self._make_other()
+        result = mg.merge_crdt(other, strategy="lww")
+        assert result["nodes_added"] == 2
+        assert result["nodes_updated"] == 0
+
+    def test_lww_conflict_newer_wins(self, mg):
+        # Create a local node with old timestamp
+        mg.conn.execute(
+            "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            ("shared1", "old_label", "fact", '{}', 1000.0, 1000.0, 1.0, '[]'))
+        # Other graph has newer version
+        other = {"nodes": [{"id": "shared1", "label": "new_label", "kind": "fact",
+                            "data": {"v": 99}, "created": 2000.0, "accessed": 2000.0,
+                            "weight": 1.0, "tags": []}], "edges": []}
+        result = mg.merge_crdt(other, strategy="lww")
+        assert result["nodes_updated"] == 1
+        node = mg.get_node("shared1")
+        assert node.label == "new_label"
+
+    def test_lww_older_skipped(self, mg):
+        # Local is newer
+        mg.conn.execute(
+            "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            ("shared2", "new_label", "fact", '{}', 2000.0, 2000.0, 1.0, '[]'))
+        other = {"nodes": [{"id": "shared2", "label": "old_label", "kind": "fact",
+                            "data": {}, "created": 1000.0, "accessed": 1000.0,
+                            "weight": 1.0, "tags": []}], "edges": []}
+        result = mg.merge_crdt(other, strategy="lww")
+        assert result["nodes_skipped"] == 1
+        node = mg.get_node("shared2")
+        assert node.label == "new_label"
+
+    def test_or_set_preserves_both(self, mg):
+        a = mg.add("original", "fact", {"v": 1})
+        other = {"nodes": [{"id": a.id, "label": "updated", "kind": "fact",
+                            "data": {"v": 2}, "created": 1000.0, "accessed": 2000.0,
+                            "weight": 1.0, "tags": []}], "edges": []}
+        result = mg.merge_crdt(other, strategy="or_set")
+        assert result["nodes_added"] == 1
+        # Original should still exist
+        assert mg.get_node(a.id).label == "original"
+
+    def test_trust_weighted(self, mg):
+        mg.conn.execute(
+            "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            ("t1", "local", "fact", '{}', 1000.0, 1000.0, 0.5, '[]'))
+        other = {"nodes": [{"id": "t1", "label": "remote", "kind": "fact",
+                            "data": {"v": 1}, "created": 1000.0, "accessed": 1000.0,
+                            "weight": 1.0, "tags": []}], "edges": []}
+        result = mg.merge_crdt(other, strategy="trust", trust_weight=0.8)
+        assert result["nodes_updated"] == 1
+        node = mg.get_node("t1")
+        # 0.8*1.0 + 0.2*0.5 = 0.9
+        assert abs(node.weight - 0.9) < 0.01
+        # trust_weight > 0.5 → take remote content
+        assert node.label == "remote"
+
+    def test_edges_merged(self, mg):
+        a = mg.add("A", "x")
+        b = mg.add("B", "x")
+        other = {
+            "nodes": [
+                {"id": a.id, "label": "A", "kind": "x", "data": {},
+                 "created": 1000.0, "accessed": 1000.0, "weight": 1.0, "tags": []},
+                {"id": b.id, "label": "B", "kind": "x", "data": {},
+                 "created": 1000.0, "accessed": 1000.0, "weight": 1.0, "tags": []},
+            ],
+            "edges": [{"source": a.id, "target": b.id, "relation": "knows", "weight": 2.0}],
+        }
+        result = mg.merge_crdt(other, strategy="lww")
+        assert result["edges_added"] == 1
+        assert mg.is_linked(a.id, b.id)
+
+    def test_empty_other(self, mg):
+        result = mg.merge_crdt({"nodes": [], "edges": []}, strategy="lww")
+        assert result == {"nodes_added": 0, "nodes_updated": 0, "nodes_skipped": 0, "edges_added": 0}
+
+    def test_unknown_strategy(self, mg):
+        a = mg.add("A", "x")
+        other = {"nodes": [{"id": a.id, "label": "B", "kind": "x", "data": {},
+                           "created": 1000.0, "accessed": 1000.0, "weight": 1.0, "tags": []}],
+                 "edges": []}
+        result = mg.merge_crdt(other, strategy="bogus")
+        assert result["nodes_skipped"] == 1

@@ -7948,6 +7948,103 @@ class MemoryGraph:
         return count
 
     # ===================================================================
+    # CRDT-based Multi-Agent Merge (06-16 research: LWW / OR-Set / Trust-weighted)
+    # ===================================================================
+
+    def merge_crdt(self, other_graph_data: dict, strategy: str = "lww",
+                   trust_weight: float = 0.5) -> dict:
+        """Merge another graph's data using CRDT-inspired conflict resolution.
+
+        Strategies (from Multi-Agent Memory Consensus research, 06-16):
+          - lww: Last-Writer-Wins by accessed timestamp (deterministic)
+          - or_set: OR-Set union — keep both versions, link with crdt_merge
+          - trust: Trust-weighted — blend weights, prefer higher-trust content
+
+        Args:
+            other_graph_data: Export dict from another MemoryGraph.export_json()
+            strategy: Merge strategy (lww | or_set | trust)
+            trust_weight: Weight for *other* graph's data (0-1, default 0.5)
+
+        Returns:
+            Summary dict: {nodes_added, nodes_updated, nodes_skipped, edges_added}
+        """
+        summary = {"nodes_added": 0, "nodes_updated": 0, "nodes_skipped": 0, "edges_added": 0}
+
+        for node in other_graph_data.get("nodes", []):
+            nid = str(node["id"])
+            existing = self.get_node(nid)
+
+            if existing is None:
+                # New node — direct insert to preserve ID
+                tags = node.get("tags", [])
+                if isinstance(tags, str):
+                    tags = [tags]
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                    (nid, node.get("label", ""), node.get("kind", "fact"),
+                     json.dumps(node.get("data", {})),
+                     node.get("created", time.time()), node.get("accessed", time.time()),
+                     node.get("weight", 1.0), json.dumps(tags)))
+                if self._fts_enabled:
+                    self._fts_sync_node(nid)
+                summary["nodes_added"] += 1
+                continue
+
+            if strategy == "lww":
+                other_ts = node.get("accessed", node.get("created", 0))
+                local_ts = existing.accessed or existing.created or 0
+                if other_ts > local_ts:
+                    self.update_node(nid, label=node.get("label", existing.label),
+                                     kind=node.get("kind", existing.kind),
+                                     data=node.get("data", {}),
+                                     weight=node.get("weight", existing.weight))
+                    summary["nodes_updated"] += 1
+                else:
+                    summary["nodes_skipped"] += 1
+
+            elif strategy == "or_set":
+                # OR-Set: preserve both versions
+                merged_id = f"{nid}::crdt::{int(node.get('accessed', 0))}"
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                    (merged_id, node.get("label", ""), node.get("kind", "fact"),
+                     json.dumps(node.get("data", {})),
+                     node.get("created", time.time()), node.get("accessed", time.time()),
+                     node.get("weight", 1.0), json.dumps(node.get("tags", []))))
+                if self._fts_enabled:
+                    self._fts_sync_node(merged_id)
+                self.link(nid, merged_id, "crdt_merge")
+                summary["nodes_added"] += 1
+
+            elif strategy == "trust":
+                other_w = node.get("weight", 1.0)
+                local_w = existing.weight or 1.0
+                blended = trust_weight * other_w + (1 - trust_weight) * local_w
+                # Update content first, then set blended weight
+                if trust_weight > 0.5:
+                    self.update_node(nid, label=node.get("label", existing.label),
+                                     data=node.get("data", {}),
+                                     weight=blended)
+                else:
+                    self.reweight(nid, blended)
+                summary["nodes_updated"] += 1
+
+            else:
+                summary["nodes_skipped"] += 1
+
+        self.conn.commit()
+
+        # Merge edges (always union)
+        for edge in other_graph_data.get("edges", []):
+            s, t = str(edge["source"]), str(edge["target"])
+            if not self.is_linked(s, t):
+                self.link(s, t, edge.get("relation", "rel"),
+                          weight=edge.get("weight", 1.0))
+                summary["edges_added"] += 1
+
+        return summary
+
+    # ===================================================================
     # Weighted Degree & Neighborhood Census
     # ===================================================================
 
