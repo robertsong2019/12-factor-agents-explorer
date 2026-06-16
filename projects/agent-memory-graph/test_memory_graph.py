@@ -4875,6 +4875,88 @@ class TestAdaptiveFusionExtras:
             assert labels.index("heavy") < labels.index("light")
 
 
+    def test_graph_weighted_bonus_strong_beats_weak_score(self):
+        """Weighted bonus: 强连接邻居的 score 应严格高于弱连接邻居。"""
+        mg = MemoryGraph()
+        n1 = mg.add("seed", "concept")
+        n2 = mg.add("strong_neighbor", "concept")
+        n3 = mg.add("weak_neighbor", "concept")
+        mg.link(n1.id, n2.id, "related", weight=10.0)
+        mg.link(n1.id, n3.id, "related", weight=0.01)
+        results = mg.search_hybrid("seed", fusion="rrf")
+        scores = {r["label"]: r["score"] for r in results}
+        # Both should appear via graph boost
+        if "strong_neighbor" in scores and "weak_neighbor" in scores:
+            assert scores["strong_neighbor"] > scores["weak_neighbor"]
+
+    def test_graph_weighted_bonus_proportional(self):
+        """Weighted bonus: 相同 rank 位置, edge weight 翻倍 ≈ score 增量可测。"""
+        mg_a = MemoryGraph()
+        n1a = mg_a.add("seed", "concept")
+        n2a = mg_a.add("neighbor", "concept")
+        mg_a.link(n1a.id, n2a.id, "related", weight=1.0)
+        results_a = mg_a.search_hybrid("seed", fusion="rrf")
+        score_a = {r["label"]: r["score"] for r in results_a}.get("neighbor", 0.0)
+
+        mg_b = MemoryGraph()
+        n1b = mg_b.add("seed", "concept")
+        n2b = mg_b.add("neighbor", "concept")
+        mg_b.link(n1b.id, n2b.id, "related", weight=100.0)
+        results_b = mg_b.search_hybrid("seed", fusion="rrf")
+        score_b = {r["label"]: r["score"] for r in results_b}.get("neighbor", 0.0)
+
+        # With weighted bonus: weight=1.0 (normalized=1.0) → bonus=2.0x
+        # weight=100.0 (normalized=1.0) → bonus=2.0x
+        # Both normalize to 1.0, so scores should be identical
+        assert abs(score_a - score_b) < 0.001
+
+    def test_graph_weighted_bonus_disabled_via_equal_weights(self):
+        """所有 edge weights 相同时, weighted bonus 退化为标准 RRF。"""
+        mg = MemoryGraph()
+        n1 = mg.add("center", "concept")
+        n2 = mg.add("a", "concept")
+        n3 = mg.add("b", "concept")
+        # Equal weights → normalized all 1.0 → bonus = 2.0x for both
+        mg.link(n1.id, n2.id, "related", weight=1.0)
+        mg.link(n1.id, n3.id, "related", weight=1.0)
+        results = mg.search_hybrid("center", fusion="rrf")
+        scores = {r["label"]: r["score"] for r in results}
+        # With equal weights, both neighbors get same score
+        if "a" in scores and "b" in scores:
+            assert abs(scores["a"] - scores["b"]) < 0.001
+
+    def test_graph_weighted_bonus_multi_seed(self):
+        """Weighted bonus 在多邻居场景中保持排序一致性。"""
+        mg = MemoryGraph()
+        hub = mg.add("hub", "concept")
+        weights = [10.0, 5.0, 2.0, 0.5, 0.01]
+        for i, w in enumerate(weights):
+            nid = mg.add(f"node_{i}", "concept")
+            mg.link(hub.id, nid.id, "related", weight=w)
+        results = mg.search_hybrid("hub", fusion="rrf")
+        labels = [r["label"] for r in results]
+        # Verify higher weight → higher rank (earlier in results)
+        graph_nodes = [l for l in labels if l.startswith("node_")]
+        # node_0 (weight=10) should come before node_4 (weight=0.01)
+        if len(graph_nodes) >= 2:
+            assert graph_nodes[0] == "node_0"
+            assert graph_nodes[-1] == "node_4"
+
+    def test_graph_weighted_bonus_adaptive_mode(self):
+        """Weighted bonus 在 adaptive 模式下也生效。"""
+        mg = MemoryGraph()
+        n1 = mg.add("root", "concept")
+        n2 = mg.add("strong", "concept")
+        n3 = mg.add("weak", "concept")
+        mg.link(n1.id, n2.id, "related", weight=5.0)
+        mg.link(n1.id, n3.id, "related", weight=0.1)
+        # adaptive mode should also show weighted bonus effect
+        results = mg.search_hybrid("root", fusion="adaptive")
+        labels = [r["label"] for r in results]
+        if "strong" in labels and "weak" in labels:
+            assert labels.index("strong") < labels.index("weak")
+
+
 class TestVectorBatchOps:
     """测试向量批量操作和工具。"""
 

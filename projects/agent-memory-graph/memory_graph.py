@@ -5433,8 +5433,11 @@ class MemoryGraph:
                 }
                 route_rankings.append(graph_ranking)
                 route_scores.append(graph_raw_scores)
+                # Weighted bonus: stronger edges contribute proportionally more
+                # Edge weight 1.0 → 2x base RRF; 0.5 → 1.5x; 0.0 → 1x (backward compat)
                 for rank, nid in enumerate(graph_ranking):
-                    rrf_scores[nid] += w_graph / (K + rank + 1)
+                    ew_bonus = 1.0 + graph_raw_scores.get(nid, 0.0)
+                    rrf_scores[nid] += w_graph * ew_bonus / (K + rank + 1)
                     sources_map[nid].add("graph")
             else:
                 route_rankings.append([])
@@ -5456,7 +5459,8 @@ class MemoryGraph:
                         rrf_scores[nid] += refined[1] / (K + rank + 1)
                 if graph_ranking:
                     for rank, nid in enumerate(graph_ranking):
-                        rrf_scores[nid] += refined[2] / (K + rank + 1)
+                        ew_bonus = 1.0 + graph_raw_scores.get(nid, 0.0)
+                        rrf_scores[nid] += refined[2] * ew_bonus / (K + rank + 1)
 
         # WRRF: 置信度加权 (用归一化原始分数)
         if fusion == "wrrf":
