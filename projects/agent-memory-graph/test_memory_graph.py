@@ -10089,3 +10089,80 @@ class TestMergeCRDT:
                  "edges": []}
         result = mg.merge_crdt(other, strategy="bogus")
         assert result["nodes_skipped"] == 1
+
+
+# ── Graph Entropy & Connectivity Frontier ───────────────────────────────
+
+class TestGraphEntropy:
+    def test_empty(self, mg):
+        result = mg.graph_entropy()
+        assert result["entropy"] == 0.0
+        assert result["normalized"] == 0.0
+
+    def test_regular_graph(self, mg):
+        # Triangle: all degrees = 2 → entropy = 0
+        a, b, c = mg.add("A", "x"), mg.add("B", "x"), mg.add("C", "x")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        result = mg.graph_entropy()
+        # All same degree → entropy = 0
+        assert result["entropy"] == 0.0
+
+    def test_heterogeneous(self, mg):
+        # Star: center degree 4, leaves degree 1
+        center = mg.add("hub", "x")
+        for i in range(4):
+            leaf = mg.add(f"L{i}", "x")
+            mg.link(center.id, leaf.id, "r")
+        result = mg.graph_entropy()
+        # Two distinct degrees → entropy > 0
+        assert result["entropy"] > 0.0
+        assert 0.0 < result["normalized"] <= 1.0
+
+    def test_normalized_bounded(self, mg):
+        # Build a chain: 0-1-2-3-4
+        nodes = [mg.add(f"N{i}", "x") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        result = mg.graph_entropy()
+        assert 0.0 <= result["normalized"] <= 1.0
+
+
+class TestConnectivityFrontier:
+    def test_empty_node(self, mg):
+        assert mg.connectivity_frontier("nonexistent") == {}
+
+    def test_single_node(self, mg):
+        a = mg.add("A", "x")
+        census = mg.connectivity_frontier(a.id)
+        assert census == {0: 1}
+
+    def test_chain(self, mg):
+        # A - B - C - D
+        a, b, c, d = [mg.add(f"N{i}", "x") for i in range(4)]
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, d.id, "r")
+        census = mg.connectivity_frontier(a.id)
+        assert census[0] == 1  # self
+        assert census[1] == 1  # B
+        assert census[2] == 1  # C
+        assert census[3] == 1  # D
+
+    def test_star(self, mg):
+        center = mg.add("hub", "x")
+        leaves = [mg.add(f"L{i}", "x") for i in range(3)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        census = mg.connectivity_frontier(center.id)
+        assert census[0] == 1  # center
+        assert census[1] == 3  # all leaves at hop 1
+
+    def test_max_hop_limit(self, mg):
+        a, b, c = mg.add("A", "x"), mg.add("B", "x"), mg.add("C", "x")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        census = mg.connectivity_frontier(a.id, max_hop=1)
+        # C is at hop 2, should not be reachable with max_hop=1
+        assert census.get(2, 0) == 0

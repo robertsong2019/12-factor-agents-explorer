@@ -7456,6 +7456,68 @@ class MemoryGraph:
             nbrs_b.add(str(r["nb"]))
         return sorted(nbrs_a & nbrs_b)
 
+    def graph_entropy(self) -> dict[str, float]:
+        """Shannon entropy of the degree distribution.
+
+        H = -sum(p_k * log2(p_k)) where p_k = fraction of nodes with degree k.
+        Low entropy = uniform structure (e.g. regular graph).
+        High entropy = heterogeneous (e.g. scale-free).
+        Also returns normalized entropy (H / H_max) for cross-graph comparison.
+        """
+        n = self.conn.execute("SELECT COUNT(*) c FROM nodes").fetchone()["c"]
+        if n == 0:
+            return {"entropy": 0.0, "normalized": 0.0, "max_entropy": 0.0}
+
+        dist = self.degree_distribution()
+        total = sum(dist.values())
+        if total == 0:
+            return {"entropy": 0.0, "normalized": 0.0, "max_entropy": 0.0}
+
+        h = 0.0
+        for deg, frac in dist.items():
+            p = frac / total
+            if p > 0:
+                h -= p * math.log2(p)
+
+        h_max = math.log2(len(dist)) if len(dist) > 1 else 1.0
+        return {
+            "entropy": round(h, 4),
+            "max_entropy": round(h_max, 4),
+            "normalized": round(h / h_max, 4) if h_max > 0 else 0.0,
+        }
+
+    def connectivity_frontier(self, node_id: str, max_hop: int = 3) -> dict[int, int]:
+        """BFS hop-distance census from a seed node.
+
+        Returns {hop: count} — how many nodes are reachable at each distance.
+        Useful for influence radius estimation and BFS-based exploration.
+        """
+        if not self.has_node(node_id):
+            return {}
+
+        visited = {node_id: 0}
+        frontier = [node_id]
+        for hop in range(1, max_hop + 1):
+            next_frontier = []
+            for nid in frontier:
+                for r in self.conn.execute(
+                    "SELECT target AS nb FROM edges WHERE source=? "
+                    "UNION "
+                    "SELECT source AS nb FROM edges WHERE target=?",
+                    (nid, nid)
+                ).fetchall():
+                    nb = str(r["nb"])
+                    if nb not in visited:
+                        visited[nb] = hop
+                        next_frontier.append(nb)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        census: dict[int, int] = {}
+        for _, hop in visited.items():
+            census[hop] = census.get(hop, 0) + 1
+        return census
 
 
     # ===================================================================
