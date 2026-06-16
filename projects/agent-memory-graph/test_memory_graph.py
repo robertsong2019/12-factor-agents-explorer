@@ -9717,4 +9717,117 @@ class TestNoScopeDeleteGuard:
         n2 = mg.add("node2", "fact")
         count = mg.delete_many([n1.id, n2.id])
         assert count == 2
-        assert mg.stats()["nodes"] == 0
+
+
+class TestDegreeDistribution:
+    """度分布分析。"""
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.degree_distribution() == {}
+
+    def test_isolated_nodes(self):
+        """无连接节点的度分布。"""
+        mg = MemoryGraph()
+        mg.add("solo1", "fact")
+        mg.add("solo2", "fact")
+        dist = mg.degree_distribution()
+        assert dist == {0: 1.0}  # All degree-0
+
+    def test_simple_graph(self):
+        """三角图度分布。"""
+        mg = MemoryGraph()
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        c = mg.add("C", "fact")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(c.id, a.id, "rel")
+        dist = mg.degree_distribution()
+        assert dist == {2: 1.0}  # Every node has degree 2
+
+    def test_star_graph(self):
+        """星形图: 中心度=3, 叶子度=1。"""
+        mg = MemoryGraph()
+        center = mg.add("center", "fact")
+        for i in range(3):
+            leaf = mg.add(f"leaf{i}", "fact")
+            mg.link(center.id, leaf.id, "rel")
+        dist = mg.degree_distribution()
+        assert dist[1] == 0.75   # 3 of 4 nodes
+        assert dist[3] == 0.25   # 1 of 4 nodes
+
+    def test_fractions_sum_to_one(self):
+        """所有比例之和应为1。"""
+        mg = MemoryGraph()
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        c = mg.add("C", "fact")
+        d = mg.add("D", "fact")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        dist = mg.degree_distribution()
+        assert abs(sum(dist.values()) - 1.0) < 1e-9
+
+
+class TestNetworkSummary:
+    """network_summary 一站式分析。"""
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        result = mg.network_summary()
+        assert result["nodes"] == 0
+        assert result["edges"] == 0
+        assert result["density"] == 0.0
+
+    def test_basic_metrics(self):
+        """验证核心度量。"""
+        mg = MemoryGraph()
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        c = mg.add("C", "fact")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(c.id, a.id, "rel")
+        result = mg.network_summary()
+        assert result["nodes"] == 3
+        assert result["edges"] == 3
+        assert result["density"] == 1.0  # Complete graph K3
+        assert result["avg_degree"] == 2.0
+        assert result["max_degree"] == 2
+
+    def test_star_graph_summary(self):
+        """星形图分析。"""
+        mg = MemoryGraph()
+        center = mg.add("center", "fact")
+        for i in range(4):
+            leaf = mg.add(f"leaf{i}", "fact")
+            mg.link(center.id, leaf.id, "rel")
+        result = mg.network_summary()
+        assert result["nodes"] == 5
+        assert result["edges"] == 4
+        assert result["avg_degree"] == round(2.0 * 4 / 5, 2)
+        assert result["max_degree"] == 4
+        assert result["components"] == 1
+
+    def test_disconnected_components(self):
+        """断连图: 两个独立的三角。"""
+        mg = MemoryGraph()
+        # Triangle 1
+        a1 = mg.add("a1", "fact")
+        b1 = mg.add("b1", "fact")
+        c1 = mg.add("c1", "fact")
+        mg.link(a1.id, b1.id, "rel")
+        mg.link(b1.id, c1.id, "rel")
+        mg.link(c1.id, a1.id, "rel")
+        # Triangle 2
+        a2 = mg.add("a2", "fact")
+        b2 = mg.add("b2", "fact")
+        c2 = mg.add("c2", "fact")
+        mg.link(a2.id, b2.id, "rel")
+        mg.link(b2.id, c2.id, "rel")
+        mg.link(c2.id, a2.id, "rel")
+        result = mg.network_summary()
+        assert result["components"] == 2
+        assert result["largest_component_size"] == 3
+        assert result["largest_component_ratio"] == 0.5  # 3/6

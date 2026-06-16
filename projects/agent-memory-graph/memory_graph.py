@@ -7314,6 +7314,90 @@ class MemoryGraph:
             return 0.0
         return numerator / denominator
 
+    def degree_distribution(self) -> dict[int, float]:
+        """计算度分布：每个度值对应的节点比例。
+
+        返回 {degree: fraction} 字典。关键用途：
+        - 判断是否为 scale-free 网络（幂律分布）
+        - 识别 hub 节点（高度数）
+        - 对比随机图与真实图的度分布差异
+        """
+        rows = self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall()
+        deg: dict[str, int] = {}
+        for r in rows:
+            s, t = str(r["source"]), str(r["target"])
+            deg[s] = deg.get(s, 0) + 1
+            deg[t] = deg.get(t, 0) + 1
+        total_nodes = self.conn.execute("SELECT COUNT(*) c FROM nodes").fetchone()["c"]
+        if total_nodes == 0:
+            return {}
+        # Count nodes at each degree (including degree-0 nodes)
+        degree_counts: dict[int, int] = {}
+        node_ids = {str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()}
+        for nid in node_ids:
+            d = deg.get(nid, 0)
+            degree_counts[d] = degree_counts.get(d, 0) + 1
+        return {d: round(c / total_nodes, 4) for d, c in sorted(degree_counts.items())}
+
+    def network_summary(self) -> dict:
+        """一站式网络分析摘要：密度、聚类、度分布、连通性等。
+
+        聚合已有的分析 API 为单次调用，适合 dashboard 或快速诊断。
+        """
+        n = self.conn.execute("SELECT COUNT(*) c FROM nodes").fetchone()["c"]
+        m = self.conn.execute("SELECT COUNT(*) c FROM edges").fetchone()["c"]
+        if n == 0:
+            return {"nodes": 0, "edges": 0, "density": 0.0}
+
+        # Average degree
+        rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        deg: dict[str, int] = {}
+        for r in rows:
+            s, t = str(r["source"]), str(r["target"])
+            deg[s] = deg.get(s, 0) + 1
+            deg[t] = deg.get(t, 0) + 1
+        avg_degree = (2.0 * m / n) if n > 0 else 0.0
+        max_degree = max(deg.values()) if deg else 0
+
+        # Density
+        density = (2.0 * m) / (n * (n - 1)) if n > 1 else 0.0
+
+        # Global clustering coefficient (transitivity)
+        try:
+            transitivity = self.transitivity()
+        except Exception:
+            transitivity = 0.0
+
+        # Connected components
+        try:
+            components = self.find_components()
+            num_components = len(components)
+            largest_cc = max((len(c) for c in components), default=0)
+        except Exception:
+            num_components = 0
+            largest_cc = 0
+
+        # Reciprocity (directed)
+        try:
+            recip = self.reciprocity()
+        except Exception:
+            recip = 0.0
+
+        return {
+            "nodes": n,
+            "edges": m,
+            "density": round(density, 4),
+            "avg_degree": round(avg_degree, 2),
+            "max_degree": max_degree,
+            "transitivity": round(transitivity, 4),
+            "reciprocity": round(recip, 4),
+            "components": num_components,
+            "largest_component_size": largest_cc,
+            "largest_component_ratio": round(largest_cc / n, 4) if n > 0 else 0.0,
+        }
+
 
 
     # ===================================================================
