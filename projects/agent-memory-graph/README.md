@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-1076-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1133-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -37,6 +37,8 @@
 - **memorywire 互操作** — to_memorywire/from_memorywire 跨后端记忆交换 (semantic/episodic/procedural/emotional)
 - **图探索与采样** — 加权随机游走 (random walk with restart) + BFS/DFS/random_walk 三策略子图采样
 - **鲁棒社区检测** — Leiden 启发的随机化迭代 + 模块度回退，避免对称图标签级联
+- **网络拓扑分析** — 度分布 (Shannon 熵) + 连通前沿 + Freeman 归一化度中心性 + 诱导子图密度 + 加权度 + 邻域普查
+- **多智能体记忆合并** — CRDT-based 合并策略 (LWW/OR-Set/Trust-weighted)，支持多 Agent 记忆图一致合并
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## 安装
@@ -898,6 +900,89 @@ Adamic/Adar 指数 — 共同邻居的 1/log(degree) 之和，用于链路预测
 
 ---
 
+### 网络拓扑分析
+
+#### `degree_distribution() -> dict[int, float]`
+
+度分布——每个度数值对应的节点比例。返回 `{degree: fraction}`，用于分析网络的异质性（幂律 vs 均匀）。
+
+```python
+dist = mg.degree_distribution()
+# {0: 0.05, 1: 0.30, 2: 0.35, 3: 0.20, 4: 0.10}
+```
+
+#### `network_summary() -> dict`
+
+综合网络统计仪表盘——节点数、边数、密度、平均度、最大度、连通分量数、平均聚类系数、标签数、类型分布等。`stats()` 的增强版。
+
+#### `k_hop_neighbors(node_id, k=2) -> dict[int, list[str]]`
+
+K-hop 邻居普查——返回每一跳的节点 ID 列表 `{hop: [node_ids]}`。比 `neighbors(depth=k)` 更直观地展示逐层扩展结构。
+
+```python
+hops = mg.k_hop_neighbors("node-1", k=3)
+# {1: ["node-2", "node-3"], 2: ["node-4", "node-5", "node-6"], 3: ["node-7"]}
+```
+
+#### `common_neighbors(node_id_a, node_id_b) -> list[str]`
+
+两个节点的共同邻居列表——用于链路预测和社区桥梁分析。
+
+#### `graph_entropy() -> dict[str, float]`
+
+图熵——基于度分布的 Shannon 熵。高值 = 度分布均匀（异构网络）；低值 = 度集中（hub-spoke 结构）。返回 `{entropy, max_entropy, normalized}`。
+
+#### `connectivity_frontier(node_id, max_hop=3) -> dict[int, int]`
+
+连通前沿——从指定节点出发，每一跳新增的可达节点数 `{hop: new_nodes}`。衡量节点的信息辐射范围和速度。
+
+#### `degree_centrality_normalized() -> dict[str, float]`
+
+Freeman 归一化度中心性——节点度数 / (n-1)，范围 [0, 1]。消除图规模差异后的标准化中心性。适用于跨图比较节点重要性。
+
+#### `edge_density_subgraph(node_ids) -> float`
+
+诱导子图边密度——指定节点集合内部的边数 / 最大可能边数。用于评估社区或群体的紧密度。
+
+#### `weighted_degree(node_id) -> float`
+
+加权度——节点所有邻接边的权重之和。衡量节点的总连接强度（vs 普通度数只计边数）。
+
+#### `weighted_degree_all() -> dict[str, float]`
+
+全图加权度——每个节点的加权度 `{node_id: weighted_degree}`。
+
+#### `neighborhood_census() -> dict[str, dict]`
+
+邻域普查——每个节点的邻居统计 `{node_id: {"in": n, "out": n, "both": n}}`。快速了解全图的度分布细节。
+
+---
+
+### CRDT 合并与多智能体记忆
+
+#### `merge_crdt(other_graph_data, strategy="lww", trust_weights=None) -> dict`
+
+CRDT-based 多 Agent 记忆图合并——将另一个图的数据合并到当前图，保证收敛一致性。
+
+| 策略 | 说明 |
+|------|------|
+| `"lww"` | Last-Write-Wins：以 created_at 时间戳最新者为准 |
+| `"or-set"` | OR-Set：所有添加和删除都记录，无冲突 |
+| `"trust"` | Trust-weighted：按 Agent 信任度权重加权决策 |
+
+```python
+# 多 Agent 场景：合并两个 Agent 的记忆图
+mg1 = MemoryGraph("agent1.db")
+mg2_data = MemoryGraph("agent2.db").export_json()
+result = mg1.merge_crdt(mg2_data, strategy="trust",
+                       trust_weights={"agent1": 0.9, "agent2": 0.7})
+# {"merged_nodes": 45, "merged_edges": 12, "conflicts_resolved": 3}
+```
+
+适用场景：多智能体协作场景下的记忆同步、联邦学习中的知识聚合、Agent 团队的共享记忆构建。
+
+---
+
 ### 聚类
 
 #### `cluster(kind, threshold=0.4) -> list[dict]`
@@ -1265,7 +1350,7 @@ mg2.from_memorywire(wire)  # → 120 (imported nodes)
 python3 -m pytest test_memory_graph.py -q
 ```
 
-1076 个测试覆盖所有 API。
+1133 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -1284,6 +1369,8 @@ python3 -m pytest test_memory_graph.py -q
 13. **memorywire 互操作** — to_memorywire/from_memorywire 实现跨后端记忆交换，标准化语义/情景/程序/情感四种记忆类型的导入导出
 14. **图探索与采样** — random_walk（带重启的加权随机游走）+ graph_sample（BFS/DFS/random_walk 三策略子图采样），服务于图嵌入预处理和 GraphRAG 局部探索
 15. **鲁棒社区检测** — lazy_community_detect 采用 Leiden 启发的随机化节点迭代 + 模块度回退机制，避免对称图上的标签级联问题
+16. **网络拓扑分析** — degree_distribution (Shannon 度分布熵) + network_summary (综合仪表盘) + k_hop_neighbors + common_neighbors + graph_entropy + connectivity_frontier + degree_centrality_normalized (Freeman) + edge_density_subgraph + weighted_degree + neighborhood_census 量化记忆网络的多维度拓扑特征
+17. **多智能体记忆合并** — merge_crdt 实现 CRDT-based 多 Agent 记忆图合并，支持 LWW (Last-Write-Wins)、OR-Set (Add-Remove Set) 和 Trust-weighted 三种合并策略，确保分布式场景下的记忆一致性
 
 ## 许可
 
