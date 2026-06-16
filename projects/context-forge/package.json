@@ -8,5 +8,8 @@
   },
   "files": ["context-forge.mjs", "README.md"],
   "keywords": ["ai", "agents", "cursor", "copilot", "claude", "context", "codebase-analysis"],
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
 }

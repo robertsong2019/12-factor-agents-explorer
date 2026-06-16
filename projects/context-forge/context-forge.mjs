@@ -32,7 +32,7 @@ const IGNORE_DIRS = new Set([
   ".cache", ".sass-cache", "vendor", "Pods", ".gradle", ".idea",
 ]);
 
-async function detectProject(root) {
+export async function detectProject(root) {
   const files = await readdir(root);
   const info = { languages: new Map(), frameworks: [], entryPoints: [], scripts: {}, deps: {}, root };
 
@@ -111,7 +111,7 @@ async function detectProject(root) {
   return info;
 }
 
-async function scanLanguages(root, maxDepth = 3, depth = 0) {
+export async function scanLanguages(root, maxDepth = 3, depth = 0) {
   const langs = new Map();
   if (depth >= maxDepth) return langs;
 
@@ -132,7 +132,7 @@ async function scanLanguages(root, maxDepth = 3, depth = 0) {
   return langs;
 }
 
-async function getDirStructure(root, prefix = "", maxDepth = 2, depth = 0) {
+export async function getDirStructure(root, prefix = "", maxDepth = 2, depth = 0) {
   if (depth >= maxDepth) return "";
   let out = "";
   try {
@@ -156,7 +156,7 @@ async function getDirStructure(root, prefix = "", maxDepth = 2, depth = 0) {
 
 // ─── Context Generation ──────────────────────────────────────────
 
-function generateAgentsMd(info, langs, structure) {
+export function generateAgentsMd(info, langs, structure) {
   const langList = [...langs.entries()].sort((a, b) => b[1] - a[1]).map(([l, c]) => `${l} (${c} files)`);
   const primaryLang = langList[0] || "Unknown";
 
@@ -221,7 +221,7 @@ ${info.configFiles?.length ? info.configFiles.map(f => `- \`${f}\``).join("\n") 
   return md;
 }
 
-function generateCursorRules(info, langs, structure) {
+export function generateCursorRules(info, langs, structure) {
   const primaryLang = [...langs.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "Unknown";
   const frameworks = [...new Set(info.frameworks)];
 
@@ -252,7 +252,7 @@ ${info.entryPoints.map(e => `- ${e}`).join("\n") || "- (auto-detect)"}
   return rules;
 }
 
-function generateCopilotInstructions(info) {
+export function generateCopilotInstructions(info) {
   const frameworks = [...new Set(info.frameworks)];
   return `# Copilot Instructions — ${basename(info.root)}
 
@@ -271,7 +271,7 @@ ${Object.entries(info.scripts).map(([k, v]) => `- \`npm run ${k}\`: ${v}`).join(
 `;
 }
 
-function generateClaudeMd(info, langs, structure) {
+export function generateClaudeMd(info, langs, structure) {
   return `# CLAUDE.md — ${basename(info.root)}
 
 This file provides context for Claude Code when working on this project.
@@ -295,7 +295,7 @@ ${structure || "(see source)"}
 
 // ─── File Update Logic ───────────────────────────────────────────
 
-async function writeOrUpdate(filePath, content, options) {
+export async function writeOrUpdate(filePath, content, options) {
   if (options.dryRun) {
     console.log(`\n${"=".repeat(60)}`);
     console.log(`📄 ${filePath}`);
@@ -390,8 +390,11 @@ async function main() {
   console.log(`\n✨ Done! ${options.dryRun ? "(dry run — no files written)" : "Context files generated."}`);
 }
 
-function resolve(p) {
+export function resolvePath(p) {
   return p.startsWith("/") ? p : join(process.cwd(), p);
 }
 
-main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
+// Only run main when executed directly (not imported)
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
+}
