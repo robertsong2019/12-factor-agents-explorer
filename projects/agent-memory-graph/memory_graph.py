@@ -7519,6 +7519,49 @@ class MemoryGraph:
             census[hop] = census.get(hop, 0) + 1
         return census
 
+    def degree_centrality_normalized(self) -> dict[str, float]:
+        """Normalized degree centrality: degree / (n-1).
+
+        Freeman's classic centrality measure, normalized to [0, 1].
+        A hub in a star graph scores 1.0, peripheral nodes score 1/(n-1).
+        """
+        n = self.conn.execute("SELECT COUNT(*) c FROM nodes").fetchone()["c"]
+        if n <= 1:
+            rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+            return {str(r["id"]): 0.0 for r in rows}
+
+        rows = self.conn.execute(
+            "SELECT id FROM nodes"
+        ).fetchall()
+        result = {}
+        denom = n - 1
+        for r in rows:
+            nid = str(r["id"])
+            deg = self.conn.execute(
+                "SELECT COUNT(*) c FROM edges WHERE source=? OR target=?",
+                (nid, nid)
+            ).fetchone()["c"]
+            result[nid] = round(deg / denom, 4)
+        return result
+
+    def edge_density_subgraph(self, node_ids: list[str]) -> float:
+        """Edge density of an induced subgraph.
+
+        Density = actual_edges / possible_edges (n*(n-1)/2 for undirected).
+        Useful for evaluating community tightness or cluster cohesion.
+        """
+        n = len(node_ids)
+        if n < 2:
+            return 0.0
+        node_set = set(node_ids)
+        placeholders = ",".join("?" * n)
+        actual = self.conn.execute(
+            f"SELECT COUNT(*) c FROM edges WHERE source IN ({placeholders}) AND target IN ({placeholders})",
+            (*node_ids, *node_ids)
+        ).fetchone()["c"]
+        possible = n * (n - 1) / 2
+        return round(actual / possible, 4) if possible > 0 else 0.0
+
 
     # ===================================================================
     # Learnable Memory Management (Memory-R1 / AgeMem inspired)

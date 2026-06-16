@@ -10166,3 +10166,67 @@ class TestConnectivityFrontier:
         census = mg.connectivity_frontier(a.id, max_hop=1)
         # C is at hop 2, should not be reachable with max_hop=1
         assert census.get(2, 0) == 0
+
+
+# ── Degree Centrality (Normalized) & Subgraph Edge Density ──────────────────
+
+class TestDegreeCentralityNormalized:
+    def test_empty(self, mg):
+        assert mg.degree_centrality_normalized() == {}
+
+    def test_single(self, mg):
+        a = mg.add("A", "x")
+        result = mg.degree_centrality_normalized()
+        assert result[a.id] == 0.0
+
+    def test_star(self, mg):
+        center = mg.add("hub", "x")
+        leaves = [mg.add(f"L{i}", "x") for i in range(4)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        result = mg.degree_centrality_normalized()
+        n = 5
+        # center has degree 4, normalized = 4/(5-1) = 1.0
+        assert result[center.id] == 1.0
+        # leaves have degree 1, normalized = 1/4 = 0.25
+        for leaf in leaves:
+            assert result[leaf.id] == 0.25
+
+    def test_complete_graph(self, mg):
+        nodes = [mg.add(f"N{i}", "x") for i in range(4)]
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        result = mg.degree_centrality_normalized()
+        # In K4, every node has degree 3, normalized = 3/3 = 1.0
+        for node in nodes:
+            assert result[node.id] == 1.0
+
+
+class TestEdgeDensitySubgraph:
+    def test_empty(self, mg):
+        assert mg.edge_density_subgraph([]) == 0.0
+
+    def test_single(self, mg):
+        a = mg.add("A", "x")
+        assert mg.edge_density_subgraph([a.id]) == 0.0
+
+    def test_complete_pair(self, mg):
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r")
+        assert mg.edge_density_subgraph([a.id, b.id]) == 1.0
+
+    def test_sparse_triple(self, mg):
+        a, b, c = mg.add("A", "x"), mg.add("B", "x"), mg.add("C", "x")
+        mg.link(a.id, b.id, "r")
+        # Only 1 of 3 possible edges
+        density = mg.edge_density_subgraph([a.id, b.id, c.id])
+        assert density == round(1 / 3, 4)
+
+    def test_disconnected(self, mg):
+        a, b, c, d = [mg.add(f"N{i}", "x") for i in range(4)]
+        mg.link(a.id, b.id, "r")
+        # c and d are disconnected from subgraph {a, b, c, d}
+        density = mg.edge_density_subgraph([a.id, b.id, c.id, d.id])
+        # 1 edge out of 6 possible = 0.1667
+        assert density == round(1 / 6, 4)
