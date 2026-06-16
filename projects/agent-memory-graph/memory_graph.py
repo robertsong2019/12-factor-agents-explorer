@@ -7947,6 +7947,49 @@ class MemoryGraph:
         self.conn.commit()
         return count
 
+    # ===================================================================
+    # Weighted Degree & Neighborhood Census
+    # ===================================================================
+
+    def weighted_degree(self, node_id: str) -> float:
+        """Sum of edge weights for a node (in + out).
+
+        Unlike degree count, this captures connection *strength*.
+        """
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(weight), 0) AS w FROM edges WHERE source = ? OR target = ?",
+            (node_id, node_id),
+        ).fetchone()
+        return float(row["w"]) if row else 0.0
+
+    def weighted_degree_all(self) -> dict[str, float]:
+        """Weighted degree for every node."""
+        nodes = [str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        return {nid: self.weighted_degree(nid) for nid in nodes}
+
+    def neighborhood_census(self) -> dict[str, dict]:
+        """Per-node neighborhood census: degree, weighted_degree, neighbors list.
+
+        Useful for batch analysis and exports.
+        """
+        nodes = [str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        edge_rows = self.conn.execute("SELECT source, target, weight FROM edges").fetchall()
+        nbrs: dict[str, list[str]] = {n: [] for n in nodes}
+        wsum: dict[str, float] = {n: 0.0 for n in nodes}
+        for e in edge_rows:
+            s, t = str(e["source"]), str(e["target"])
+            w = float(e["weight"]) if e["weight"] is not None else 1.0
+            if s in nbrs:
+                nbrs[s].append(t)
+                wsum[s] += w
+            if t in nbrs:
+                nbrs[t].append(s)
+                wsum[t] += w
+        return {
+            n: {"degree": len(nbrs[n]), "weighted_degree": wsum[n], "neighbors": nbrs[n]}
+            for n in nodes
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

@@ -9934,3 +9934,61 @@ class TestCommonNeighbors:
         mg.link(b.id, y.id, "rel")
         common = mg.common_neighbors(a.id, b.id)
         assert set(common) == {x.id, y.id}
+
+
+# ── Weighted Degree & Neighborhood Census ───────────────────────────────
+
+class TestWeightedDegree:
+    def test_empty(self, mg):
+        assert mg.weighted_degree("x") == 0.0
+
+    def test_single_edge(self, mg):
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r", weight=2.5)
+        assert mg.weighted_degree(a.id) == 2.5
+        assert mg.weighted_degree(b.id) == 2.5
+
+    def test_multi_edge(self, mg):
+        a = mg.add("A", "x")
+        b = mg.add("B", "x")
+        c = mg.add("C", "x")
+        mg.link(a.id, b.id, "r", weight=1.0)
+        mg.link(a.id, c.id, "r", weight=3.0)
+        assert mg.weighted_degree(a.id) == 4.0
+
+    def test_default_weight(self, mg):
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "r")  # default weight = 1.0
+        assert mg.weighted_degree(a.id) == 1.0
+
+    def test_all(self, mg):
+        a, b, c = mg.add("A", "x"), mg.add("B", "x"), mg.add("C", "x")
+        mg.link(a.id, b.id, "r", weight=2.0)
+        mg.link(b.id, c.id, "r", weight=3.0)
+        wd = mg.weighted_degree_all()
+        assert wd[a.id] == 2.0
+        assert wd[b.id] == 5.0
+        assert wd[c.id] == 3.0
+
+
+class TestNeighborhoodCensus:
+    def test_empty(self, mg):
+        assert mg.neighborhood_census() == {}
+
+    def test_basic(self, mg):
+        a, b, c = mg.add("A", "x"), mg.add("B", "x"), mg.add("C", "x")
+        mg.link(a.id, b.id, "r", weight=2.0)
+        mg.link(b.id, c.id, "r", weight=1.0)
+        census = mg.neighborhood_census()
+        assert census[a.id]["degree"] == 1
+        assert census[a.id]["weighted_degree"] == 2.0
+        assert set(census[a.id]["neighbors"]) == {b.id}
+        assert census[b.id]["degree"] == 2
+        assert census[b.id]["weighted_degree"] == 3.0
+
+    def test_isolated_node(self, mg):
+        a = mg.add("lonely", "x")
+        census = mg.neighborhood_census()
+        assert census[a.id]["degree"] == 0
+        assert census[a.id]["weighted_degree"] == 0.0
+        assert census[a.id]["neighbors"] == []
