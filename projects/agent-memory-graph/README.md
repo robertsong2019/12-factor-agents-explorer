@@ -1305,6 +1305,59 @@ summary = mg.memory_stats_summary()
 #  'time_span_days': 45.2, 'top_weighted': [...]}
 ```
 
+### 向量时钟与增量同步（多 Agent 因果一致性）
+
+> Vector clock 因果追踪 + pub/sub 事件通知 + 增量 delta 同步。
+> 支持多 Agent 间的因果一致记忆同步。
+
+#### `vector_clock(node_id) -> dict[str, int]`
+
+返回节点的向量时钟（每个 writer agent 的因果版本号）。
+用于 `merge_crdt` 和 `apply_changes` 检测并发更新 vs 因果排序。
+
+```python
+vc = mg.vector_clock("concept:ai")
+# {'agent_a': 3, 'agent_b': 1}
+```
+
+#### `subscribe(callback) -> None`
+
+注册节点变更事件回调。回调接收一个 dict：
+`{event: 'add'|'update'|'delete'|'link', node_id, agent_id, timestamp}`。
+
+```python
+def on_change(evt):
+    print(f"{evt['event']}: {evt['node_id']} by {evt['agent_id']}")
+
+mg.subscribe(on_change)
+mg.add("new_fact", "sky is blue")  # 触发回调
+```
+
+#### `get_changes(since=0.0) -> dict`
+
+导出指定时间戳之后的所有节点/边变更（增量 delta）。
+与 `apply_changes()` 配对使用，实现 Agent 间的增量同步。
+
+```python
+delta = mg.get_changes(since=time.time() - 3600)  # 最近 1 小时
+# {'nodes': [...], 'edges': [...], 'timestamp': 1718700000.0}
+```
+
+#### `apply_changes(delta, agent_id="_remote", strategy="lww") -> dict`
+
+应用来自另一个 Agent 的 delta（`get_changes()` 输出）。
+使用向量时钟进行因果感知合并：
+
+- `'before'`/`'equal'`: 跳过（本地相同或更新）
+- `'after'`: 接受（远端更新）
+- `'concurrent'`: 按 strategy 解决（`lww`/`or_set`/`trust`）
+
+```python
+summary = mg.apply_changes(remote_delta, agent_id="agent_b", strategy="lww")
+# {'nodes_added': 5, 'nodes_updated': 2, 'nodes_skipped': 1,
+#  'concurrent_conflicts': 0, 'edges_added': 3}
+```
+
 ---
 
 ### memorywire 互操作
@@ -1350,7 +1403,7 @@ mg2.from_memorywire(wire)  # → 120 (imported nodes)
 python3 -m pytest test_memory_graph.py -q
 ```
 
-1133 个测试覆盖所有 API。
+1156 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -1371,6 +1424,7 @@ python3 -m pytest test_memory_graph.py -q
 15. **鲁棒社区检测** — lazy_community_detect 采用 Leiden 启发的随机化节点迭代 + 模块度回退机制，避免对称图上的标签级联问题
 16. **网络拓扑分析** — degree_distribution (Shannon 度分布熵) + network_summary (综合仪表盘) + k_hop_neighbors + common_neighbors + graph_entropy + connectivity_frontier + degree_centrality_normalized (Freeman) + edge_density_subgraph + weighted_degree + neighborhood_census 量化记忆网络的多维度拓扑特征
 17. **多智能体记忆合并** — merge_crdt 实现 CRDT-based 多 Agent 记忆图合并，支持 LWW (Last-Write-Wins)、OR-Set (Add-Remove Set) 和 Trust-weighted 三种合并策略，确保分布式场景下的记忆一致性
+18. **向量时钟与增量同步** — vector_clock 因果追踪 + subscribe pub/sub 事件通知 + get_changes/apply_changes 增量 delta 同步，实现多 Agent 间因果一致的记忆同步，支持 LWW/OR-Set/Trust 冲突解决策略
 
 ## 许可
 
