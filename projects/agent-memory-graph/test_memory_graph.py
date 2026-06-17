@@ -10312,3 +10312,231 @@ class TestEdgeDensitySubgraph:
         density = mg.edge_density_subgraph([a.id, b.id, c.id, d.id])
         # 1 edge out of 6 possible = 0.1667
         assert density == round(1 / 6, 4)
+
+
+class TestVectorClock:
+    def test_vector_clock_default(self, mg):
+        """Node without vector clock returns default."""
+        n = mg.add("test", "fact")
+        vc = mg.vector_clock(n.id)
+        assert isinstance(vc, dict)
+        assert vc.get("_default", 0) == 0
+
+    def test_vector_clock_increment(self, mg):
+        """_vector_clock_increment bumps the agent's counter."""
+        n = mg.add("test", "fact")
+        mg._vector_clock_increment(n.id, "agent_A")
+        mg._vector_clock_increment(n.id, "agent_A")
+        mg._vector_clock_increment(n.id, "agent_B")
+        vc = mg.vector_clock(n.id)
+        assert vc["agent_A"] == 2
+        assert vc["agent_B"] == 1
+
+    def test_vc_compare_equal(self):
+        """Identical clocks are equal."""
+        assert MemoryGraph._vc_compare({"A": 1}, {"A": 1}) == "equal"
+
+    def test_vc_compare_before(self):
+        """Smaller clock happened-before."""
+        assert MemoryGraph._vc_compare({"A": 1}, {"A": 2}) == "before"
+        assert MemoryGraph._vc_compare({"A": 1, "B": 0}, {"A": 1, "B": 1}) == "before"
+
+    def test_vc_compare_after(self):
+        """Larger clock happened-after."""
+        assert MemoryGraph._vc_compare({"A": 3}, {"A": 1}) == "after"
+
+    def test_vc_compare_concurrent(self):
+        """Divergent clocks are concurrent."""
+        # A wrote x2, B wrote y2 — neither saw the other's latest
+        assert MemoryGraph._vc_compare(
+            {"A": 2, "B": 0}, {"A": 0, "B": 2}) == "concurrent"
+
+    def test_vc_compare_missing_key(self):
+        """Missing keys treated as 0."""
+        assert MemoryGraph._vc_compare({"A": 1}, {"A": 1, "B": 1}) == "before"
+        assert MemoryGraph._vc_compare({"A": 1, "B": 1}, {"A": 1}) == "after"
+
+    def test_vector_clock_not_found(self, mg):
+        """Non-existent node raises KeyError."""
+        with pytest.raises(KeyError):
+            mg.vector_clock("nonexistent")
+
+
+class TestSubscribe:
+    def test_subscribe_add_event(self, mg):
+        """Subscribe fires on add events."""
+        events = []
+        mg.subscribe(lambda evt: events.append(evt))
+        # add() doesn't call _notify directly; let's trigger via apply_changes
+        delta = {"nodes": [{"id": "X1", "label": "Test", "kind": "fact",
+                             "data": {}, "created": time.time(),
+                             "accessed": time.time(), "weight": 1.0,
+                             "tags": []}],
+                 "edges": []}
+        mg.apply_changes(delta, agent_id="agent_X")
+        assert len(events) == 1
+        assert events[0]["event"] == "add"
+        assert events[0]["node_id"] == "X1"
+        assert events[0]["agent_id"] == "agent_X"
+
+    def test_subscribe_update_event(self, mg):
+        """Subscribe fires on update events via apply_changes."""
+        events = []
+        n = mg.add("original", "fact", {"_vc": {"_self": 1}})
+        mg.subscribe(lambda evt: events.append(evt))
+        delta = {"nodes": [{"id": n.id, "label": "updated", "kind": "fact",
+                             "data": {"_vc": {"_self": 2}},
+                             "created": time.time(),
+                             "accessed": time.time() + 100,
+                             "weight": 1.0, "tags": []}],
+                 "edges": []}
+        mg.apply_changes(delta, agent_id="agent_Y")
+        assert len(events) == 1
+        assert events[0]["event"] == "update"
+        assert events[0]["agent_id"] == "agent_Y"
+
+    def test_subscribe_multiple_callbacks(self, mg):
+        """Multiple subscribers all fire."""
+        log_a, log_b = [], []
+        mg.subscribe(lambda evt: log_a.append(evt["event"]))
+        mg.subscribe(lambda evt: log_b.append(evt["event"]))
+        delta = {"nodes": [{"id": "Z1", "label": "Z", "kind": "fact",
+                             "data": {}, "created": time.time(),
+                             "accessed": time.time(), "weight": 1.0,
+                             "tags": []}], "edges": []}
+        mg.apply_changes(delta)
+        assert log_a == ["add"]
+        assert log_b == ["add"]
+
+    def test_subscribe_error_isolated(self, mg):
+        """A failing callback doesn't block others."""
+        good_log = []
+        mg.subscribe(lambda evt: (_ for _ in ()).throw(RuntimeError("boom")))
+        mg.subscribe(lambda evt: good_log.append(evt["event"]))
+        delta = {"nodes": [{"id": "E1", "label": "E", "kind": "fact",
+                             "data": {}, "created": time.time(),
+                             "accessed": time.time(), "weight": 1.0,
+                             "tags": []}], "edges": []}
+        mg.apply_changes(delta)
+        assert good_log == ["add"]
+
+
+class TestGetChangesApplyChanges:
+    def test_get_changes_returns_all_since_zero(self, mg):
+        """get_changes(since=0) returns all nodes."""
+        a = mg.add("A", "x")
+        b = mg.add("B", "x")
+        delta = mg.get_changes(since=0.0)
+        ids = [n["id"] for n in delta["nodes"]]
+        assert a.id in ids
+        assert b.id in ids
+        assert delta["timestamp"] > 0
+
+    def test_get_changes_since_future(self, mg):
+        """get_changes with future timestamp returns empty nodes."""
+        mg.add("A", "x")
+        delta = mg.get_changes(since=time.time() + 1000)
+        assert len(delta["nodes"]) == 0
+
+    def test_apply_changes_new_node(self, mg):
+        """apply_changes adds new nodes from remote."""
+        delta = {"nodes": [{"id": "remote_1", "label": "Remote",
+                             "kind": "fact", "data": {"_vc": {"agent_A": 1}},
+                             "created": time.time(), "accessed": time.time(),
+                             "weight": 1.0, "tags": ["remote"]}],
+                 "edges": []}
+        summary = mg.apply_changes(delta, agent_id="agent_A")
+        assert summary["nodes_added"] == 1
+        assert mg.get_node("remote_1") is not None
+        assert mg.get_node("remote_1").label == "Remote"
+
+    def test_apply_changes_seeds_vector_clock(self, mg):
+        """New nodes from apply_changes get a vector clock."""
+        delta = {"nodes": [{"id": "r2", "label": "R2", "kind": "fact",
+                             "data": {}, "created": time.time(),
+                             "accessed": time.time(), "weight": 1.0,
+                             "tags": []}], "edges": []}
+        mg.apply_changes(delta, agent_id="agent_Z")
+        node = mg.get_node("r2")
+        assert "_vc" in node.data
+        assert node.data["_vc"].get("agent_Z") == 1
+
+    def test_apply_changes_skips_equal_version(self, mg):
+        """Same vector clock → skip."""
+        n = mg.add("orig", "fact", {"_vc": {"_self": 1}})
+        delta = {"nodes": [{"id": n.id, "label": "updated", "kind": "fact",
+                             "data": {"_vc": {"_self": 1}},
+                             "created": time.time(),
+                             "accessed": time.time(), "weight": 1.0,
+                             "tags": []}], "edges": []}
+        summary = mg.apply_changes(delta)
+        assert summary["nodes_skipped"] == 1
+        assert mg.get_node(n.id).label == "orig"  # unchanged
+
+    def test_apply_changes_accepts_newer(self, mg):
+        """After-version remote overwrites local."""
+        n = mg.add("old", "fact", {"_vc": {"_self": 1}})
+        delta = {"nodes": [{"id": n.id, "label": "new", "kind": "fact",
+                             "data": {"_vc": {"_self": 2, "agent_B": 1}},
+                             "created": time.time(),
+                             "accessed": time.time(), "weight": 1.0,
+                             "tags": []}], "edges": []}
+        summary = mg.apply_changes(delta, agent_id="agent_B")
+        assert summary["nodes_updated"] == 1
+        assert mg.get_node(n.id).label == "new"
+
+    def test_apply_changes_concurrent_lww(self, mg):
+        """Concurrent conflict with LWW uses timestamp."""
+        old_ts = time.time() - 100
+        n = mg.add("local", "fact", {"_vc": {"_self": 2}})
+        mg.update_node(n.id, label="local_version")
+        # Remote has concurrent clock, older timestamp
+        delta = {"nodes": [{"id": n.id, "label": "remote_version",
+                             "kind": "fact",
+                             "data": {"_vc": {"agent_X": 2}},
+                             "created": old_ts, "accessed": old_ts,
+                             "weight": 1.0, "tags": []}], "edges": []}
+        summary = mg.apply_changes(delta, agent_id="agent_X", strategy="lww")
+        assert summary["concurrent_conflicts"] == 1
+        assert summary["nodes_skipped"] == 1
+        assert mg.get_node(n.id).label == "local_version"
+
+    def test_apply_changes_merges_edges(self, mg):
+        """apply_changes adds missing edges."""
+        a = mg.add("A", "x")
+        b = mg.add("B", "x")
+        delta = {"nodes": [],
+                 "edges": [{"source": a.id, "target": b.id,
+                            "relation": "linked", "weight": 0.5}]}
+        summary = mg.apply_changes(delta)
+        assert summary["edges_added"] == 1
+        assert mg.is_linked(a.id, b.id)
+
+    def test_apply_changes_full_sync_roundtrip(self, mg):
+        """Full roundtrip: graph A exports → graph B imports."""
+        mg.add("root", "concept", {"value": 42})
+        delta = mg.get_changes(since=0.0)
+
+        mg2 = MemoryGraph()
+        summary = mg2.apply_changes(delta, agent_id="agent_A")
+        assert summary["nodes_added"] >= 1
+        # Verify by searching for the transferred node
+        results = mg2.search_by_label("root")
+        assert len(results) > 0
+        assert results[0].label == "root"
+
+    def test_apply_changes_empty_delta(self, mg):
+        """Empty delta is a no-op."""
+        summary = mg.apply_changes({"nodes": [], "edges": []})
+        assert summary["nodes_added"] == 0
+        assert summary["nodes_updated"] == 0
+        assert summary["edges_added"] == 0
+
+    def test_get_changes_includes_edges(self, mg):
+        """get_changes includes edge data."""
+        a, b = mg.add("A", "x"), mg.add("B", "x")
+        mg.link(a.id, b.id, "rel")
+        delta = mg.get_changes(since=0.0)
+        assert len(delta["edges"]) >= 1
+        edge_sources = [(e["source"], e["target"]) for e in delta["edges"]]
+        assert (a.id, b.id) in edge_sources

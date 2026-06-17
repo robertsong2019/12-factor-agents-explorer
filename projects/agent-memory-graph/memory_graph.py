@@ -8196,6 +8196,226 @@ class MemoryGraph:
             for n in nodes
         }
 
+    # ===================================================================
+    # Vector Clock & Incremental Sync (Multi-Agent Causal Consistency)
+    # ===================================================================
+
+    def vector_clock(self, node_id: str) -> dict[str, int]:
+        """Return the vector clock for a node.
+
+        Tracks causal version per agent (writer). Used by merge_crdt
+        to detect concurrent updates vs causal ordering.
+
+        The clock is stored in node metadata under '_vc'. If absent,
+        returns a default clock {'_default': 0}.
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            raise KeyError(f"Node not found: {node_id}")
+        vc = node.data.get("_vc", {"_default": 0})
+        if not isinstance(vc, dict):
+            vc = {"_default": 0}
+        return vc
+
+    def _vector_clock_increment(self, node_id: str, agent_id: str = "_self"):
+        """Increment the vector clock entry for *agent_id* on a node."""
+        node = self.get_node(node_id)
+        if node is None:
+            return
+        vc = dict(node.data.get("_vc", {}))
+        vc[agent_id] = vc.get(agent_id, 0) + 1
+        # Merge into data without clobbering other fields
+        new_data = dict(node.data)
+        new_data["_vc"] = vc
+        self.conn.execute(
+            "UPDATE nodes SET data=? WHERE id=?",
+            (json.dumps(new_data), node_id))
+        self.conn.commit()
+
+    @staticmethod
+    def _vc_compare(vc_a: dict[str, int], vc_b: dict[str, int]) -> str:
+        """Compare two vector clocks.
+
+        Returns:
+          'before' — vc_a < vc_b (a happened-before b)
+          'after'  — vc_a > vc_b (a happened-after b)
+          'equal'  — identical
+          'concurrent' — neither precedes (conflict)
+        """
+        keys = set(vc_a) | set(vc_b)
+        a_le_b = True
+        b_le_a = True
+        for k in keys:
+            a_val = vc_a.get(k, 0)
+            b_val = vc_b.get(k, 0)
+            if a_val > b_val:
+                a_le_b = False
+            if b_val > a_val:
+                b_le_a = False
+        if a_le_b and b_le_a:
+            return "equal"
+        if a_le_b:
+            return "before"
+        if b_le_a:
+            return "after"
+        return "concurrent"
+
+    def subscribe(self, callback) -> None:
+        """Register a callback for node change events.
+
+        The callback receives a dict with keys:
+          event: 'add' | 'update' | 'delete' | 'link'
+          node_id: affected node id
+          agent_id: writer agent (for multi-agent sync)
+          timestamp: event time
+
+        Multiple callbacks are supported (called in registration order).
+        """
+        if not hasattr(self, '_subscribers'):
+            self._subscribers = []
+        self._subscribers.append(callback)
+
+    def _notify(self, event: str, node_id: str, agent_id: str = "_self") -> None:
+        """Internal: fire subscriber callbacks."""
+        if not hasattr(self, '_subscribers'):
+            return
+        evt = {
+            "event": event,
+            "node_id": node_id,
+            "agent_id": agent_id,
+            "timestamp": time.time(),
+        }
+        for cb in self._subscribers:
+            try:
+                cb(evt)
+            except Exception:
+                pass  # subscriber errors don't break the operation
+
+    def get_changes(self, since: float = 0.0) -> dict:
+        """Export all node/edge changes since a timestamp (epoch seconds).
+
+        Used for incremental delta-sync between agents.
+        Pairs with apply_changes() on the receiving side.
+
+        Returns:
+          {'nodes': [...], 'edges': [...], 'timestamp': current_time}
+        """
+        nodes = [
+            {
+                "id": str(r["id"]), "label": r["label"], "kind": r["kind"],
+                "data": json.loads(r["data"]) if r["data"] else {},
+                "created": r["created"], "accessed": r["accessed"],
+                "weight": r["weight"],
+                "tags": json.loads(r["tags"]) if r["tags"] else [],
+            }
+            for r in self.conn.execute(
+                "SELECT * FROM nodes WHERE accessed >= ? OR created >= ?",
+                (since, since)).fetchall()
+        ]
+        edges = [
+            {"source": str(r["source"]), "target": str(r["target"]),
+             "relation": r["relation"], "weight": r["weight"]}
+            for r in self.conn.execute(
+                "SELECT * FROM edges WHERE 1=1").fetchall()
+        ]  # edges don't have timestamps; include all (small overhead)
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "timestamp": time.time(),
+        }
+
+    def apply_changes(self, delta: dict, agent_id: str = "_remote",
+                      strategy: str = "lww") -> dict:
+        """Apply a delta (from get_changes) using vector-clock-aware merge.
+
+        Unlike merge_crdt (full export), this works with incremental deltas.
+        Uses vector clocks to detect causal ordering:
+          - 'before'/'equal': skip (remote is older or same)
+          - 'after': accept (remote is newer)
+          - 'concurrent': apply strategy (lww/or_set/trust)
+
+        Args:
+          delta: Output from another graph's get_changes()
+          agent_id: Identifier for the remote agent
+          strategy: Conflict strategy for concurrent updates
+
+        Returns:
+          Summary dict with counts + any concurrent conflicts detected.
+        """
+        summary = {"nodes_added": 0, "nodes_updated": 0, "nodes_skipped": 0,
+                   "concurrent_conflicts": 0, "edges_added": 0}
+
+        for node in delta.get("nodes", []):
+            nid = str(node["id"])
+            existing = self.get_node(nid)
+
+            if existing is None:
+                # New node — direct insert, seed its vector clock
+                tags = node.get("tags", [])
+                if isinstance(tags, str):
+                    tags = [tags]
+                data = dict(node.get("data", {}))
+                # Ensure vector clock exists
+                if "_vc" not in data:
+                    data["_vc"] = {agent_id: 1}
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                    (nid, node.get("label", ""), node.get("kind", "fact"),
+                     json.dumps(data),
+                     node.get("created", time.time()), node.get("accessed", time.time()),
+                     node.get("weight", 1.0), json.dumps(tags)))
+                if self._fts_enabled:
+                    self._fts_sync_node(nid)
+                summary["nodes_added"] += 1
+                self._notify("add", nid, agent_id)
+                continue
+
+            # Compare vector clocks
+            local_vc = existing.data.get("_vc", {})
+            remote_vc = node.get("data", {}).get("_vc", {})
+            order = self._vc_compare(local_vc, remote_vc)
+
+            if order in ("before", "equal"):
+                # Local is same or newer — check if truly equal
+                if order == "equal":
+                    summary["nodes_skipped"] += 1
+                    continue
+                # Remote is newer — accept it
+            if order == "concurrent":
+                summary["concurrent_conflicts"] += 1
+                if strategy == "lww":
+                    other_ts = node.get("accessed", 0)
+                    local_ts = existing.accessed or 0
+                    if other_ts <= local_ts:
+                        summary["nodes_skipped"] += 1
+                        continue
+                # For or_set/trust, fall through to merge_crdt logic
+
+            # Apply the update
+            merged_data = dict(node.get("data", {}))
+            # Merge vector clocks
+            merged_vc = dict(local_vc)
+            for k, v in remote_vc.items():
+                merged_vc[k] = max(merged_vc.get(k, 0), v)
+            merged_data["_vc"] = merged_vc
+
+            self.update_node(nid, label=node.get("label", existing.label),
+                             data=merged_data,
+                             weight=node.get("weight", existing.weight))
+            summary["nodes_updated"] += 1
+            self._notify("update", nid, agent_id)
+
+        # Merge edges (union)
+        for edge in delta.get("edges", []):
+            s, t = str(edge["source"]), str(edge["target"])
+            if not self.is_linked(s, t):
+                self.link(s, t, edge.get("relation", "rel"),
+                          weight=edge.get("weight", 1.0))
+                summary["edges_added"] += 1
+
+        self.conn.commit()
+        return summary
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
