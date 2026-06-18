@@ -10800,3 +10800,123 @@ class TestConsolidateMemory:
         high_thresh = mg.consolidate_memory(strategy="promote",
                                              divergence_threshold=0.9, dry_run=True)
         assert low_thresh["promoted"] >= high_thresh["promoted"]
+
+
+class TestRetentionScore:
+    """Tests for retention scoring (divergence-aware FiFA)."""
+
+    def test_retention_score_basic(self, mg):
+        """Retention score returns all expected fields."""
+        a = mg.add("test node", "fact")
+        report = mg.retention_score(a.id)
+        assert report is not None
+        assert 0.0 <= report["score"] <= 1.0
+        assert "components" in report
+        for comp in ("importance", "recency", "connectivity", "divergence"):
+            assert comp in report["components"]
+        assert report["recommendation"] in ("keep", "review", "evict")
+
+    def test_retention_score_nonexistent(self, mg):
+        """Nonexistent node returns None."""
+        assert mg.retention_score("nonexistent") is None
+
+    def test_retention_high_weight_node(self, mg):
+        """High-weight node gets higher importance component."""
+        a = mg.add("important", "fact")
+        b = mg.add("unimportant", "fact")
+        mg.update_node(a.id, weight=1.0)
+        mg.update_node(b.id, weight=0.1)
+        score_a = mg.retention_score(a.id)
+        score_b = mg.retention_score(b.id)
+        assert score_a["components"]["importance"] > score_b["components"]["importance"]
+
+    def test_rettlement_connected_node(self, mg):
+        """Well-connected node gets higher connectivity score."""
+        hub = mg.add("hub", "concept")
+        for i in range(5):
+            n = mg.add(f"node_{i}", "concept")
+            mg.link(hub.id, n.id, "rel")
+        isolated = mg.add("isolated", "concept")
+        hub_score = mg.retention_score(hub.id)
+        iso_score = mg.retention_score(isolated.id)
+        assert hub_score["components"]["connectivity"] > iso_score["components"]["connectivity"]
+
+    def test_retention_recommendation_thresholds(self, mg):
+        """Recommendation follows score thresholds."""
+        # A fresh, high-weight, connected node → keep
+        a = mg.add("important fresh node", "concept")
+        mg.update_node(a.id, weight=1.0)
+        b = mg.add("other", "concept")
+        mg.link(a.id, b.id, "rel")
+        report = mg.retention_score(a.id)
+        assert report["recommendation"] == "keep"
+
+    def test_retention_custom_weights(self, mg):
+        """Custom weights affect the final score."""
+        a = mg.add("test", "fact")
+        # All weight on importance
+        report = mg.retention_score(a.id, w_importance=1.0, w_recency=0,
+                                     w_connectivity=0, w_divergence=0)
+        assert report["score"] == pytest.approx(report["components"]["importance"], abs=0.01)
+
+
+class TestMemoryEvict:
+    """Tests for smart eviction."""
+
+    def test_evict_dry_run(self, mg):
+        """Dry run doesn't delete nodes."""
+        a = mg.add("node to check", "fact")
+        result = mg.memory_evict(dry_run=True)
+        assert result["scanned"] >= 1
+        assert mg.get_node(a.id) is not None
+
+    def test_evict_removes_low_score(self, mg):
+        """Eviction removes lowest-score nodes first."""
+        # Create nodes with varying importance
+        for i in range(10):
+            n = mg.add(f"low priority item {i}", "fact")
+        result = mg.memory_evict(budget=3, min_score=0.5, dry_run=False)
+        assert result["evicted"] <= 3
+
+    def test_evict_keeps_high_score(self, mg):
+        """High-score nodes are kept."""
+        important = mg.add("critical important node", "fact")
+        mg.update_node(important.id, weight=1.0)
+        other = mg.add("other", "fact")
+        mg.link(important.id, other.id, "rel")
+        result = mg.memory_evict(budget=5, min_score=0.05, dry_run=False)
+        # Important node should survive
+        assert mg.get_node(important.id) is not None
+
+    def test_evict_empty_graph(self, mg):
+        """Empty graph → scanned=0."""
+        result = mg.memory_evict(dry_run=True)
+        assert result["scanned"] == 0
+        assert result["evicted"] == 0
+
+    def test_evict_budget_limit(self, mg):
+        """Budget limits eviction count."""
+        for i in range(20):
+            mg.add(f"disposable node {i}", "temp")
+        result = mg.memory_evict(budget=5, min_score=0.99, dry_run=False)
+        assert result["evicted"] <= 5
+
+    def test_evict_returns_details(self, mg):
+        """Eviction details include node_id, label, score."""
+        for i in range(5):
+            mg.add(f"temp item {i}", "temp")
+        result = mg.memory_evict(budget=3, min_score=0.99, dry_run=True)
+        for detail in result["details"]:
+            assert "node_id" in detail
+            assert "label" in detail
+            assert "score" in detail
+
+    def test_evict_preserves_ordering(self, mg):
+        """Evicted nodes have lower scores than kept nodes."""
+        for i in range(10):
+            n = mg.add(f"item_{i}", "fact")
+        result = mg.memory_evict(budget=3, min_score=0.3, dry_run=True)
+        if result["evicted"] > 0:
+            max_evicted = max(d["score"] for d in result["details"])
+            # All evicted should have low scores
+            assert max_evicted < 0.3

@@ -8588,6 +8588,115 @@ class MemoryGraph:
             self.conn.commit()
         return result
 
+    # ── Retention Scoring & Smart Eviction ────────────────────────
+
+    def retention_score(self, node_id: str,
+                        w_importance: float = 0.3,
+                        w_recency: float = 0.25,
+                        w_connectivity: float = 0.25,
+                        w_divergence: float = 0.2) -> dict | None:
+        """计算节点保留分数 (0-1), 综合重要性/时效/连接度/分歧度。
+
+        用于智能驱逐决策: 低分节点优先驱逐。
+        分数 = importance*w1 + recency*w2 + connectivity*w3 + divergence*w4
+
+        Returns:
+            {node_id, label, score, components: {importance, recency, connectivity, divergence}, recommendation}
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return None
+
+        # Importance: normalized weight (0-1)
+        importance = min(node.weight, 1.0) if node.weight else 0.0
+
+        # Recency: exponential decay based on age (half-life = 7 days)
+        now = time.time()
+        age_seconds = now - (node.accessed or node.created)
+        recency = math.exp(-age_seconds / (7 * 86400))  # half-life ~7 days
+
+        # Connectivity: degree / max_degree in graph (normalized)
+        degree = len(self.neighbors(node_id))
+        max_degree_row = self.conn.execute(
+            "SELECT COUNT(*) as c FROM edges GROUP BY source ORDER BY c DESC LIMIT 1"
+        ).fetchone()
+        max_degree = max_degree_row["c"] if max_degree_row else 1
+        connectivity = min(degree / max(max_degree, 1), 1.0)
+
+        # Divergence: from semantic_divergence (high divergence = unique = keep)
+        div_report = self.semantic_divergence(node_id)
+        divergence = div_report["divergence"] if div_report else 0.0
+
+        score = (importance * w_importance +
+                 recency * w_recency +
+                 connectivity * w_connectivity +
+                 divergence * w_divergence)
+
+        recommendation = "keep" if score >= 0.4 else ("review" if score >= 0.2 else "evict")
+
+        return {
+            "node_id": node_id,
+            "label": node.label,
+            "score": round(score, 4),
+            "components": {
+                "importance": round(importance, 4),
+                "recency": round(recency, 4),
+                "connectivity": round(connectivity, 4),
+                "divergence": round(divergence, 4),
+            },
+            "recommendation": recommendation,
+        }
+
+    def memory_evict(self, budget: int = 20,
+                     min_score: float = 0.15,
+                     dry_run: bool = False) -> dict:
+        """基于保留分数的智能驱逐 (FiFA + divergence-aware)。
+
+        1. 计算所有节点 retention_score
+        2. 按分数升序排序
+        3. 驱逐分数 < min_score 的节点, 最多 budget 个
+
+        Returns:
+            {scanned, evicted, kept, details}
+        """
+        all_ids = [r["id"] for r in self.conn.execute(
+            "SELECT id FROM nodes"
+        ).fetchall()]
+
+        scores = []
+        for nid in all_ids:
+            report = self.retention_score(nid)
+            if report:
+                scores.append(report)
+
+        scores.sort(key=lambda r: r["score"])
+
+        evicted = 0
+        details = []
+        for report in scores:
+            if evicted >= budget:
+                break
+            if report["score"] >= min_score:
+                break
+            if not dry_run:
+                self.delete_node(report["node_id"])
+            evicted += 1
+            details.append({
+                "node_id": report["node_id"],
+                "label": report["label"][:40],
+                "score": report["score"],
+            })
+
+        if not dry_run:
+            self.conn.commit()
+
+        return {
+            "scanned": len(scores),
+            "evicted": evicted,
+            "kept": len(scores) - evicted,
+            "details": details,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
