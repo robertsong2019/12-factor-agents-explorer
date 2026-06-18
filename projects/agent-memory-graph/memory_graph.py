@@ -8697,6 +8697,112 @@ class MemoryGraph:
             "details": details,
         }
 
+    # ── Cluster Seed Discovery (Consolidation follow-up) ──────────
+
+    def cluster_seeds(self) -> list[dict]:
+        """返回所有标记为 cluster_seed 的节点 (promote 操作的结果)。
+
+        Returns:
+            [{node_id, label, kind, weight, neighbor_count}]
+        """
+        rows = self.conn.execute(
+            "SELECT id, label, kind, weight FROM nodes WHERE tags LIKE '%cluster_seed%'",
+        ).fetchall()
+        results = []
+        for r in rows:
+            nbrs = self.neighbors(r["id"])
+            results.append({
+                "node_id": r["id"],
+                "label": r["label"],
+                "kind": r["kind"],
+                "weight": r["weight"],
+                "neighbor_count": len(nbrs),
+            })
+        return results
+
+    def seed_expansion(self, seed_id: str, max_hops: int = 2) -> dict | None:
+        """从 cluster_seed 向外扩展，识别聚类边界 (BFS)。
+
+        Returns:
+            {seed_id, layers: {hop: [node_ids]}, boundary: [node_ids], size}
+        """
+        node = self.get_node(seed_id)
+        if not node:
+            return None
+
+        layers = self.k_hop_neighbors(seed_id, max_hops)
+        # Flatten all reached nodes
+        all_reached = set()
+        for hop, ids in layers.items():
+            all_reached.update(ids)
+
+        # Boundary = nodes in the outermost non-empty hop
+        boundary = []
+        for hop in range(max_hops, 0, -1):
+            if hop in layers and layers[hop]:
+                boundary = layers[hop]
+                break
+
+        return {
+            "seed_id": seed_id,
+            "seed_label": node.label,
+            "layers": {str(k): v for k, v in layers.items()},
+            "boundary": boundary,
+            "size": len(all_reached) + 1,  # +1 for seed itself
+        }
+
+    def consolidation_report(self) -> dict:
+        """生成完整记忆固化状态报告。
+
+        Combines: divergence stats + cluster seeds + eviction candidates.
+
+        Returns:
+            {total_nodes, high_divergence_count, cluster_seeds,
+             eviction_candidates, avg_retention, consolidation_health}
+        """
+        all_ids = [r["id"] for r in self.conn.execute(
+            "SELECT id FROM nodes"
+        ).fetchall()]
+
+        if not all_ids:
+            return {"total_nodes": 0, "high_divergence_count": 0,
+                    "cluster_seeds": 0, "eviction_candidates": 0,
+                    "avg_retention": 0.0, "consolidation_health": "empty"}
+
+        high_div = 0
+        scores = []
+        for nid in all_ids:
+            div_r = self.semantic_divergence(nid)
+            if div_r and div_r["divergence"] > 0.5:
+                high_div += 1
+            ret_r = self.retention_score(nid)
+            if ret_r:
+                scores.append(ret_r["score"])
+
+        seeds = self.cluster_seeds()
+        evict_candidates = sum(1 for s in scores if s < 0.2)
+        avg_retention = sum(scores) / len(scores) if scores else 0.0
+
+        # Health: good if low high-div ratio + low eviction candidates
+        high_div_ratio = high_div / len(all_ids)
+        evict_ratio = evict_candidates / len(all_ids) if all_ids else 0
+        if high_div_ratio < 0.2 and evict_ratio < 0.1:
+            health = "healthy"
+        elif high_div_ratio < 0.4 and evict_ratio < 0.3:
+            health = "moderate"
+        else:
+            health = "needs_attention"
+
+        return {
+            "total_nodes": len(all_ids),
+            "high_divergence_count": high_div,
+            "high_divergence_ratio": round(high_div_ratio, 4),
+            "cluster_seeds": len(seeds),
+            "eviction_candidates": evict_candidates,
+            "avg_retention": round(avg_retention, 4),
+            "consolidation_health": health,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

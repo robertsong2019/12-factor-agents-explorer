@@ -10920,3 +10920,189 @@ class TestMemoryEvict:
             max_evicted = max(d["score"] for d in result["details"])
             # All evicted should have low scores
             assert max_evicted < 0.3
+
+
+class TestClusterSeeds:
+    """Tests for cluster seed discovery and expansion."""
+
+    def test_cluster_seeds_empty(self, mg):
+        """No seeds in fresh graph."""
+        assert mg.cluster_seeds() == []
+
+    def test_cluster_seeds_after_promote(self, mg):
+        """Promote creates cluster_seed tags."""
+        a = mg.add("quantum blockchain unique", "concept")
+        b = mg.add("cooking recipe italian", "hobby")
+        c = mg.add("music jazz piano", "hobby")
+        d = mg.add("art painting modern", "hobby")
+        mg.link(a.id, b.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        mg.link(a.id, d.id, "rel")
+        mg.consolidate_memory(strategy="auto", divergence_threshold=0.3, dry_run=False)
+        seeds = mg.cluster_seeds()
+        assert len(seeds) >= 1
+
+    def test_cluster_seeds_returns_fields(self, mg):
+        """Seed entries have expected fields."""
+        a = mg.add("very unique content xyz", "concept")
+        mg.tag_nodes("cluster_seed", [a.id])
+        seeds = mg.cluster_seeds()
+        assert len(seeds) == 1
+        for field in ("node_id", "label", "kind", "weight", "neighbor_count"):
+            assert field in seeds[0]
+
+
+class TestSeedExpansion:
+    """Tests for cluster boundary detection."""
+
+    def test_seed_expansion_basic(self, mg):
+        """Expansion returns layers and boundary."""
+        seed = mg.add("seed node", "concept")
+        a = mg.add("level1", "concept")
+        b = mg.add("level1 other", "concept")
+        c = mg.add("level2", "concept")
+        mg.link(seed.id, a.id, "rel")
+        mg.link(seed.id, b.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        result = mg.seed_expansion(seed.id, max_hops=2)
+        assert result is not None
+        assert result["seed_id"] == seed.id
+        assert "layers" in result
+        assert "boundary" in result
+        assert result["size"] >= 3
+
+    def test_seed_expansion_nonexistent(self, mg):
+        """Nonexistent seed returns None."""
+        assert mg.seed_expansion("nonexistent") is None
+
+    def test_seed_expansion_isolated(self, mg):
+        """Isolated seed has no layers."""
+        seed = mg.add("lonely seed", "fact")
+        result = mg.seed_expansion(seed.id)
+        assert result is not None
+        assert result["boundary"] == []
+
+    def test_seed_expansion_max_hops(self, mg):
+        """max_hops limits traversal depth."""
+        nodes = [mg.add(f"node_{i}", "concept") for i in range(5)]
+        for i in range(len(nodes) - 1):
+            mg.link(nodes[i].id, nodes[i+1].id, "rel")
+        result = mg.seed_expansion(nodes[0].id, max_hops=1)
+        assert result is not None
+        # Only hop-1 nodes should be in layers
+        total_reached = sum(len(ids) for hop, ids in result["layers"].items() if int(hop) > 0)
+        assert total_reached <= 1
+
+
+class TestSeedExpansion:
+    """Tests for cluster seed discovery and expansion."""
+
+    def test_cluster_seeds_empty(self, mg):
+        """No seeds in fresh graph."""
+        assert mg.cluster_seeds() == []
+
+    def test_cluster_seeds_after_promote(self, mg):
+        """Promote creates cluster_seed tags."""
+        a = mg.add("quantum blockchain unique", "concept")
+        b = mg.add("cooking recipe italian", "hobby")
+        c = mg.add("music jazz piano", "hobby")
+        d = mg.add("art painting modern", "hobby")
+        mg.link(a.id, b.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        mg.link(a.id, d.id, "rel")
+        mg.consolidate_memory(strategy="auto", divergence_threshold=0.3, dry_run=False)
+        seeds = mg.cluster_seeds()
+        assert len(seeds) >= 1
+
+    def test_cluster_seeds_returns_fields(self, mg):
+        """Seed entries have expected fields."""
+        a = mg.add("very unique content xyz", "concept")
+        mg.tag_nodes("cluster_seed", [a.id])
+        seeds = mg.cluster_seeds()
+        assert len(seeds) == 1
+        for field in ("node_id", "label", "kind", "weight", "neighbor_count"):
+            assert field in seeds[0]
+
+
+class TestSeedExpansion:
+    """Tests for cluster boundary detection."""
+
+    def test_seed_expansion_basic(self, mg):
+        """Expansion returns layers and boundary."""
+        seed = mg.add("seed node", "concept")
+        a = mg.add("level1", "concept")
+        b = mg.add("level1 other", "concept")
+        c = mg.add("level2", "concept")
+        mg.link(seed.id, a.id, "rel")
+        mg.link(seed.id, b.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        result = mg.seed_expansion(seed.id, max_hops=2)
+        assert result is not None
+        assert result["seed_id"] == seed.id
+        assert "layers" in result
+        assert "boundary" in result
+        assert result["size"] >= 3
+
+    def test_seed_expansion_nonexistent(self, mg):
+        """Nonexistent seed returns None."""
+        assert mg.seed_expansion("nonexistent") is None
+
+    def test_seed_expansion_isolated(self, mg):
+        """Isolated seed has no layers."""
+        seed = mg.add("lonely seed", "fact")
+        result = mg.seed_expansion(seed.id)
+        assert result is not None
+        assert result["boundary"] == []
+
+    def test_seed_expansion_max_hops(self, mg):
+        """max_hops limits traversal depth."""
+        nodes = [mg.add(f"node_{i}", "concept") for i in range(5)]
+        for i in range(len(nodes) - 1):
+            mg.link(nodes[i].id, nodes[i+1].id, "rel")
+        result = mg.seed_expansion(nodes[0].id, max_hops=1)
+        assert result is not None
+        total_reached = sum(len(ids) for hop, ids in result["layers"].items() if int(hop) > 0)
+        assert total_reached <= 1
+
+
+class TestConsolidationReport:
+    """Tests for the consolidation status report."""
+
+    def test_report_empty_graph(self, mg):
+        """Empty graph returns healthy empty report."""
+        report = mg.consolidation_report()
+        assert report["total_nodes"] == 0
+        assert report["consolidation_health"] == "empty"
+
+    def test_report_basic_fields(self, mg):
+        """Report contains all expected fields."""
+        a = mg.add("test", "fact")
+        report = mg.consolidation_report()
+        for field in ("total_nodes", "high_divergence_count",
+                      "cluster_seeds", "eviction_candidates",
+                      "avg_retention", "consolidation_health"):
+            assert field in report
+        assert report["total_nodes"] >= 1
+
+    def test_report_health_healthy(self, mg):
+        """Low divergence -> healthy."""
+        a = mg.add("Python programming language", "skill")
+        b = mg.add("Python programming language tool", "skill")
+        mg.link(a.id, b.id, "rel")
+        report = mg.consolidation_report()
+        assert report["consolidation_health"] in ("healthy", "moderate")
+
+    def test_report_high_divergence_detected(self, mg):
+        """High divergence nodes are counted."""
+        a = mg.add("quantum blockchain xyz", "science")
+        b = mg.add("cooking pasta recipe", "hobby")
+        mg.link(a.id, b.id, "rel")
+        report = mg.consolidation_report()
+        assert report["high_divergence_count"] >= 1
+
+    def test_report_avg_retention_range(self, mg):
+        """Average retention is between 0 and 1."""
+        for i in range(5):
+            mg.add(f"item {i}", "fact")
+        report = mg.consolidation_report()
+        assert 0.0 <= report["avg_retention"] <= 1.0
