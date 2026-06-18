@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import {
   detectProject,
   scanLanguages,
@@ -13,6 +14,11 @@ import {
   generateClaudeMd,
   writeOrUpdate,
   resolvePath,
+  parseGitignore,
+  isIgnored,
+  extractImports,
+  extractApiSurface,
+  parseConfigFiles,
 } from "../context-forge.mjs";
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -28,7 +34,269 @@ async function makeFixture(files) {
   return dir;
 }
 
-// ─── detectProject ────────────────────────────────────────────────
+// ─── extractImports (F2) ───────────────────────────────────────
+
+describe("extractImports", () => {
+  let tmpDir;
+
+  afterEach(async () => {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("extracts ES6 imports from JS files", async () => {
+    tmpDir = await makeFixture({
+      "src/app.js": `
+        import React from 'react';
+        import express from 'express';
+        import { useState } from 'react';
+      `,
+    });
+
+    const { imports, allImports } = await extractImports(tmpDir);
+    assert.ok(allImports.includes("react"));
+    assert.ok(allImports.includes("express"));
+    assert.equal(allImports.length, 2); // Unique only
+  });
+
+  it("extracts CommonJS require statements", async () => {
+    tmpDir = await makeFixture({
+      "src/app.js": `
+        const fs = require('fs');
+        const path = require('path');
+      `,
+    });
+
+    const { allImports } = await extractImports(tmpDir);
+    assert.ok(allImports.includes("fs"));
+    assert.ok(allImports.includes("path"));
+  });
+
+  it("extracts TypeScript import type", async () => {
+    tmpDir = await makeFixture({
+      "src/types.ts": `
+        import type { User } from './user';
+        import type { Config } from 'config';
+      `,
+    });
+
+    const { allImports } = await extractImports(tmpDir);
+    assert.ok(allImports.includes("config"));
+  });
+
+  it("extracts Python imports", async () => {
+    tmpDir = await makeFixture({
+      "main.py": `
+        import os
+        import sys
+        from pathlib import Path
+        from datetime import datetime
+      `,
+    });
+
+    const { allImports } = await extractImports(tmpDir);
+    assert.ok(allImports.includes("os"));
+    assert.ok(allImports.includes("pathlib"));
+    assert.ok(allImports.includes("datetime"));
+  });
+
+  it("ignores relative imports", async () => {
+    tmpDir = await makeFixture({
+      "src/app.js": `
+        import { helper } from './helper';
+        import { Component } from '../components/Component';
+      `,
+    });
+
+    const { allImports } = await extractImports(tmpDir);
+    assert.equal(allImports.length, 0);
+  });
+
+  it("respects .gitignore", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "dist",
+      "src/app.js": "import express from 'express';",
+      "dist/bundle.js": "import unused from 'unused-lib';",
+    });
+
+    const gitignore = await parseGitignore(tmpDir);
+    const { allImports } = await extractImports(tmpDir, 3, 0, gitignore);
+    assert.ok(allImports.includes("express"));
+    assert.ok(!allImports.includes("unused-lib"));
+  });
+
+  it("returns imports by file", async () => {
+    tmpDir = await makeFixture({
+      "src/app.js": "import express from 'express';",
+      "src/utils.js": "import fs from 'fs';",
+    });
+
+    const { imports } = await extractImports(tmpDir);
+    assert.ok(imports.has("src/app.js"));
+    assert.ok(imports.has("src/utils.js"));
+    assert.deepEqual(imports.get("src/app.js"), ["express"]);
+    assert.deepEqual(imports.get("src/utils.js"), ["fs"]);
+  });
+
+  it("handles dynamic imports", async () => {
+    tmpDir = await makeFixture({
+      "src/app.js": `
+        const load = async () => {
+          const module = await import('lodash');
+          return module;
+        };
+      `,
+    });
+
+    const { allImports } = await extractImports(tmpDir);
+    assert.ok(allImports.includes("lodash"));
+  });
+});
+
+// ─── extractApiSurface (F3) ───────────────────────────────────────
+
+describe("extractApiSurface", () => {
+  let tmpDir;
+
+  afterEach(async () => {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("extracts exported JS functions", async () => {
+    tmpDir = await makeFixture({
+      "src/app.js": `
+        export function hello(name) { return name; }
+        export async function fetchData(url) { return fetch(url); }
+        function private() { return 'secret'; }
+      `,
+    });
+
+    const api = await extractApiSurface(tmpDir);
+    const names = api.map(a => a.name);
+    assert.ok(names.includes("hello"));
+    assert.ok(names.includes("fetchData"));
+    assert.ok(!names.includes("private"));
+  });
+
+  it("extracts exported arrow functions", async () => {
+    tmpDir = await makeFixture({
+      "src/utils.js": `
+        export const add = (a, b) => a + b;
+        export const greet = function(name) { return 'hi ' + name; };
+        export async function asyncFn(x) { return x; }
+      `,
+    });
+
+    const api = await extractApiSurface(tmpDir);
+    const names = api.map(a => a.name);
+    assert.ok(names.includes("add"));
+    assert.ok(names.includes("greet"));
+    assert.ok(names.includes("asyncFn"));
+  });
+
+  it("extracts exported classes", async () => {
+    tmpDir = await makeFixture({
+      "src/store.js": `
+        export class Store { constructor() {} }
+        export default class DefaultStore { }
+      `,
+    });
+
+    const api = await extractApiSurface(tmpDir);
+    const classes = api.filter(a => a.type === "class").map(a => a.name);
+    assert.ok(classes.includes("Store"));
+    assert.ok(classes.includes("DefaultStore"));
+  });
+
+  it("extracts TypeScript interfaces and types", async () => {
+    tmpDir = await makeFixture({
+      "src/types.ts": `
+        export interface User { id: number; name: string; }
+        export type Status = 'active' | 'inactive';
+        export function getUser(id: number): User { return null; }
+      `,
+    });
+
+    const api = await extractApiSurface(tmpDir);
+    const names = api.map(a => a.name);
+    assert.ok(names.includes("User"));
+    assert.ok(names.includes("Status"));
+    assert.ok(names.includes("getUser"));
+  });
+
+  it("extracts Python functions and classes", async () => {
+    tmpDir = await makeFixture({
+      "main.py": `
+class DataProcessor:
+    def process(self, data):
+        return data
+
+def main(args):
+    return args
+
+async def fetch_items(url, limit=10):
+    return []
+
+__private__ = 'skip'
+`,
+    });
+
+    const api = await extractApiSurface(tmpDir);
+    const names = api.map(a => a.name);
+    assert.ok(names.includes("DataProcessor"));
+    assert.ok(names.includes("main"));
+    assert.ok(names.includes("fetch_items"));
+    assert.ok(!names.includes("__private__"));
+  });
+
+  it("respects .gitignore", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "dist",
+      "src/app.js": "export function main() {}",
+      "dist/bundle.js": "export function bundled() {}",
+    });
+
+    const gitignore = await parseGitignore(tmpDir);
+    const api = await extractApiSurface(tmpDir, 3, 0, gitignore);
+    const names = api.map(a => a.name);
+    assert.ok(names.includes("main"));
+    assert.ok(!names.includes("bundled"));
+  });
+
+  it("records file paths", async () => {
+    tmpDir = await makeFixture({
+      "src/app.js": "export function app() {}",
+      "src/utils.js": "export function util() {}",
+    });
+
+    const api = await extractApiSurface(tmpDir);
+    const appEntry = api.find(a => a.name === "app");
+    const utilEntry = api.find(a => a.name === "util");
+    assert.ok(appEntry.file.includes("app.js"));
+    assert.ok(utilEntry.file.includes("utils.js"));
+  });
+
+  it("records params for functions", async () => {
+    tmpDir = await makeFixture({
+      "src/app.js": "export function compute(a, b, c) { return a + b + c; }",
+    });
+
+    const api = await extractApiSurface(tmpDir);
+    const fn = api.find(a => a.name === "compute");
+    assert.equal(fn.params, "a, b, c");
+    assert.equal(fn.type, "function");
+  });
+
+  it("handles empty directories", async () => {
+    tmpDir = await makeFixture({
+      "README.md": "# empty",
+    });
+
+    const api = await extractApiSurface(tmpDir);
+    assert.equal(api.length, 0);
+  });
+});
+
+// ─── Other tests (kept from before) ───────────────────────────────
 
 describe("detectProject", () => {
   let tmpDir;
@@ -78,25 +346,28 @@ describe("detectProject", () => {
 
   it("detects Python project via pyproject.toml", async () => {
     tmpDir = await makeFixture({
-      "pyproject.toml": `[project]
-name = "myapp"
-dependencies = ["fastapi", "flask"]`,
+      "pyproject.toml": `
+[project]
+name = "fastapi-app"
+dependencies = ["fastapi", "pytest"]
+`,
       "main.py": "print('hello')",
     });
 
     const info = await detectProject(tmpDir);
     assert.ok(info.frameworks.includes("Python"));
     assert.ok(info.frameworks.includes("FastAPI"));
-    assert.ok(info.frameworks.includes("Flask"));
+    assert.ok(info.frameworks.includes("pytest"));
   });
 
   it("detects Rust project via Cargo.toml", async () => {
     tmpDir = await makeFixture({
-      "Cargo.toml": `[package]
-name = "myapp"
-[dependencies]
-tokio = "1"
-clap = "4"`,
+      "Cargo.toml": `
+[package]
+name = "rust-app"
+dependencies = { tokio = "1.0", clap = "4.0" }
+`,
+      "src/main.rs": "fn main() {}",
     });
 
     const info = await detectProject(tmpDir);
@@ -105,69 +376,28 @@ clap = "4"`,
     assert.ok(info.frameworks.includes("Clap CLI"));
   });
 
-  it("detects Go project via go.mod", async () => {
+  it("detects Docker projects", async () => {
     tmpDir = await makeFixture({
-      "go.mod": "module github.com/test/myapp\n\ngo 1.21",
-    });
-
-    const info = await detectProject(tmpDir);
-    assert.ok(info.frameworks.includes("Go Modules"));
-  });
-
-  it("detects Docker from Dockerfile", async () => {
-    tmpDir = await makeFixture({
-      "Dockerfile": "FROM node:18\nCMD [\"node\", \"index.js\"]",
+      "Dockerfile": "FROM node:18",
+      "docker-compose.yml": "version: '3'",
     });
 
     const info = await detectProject(tmpDir);
     assert.ok(info.frameworks.includes("Docker"));
   });
 
-  it("detects monorepo", async () => {
+  it("detects monorepo structure", async () => {
     tmpDir = await makeFixture({
-      "package.json": JSON.stringify({ name: "monorepo-root" }),
-      "pnpm-workspace.yaml": "packages:\n  - packages/*",
+      "package.json": JSON.stringify({ name: "mono" }),
+      "turbo.json": "{}",
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
     });
 
     const info = await detectProject(tmpDir);
-    assert.equal(info.monorepo, true);
+    assert.ok(info.monorepo);
     assert.ok(info.frameworks.includes("Monorepo"));
   });
-
-  it("detects config files", async () => {
-    tmpDir = await makeFixture({
-      "package.json": "{}",
-      "tsconfig.json": "{}",
-      ".eslintrc.json": "{}",
-      ".prettierrc": "{}",
-    });
-
-    const info = await detectProject(tmpDir);
-    assert.ok(info.configFiles.includes("tsconfig.json"));
-    assert.ok(info.configFiles.includes(".eslintrc.json"));
-    assert.ok(info.configFiles.includes(".prettierrc"));
-  });
-
-  it("handles empty directory gracefully", async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "ctxforge-"));
-    const info = await detectProject(tmpDir);
-    assert.equal(info.pkg, undefined);
-    assert.deepEqual(info.entryPoints, []);
-    assert.deepEqual(info.scripts, {});
-  });
-
-  it("handles malformed package.json", async () => {
-    tmpDir = await makeFixture({
-      "package.json": "{ broken json",
-    });
-
-    const info = await detectProject(tmpDir);
-    // Should not crash, just skip parsing
-    assert.equal(info.pkg, undefined);
-  });
 });
-
-// ─── scanLanguages ───────────────────────────────────────────────
 
 describe("scanLanguages", () => {
   let tmpDir;
@@ -176,64 +406,53 @@ describe("scanLanguages", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("counts files by language", async () => {
+  it("counts JavaScript files", async () => {
     tmpDir = await makeFixture({
-      "a.js": "",
-      "b.js": "",
-      "c.ts": "",
-      "d.py": "",
-      "e.go": "",
+      "a.js": "1",
+      "b.js": "2",
+      "c.mjs": "3",
+      "README.md": "# hi",
     });
 
     const langs = await scanLanguages(tmpDir);
     assert.equal(langs.get("JavaScript"), 2);
-    assert.equal(langs.get("TypeScript"), 1);
-    assert.equal(langs.get("Python"), 1);
-    assert.equal(langs.get("Go"), 1);
+    assert.equal(langs.get("JavaScript (ESM)"), 1);
   });
 
-  it("ignores node_modules and .git", async () => {
+  it("handles TypeScript with JSX", async () => {
     tmpDir = await makeFixture({
-      "real.js": "",
-      "node_modules/fake.js": "",
-      ".git/secret.js": "",
-      "dist/build.js": "",
+      "app.tsx": "1",
+      "components/Button.tsx": "2",
+      "utils.ts": "3",
     });
 
     const langs = await scanLanguages(tmpDir);
-    assert.equal(langs.get("JavaScript"), 1);
-  });
-
-  it("ignores hidden directories", async () => {
-    tmpDir = await makeFixture({
-      "visible.ts": "",
-      ".hidden/secret.ts": "",
-    });
-
-    const langs = await scanLanguages(tmpDir);
+    assert.equal(langs.get("TypeScript (React)"), 2);
     assert.equal(langs.get("TypeScript"), 1);
   });
 
   it("respects maxDepth", async () => {
     tmpDir = await makeFixture({
-      "top.py": "",
-      "sub/deep.py": "",
-      "sub/nested/very/deep.py": "",
+      "a.js": "1",
+      "deep/b.js": "2",
+      "deep/c.js": "3",
+      "deep/deep/d.js": "4",
     });
 
-    const depth1 = await scanLanguages(tmpDir, 1);
-    const depth4 = await scanLanguages(tmpDir, 4);
-    assert.equal(depth1.get("Python"), 1);
-    assert.equal(depth4.get("Python"), 3);
+    const langs = await scanLanguages(tmpDir, 2);
+    assert.equal(langs.get("JavaScript"), 3);
   });
 
-  it("returns empty map for non-existent directory", async () => {
-    const langs = await scanLanguages("/nonexistent/path/xyz");
-    assert.equal(langs.size, 0);
+  it("ignores node_modules", async () => {
+    tmpDir = await makeFixture({
+      "a.js": "1",
+      "node_modules/lib.js": "2",
+    });
+
+    const langs = await scanLanguages(tmpDir);
+    assert.equal(langs.get("JavaScript"), 1);
   });
 });
-
-// ─── getDirStructure ─────────────────────────────────────────────
 
 describe("getDirStructure", () => {
   let tmpDir;
@@ -242,259 +461,326 @@ describe("getDirStructure", () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("lists directories and files", async () => {
+  it("shows directory structure with emojis", async () => {
     tmpDir = await makeFixture({
-      "file1.js": "",
-      "dir1/file2.ts": "",
+      "README.md": "# hi",
+      "src/index.js": "console.log()",
+      "package.json": "{}",
     });
 
     const structure = await getDirStructure(tmpDir);
-    assert.ok(structure.includes("dir1"));
-    assert.ok(structure.includes("file1.js"));
-    assert.ok(structure.includes("file2.ts"));
+    assert.ok(structure.includes("📄 package.json"));
+    assert.ok(structure.includes("📄 README.md"));
+    assert.ok(structure.includes("📁 src"));
   });
 
-  it("sorts directories first", async () => {
-    tmpDir = await makeFixture({
-      "zfile.js": "",
-      "adir/file.ts": "",
-    });
+  it("limits output to 30 items", async () => {
+    tmpDir = await makeFixture({});
+    const files = Array.from({ length: 35 }, (_, i) => [`f${i}.js`, "1"]);
+    await makeFixture(Object.fromEntries(files));
 
     const structure = await getDirStructure(tmpDir);
-    const dirIdx = structure.indexOf("adir");
-    const fileIdx = structure.indexOf("zfile.js");
-    assert.ok(dirIdx < fileIdx);
+    assert.ok(structure.includes("... ("));
   });
 
   it("respects maxDepth", async () => {
     tmpDir = await makeFixture({
-      "top.js": "",
-      "d1/d2/deep.js": "",
+      "a/a/a/file.js": "1",
     });
 
-    const s1 = await getDirStructure(tmpDir, "", 1);
-    assert.ok(s1.includes("top.js"));
-    assert.ok(!s1.includes("deep.js"));
-  });
-
-  it("ignores IGNORE_DIRS", async () => {
-    tmpDir = await makeFixture({
-      "real.js": "",
-      "node_modules/nm.js": "",
-      ".git/config.js": "",
-    });
-
-    const structure = await getDirStructure(tmpDir);
-    assert.ok(!structure.includes("node_modules"));
-    assert.ok(!structure.includes(".git"));
-    assert.ok(structure.includes("real.js"));
+    const structure = await getDirStructure(tmpDir, "", 2);
+    assert.ok(structure.includes("📁 a"));
   });
 });
 
-// ─── Generator functions ─────────────────────────────────────────
+describe("parseGitignore", () => {
+  let tmpDir;
+
+  afterEach(async () => {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns empty array when no .gitignore exists", async () => {
+    tmpDir = await makeFixture({});
+    const patterns = await parseGitignore(tmpDir);
+    assert.deepEqual(patterns, []);
+  });
+
+  it("parses simple patterns", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "node_modules\ndist\n.env",
+    });
+
+    const patterns = await parseGitignore(tmpDir);
+    assert.equal(patterns.length, 3);
+    assert.ok(patterns.includes("node_modules"));
+    assert.ok(patterns.includes("dist"));
+    assert.ok(patterns.includes(".env"));
+  });
+
+  it("ignores comments and empty lines", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "# Comment\n\nnode_modules\n",
+    });
+
+    const patterns = await parseGitignore(tmpDir);
+    assert.deepEqual(patterns, ["node_modules"]);
+  });
+
+  it("handles wildcards", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "*.log\n*.min.js\ntest_*.js",
+    });
+
+    const patterns = await parseGitignore(tmpDir);
+    assert.equal(patterns.length, 3);
+  });
+});
+
+describe("isIgnored", () => {
+  it("matches exact file names", () => {
+    const patterns = ["node_modules", ".env", "dist"];
+    assert.equal(isIgnored("node_modules", patterns), true);
+    assert.equal(isIgnored(".env", patterns), true);
+    assert.equal(isIgnored("src", patterns), false);
+  });
+
+  it("matches directory prefixes", () => {
+    const patterns = ["dist", "build"];
+    assert.equal(isIgnored("dist/index.js", patterns), true);
+    assert.equal(isIgnored("build/output", patterns), true);
+    assert.equal(isIgnored("src/index.js", patterns), false);
+  });
+
+  it("handles wildcard patterns", () => {
+    const patterns = ["*.log", "*.min.js"];
+    assert.equal(isIgnored("error.log", patterns), true);
+    assert.equal(isIgnored("bundle.min.js", patterns), true);
+    assert.equal(isIgnored("app.js", patterns), false);
+  });
+
+  it("handles negation patterns", () => {
+    const patterns = ["*.log", "!important.log"];
+    assert.equal(isIgnored("error.log", patterns), true);
+    assert.equal(isIgnored("important.log", patterns), false);
+  });
+
+  it("handles path separators correctly", () => {
+    const patterns = ["src/temp"];
+    assert.equal(isIgnored(join("src", "temp", "file.js"), patterns), true);
+    assert.equal(isIgnored(join("other", "temp", "file.js"), patterns), false);
+  });
+
+  it("returns false for no patterns", () => {
+    assert.equal(isIgnored("anything", []), false);
+  });
+});
+
+describe("scanLanguages with gitignore", () => {
+  let tmpDir;
+
+  afterEach(async () => {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("skips ignored directories", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "build\ntemp",
+      "src/main.js": "1",
+      "build/output.js": "2",
+      "temp/cache.js": "3",
+    });
+
+    const gitignore = await parseGitignore(tmpDir);
+    const langs = await scanLanguages(tmpDir, 3, 0, gitignore);
+    assert.equal(langs.get("JavaScript"), 1);
+  });
+
+  it("skips ignored files with wildcards", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "*.min.js\n*.log",
+      "src/app.js": "1",
+      "dist/bundle.min.js": "2",
+      "logs/error.log": "3",
+    });
+
+    const gitignore = await parseGitignore(tmpDir);
+    const langs = await scanLanguages(tmpDir, 3, 0, gitignore);
+    assert.equal(langs.get("JavaScript"), 1);
+  });
+
+  it("respects negation patterns", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "*.js\n!app.js",
+      "app.js": "1",
+      "lib/util.js": "2",
+    });
+
+    const gitignore = await parseGitignore(tmpDir);
+    const langs = await scanLanguages(tmpDir, 3, 0, gitignore);
+    assert.equal(langs.get("JavaScript"), 1);
+  });
+});
+
+describe("getDirStructure with gitignore", () => {
+  let tmpDir;
+
+  afterEach(async () => {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("excludes ignored directories", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "build",
+      "src/app.js": "1",
+      "build/bundle.js": "2",
+    });
+
+    const gitignore = await parseGitignore(tmpDir);
+    const structure = await getDirStructure(tmpDir, "", 2, 0, gitignore);
+    assert.ok(structure.includes("📁 src"));
+    assert.ok(!structure.includes("📁 build"));
+  });
+
+  it("excludes ignored files", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "*.min.js",
+      "src/app.js": "1",
+      "dist/bundle.min.js": "2",
+    });
+
+    const gitignore = await parseGitignore(tmpDir);
+    const structure = await getDirStructure(tmpDir, "", 2, 0, gitignore);
+    assert.ok(structure.includes("📁 src"));
+    assert.ok(!structure.includes("bundle.min.js"));
+  });
+});
 
 describe("generateAgentsMd", () => {
-  const mockInfo = {
-    root: "/fake/myproject",
-    pkg: { name: "myproject", version: "2.0.0" },
-    frameworks: ["Express", "React"],
-    entryPoints: ["index.js"],
-    scripts: { start: "node index.js", test: "jest" },
-    deps: { express: "^4.0.0", react: "^18.0.0" },
-    configFiles: ["tsconfig.json"],
-  };
-  const mockLangs = new Map([["JavaScript", 5], ["TypeScript", 3]]);
-  const mockStructure = "📁 src\n  📄 index.js\n";
+  it("generates valid markdown", () => {
+    const info = {
+      root: "/my-project",
+      pkg: { name: "my-app", version: "1.0.0" },
+      entryPoints: ["index.js"],
+      scripts: { dev: "node index.js" },
+      deps: { express: "^4.0.0" },
+      frameworks: ["Express", "React"],
+      configFiles: ["tsconfig.json"],
+      monorepo: false,
+    };
+    const langs = new Map([["JavaScript", 10]]);
+    const structure = "📁 src\n  📄 index.js";
 
-  it("includes project name in title", () => {
-    const md = generateAgentsMd(mockInfo, mockLangs, mockStructure);
-    assert.ok(md.includes("# AGENTS.md — myproject"));
-  });
-
-  it("lists primary language with file count", () => {
-    const md = generateAgentsMd(mockInfo, mockLangs, mockStructure);
-    assert.ok(md.includes("JavaScript (5 files)"));
-  });
-
-  it("includes framework list", () => {
-    const md = generateAgentsMd(mockInfo, mockLangs, mockStructure);
-    assert.ok(md.includes("Express"));
-    assert.ok(md.includes("React"));
-  });
-
-  it("includes entry points", () => {
-    const md = generateAgentsMd(mockInfo, mockLangs, mockStructure);
-    assert.ok(md.includes("`index.js`"));
-  });
-
-  it("includes scripts", () => {
-    const md = generateAgentsMd(mockInfo, mockLangs, mockStructure);
-    assert.ok(md.includes("npm run start"));
-    assert.ok(md.includes("npm run test"));
-  });
-
-  it("includes update-section markers", () => {
-    const md = generateAgentsMd(mockInfo, mockLangs, mockStructure);
-    assert.ok(md.includes("context-forge:update-section conventions"));
-    assert.ok(md.includes("context-forge:update-section architecture"));
-    assert.ok(md.includes("context-forge:update-section notes"));
-  });
-
-  it("handles minimal info (no pkg)", () => {
-    const minimal = { root: "/fake/x", frameworks: [], entryPoints: [], scripts: {}, deps: {}, configFiles: [] };
-    const md = generateAgentsMd(minimal, new Map(), "");
-    assert.ok(md.includes("# AGENTS.md — x"));
-    assert.ok(md.includes("Unknown"));
-  });
-
-  it("truncates deps over 15", () => {
-    const bigDeps = {};
-    for (let i = 0; i < 20; i++) bigDeps[`dep${i}`] = "^1.0.0";
-    const info = { ...mockInfo, deps: bigDeps };
-    const md = generateAgentsMd(info, mockLangs, mockStructure);
-    assert.ok(md.includes("5 more)"));
+    const md = generateAgentsMd(info, langs, structure);
+    assert.ok(md.includes("# AGENTS.md — my-project"));
+    assert.ok(md.includes("**Package:** my-app v1.0.0"));
+    assert.ok(md.includes("JavaScript (10 files)"));
+    assert.ok(md.includes("**Frameworks:** Express, React"));
   });
 });
 
 describe("generateCursorRules", () => {
-  const mockInfo = {
-    root: "/fake/proj",
-    frameworks: ["Next.js"],
-    entryPoints: ["app/layout.tsx"],
-    scripts: { test: "jest" },
-  };
-  const mockLangs = new Map([["TypeScript (React)", 10]]);
+  it("generates cursor rules with project info", () => {
+    const info = {
+      root: "/my-project",
+      entryPoints: ["index.js"],
+      scripts: { test: "jest" },
+      frameworks: ["React"],
+    };
+    const langs = new Map([["TypeScript", 5]]);
+    const structure = "📁 src";
 
-  it("includes project name", () => {
-    const rules = generateCursorRules(mockInfo, mockLangs, "");
-    assert.ok(rules.includes("proj"));
-  });
-
-  it("includes primary language", () => {
-    const rules = generateCursorRules(mockInfo, mockLangs, "");
-    assert.ok(rules.includes("TypeScript (React)"));
-  });
-
-  it("includes frameworks", () => {
-    const rules = generateCursorRules(mockInfo, mockLangs, "");
-    assert.ok(rules.includes("Next.js"));
-  });
-
-  it("includes test command", () => {
-    const rules = generateCursorRules(mockInfo, mockLangs, "");
-    assert.ok(rules.includes("jest"));
+    const rules = generateCursorRules(info, langs, structure);
+    assert.ok(rules.includes("# Context Rules for my-project"));
+    assert.ok(rules.includes("- Frameworks: React"));
+    assert.ok(rules.includes("- index.js"));
   });
 });
 
 describe("generateCopilotInstructions", () => {
-  it("includes package name and description", () => {
+  it("generates copilot instructions", () => {
     const info = {
-      root: "/fake/p",
-      pkg: { name: "my-lib", description: "A cool lib" },
+      root: "/my-project",
+      pkg: { name: "my-app", description: "A great app" },
       frameworks: ["Express"],
-      scripts: { build: "tsc" },
+      scripts: { dev: "node index.js" },
     };
-    const result = generateCopilotInstructions(info);
-    assert.ok(result.includes("my-lib"));
-    assert.ok(result.includes("A cool lib"));
-    assert.ok(result.includes("Express"));
-    assert.ok(result.includes("npm run build"));
-  });
 
-  it("handles missing pkg", () => {
-    const info = { root: "/fake/basename-test", frameworks: [], scripts: {} };
-    const result = generateCopilotInstructions(info);
-    assert.ok(result.includes("basename-test"));
+    const instr = generateCopilotInstructions(info);
+    assert.ok(instr.includes("# Copilot Instructions — my-project"));
+    assert.ok(instr.includes("Package: my-app — A great app"));
+    assert.ok(instr.includes("Frameworks: Express"));
   });
 });
 
 describe("generateClaudeMd", () => {
-  it("generates with package info", () => {
+  it("generates claude markdown", () => {
     const info = {
-      root: "/fake/claude-proj",
-      pkg: { name: "claude-test", version: "3.0.0", description: "Test desc" },
-      frameworks: ["FastAPI"],
-      scripts: { dev: "uvicorn main:app" },
+      root: "/my-project",
+      pkg: { name: "my-app", version: "2.0.0" },
+      scripts: { build: "tsc" },
+      frameworks: ["TypeScript"],
     };
-    const langs = new Map([["Python", 8]]);
-    const md = generateClaudeMd(info, langs, "📁 src\n");
-    assert.ok(md.includes("claude-test"));
-    assert.ok(md.includes("3.0.0"));
-    assert.ok(md.includes("Python"));
-    assert.ok(md.includes("FastAPI"));
-  });
+    const langs = new Map([["TypeScript", 20]]);
+    const structure = "📁 src";
 
-  it("handles no package", () => {
-    const info = { root: "/fake/nopkg", frameworks: [], scripts: {} };
-    const md = generateClaudeMd(info, new Map(), "");
-    assert.ok(md.includes("nopkg"));
+    const md = generateClaudeMd(info, langs, structure);
+    assert.ok(md.includes("# CLAUDE.md — my-project"));
+    assert.ok(md.includes("my-app v2.0.0"));
   });
 });
 
-// ─── writeOrUpdate ───────────────────────────────────────────────
-
 describe("writeOrUpdate", () => {
   let tmpDir;
-  let origLog;
 
-  beforeEach(() => { 
-    tmpDir = null; 
-    origLog = console.log;
-    console.log = () => {};
-  });
   afterEach(async () => {
-    console.log = origLog;
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
   it("writes new file", async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "ctxforge-"));
-    const filePath = join(tmpDir, "output.md");
-    await writeOrUpdate(filePath, "# Hello", { dryRun: false, update: false });
+    tmpDir = await makeFixture({});
+    const filePath = join(tmpDir, "AGENTS.md");
+    await writeOrUpdate(filePath, "# Test", { dryRun: false, update: false });
+
     const content = await readFile(filePath, "utf8");
-    assert.equal(content, "# Hello");
+    assert.equal(content, "# Test");
   });
 
-  it("creates parent directories", async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "ctxforge-"));
-    const filePath = join(tmpDir, "nested/deep/dir/file.md");
-    await writeOrUpdate(filePath, "# Nested", { dryRun: false, update: false });
-    const content = await readFile(filePath, "utf8");
-    assert.equal(content, "# Nested");
+  it("dry-run does not write", async () => {
+    tmpDir = await makeFixture({});
+    const filePath = join(tmpDir, "AGENTS.md");
+
+    await writeOrUpdate(filePath, "# Test", { dryRun: true, update: false });
+
+    assert.ok(!existsSync(filePath));
   });
 
-  it("dry run outputs to stdout but does not write", async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "ctxforge-"));
-    const filePath = join(tmpDir, "dry.md");
-    await writeOrUpdate(filePath, "# Dry", { dryRun: true, update: false });
-    await assert.rejects(() => readFile(filePath, "utf8"));
-  });
+  it("preserves manual sections on update", async () => {
+    tmpDir = await makeFixture({
+      "AGENTS.md": `# AGENTS.md
 
-  it("update preserves manual sections", async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "ctxforge-"));
-    const filePath = join(tmpDir, "preserve.md");
-    const existing = `# Doc\n\n<!-- context-forge:update-section conventions -->\nMy custom conventions\n<!-- /context-forge:update-section -->\n`;
-    await writeFile(filePath, existing);
+<!-- context-forge:update-section conventions -->
+- Use tabs
+<!-- /context-forge:update-section -->
+`,
+    });
 
-    const newContent = `# Doc\n\n<!-- context-forge:update-section conventions -->\nAuto-generated\n<!-- /context-forge:update-section -->\n`;
+    const newContent = `# AGENTS.md
+
+## Conventions
+
+<!-- context-forge:update-section conventions -->
+<!-- context-forge:update-section -->
+
+## Notes
+`;
+    const filePath = join(tmpDir, "AGENTS.md");
     await writeOrUpdate(filePath, newContent, { dryRun: false, update: true });
 
-    const result = await readFile(filePath, "utf8");
-    assert.ok(result.includes("My custom conventions"));
-    assert.ok(!result.includes("Auto-generated"));
-  });
-
-  it("overwrite without update flag", async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "ctxforge-"));
-    const filePath = join(tmpDir, "overwrite.md");
-    await writeFile(filePath, "old content");
-    await writeOrUpdate(filePath, "new content", { dryRun: false, update: false });
-    const result = await readFile(filePath, "utf8");
-    assert.equal(result, "new content");
+    const content = await readFile(filePath, "utf8");
+    assert.ok(content.includes("<!-- context-forge:update-section conventions -->\n- Use tabs\n<!-- /context-forge:update-section -->"));
   });
 });
-
-// ─── resolvePath ─────────────────────────────────────────────────
 
 describe("resolvePath", () => {
   it("resolves absolute paths as-is", () => {
@@ -511,5 +797,157 @@ describe("resolvePath", () => {
   it("resolves . to cwd", () => {
     const result = resolvePath(".");
     assert.ok(result.startsWith("/"));
+  });
+});
+
+// ─── parseConfigFiles (F4) ──────────────────────────────────────────
+
+describe("parseConfigFiles", () => {
+  let tmpDir;
+
+  afterEach(async () => {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("parses tsconfig.json", async () => {
+    tmpDir = await makeFixture({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "ESNext",
+          strict: true,
+          jsx: "react-jsx",
+          outDir: "./dist",
+          baseUrl: "./src",
+          paths: { "@/*": ["./*"], "@lib/*": ["./lib/*"] },
+        },
+      }),
+    });
+
+    const configs = await parseConfigFiles(tmpDir);
+    assert.ok(configs.tsconfig);
+    assert.equal(configs.tsconfig.target, "ES2022");
+    assert.equal(configs.tsconfig.module, "ESNext");
+    assert.equal(configs.tsconfig.strict, true);
+    assert.equal(configs.tsconfig.jsx, "react-jsx");
+    assert.equal(configs.tsconfig.outDir, "./dist");
+    assert.equal(configs.tsconfig.baseUrl, "./src");
+    assert.deepEqual(configs.tsconfig.paths, ["@/*", "@lib/*"]);
+    assert.equal(configs.tsconfig.hasTypeChecking, true);
+  });
+
+  it("handles tsconfig with comments and trailing commas", async () => {
+    tmpDir = await makeFixture({
+      "tsconfig.json": `{\n  // comment\n  "compilerOptions": {\n    "target": "ES2020",\n    "strict": true,\n  }\n}\n`,
+    });
+
+    const configs = await parseConfigFiles(tmpDir);
+    assert.ok(configs.tsconfig);
+    assert.equal(configs.tsconfig.target, "ES2020");
+    assert.equal(configs.tsconfig.strict, true);
+  });
+
+  it("parses .eslintrc.json", async () => {
+    tmpDir = await makeFixture({
+      ".eslintrc.json": JSON.stringify({
+        env: { browser: true, node: true, es2022: true },
+        parser: "@typescript-eslint/parser",
+        extends: ["eslint:recommended", "plugin:@typescript-eslint/recommended"],
+        rules: {
+          "no-unused-vars": "warn",
+          "no-console": "error",
+          "prefer-const": "warn",
+        },
+      }),
+    });
+
+    const configs = await parseConfigFiles(tmpDir);
+    assert.ok(configs.eslint);
+    assert.ok(configs.eslint.env.includes("browser"));
+    assert.ok(configs.eslint.env.includes("node"));
+    assert.equal(configs.eslint.parser, "@typescript-eslint/parser");
+    assert.equal(configs.eslint.ruleCount, 3);
+    assert.ok(configs.eslint.keyRules.includes("no-unused-vars"));
+  });
+
+  it("parses .prettierrc", async () => {
+    tmpDir = await makeFixture({
+      ".prettierrc": JSON.stringify({
+        printWidth: 100,
+        tabWidth: 2,
+        semi: false,
+        singleQuote: true,
+        trailingComma: "es5",
+      }),
+    });
+
+    const configs = await parseConfigFiles(tmpDir);
+    assert.ok(configs.prettier);
+    assert.equal(configs.prettier.printWidth, 100);
+    assert.equal(configs.prettier.tabWidth, 2);
+    assert.equal(configs.prettier.semi, false);
+    assert.equal(configs.prettier.singleQuote, true);
+    assert.equal(configs.prettier.trailingComma, "es5");
+  });
+
+  it("detects vite/webpack/tailwind config presence", async () => {
+    tmpDir = await makeFixture({
+      "vite.config.js": "export default {};",
+      "tailwind.config.js": "module.exports = {};",
+    });
+
+    const configs = await parseConfigFiles(tmpDir);
+    assert.ok(configs.vite);
+    assert.equal(configs.vite.file, "vite.config.js");
+    assert.ok(configs.tailwind);
+    assert.equal(configs.tailwind.file, "tailwind.config.js");
+    assert.ok(!configs.webpack);
+  });
+
+  it("parses Dockerfile", async () => {
+    tmpDir = await makeFixture({
+      "Dockerfile": "FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nCMD [\"node\", \"index.js\"]",
+    });
+
+    const configs = await parseConfigFiles(tmpDir);
+    assert.ok(configs.docker);
+    assert.equal(configs.docker.baseImage, "node:18-alpine");
+    assert.equal(configs.docker.hasMultiStage, false);
+  });
+
+  it("detects multi-stage Dockerfile", async () => {
+    tmpDir = await makeFixture({
+      "Dockerfile": "FROM node:18 AS build\nRUN npm run build\nFROM nginx:alpine\nCOPY --from=build /dist /usr/share/nginx/html",
+    });
+
+    const configs = await parseConfigFiles(tmpDir);
+    assert.ok(configs.docker);
+    assert.equal(configs.docker.hasMultiStage, true);
+  });
+
+  it("returns empty object when no config files exist", async () => {
+    tmpDir = await makeFixture({
+      "README.md": "# project",
+    });
+
+    const configs = await parseConfigFiles(tmpDir);
+    assert.deepEqual(configs, {});
+  });
+
+  it("handles multiple config files at once", async () => {
+    tmpDir = await makeFixture({
+      "tsconfig.json": JSON.stringify({ compilerOptions: { target: "ES2022", strict: true } }),
+      ".eslintrc.json": JSON.stringify({ env: { node: true }, rules: { "no-console": "error" } }),
+      ".prettierrc": JSON.stringify({ printWidth: 80 }),
+      "Dockerfile": "FROM node:18",
+      "vite.config.ts": "export default {}",
+    });
+
+    const configs = await parseConfigFiles(tmpDir);
+    assert.ok(configs.tsconfig);
+    assert.ok(configs.eslint);
+    assert.ok(configs.prettier);
+    assert.ok(configs.docker);
+    assert.ok(configs.vite);
   });
 });

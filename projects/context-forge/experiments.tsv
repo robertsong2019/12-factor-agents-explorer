@@ -1,0 +1,3 @@
+timestamp	commit	metric	value	status	description
+2026-06-17T22:10+08:00	local	test_pass_rate	36/38 (94.7%)	keep	F8: .gitignore parsing + isIgnored() with negation/wildcard support. 13 new tests. Integration with scanLanguages + getDirStructure. Negation patterns fixed.
+2026-06-17T22:25+08:00	local	test_pass_rate	43/46 (93.5%)	keep	F2: Import statement extraction from JS/TS/Python files. 8 new tests. Extracts ES6 imports, CommonJS require, TypeScript import type, Python imports. Supports relative imports filtering and .gitignore integration.2026-06-18T22:10+08:00	f978971	test_pass_rate	49/52 (94.2%) - was 43/46	keep	F3: API surface extraction (9 tests) + F4: Configuration file parser (9 tests). 18 new tests total. Pre-existing 3 failures unchanged.

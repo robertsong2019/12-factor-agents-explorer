@@ -13,8 +13,373 @@
  */
 
 import { readdir, readFile, writeFile, stat, mkdir } from "node:fs/promises";
-import { join, basename, extname, relative } from "node:path";
-import { existsSync } from "node:fs";
+import { join, basename, extname, relative, sep } from "node:path";
+import { existsSync as fsExistsSync } from "node:fs";
+
+export const existsSync = fsExistsSync;
+
+// ─── Import Statement Extraction ───────────────────────────────────────
+
+const IMPORT_PATTERNS = {
+  javascript: [
+    // import ... from '...'
+    /import\s+(?:(?:\{[^}]*\})|(?:[^\s]+)|(?:\*\s+as\s+[^\s]+))\s+from\s+['"]([^'"]+)['"]/g,
+    // import('...')
+    /import\(['"]([^'"]+)['"]\)/g,
+    // require('...')
+    /require\(['"]([^'"]+)['"]\)/g,
+  ],
+  typescript: [
+    // All JS patterns plus TypeScript specifics
+    /import\s+(?:(?:\{[^}]*\})|(?:[^\s]+)|(?:\*\s+as\s+[^\s]+))\s+from\s+['"]([^'"]+)['"]/g,
+    /import\(['"]([^'"]+)['"]\)/g,
+    /require\(['"]([^'"]+)['"]\)/g,
+    // TypeScript import type
+    /import\s+type\s+(?:(?:\{[^}]*\})|(?:[^\s]+))\s+from\s+['"]([^'"]+)['"]/g,
+  ],
+  python: [
+    // import ...
+    /^import\s+([\w.]+)/gm,
+    // from ... import ...
+    /^from\s+([\w.]+)\s+import/gm,
+  ],
+};
+
+export async function extractImports(root, maxDepth = 3, depth = 0, gitignore = []) {
+  const imports = new Map(); // { filepath: [imports] }
+  const allImports = new Set(); // unique import paths
+
+  if (depth >= maxDepth) return { imports, allImports: [...allImports] };
+
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    for (const e of entries) {
+      const relativePath = depth === 0 ? e.name : relative(root, join(root, e.name));
+      if (isIgnored(relativePath, gitignore)) continue;
+
+      if (e.isDirectory() && !IGNORE_DIRS.has(e.name) && !e.name.startsWith(".")) {
+        const result = await extractImports(join(root, e.name), maxDepth, depth + 1, gitignore);
+        for (const [k, v] of result.imports) imports.set(k, v);
+        result.allImports.forEach(i => allImports.add(i));
+      } else if (e.isFile()) {
+        const ext = extname(e.name);
+        const lang = LANGUAGE_MAP[ext];
+        if (lang) {
+          const content = await readFile(join(root, e.name), "utf8");
+          const fileImports = [];
+
+          if (lang.includes("JavaScript") || lang.includes("TypeScript")) {
+            const patterns = lang.includes("TypeScript") ? IMPORT_PATTERNS.typescript : IMPORT_PATTERNS.javascript;
+            for (const pattern of patterns) {
+              let match;
+              while ((match = pattern.exec(content)) !== null) {
+                const importPath = match[1] || match[2];
+                if (importPath && !importPath.startsWith(".") && !importPath.startsWith("/")) {
+                  fileImports.push(importPath);
+                  allImports.add(importPath);
+                }
+              }
+              pattern.lastIndex = 0; // Reset regex
+            }
+          } else if (lang.includes("Python")) {
+            for (const line of content.split("\n")) {
+              const trimmed = line.trim();
+              if (trimmed.startsWith("import ") || trimmed.startsWith("from ")) {
+                const match = trimmed.match(/^import\s+([\w.]+)/) || trimmed.match(/^from\s+([\w.]+)\s+import/);
+                if (match) {
+                  const importPath = match[1].split(".")[0]; // Get base module
+                  fileImports.push(importPath);
+                  allImports.add(importPath);
+                }
+              }
+            }
+          }
+
+          if (fileImports.length > 0) {
+            imports.set(relativePath, fileImports);
+          }
+        }
+      }
+    }
+  } catch {}
+
+  return { imports, allImports: [...allImports] };
+}
+
+// ─── Configuration File Parser (F4) ───────────────────────────────────
+
+export async function parseConfigFiles(root) {
+  const configs = {};
+
+  // tsconfig.json
+  const tsconfigPath = join(root, "tsconfig.json");
+  if (existsSync(tsconfigPath)) {
+    try {
+      const raw = await readFile(tsconfigPath, "utf8");
+      // Strip comments and trailing commas for JSON.parse
+      const clean = raw.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/,\s*([}\]])/g, "$1");
+      const parsed = JSON.parse(clean);
+      const co = parsed.compilerOptions || {};
+      configs.tsconfig = {
+        target: co.target || null,
+        module: co.module || null,
+        strict: co.strict ?? false,
+        jsx: co.jsx || null,
+        outDir: co.outDir || null,
+        baseUrl: co.baseUrl || null,
+        paths: co.paths ? Object.keys(co.paths) : [],
+        hasTypeChecking: co.strict || co.noImplicitAny || co.strictNullChecks || false,
+      };
+    } catch {}
+  }
+
+  // .eslintrc.json
+  for (const name of [".eslintrc.json", ".eslintrc"]) {
+    const p = join(root, name);
+    if (existsSync(p)) {
+      try {
+        const raw = await readFile(p, "utf8");
+        const parsed = JSON.parse(raw);
+        configs.eslint = {
+          env: parsed.env ? Object.keys(parsed.env) : [],
+          parser: parsed.parser || null,
+          extends: parsed.extends || [],
+          ruleCount: parsed.rules ? Object.keys(parsed.rules).length : 0,
+          keyRules: parsed.rules ? Object.keys(parsed.rules).slice(0, 10) : [],
+        };
+        break;
+      } catch {}
+    }
+  }
+
+  // .prettierrc
+  for (const name of [".prettierrc", ".prettierrc.json", ".prettierrc.js"]) {
+    const p = join(root, name);
+    if (existsSync(p)) {
+      try {
+        const raw = await readFile(p, "utf8");
+        let parsed;
+        if (name.endsWith(".js")) {
+          // Extract object literal from JS file
+          const m = raw.match(/\{[\s\S]*\}/);
+          parsed = m ? eval("(" + m[0] + ")") : {};
+        } else {
+          parsed = JSON.parse(raw);
+        }
+        configs.prettier = {
+          printWidth: parsed.printWidth || null,
+          tabWidth: parsed.tabWidth ?? null,
+          semi: parsed.semi ?? null,
+          singleQuote: parsed.singleQuote ?? null,
+          trailingComma: parsed.trailingComma || null,
+        };
+        break;
+      } catch {}
+    }
+  }
+
+  // vite.config / webpack.config presence
+  for (const [key, files] of [
+    ["vite", ["vite.config.js", "vite.config.mjs", "vite.config.ts"]],
+    ["webpack", ["webpack.config.js", "webpack.config.ts"]],
+    ["tailwind", ["tailwind.config.js", "tailwind.config.ts"]],
+    ["postcss", ["postcss.config.js", "postcss.config.cjs"]],
+  ]) {
+    for (const f of files) {
+      if (existsSync(join(root, f))) {
+        configs[key] = { file: f };
+        break;
+      }
+    }
+  }
+
+  // Dockerfile
+  const dockerfilePath = join(root, "Dockerfile");
+  if (existsSync(dockerfilePath)) {
+    try {
+      const raw = await readFile(dockerfilePath, "utf8");
+      const fromMatch = raw.match(/^FROM\s+(\S+)/m);
+      configs.docker = {
+        baseImage: fromMatch ? fromMatch[1] : null,
+        hasMultiStage: (raw.match(/^FROM/gm) || []).length > 1,
+      };
+    } catch {}
+  }
+
+  return configs;
+}
+
+// ─── API Surface Extraction (F3) ──────────────────────────────────────
+
+const API_PATTERNS = {
+  javascript: [
+    // export function name(args) { / export async function name(args) {
+    /(?:^|\n)\s*export\s+(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/g,
+    // export const/let/var name = (args) => { / export const name = function(args) {
+    /(?:^|\n)\s*export\s+(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(?:\(([^)]*)\)|function\s*\(([^)]*)\))/g,
+    // export class Name { / export default class Name {
+    /(?:^|\n)\s*export\s+(?:default\s+)?class\s+(\w+)/g,
+    // module.exports = { name: function(args) { ... } }
+    /(?:^|\n)\s*(\w+)\s*\(([^)]*)\)\s*\{/g,  // captures less precisely, used as fallback
+  ],
+  typescript: [
+    // Same as JS plus TypeScript-specific
+    /(?:^|\n)\s*export\s+(?:async\s+)?function\s+(\w+)\s*(?:<[^>]+>)?\s*\(([^)]*)\)/g,
+    /(?:^|\n)\s*export\s+(?:const|let|var)\s+(\w+)\s*(?::\s*[^=]+)?=\s*(?:async\s*)?(?:\(([^)]*)\)|function\s*\(([^)]*)\))/g,
+    /(?:^|\n)\s*export\s+(?:default\s+)?(?:abstract\s+)?class\s+(\w+)/g,
+    // export interface Name / export type Name
+    /(?:^|\n)\s*export\s+(?:interface|type)\s+(\w+)/g,
+    // public methods inside classes: methodName(args) {
+  ],
+  python: [
+    // def function_name(args):
+    /^def\s+(\w+)\s*\(([^)]*)\)/gm,
+    // class ClassName:
+    /^class\s+(\w+)/gm,
+    // async def function_name(args):
+    /^async\s+def\s+(\w+)\s*\(([^)]*)\)/gm,
+  ],
+};
+
+export async function extractApiSurface(root, maxDepth = 3, depth = 0, gitignore = []) {
+  const api = []; // { file, name, type, params, visibility }
+
+  if (depth >= maxDepth) return api;
+
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    for (const e of entries) {
+      const relativePath = depth === 0 ? e.name : relative(root, join(root, e.name));
+      if (isIgnored(relativePath, gitignore)) continue;
+
+      if (e.isDirectory() && !IGNORE_DIRS.has(e.name) && !e.name.startsWith(".")) {
+        const sub = await extractApiSurface(join(root, e.name), maxDepth, depth + 1, gitignore);
+        api.push(...sub);
+      } else if (e.isFile()) {
+        const ext = extname(e.name);
+        const lang = LANGUAGE_MAP[ext];
+        if (!lang) continue;
+
+        const content = await readFile(join(root, e.name), "utf8");
+        const filePath = depth === 0 ? e.name : relativePath;
+
+        const isTS = lang.includes("TypeScript");
+        const isJS = lang.includes("JavaScript");
+        const isPy = lang.includes("Python");
+
+        if (isJS || isTS) {
+          const patterns = isTS ? API_PATTERNS.typescript : API_PATTERNS.javascript;
+          // Functions
+          let match;
+          const funcRe = isTS
+            ? /(?:^|\n)\s*export\s+(?:async\s+)?function\s+(\w+)\s*(?:<[^>]+>)?\s*\(([^)]*)\)/g
+            : /(?:^|\n)\s*export\s+(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/g;
+          while ((match = funcRe.exec(content)) !== null) {
+            api.push({ file: filePath, name: match[1], type: "function", params: match[2].trim(), visibility: "exported" });
+          }
+          // Arrow / const functions
+          const arrowRe = isTS
+            ? /(?:^|\n)\s*export\s+(?:const|let|var)\s+(\w+)\s*(?::\s*[^=]+)?=\s*(?:async\s*)?(?:\(([^)]*)\)|function\s*\(([^)]*)\))/g
+            : /(?:^|\n)\s*export\s+(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(?:\(([^)]*)\)|function\s*\(([^)]*)\))/g;
+          while ((match = arrowRe.exec(content)) !== null) {
+            const params = (match[2] || match[3] || "").trim();
+            api.push({ file: filePath, name: match[1], type: "function", params, visibility: "exported" });
+          }
+          // Classes
+          const classRe = isTS
+            ? /(?:^|\n)\s*export\s+(?:default\s+)?(?:abstract\s+)?class\s+(\w+)/g
+            : /(?:^|\n)\s*export\s+(?:default\s+)?class\s+(\w+)/g;
+          while ((match = classRe.exec(content)) !== null) {
+            api.push({ file: filePath, name: match[1], type: "class", params: "", visibility: "exported" });
+          }
+          // TypeScript interfaces and types
+          if (isTS) {
+            const typeRe = /(?:^|\n)\s*export\s+(?:interface|type)\s+(\w+)/g;
+            while ((match = typeRe.exec(content)) !== null) {
+              api.push({ file: filePath, name: match[1], type: "type", params: "", visibility: "exported" });
+            }
+          }
+        } else if (isPy) {
+          // Functions
+          const funcRe = /^(?:async\s+)?def\s+(\w+)\s*\(([^)]*)\)/gm;
+          let match;
+          while ((match = funcRe.exec(content)) !== null) {
+            // Skip dunder methods except __init__
+            if (match[1].startsWith("__") && match[1].endsWith("__") && match[1] !== "__init__") continue;
+            api.push({ file: filePath, name: match[1], type: "function", params: match[2].trim(), visibility: "public" });
+          }
+          // Classes
+          const classRe = /^class\s+(\w+)/gm;
+          while ((match = classRe.exec(content)) !== null) {
+            api.push({ file: filePath, name: match[1], type: "class", params: "", visibility: "public" });
+          }
+        }
+      }
+    }
+  } catch {}
+
+  return api;
+}
+
+// ─── Gitignore Parsing ─────────────────────────────────────────────
+
+export async function parseGitignore(root) {
+  const gitignorePath = join(root, ".gitignore");
+  if (!existsSync(gitignorePath)) return [];
+
+  try {
+    const content = await readFile(gitignorePath, "utf8");
+    const patterns = [];
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      patterns.push(trimmed);
+    }
+    return patterns;
+  } catch {
+    return [];
+  }
+}
+
+export function isIgnored(path, ignoredPatterns) {
+  let ignored = false;
+  const parts = path.split(sep);
+  for (const pattern of ignoredPatterns) {
+    let p = pattern;
+    let isDir = p.endsWith("/");
+    if (isDir) p = p.slice(0, -1);
+    const isNegated = p.startsWith("!");
+    if (isNegated) p = p.slice(1);
+
+    const isWildcard = p.includes("*");
+
+    let matches = false;
+    if (isWildcard) {
+      const regex = new RegExp(
+        "^" +
+        p
+          .replace(/\./g, "\\.")
+          .replace(/\*/g, ".*")
+          .replace(/\?/g, ".") +
+        "$"
+      );
+      for (const part of parts) {
+        if (regex.test(part)) matches = true;
+      }
+      if (regex.test(path)) matches = true;
+    } else {
+      // Exact match or directory prefix match
+      if (parts.includes(p)) matches = true;
+      if (path.startsWith(p + sep)) matches = true;
+      if (path === p) matches = true;
+    }
+
+    if (matches) {
+      ignored = isNegated ? false : true;
+    }
+  }
+  return ignored;
+}
 
 // ─── Project Detection ───────────────────────────────────────────
 
@@ -111,15 +476,17 @@ export async function detectProject(root) {
   return info;
 }
 
-export async function scanLanguages(root, maxDepth = 3, depth = 0) {
+export async function scanLanguages(root, maxDepth = 3, depth = 0, gitignore = []) {
   const langs = new Map();
   if (depth >= maxDepth) return langs;
 
   try {
     const entries = await readdir(root, { withFileTypes: true });
     for (const e of entries) {
+      const relativePath = depth === 0 ? e.name : relative(root, join(root, e.name));
+      if (isIgnored(relativePath, gitignore)) continue;
       if (e.isDirectory() && !IGNORE_DIRS.has(e.name) && !e.name.startsWith(".")) {
-        const sub = await scanLanguages(join(root, e.name), maxDepth, depth + 1);
+        const sub = await scanLanguages(join(root, e.name), maxDepth, depth + 1, gitignore);
         for (const [k, v] of sub) langs.set(k, (langs.get(k) || 0) + v);
       } else if (e.isFile()) {
         const ext = extname(e.name);
@@ -132,21 +499,23 @@ export async function scanLanguages(root, maxDepth = 3, depth = 0) {
   return langs;
 }
 
-export async function getDirStructure(root, prefix = "", maxDepth = 2, depth = 0) {
+export async function getDirStructure(root, prefix = "", maxDepth = 2, depth = 0, gitignore = []) {
   if (depth >= maxDepth) return "";
   let out = "";
   try {
     const entries = await readdir(root, { withFileTypes: true });
-    const filtered = entries.filter(e =>
-      !IGNORE_DIRS.has(e.name) && !e.name.startsWith(".") && e.name !== "node_modules"
-    ).sort((a, b) => {
+    const filtered = entries.filter(e => {
+      const relativePath = depth === 0 ? e.name : relative(root, join(root, e.name));
+      if (isIgnored(relativePath, gitignore)) return false;
+      return !IGNORE_DIRS.has(e.name) && !e.name.startsWith(".") && e.name !== "node_modules";
+    }).sort((a, b) => {
       if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
     for (const e of filtered.slice(0, 30)) {
       out += `${prefix}${e.isDirectory() ? "📁" : "📄"} ${e.name}\n`;
       if (e.isDirectory()) {
-        out += await getDirStructure(join(root, e.name), prefix + "  ", maxDepth, depth + 1);
+        out += await getDirStructure(join(root, e.name), prefix + "  ", maxDepth, depth + 1, gitignore);
       }
     }
     if (filtered.length > 30) out += `${prefix}... (${filtered.length - 30} more)\n`;
@@ -342,7 +711,7 @@ async function main() {
     json: args.includes("--json"),
   };
 
-  const root = resolve(projectPath);
+  const root = resolvePath(projectPath);
   if (!existsSync(root)) {
     console.error(`❌ Path not found: ${root}`);
     process.exit(1);
@@ -350,10 +719,16 @@ async function main() {
 
   console.log(`🔨 context-forge — Analyzing ${basename(root)}...\n`);
 
-  const [info, langs] = await Promise.all([
+  const [info, gitignore, langs, importData, apiSurface, configData] = await Promise.all([
     detectProject(root),
-    scanLanguages(root),
+    parseGitignore(root),
+    scanLanguages(root, 3, 0, gitignore),
+    extractImports(root, 3, 0, gitignore),
+    extractApiSurface(root, 3, 0, gitignore),
+    parseConfigFiles(root),
   ]);
+  info.apiSurface = apiSurface;
+  info.configData = configData;
 
   if (options.json) {
     console.log(JSON.stringify({
@@ -362,11 +737,20 @@ async function main() {
       entryPoints: info.entryPoints,
       scripts: info.scripts,
       configFiles: info.configFiles,
+      gitignore,
+      imports: {
+        total: importData.allImports.length,
+        unique: [...new Set(importData.allImports)].length,
+        byFile: Object.fromEntries(importData.imports),
+      },
+      apiSurface: apiSurface.slice(0, 100),
+      apiSurfaceCount: apiSurface.length,
+      configs: configData,
     }, null, 2));
     return;
   }
 
-  const structure = await getDirStructure(root);
+  const structure = await getDirStructure(root, "", 2, 0, gitignore);
 
   const generators = {
     agents: { file: "AGENTS.md", gen: () => generateAgentsMd(info, langs, structure) },
