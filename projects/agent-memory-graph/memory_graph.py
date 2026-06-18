@@ -8416,6 +8416,178 @@ class MemoryGraph:
         self.conn.commit()
         return summary
 
+    # ── Memory Consolidation (GAM ICLR 2026) ──────────────────────
+
+    def semantic_divergence(self, node_id: str) -> dict | None:
+        """检测节点与邻居的语义分歧程度 (GAM-inspired)。
+
+        比较 node 的 label/kind 与其直接邻居，计算分歧分数 0-1。
+        高分歧 → 该节点可能需要 consolidation (promote/demote/merge)。
+
+        Returns:
+            {node_id, label, kind, neighbor_count, divergence, avg_similarity,
+             kind_mismatch_ratio, suggestion}
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return None
+
+        nbrs = self.neighbors(node_id)
+        if not nbrs:
+            return {
+                "node_id": node_id, "label": node.label, "kind": node.kind,
+                "neighbor_count": 0, "divergence": 0.0,
+                "avg_similarity": 0.0, "kind_mismatch_ratio": 0.0,
+                "suggestion": "isolated",
+            }
+
+        sims: list[float] = []
+        kind_mismatches = 0
+        for nbr in nbrs:
+            sim = self._content_similarity(node.label, nbr.label)
+            sims.append(sim)
+            if nbr.kind != node.kind:
+                kind_mismatches += 1
+
+        avg_sim = sum(sims) / len(sims) if sims else 0.0
+        # Divergence = 1 - avg_similarity (higher = more different from neighbors)
+        divergence = round(1.0 - avg_sim, 4)
+        kind_mismatch_ratio = round(kind_mismatches / len(nbrs), 4) if nbrs else 0.0
+
+        # Suggestion based on divergence level
+        if divergence > 0.8 and kind_mismatch_ratio > 0.7:
+            suggestion = "promote"   # Very different from neighbors → new cluster
+        elif divergence < 0.2:
+            suggestion = "demote"    # Very similar → merge into neighborhood
+        elif kind_mismatch_ratio > 0.5:
+            suggestion = "reclassify"  # Kind doesn't match neighborhood
+        else:
+            suggestion = "keep"
+
+        return {
+            "node_id": node_id,
+            "label": node.label,
+            "kind": node.kind,
+            "neighbor_count": len(nbrs),
+            "divergence": divergence,
+            "avg_similarity": round(avg_sim, 4),
+            "kind_mismatch_ratio": kind_mismatch_ratio,
+            "suggestion": suggestion,
+        }
+
+    def divergence_scan(self, threshold: float = 0.5,
+                        limit: int = 100) -> list[dict]:
+        """扫描全图，找出高分歧节点 (批量诊断)。
+
+        Args:
+            threshold: 最小分歧分数 (0-1)
+            limit: 最大返回数量
+
+        Returns:
+            List of divergence reports sorted by divergence descending
+        """
+        all_ids = [r["id"] for r in self.conn.execute(
+            "SELECT id FROM nodes ORDER BY accessed DESC LIMIT ?", (limit * 3,)
+        ).fetchall()]
+
+        results = []
+        for nid in all_ids:
+            report = self.semantic_divergence(nid)
+            if report and report["divergence"] >= threshold:
+                results.append(report)
+            if len(results) >= limit:
+                break
+
+        results.sort(key=lambda r: r["divergence"], reverse=True)
+        return results
+
+    # divergence_scan uses semantic_divergence internally, no changes needed
+
+    def consolidate_memory(self, strategy: str = "auto",
+                           divergence_threshold: float = 0.7,
+                           similarity_threshold: float = 0.25,
+                           dry_run: bool = False) -> dict:
+        """记忆固化: 基于语义分歧的记忆整理 (GAM ICLR 2026 inspired)。
+
+        策略:
+        - promote: 高分歧节点标记为新聚类种子 (kind 添加 'cluster_seed')
+        - demote: 低分歧节点合并到最相似邻居
+        - reclassify: kind 与邻居不一致 → 更新 kind 为多数邻居的 kind
+        - auto: 自动选择最佳策略 per node (默认)
+
+        Args:
+            strategy: auto|promote|demote|reclassify
+            divergence_threshold: promote 阈值
+            similarity_threshold: demote 阈值 (1-similarity = divergence)
+            dry_run: 仅报告不执行
+
+        Returns:
+            {scanned, promoted, demoted, reclassified, kept, details}
+        """
+        all_ids = [r["id"] for r in self.conn.execute(
+            "SELECT id FROM nodes"
+        ).fetchall()]
+
+        result = {"scanned": 0, "promoted": 0, "demoted": 0,
+                  "reclassified": 0, "kept": 0, "details": []}
+
+        for nid in all_ids:
+            report = self.semantic_divergence(nid)
+            if not report:
+                continue
+            result["scanned"] += 1
+            suggestion = report["suggestion"] if strategy == "auto" else strategy
+            div = report["divergence"]
+
+            if suggestion == "promote" or (suggestion == "auto" and div >= divergence_threshold):
+                if not dry_run:
+                    self.tag_nodes("cluster_seed", [nid])
+                result["promoted"] += 1
+                result["details"].append(
+                    {"node_id": nid, "action": "promote", "divergence": div})
+
+            elif suggestion == "demote" or (suggestion == "auto" and div <= similarity_threshold):
+                # Find most similar neighbor and merge into it
+                if not dry_run:
+                    nbrs = self.neighbors(nid)
+                    best_target = None
+                    best_sim = 0.0
+                    node = self.get_node(nid)
+                    for nbr in nbrs:
+                        if node:
+                            sim = self._content_similarity(node.label, nbr.label)
+                            if sim > best_sim:
+                                best_sim = sim
+                                best_target = nbr.id
+                    if best_target and best_sim > 0.3:
+                        self.merge_nodes(nid, best_target)
+                result["demoted"] += 1
+                result["details"].append(
+                    {"node_id": nid, "action": "demote", "divergence": div})
+
+            elif suggestion == "reclassify":
+                if not dry_run:
+                    # Set kind to majority neighbor kind
+                    nbrs = self.neighbors(nid)
+                    kind_counts: dict[str, int] = defaultdict(int)
+                    for nbr in nbrs:
+                        kind_counts[nbr.kind] += 1
+                    if kind_counts:
+                        majority_kind = max(kind_counts, key=kind_counts.get)
+                        node = self.get_node(nid)
+                        self.update_node(nid, label=node.label,
+                                         kind=majority_kind, data=node.data)
+                result["reclassified"] += 1
+                result["details"].append(
+                    {"node_id": nid, "action": "reclassify", "divergence": div})
+
+            else:
+                result["kept"] += 1
+
+        if not dry_run:
+            self.conn.commit()
+        return result
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

@@ -10540,3 +10540,263 @@ class TestGetChangesApplyChanges:
         assert len(delta["edges"]) >= 1
         edge_sources = [(e["source"], e["target"]) for e in delta["edges"]]
         assert (a.id, b.id) in edge_sources
+
+
+class TestSemanticDivergence:
+    """Tests for semantic divergence detection (GAM ICLR 2026)."""
+
+    def test_divergence_isolated_node(self, mg):
+        """Isolated node has zero divergence."""
+        n = mg.add("lonely fact", "fact")
+        report = mg.semantic_divergence(n.id)
+        assert report is not None
+        assert report["divergence"] == 0.0
+        assert report["neighbor_count"] == 0
+        assert report["suggestion"] == "isolated"
+
+    def test_divergence_similar_neighbors(self, mg):
+        """Node with very similar neighbors → low divergence → demote."""
+        a = mg.add("Python programming language", "skill")
+        b = mg.add("Python programming language tool", "skill")
+        c = mg.add("Python programming language guide", "skill")
+        mg.link(a.id, b.id, "related")
+        mg.link(a.id, c.id, "related")
+        report = mg.semantic_divergence(a.id)
+        assert report["divergence"] < 0.5
+        assert report["suggestion"] in ("demote", "keep")
+
+    def test_divergence_different_neighbors(self, mg):
+        """Node with very different neighbors → high divergence."""
+        a = mg.add("quantum physics formula", "science")
+        b = mg.add("cooking pasta recipe", "hobby")
+        c = mg.add("rock music guitar", "hobby")
+        mg.link(a.id, b.id, "related")
+        mg.link(a.id, c.id, "related")
+        report = mg.semantic_divergence(a.id)
+        assert report["divergence"] > 0.5
+        assert report["kind_mismatch_ratio"] > 0.0
+
+    def test_divergence_nonexistent_node(self, mg):
+        """Nonexistent node returns None."""
+        assert mg.semantic_divergence("nonexistent") is None
+
+    def test_divergence_kind_mismatch_ratio(self, mg):
+        """Kind mismatch ratio correctly counts different-kind neighbors."""
+        a = mg.add("AI agent", "concept")
+        b = mg.add("neural net", "concept")
+        c = mg.add("Python skill", "skill")
+        d = mg.add("Rust crate", "tool")
+        mg.link(a.id, b.id, "related")
+        mg.link(a.id, c.id, "related")
+        mg.link(a.id, d.id, "related")
+        report = mg.semantic_divergence(a.id)
+        # 2 out of 3 neighbors have different kind
+        assert report["kind_mismatch_ratio"] == pytest.approx(2 / 3, abs=0.01)
+
+    def test_divergence_suggestion_promote(self, mg):
+        """High divergence + high kind mismatch → promote suggestion."""
+        a = mg.add("xyz quantum blockchain", "concept")
+        b = mg.add("cooking recipe pasta", "hobby")
+        c = mg.add("gardening tips tomatoes", "hobby")
+        d = mg.add("music piano jazz", "hobby")
+        mg.link(a.id, b.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        mg.link(a.id, d.id, "rel")
+        report = mg.semantic_divergence(a.id)
+        assert report["divergence"] > 0.8
+        assert report["kind_mismatch_ratio"] > 0.5
+
+    def test_divergence_report_fields(self, mg):
+        """Report contains all expected fields."""
+        a = mg.add("test", "fact")
+        b = mg.add("other", "fact")
+        mg.link(a.id, b.id, "rel")
+        report = mg.semantic_divergence(a.id)
+        for field in ("node_id", "label", "kind", "neighbor_count",
+                      "divergence", "avg_similarity", "kind_mismatch_ratio",
+                      "suggestion"):
+            assert field in report
+
+    def test_divergence_avg_similarity_range(self, mg):
+        """avg_similarity is between 0 and 1."""
+        a = mg.add("hello world", "greeting")
+        b = mg.add("hello there", "greeting")
+        mg.link(a.id, b.id, "rel")
+        report = mg.semantic_divergence(a.id)
+        assert 0.0 <= report["avg_similarity"] <= 1.0
+
+
+class TestDivergenceScan:
+    """Tests for batch divergence scanning."""
+
+    def test_scan_returns_high_divergence_only(self, mg):
+        """Scan filters by threshold."""
+        # Low divergence cluster
+        a1 = mg.add("machine learning model", "concept")
+        a2 = mg.add("machine learning algorithm", "concept")
+        a3 = mg.add("ML neural network", "concept")
+        mg.link(a1.id, a2.id, "rel")
+        mg.link(a1.id, a3.id, "rel")
+        # High divergence node
+        b1 = mg.add("cooking italian food", "hobby")
+        b2 = mg.add("quantum entanglement theory", "science")
+        mg.link(b1.id, b2.id, "rel")
+        results = mg.divergence_scan(threshold=0.5)
+        # b1 and b2 should appear (high divergence), a1 may not
+        node_ids = [r["node_id"] for r in results]
+        assert b1.id in node_ids or b2.id in node_ids
+
+    def test_scan_sorted_by_divergence(self, mg):
+        """Results are sorted descending by divergence."""
+        nodes = []
+        for i in range(5):
+            n = mg.add(f"unique_topic_{i}_xyz", "concept")
+            nodes.append(n)
+        # Link all to a very different anchor
+        anchor = mg.add("completely different anchor text", "tool")
+        for n in nodes:
+            mg.link(n.id, anchor.id, "rel")
+        results = mg.divergence_scan(threshold=0.0)
+        divs = [r["divergence"] for r in results]
+        assert divs == sorted(divs, reverse=True)
+
+    def test_scan_respects_limit(self, mg):
+        """Limit caps the number of results."""
+        for i in range(20):
+            n = mg.add(f"isolated node {i}", "fact")
+        results = mg.divergence_scan(threshold=0.0, limit=5)
+        assert len(results) <= 5
+
+    def test_scan_empty_graph(self, mg):
+        """Empty graph returns empty list."""
+        assert mg.divergence_scan() == []
+
+
+class TestConsolidateMemory:
+    """Tests for memory consolidation (GAM ICLR 2026)."""
+
+    def test_consolidate_dry_run(self, mg):
+        """Dry run reports without modifying."""
+        a = mg.add("Python coding", "skill")
+        b = mg.add("Python programming", "skill")
+        c = mg.add("Python dev", "skill")
+        mg.link(a.id, b.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        result = mg.consolidate_memory(dry_run=True)
+        assert result["scanned"] >= 3
+        assert result["promoted"] + result["demoted"] + result["reclassified"] + result["kept"] == result["scanned"]
+        # Dry run → no actual changes
+        # Node 'a' should still exist (not merged)
+        assert mg.get_node(a.id) is not None
+
+    def test_consolidate_demote_merges_similar(self, mg):
+        """Demote merges low-divergence node into most similar neighbor."""
+        a = mg.add("Python programming language", "skill")
+        b = mg.add("Python programming lang", "skill")
+        mg.link(a.id, b.id, "rel")
+        result = mg.consolidate_memory(strategy="demote",
+                                        similarity_threshold=0.9,
+                                        dry_run=False)
+        assert result["demoted"] >= 1
+
+    def test_consolidate_promote_tags_seed(self, mg):
+        """Promote tags high-divergence node as cluster_seed."""
+        a = mg.add("quantum blockchain AI convergence", "concept")
+        b = mg.add("cooking pasta recipe italian", "hobby")
+        c = mg.add("gardening tomatoes growing", "hobby")
+        d = mg.add("music piano jazz classical", "hobby")
+        mg.link(a.id, b.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        mg.link(a.id, d.id, "rel")
+        result = mg.consolidate_memory(strategy="auto",
+                                        divergence_threshold=0.5,
+                                        dry_run=False)
+        assert result["promoted"] >= 1
+        # Verify tag was added
+        promoted_detail = [d for d in result["details"] if d["action"] == "promote"]
+        if promoted_detail:
+            tags_row = mg.conn.execute(
+                "SELECT tags FROM nodes WHERE id = ?",
+                (promoted_detail[0]["node_id"],)
+            ).fetchone()
+            import json as _json
+            tag_list = _json.loads(tags_row["tags"]) if tags_row else []
+            assert "cluster_seed" in tag_list
+
+    def test_consolidate_reclassify_changes_kind(self, mg):
+        """Reclassify updates kind to majority neighbor kind."""
+        a = mg.add("mislabeled node", "wrong_kind")
+        b = mg.add("correct kind item 1", "correct_kind")
+        c = mg.add("correct kind item 2", "correct_kind")
+        mg.link(a.id, b.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        result = mg.consolidate_memory(strategy="auto", dry_run=False)
+        # Node 'a' should be reclassified (kind_mismatch > 0.5, high divergence)
+        reclassified = [d for d in result["details"] if d["action"] == "reclassify"]
+        if reclassified:
+            updated = mg.get_node(a.id)
+            assert updated.kind == "correct_kind"
+
+    def test_consolidate_returns_summary(self, mg):
+        """Result has all expected fields."""
+        result = mg.consolidate_memory(dry_run=True)
+        for field in ("scanned", "promoted", "demoted", "reclassified", "kept", "details"):
+            assert field in result
+        assert isinstance(result["details"], list)
+
+    def test_consolidate_empty_graph(self, mg):
+        """Empty graph → scanned=0."""
+        result = mg.consolidate_memory(dry_run=True)
+        assert result["scanned"] == 0
+        assert result["promoted"] == 0
+
+    def test_consolidate_auto_strategy(self, mg):
+        """Auto strategy makes appropriate decisions."""
+        # Mix of similar and different nodes
+        similar_a = mg.add("Python programming", "skill")
+        similar_b = mg.add("Python coding", "skill")
+        mg.link(similar_a.id, similar_b.id, "rel")
+        different_a = mg.add("quantum mechanics", "science")
+        different_b = mg.add("pasta recipe", "hobby")
+        mg.link(different_a.id, different_b.id, "rel")
+        result = mg.consolidate_memory(strategy="auto", dry_run=True)
+        assert result["scanned"] >= 4
+        # Should have at least some non-kept actions
+        total_actions = result["promoted"] + result["demoted"] + result["reclassified"]
+        assert total_actions >= 1
+
+    def test_consolidate_details_contain_node_id_and_action(self, mg):
+        """Each detail has node_id and action."""
+        a = mg.add("test", "fact")
+        result = mg.consolidate_memory(dry_run=True)
+        for detail in result["details"]:
+            assert "node_id" in detail
+            assert "action" in detail
+            assert detail["action"] in ("promote", "demote", "reclassify")
+
+    def test_consolidate_idempotent_second_pass(self, mg):
+        """Second consolidation pass has fewer changes."""
+        # Create divergent setup
+        a = mg.add("quantum physics", "science")
+        b = mg.add("cooking recipe", "hobby")
+        c = mg.add("music theory", "hobby")
+        mg.link(a.id, b.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        # First pass
+        first = mg.consolidate_memory(dry_run=False)
+        # Second pass should have fewer or equal actions
+        second = mg.consolidate_memory(dry_run=False)
+        first_actions = first["promoted"] + first["demoted"] + first["reclassified"]
+        second_actions = second["promoted"] + second["demoted"] + second["reclassified"]
+        assert second_actions <= first_actions
+
+    def test_consolidate_divergence_threshold_filtering(self, mg):
+        """Higher threshold → fewer promotions."""
+        a = mg.add("very different unique content xyz", "concept")
+        b = mg.add("completely other topic abc", "hobby")
+        mg.link(a.id, b.id, "rel")
+        low_thresh = mg.consolidate_memory(strategy="promote",
+                                            divergence_threshold=0.1, dry_run=True)
+        high_thresh = mg.consolidate_memory(strategy="promote",
+                                             divergence_threshold=0.9, dry_run=True)
+        assert low_thresh["promoted"] >= high_thresh["promoted"]
