@@ -11106,3 +11106,99 @@ class TestConsolidationReport:
             mg.add(f"item {i}", "fact")
         report = mg.consolidation_report()
         assert 0.0 <= report["avg_retention"] <= 1.0
+
+
+class TestConsolidationPipeline:
+    """Tests for the one-shot consolidation_pipeline orchestrator."""
+
+    def test_pipeline_empty_graph(self, mg):
+        """Empty graph pipeline returns zero actions."""
+        result = mg.consolidation_pipeline()
+        assert result["actions_total"] == 0
+        assert result["report"]["total_nodes"] == 0
+        assert "scan" in result
+        assert "consolidation" in result
+        assert "eviction" in result
+
+    def test_pipeline_returns_all_sections(self, mg):
+        """Pipeline returns scan, consolidation, eviction, report sections."""
+        mg.add("test node", "fact")
+        result = mg.consolidation_pipeline()
+        for key in ("scan", "consolidation", "eviction", "report", "actions_total"):
+            assert key in result
+
+    def test_pipeline_dry_run_no_modifications(self, mg):
+        """Dry run doesn't modify the graph."""
+        a = mg.add("quantum blockchain xyz", "science")
+        b = mg.add("cooking pasta recipe", "hobby")
+        mg.link(a.id, b.id, "rel")
+        before = mg.stats()["nodes"]
+        result = mg.consolidation_pipeline(dry_run=True)
+        after = mg.stats()["nodes"]
+        assert before == after
+        assert result["dry_run"] is True
+        # In dry_run, counts reflect proposed actions but graph unchanged
+        assert before == after
+
+    def test_pipeline_eviction_respects_budget(self, mg):
+        """Eviction respects the budget parameter."""
+        for i in range(10):
+            mg.add(f"disposable item {i}", "temp")
+        result = mg.consolidation_pipeline(evict_budget=3)
+        assert result["eviction"]["evicted"] <= 3
+
+    def test_pipeline_zero_budget_skips_eviction(self, mg):
+        """evict_budget=0 skips eviction entirely."""
+        mg.add("test", "fact")
+        result = mg.consolidation_pipeline(evict_budget=0)
+        assert result["eviction"]["evicted"] == 0
+
+    def test_pipeline_actions_total_counts_all(self, mg):
+        """actions_total = promoted + demoted + reclassified + evicted."""
+        a = mg.add("unique outlier concept xyz", "concept")
+        b = mg.add("similar idea one", "concept")
+        c = mg.add("similar idea two", "concept")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        result = mg.consolidation_pipeline(dry_run=True)
+        cons = result["consolidation"]
+        evict = result["eviction"]
+        expected = (cons.get("promoted", 0) + cons.get("demoted", 0) +
+                    cons.get("reclassified", 0) + evict.get("evicted", 0))
+        assert result["actions_total"] == expected
+
+    def test_pipeline_report_health_consistent(self, mg):
+        """Pipeline report health matches standalone consolidation_report."""
+        mg.add("Python programming", "skill")
+        mg.add("Python tooling", "skill")
+        pipeline_result = mg.consolidation_pipeline(dry_run=True)
+        standalone = mg.consolidation_report()
+        assert pipeline_result["report"]["total_nodes"] == standalone["total_nodes"]
+
+    def test_pipeline_min_retention_filter(self, mg):
+        """Higher min_retention threshold catches more nodes as eviction candidates."""
+        for i in range(5):
+            mg.add(f"low value node {i}", "temp")
+        # dry_run to avoid actual deletion so both runs see same graph
+        strict = mg.consolidation_pipeline(evict_budget=10, min_retention=0.8, dry_run=True)
+        lenient = mg.consolidation_pipeline(evict_budget=10, min_retention=0.01, dry_run=True)
+        # Strict (0.8) threshold should flag >= lenient (0.01) threshold
+        assert strict["eviction"]["evicted"] >= lenient["eviction"]["evicted"]
+
+    def test_pipeline_scan_catches_divergence(self, mg):
+        """Pipeline scan detects high-divergence nodes."""
+        a = mg.add("quantum computing physics", "science")
+        b = mg.add("medieval cooking techniques", "history")
+        mg.link(a.id, b.id, "rel")
+        result = mg.consolidation_pipeline(dry_run=True)
+        assert result["scan"]["flagged"] >= 1  # at least one divergent pair
+
+    def test_pipeline_idempotent_dry_run(self, mg):
+        """Running pipeline twice in dry_run gives same results."""
+        a = mg.add("node one", "fact")
+        b = mg.add("node two completely different", "fact")
+        mg.link(a.id, b.id, "rel")
+        r1 = mg.consolidation_pipeline(dry_run=True)
+        r2 = mg.consolidation_pipeline(dry_run=True)
+        assert r1["actions_total"] == r2["actions_total"]
+        assert r1["report"]["total_nodes"] == r2["report"]["total_nodes"]

@@ -8803,6 +8803,57 @@ class MemoryGraph:
             "consolidation_health": health,
         }
 
+    # ── Consolidation Pipeline (one-shot orchestrator) ────────────
+
+    def consolidation_pipeline(self,
+                               evict_budget: int = 10,
+                               min_retention: float = 0.15,
+                               dry_run: bool = False) -> dict:
+        """一键记忆固化: scan → consolidate → evict → report.
+
+        Orchestrates the full GAM pipeline in one call:
+        1. divergence_scan — identify drifted nodes
+        2. consolidate_memory(auto) — promote/demote/reclassify
+        3. memory_evict — remove low-retention nodes (respects budget)
+        4. consolidation_report — summary health dashboard
+
+        Args:
+            evict_budget: max nodes to evict (0 = skip eviction)
+            min_retention: retention score below which nodes are eviction candidates
+            dry_run: if True, report what *would* happen without modifying the graph
+
+        Returns:
+            {scan, consolidation, eviction, report, actions_total}
+        """
+        # Step 1: Scan for divergence issues
+        scan_items = self.divergence_scan(threshold=0.5)
+        scan = {"flagged": len(scan_items), "items": scan_items}
+
+        # Step 2: Auto-consolidate (promote/demote/reclassify)
+        cons = self.consolidate_memory(strategy="auto", dry_run=dry_run)
+
+        # Step 3: Smart eviction (skip if budget is 0)
+        if evict_budget > 0:
+            evict = self.memory_evict(
+                budget=evict_budget, min_score=min_retention, dry_run=dry_run)
+        else:
+            evict = {"scanned": 0, "evicted": 0, "kept": 0, "details": []}
+
+        # Step 4: Generate report
+        report = self.consolidation_report()
+
+        actions = (cons.get("promoted", 0) + cons.get("demoted", 0) +
+                   cons.get("reclassified", 0) + evict.get("evicted", 0))
+
+        return {
+            "scan": scan,
+            "consolidation": cons,
+            "eviction": evict,
+            "report": report,
+            "actions_total": actions,
+            "dry_run": dry_run,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
