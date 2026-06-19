@@ -11402,3 +11402,150 @@ class TestNeighborhoodAgreement:
         all_simulated = sum(l["nodes"] for l in result["layers"])
         # Only 'b' should be found
         assert all_simulated <= 1
+
+
+# ── memory_proximity tests ─────────────────────────────────────────
+
+class TestMemoryProximity:
+    """Tests for memory_proximity — semantic similarity neighborhood."""
+
+    def test_proximity_basic(self, mg):
+        """Finds semantically similar nodes."""
+        a = mg.add("python programming language", "skill")
+        b = mg.add("python scripting guide", "skill")
+        c = mg.add("rust systems programming", "skill")
+        # Don't link — proximity should still find them
+        result = mg.memory_proximity(a.id, radius=0.1)
+        assert result is not None
+        assert len(result) >= 1
+        # 'b' should be more similar than 'c'
+        labels = [r["label"] for r in result]
+        assert "python scripting guide" in labels
+
+    def test_proximity_nonexistent(self, mg):
+        """Nonexistent anchor returns None."""
+        assert mg.memory_proximity("nope") is None
+
+    def test_proximity_radius_filter(self, mg):
+        """High radius filters out dissimilar nodes."""
+        a = mg.add("machine learning", "topic")
+        b = mg.add("machine learning models", "topic")
+        c = mg.add("cooking pasta recipes", "recipe")
+
+        loose = mg.memory_proximity(a.id, radius=0.05)
+        strict = mg.memory_proximity(a.id, radius=0.5)
+        assert len(loose) >= len(strict)
+
+    def test_proximity_connected_flag(self, mg):
+        """Connected flag indicates edge presence."""
+        a = mg.add("node alpha", "test")
+        b = mg.add("node alpha beta", "test")
+        c = mg.add("node alpha gamma", "test")
+        mg.link(a.id, b.id, "rel")
+        # c is NOT linked
+
+        result = mg.memory_proximity(a.id, radius=0.1)
+        connected_items = [r for r in result if r["connected"]]
+        unconnected = [r for r in result if not r["connected"]]
+        assert any(r["label"] == "node alpha beta" for r in connected_items)
+
+    def test_proximity_excludes_self(self, mg):
+        """Anchor node is never in results."""
+        a = mg.add("solo", "test")
+        result = mg.memory_proximity(a.id, radius=0.0)
+        assert all(r["node_id"] != a.id for r in result)
+
+    def test_proximity_limit(self, mg):
+        """Limit caps results."""
+        a = mg.add("common word", "test")
+        for i in range(10):
+            mg.add(f"common word variant {i}", "test")
+
+        result = mg.memory_proximity(a.id, radius=0.0, limit=3)
+        assert len(result) <= 3
+
+    def test_proximity_sorted(self, mg):
+        """Results sorted by similarity descending."""
+        a = mg.add("python programming", "skill")
+        mg.add("python programming tutorial", "skill")
+        mg.add("python data", "skill")
+        mg.add("rust embedded", "skill")
+
+        result = mg.memory_proximity(a.id, radius=0.05)
+        sims = [r["similarity"] for r in result]
+        assert sims == sorted(sims, reverse=True)
+
+
+class TestTagInducedSubgraph:
+    """Tests for tag_induced_subgraph — tag-filtered subgraph extraction."""
+
+    def test_subgraph_any_match(self, mg):
+        """OR matching: nodes with any of the tags."""
+        a = mg.add("python service", "svc")
+        mg.tag_nodes("backend", [a.id])
+        mg.tag_nodes("python", [a.id])
+        b = mg.add("react ui", "svc")
+        mg.tag_nodes("frontend", [b.id])
+        mg.tag_nodes("react", [b.id])
+        c = mg.add("rust cli", "svc")
+        mg.tag_nodes("backend", [c.id])
+        mg.tag_nodes("rust", [c.id])
+        mg.link(a.id, c.id, "shares_tag")
+
+        result = mg.tag_induced_subgraph(["backend"], match="any")
+        assert result["node_count"] == 2  # a and c
+        assert result["edge_count"] >= 1
+
+    def test_subgraph_all_match(self, mg):
+        """AND matching: nodes with all specified tags."""
+        a = mg.add("python api", "svc")
+        mg.tag_nodes("backend", [a.id])
+        mg.tag_nodes("python", [a.id])
+        b = mg.add("python cli", "svc")
+        mg.tag_nodes("backend", [b.id])
+        mg.tag_nodes("rust", [b.id])
+        c = mg.add("rust tool", "svc")
+        mg.tag_nodes("backend", [c.id])
+
+        result = mg.tag_induced_subgraph(["backend", "python"], match="all")
+        assert result["node_count"] == 1  # only a
+
+    def test_subgraph_no_match(self, mg):
+        """No matching nodes returns empty."""
+        mg.add("untagged node", "test")
+        result = mg.tag_induced_subgraph(["nonexistent_tag"], match="any")
+        assert result["node_count"] == 0
+        assert result["edge_count"] == 0
+
+    def test_subgraph_preserves_edges(self, mg):
+        """Internal edges between matching nodes are included."""
+        a = mg.add("service a", "svc")
+        b = mg.add("service b", "svc")
+        c = mg.add("external", "ext")
+        for nid in [a.id, b.id, c.id]:
+            mg.tag_nodes("microservice", [nid])
+        mg.link(a.id, b.id, "calls")
+        mg.link(a.id, c.id, "calls")
+        mg.link(b.id, c.id, "depends")
+
+        result = mg.tag_induced_subgraph(["microservice"], match="any")
+        assert result["node_count"] == 3
+        assert result["edge_count"] == 3
+
+    def test_subgraph_structure(self, mg):
+        """Result has expected structure."""
+        a = mg.add("node1", "test")
+        mg.tag_nodes("tag1", [a.id])
+
+        result = mg.tag_induced_subgraph(["tag1"], match="any")
+        assert "nodes" in result
+        assert "edges" in result
+        assert "tags_matched" in result
+        assert result["tags_matched"] == ["tag1"]
+        assert result["node_count"] == 1
+        node = result["nodes"][0]
+        assert "id" in node
+        assert "label" in node
+        assert "kind" in node
+        assert "tags" in node
+        assert "weight" in node

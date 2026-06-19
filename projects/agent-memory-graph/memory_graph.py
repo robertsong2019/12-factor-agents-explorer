@@ -9029,6 +9029,126 @@ class MemoryGraph:
             "node_role": role,
         }
 
+    # ── Memory Proximity (semantic neighborhood search) ────────────
+
+    def memory_proximity(self, node_id: str, radius: float = 0.5,
+                         limit: int = 20) -> list[dict] | None:
+        """Find nodes within a semantic similarity radius of a target.
+
+        Unlike graph-based neighbors(), this uses content similarity (trigram)
+        to find semantically close nodes regardless of edge connections.
+        Useful for discovering related memories that aren't explicitly linked.
+
+        Args:
+            node_id: anchor node
+            radius: minimum trigram similarity (0-1) to include
+            limit: max results
+
+        Returns:
+            List of {node_id, label, kind, similarity, weight, connected}
+            sorted by similarity descending. Connected = has edge to anchor.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return None
+
+        anchor_label = node.label
+        connected_ids = set()
+        for r in self.conn.execute(
+            "SELECT target FROM edges WHERE source=? UNION "
+            "SELECT source FROM edges WHERE target=?",
+            (node_id, node_id)
+        ).fetchall():
+            connected_ids.add(r[0])
+
+        results = []
+        for r in self.conn.execute(
+            "SELECT id, label, kind, weight FROM nodes WHERE id != ?",
+            (node_id,)
+        ).fetchall():
+            sim = self._content_similarity(anchor_label, r["label"])
+            if sim >= radius:
+                results.append({
+                    "node_id": r["id"],
+                    "label": r["label"],
+                    "kind": r["kind"],
+                    "similarity": round(sim, 4),
+                    "weight": r["weight"],
+                    "connected": r["id"] in connected_ids,
+                })
+
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:limit]
+
+    # ── Tag Induced Subgraph ──────────────────────────────────────
+
+    def tag_induced_subgraph(self, tags: list[str],
+                             match: str = "any") -> dict | None:
+        """Extract a subgraph of nodes matching the given tags.
+
+        Unlike search_by_tag (returns node list only), this returns
+        a full subgraph with edges preserved, enabling localized analysis.
+
+        Args:
+            tags: tag list to filter by
+            match: 'any' (OR) or 'all' (AND)
+
+        Returns:
+            {nodes: [{id, label, kind, tags, weight}],
+             edges: [{source, target, relation}],
+             node_count, edge_count, tags_matched}
+        """
+        tag_set = set(tags)
+        matching_ids = set()
+
+        for r in self.conn.execute(
+            "SELECT id, tags FROM nodes"
+        ).fetchall():
+            node_tags = set(json.loads(r["tags"]))
+            if match == "all":
+                if tag_set.issubset(node_tags):
+                    matching_ids.add(r["id"])
+            else:  # any
+                if tag_set & node_tags:
+                    matching_ids.add(r["id"])
+
+        if not matching_ids:
+            return {"nodes": [], "edges": [],
+                    "node_count": 0, "edge_count": 0,
+                    "tags_matched": tags}
+
+        # Fetch nodes
+        nodes_out = []
+        id_list = list(matching_ids)
+        placeholders = ",".join("?" * len(id_list))
+        for r in self.conn.execute(
+            f"SELECT * FROM nodes WHERE id IN ({placeholders})", id_list
+        ).fetchall():
+            nodes_out.append({
+                "id": r["id"], "label": r["label"], "kind": r["kind"],
+                "tags": json.loads(r["tags"]), "weight": r["weight"],
+            })
+
+        # Fetch internal edges (both endpoints in matching set)
+        edges_out = []
+        for r in self.conn.execute(
+            f"SELECT source, target, relation FROM edges "
+            f"WHERE source IN ({placeholders}) AND target IN ({placeholders})",
+            id_list + id_list
+        ).fetchall():
+            edges_out.append({
+                "source": r["source"], "target": r["target"],
+                "relation": r["relation"],
+            })
+
+        return {
+            "nodes": nodes_out,
+            "edges": edges_out,
+            "node_count": len(nodes_out),
+            "edge_count": len(edges_out),
+            "tags_matched": tags,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
