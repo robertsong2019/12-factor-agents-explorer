@@ -8854,6 +8854,181 @@ class MemoryGraph:
             "dry_run": dry_run,
         }
 
+    # ── Memory Decay (time-based weight management) ──────────────
+
+    def memory_decay(self, half_life_days: float = 7.0,
+                     min_weight: float = 0.01,
+                     kinds: list[str] | None = None,
+                     dry_run: bool = False) -> dict:
+        """Apply exponential time-based weight decay to all (or filtered) nodes.
+
+        Unlike decay_all() which is blunt-force, this provides:
+        - Configurable half-life (weight halves every N days since last access)
+        - Kind filtering (e.g., only decay 'event' nodes, preserve 'person')
+        - Minimum weight floor (don't decay below this)
+        - Dry-run preview
+
+        Formula: new_weight = max(min_weight, weight * 0.5^(elapsed_days / half_life_days))
+
+        Args:
+            half_life_days: weight halves every this many days (default 7)
+            min_weight: floor weight (don't decay below this)
+            kinds: only decay these kinds (None = all)
+            dry_run: preview without applying
+
+        Returns:
+            {scanned, decayed, skipped, total_before, total_after, min_accessed_age_days}
+        """
+        now = time.time()
+        rows = self.conn.execute(
+            "SELECT id, kind, accessed, weight FROM nodes"
+        ).fetchall()
+
+        scanned = 0
+        decayed = 0
+        skipped = 0
+        total_before = 0.0
+        total_after = 0.0
+        max_age_days = 0.0
+
+        for r in rows:
+            if kinds and r["kind"] not in kinds:
+                skipped += 1
+                continue
+
+            scanned += 1
+            elapsed_days = (now - r["accessed"]) / 86400.0
+            max_age_days = max(max_age_days, elapsed_days)
+            old_w = r["weight"]
+            total_before += old_w
+
+            decay_factor = 0.5 ** (elapsed_days / half_life_days)
+            new_w = max(min_weight, old_w * decay_factor)
+            total_after += new_w
+
+            if new_w < old_w:
+                decayed += 1
+                if not dry_run:
+                    self.conn.execute(
+                        "UPDATE nodes SET weight=? WHERE id=?",
+                        (new_w, r["id"]))
+
+        if not dry_run:
+            self.conn.commit()
+
+        return {
+            "scanned": scanned,
+            "decayed": decayed,
+            "skipped": skipped,
+            "total_before": round(total_before, 4),
+            "total_after": round(total_after, 4),
+            "weight_lost": round(total_before - total_after, 4),
+            "max_accessed_age_days": round(max_age_days, 2),
+            "half_life_days": half_life_days,
+            "dry_run": dry_run,
+        }
+
+    # ── Neighborhood Agreement (multi-hop divergence) ─────────────
+
+    def neighborhood_agreement(self, node_id: str,
+                               hops: int = 2) -> dict | None:
+        """Extended semantic agreement beyond immediate neighbors.
+
+        While semantic_divergence only looks at 1-hop neighbors, this method
+        explores the N-hop neighborhood to detect broader semantic drift:
+        - Agreement decreases with hop distance (exponential decay)
+        - High multi-hop agreement + low 1-hop agreement = bridge node
+        - Low multi-hop agreement + high 1-hop agreement = boundary node
+
+        Args:
+            node_id: target node
+            hops: max BFS depth (1 = same as semantic_divergence)
+
+        Returns:
+            {node_id, label, kind, layers: [{hop, nodes, avg_similarity, agreement}],
+             overall_agreement, node_role}
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return None
+
+        visited = {node_id}
+        frontier = [node_id]
+        layers = []
+
+        for hop in range(1, hops + 1):
+            next_frontier = []
+            sims = []
+
+            for nid in frontier:
+                nbrs = self.neighbors(nid)
+                for nbr in nbrs:
+                    if nbr.id in visited:
+                        continue
+                    visited.add(nbr.id)
+                    next_frontier.append(nbr.id)
+                    sim = self._content_similarity(node.label, nbr.label)
+                    sims.append(sim)
+
+            if not sims:
+                layers.append({"hop": hop, "nodes": 0, "avg_similarity": 0.0,
+                               "agreement": 0.0})
+                break
+
+            avg_sim = sum(sims) / len(sims)
+            # Agreement = similarity weighted by hop distance (closer = more important)
+            hop_weight = 1.0 / hop
+            agreement = round(avg_sim * hop_weight, 4)
+
+            layers.append({
+                "hop": hop,
+                "nodes": len(sims),
+                "avg_similarity": round(avg_sim, 4),
+                "agreement": agreement,
+            })
+            frontier = next_frontier
+
+        # Check if node is isolated (first layer found nothing)
+        if layers and layers[0]["nodes"] == 0:
+            return {"node_id": node_id, "label": node.label, "kind": node.kind,
+                    "layers": layers, "overall_agreement": 0.0, "node_role": "isolated"}
+
+        if not layers:
+            return {"node_id": node_id, "label": node.label, "kind": node.kind,
+                    "layers": [], "overall_agreement": 0.0, "node_role": "isolated"}
+
+        # Overall = weighted average of layer agreements
+        total_weight = sum(l["nodes"] for l in layers)
+        if total_weight > 0:
+            overall = sum(l["agreement"] * l["nodes"] for l in layers) / total_weight
+        else:
+            overall = 0.0
+        overall = round(overall, 4)
+
+        # Classify node role
+        if len(layers) >= 2:
+            l1 = layers[0]["agreement"]
+            l2 = layers[1]["agreement"] if len(layers) > 1 else 0.0
+            if l1 < 0.3 and overall > 0.5:
+                role = "bridge"  # Low local but high global → connects clusters
+            elif l1 > 0.5 and overall < 0.3:
+                role = "boundary"  # High local but low global → edge of cluster
+            elif overall > 0.6:
+                role = "core"  # High everywhere → central member
+            else:
+                role = "peripheral"
+        else:
+            role = "core" if overall > 0.5 else "peripheral"
+
+        return {
+            "node_id": node_id,
+            "label": node.label,
+            "kind": node.kind,
+            "layers": layers,
+            "overall_agreement": overall,
+            "node_role": role,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

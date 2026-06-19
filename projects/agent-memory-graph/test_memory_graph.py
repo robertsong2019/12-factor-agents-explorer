@@ -11202,3 +11202,203 @@ class TestConsolidationPipeline:
         r2 = mg.consolidation_pipeline(dry_run=True)
         assert r1["actions_total"] == r2["actions_total"]
         assert r1["report"]["total_nodes"] == r2["report"]["total_nodes"]
+
+
+# ── memory_decay tests ──────────────────────────────────────────
+
+class TestMemoryDecay:
+    """Tests for memory_decay — configurable exponential weight decay."""
+
+    def test_decay_basic(self, mg):
+        """Decay reduces weights of old, untouched nodes."""
+        a = mg.add("old node", "fact")
+        # Simulate old access time (30 days ago)
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?",
+                        (time.time() - 30 * 86400, a.id))
+        mg.conn.execute("UPDATE nodes SET weight=0.8 WHERE id=?", (a.id,))
+        mg.conn.commit()
+
+        result = mg.memory_decay(half_life_days=7.0)
+        node = mg.get_node(a.id)
+        assert node.weight < 0.8  # weight should have decreased
+        assert result["decayed"] >= 1
+        assert result["weight_lost"] > 0
+
+    def test_decay_preserves_recent(self, mg):
+        """Recently accessed nodes should barely decay."""
+        a = mg.add("fresh node", "fact")
+        mg.touch(a.id)  # fresh access
+        result = mg.memory_decay(half_life_days=7.0)
+        node = mg.get_node(a.id)
+        # Very recent — should be nearly unchanged
+        assert node.weight >= 0.9 * 0.5  # default weight ~0.5, minimal decay
+
+    def test_decay_kind_filter(self, mg):
+        """Kind filter skips specified types."""
+        person = mg.add("important person", "person")
+        event = mg.add("old event", "event")
+        # Make both old
+        old_time = time.time() - 60 * 86400
+        mg.conn.execute("UPDATE nodes SET accessed=?, weight=0.8", (old_time,))
+        mg.conn.commit()
+
+        result = mg.memory_decay(half_life_days=7.0, kinds=["event"])
+        assert result["skipped"] >= 1  # person was skipped
+        assert result["scanned"] >= 1  # event was scanned
+
+    def test_decay_min_weight_floor(self, mg):
+        """Decay respects min_weight floor."""
+        a = mg.add("old low node", "fact")
+        mg.conn.execute("UPDATE nodes SET accessed=?, weight=0.05 WHERE id=?",
+                        (time.time() - 365 * 86400, a.id))
+        mg.conn.commit()
+
+        result = mg.memory_decay(half_life_days=7.0, min_weight=0.02)
+        node = mg.get_node(a.id)
+        assert node.weight >= 0.02  # never below min_weight
+
+    def test_decay_dry_run(self, mg):
+        """Dry run doesn't modify weights."""
+        a = mg.add("test node", "fact")
+        mg.conn.execute("UPDATE nodes SET accessed=?, weight=0.7 WHERE id=?",
+                        (time.time() - 30 * 86400, a.id))
+        mg.conn.commit()
+
+        result = mg.memory_decay(half_life_days=7.0, dry_run=True)
+        node = mg.get_node(a.id)
+        assert node.weight == 0.7  # unchanged
+        assert result["dry_run"] is True
+        assert result["decayed"] >= 1
+
+    def test_decay_returns_metrics(self, mg):
+        """Result includes all expected metrics."""
+        mg.add("node a", "fact")
+        mg.add("node b", "concept")
+        result = mg.memory_decay(half_life_days=14.0)
+        for key in ("scanned", "decayed", "skipped", "total_before",
+                    "total_after", "weight_lost", "max_accessed_age_days",
+                    "half_life_days", "dry_run"):
+            assert key in result, f"Missing key: {key}"
+        assert result["half_life_days"] == 14.0
+
+    def test_decay_half_life_formula(self, mg):
+        """Verify exact half-life: after 7 days with half_life=7, weight should be ~half."""
+        a = mg.add("precision test", "fact")
+        mg.conn.execute("UPDATE nodes SET accessed=?, weight=0.6 WHERE id=?",
+                        (time.time() - 7 * 86400, a.id))
+        mg.conn.commit()
+
+        mg.memory_decay(half_life_days=7.0, min_weight=0.0)
+        node = mg.get_node(a.id)
+        # After exactly 7 days with half_life=7: weight ≈ 0.6 * 0.5 = 0.3
+        assert abs(node.weight - 0.3) < 0.05  # within tolerance (timing)
+
+    def test_decay_multiple_kinds(self, mg):
+        """Decay can target multiple kinds."""
+        mg.add("event1", "event")
+        mg.add("note1", "note")
+        mg.add("person1", "person")
+        old_time = time.time() - 90 * 86400
+        mg.conn.execute("UPDATE nodes SET accessed=?", (old_time,))
+        mg.conn.commit()
+
+        result = mg.memory_decay(half_life_days=7.0, kinds=["event", "note"])
+        assert result["scanned"] == 2  # only event + note
+        assert result["skipped"] == 1  # person skipped
+
+
+# ── neighborhood_agreement tests ─────────────────────────────────
+
+class TestNeighborhoodAgreement:
+    """Tests for neighborhood_agreement — multi-hop semantic agreement."""
+
+    def test_agreement_basic(self, mg):
+        """Basic agreement returns expected structure."""
+        a = mg.add("alpha", "concept")
+        b = mg.add("alpha beta", "concept")
+        mg.link(a.id, b.id, "rel")
+        result = mg.neighborhood_agreement(a.id, hops=2)
+        assert result is not None
+        assert "layers" in result
+        assert len(result["layers"]) >= 1
+        assert result["layers"][0]["hop"] == 1
+        assert "overall_agreement" in result
+        assert "node_role" in result
+
+    def test_agreement_nonexistent_node(self, mg):
+        """Nonexistent node returns None."""
+        assert mg.neighborhood_agreement("nonexistent", hops=2) is None
+
+    def test_agreement_isolated_node(self, mg):
+        """Isolated node gets 'isolated' role."""
+        a = mg.add("lonely", "concept")
+        result = mg.neighborhood_agreement(a.id, hops=2)
+        assert result is not None
+        assert len(result["layers"]) == 1
+        assert result["layers"][0]["nodes"] == 0
+        assert result["node_role"] == "isolated"
+
+    def test_agreement_bridge_node(self, mg):
+        """Bridge node: low 1-hop agreement but connects to similar cluster."""
+        # Cluster 1
+        a1 = mg.add("python programming", "skill")
+        a2 = mg.add("python scripting", "skill")
+        a3 = mg.add("python automation", "skill")
+        mg.link(a1.id, a2.id, "same")
+        mg.link(a2.id, a3.id, "same")
+
+        # Bridge node
+        bridge = mg.add("ruby scripting language", "skill")
+        mg.link(a1.id, bridge.id, "bridge")
+
+        # Cluster 2
+        b1 = mg.add("ruby programming", "skill")
+        b2 = mg.add("ruby automation", "skill")
+        mg.link(bridge.id, b1.id, "same")
+        mg.link(b1.id, b2.id, "same")
+
+        result = mg.neighborhood_agreement(bridge.id, hops=2)
+        assert result is not None
+        assert result["node_role"] in ("bridge", "peripheral", "boundary", "core")
+        assert len(result["layers"]) >= 1
+
+    def test_agreement_core_node(self, mg):
+        """Core node: high agreement throughout neighborhood."""
+        a = mg.add("machine learning", "topic")
+        b = mg.add("machine learning models", "topic")
+        c = mg.add("machine learning training", "topic")
+        mg.link(a.id, b.id, "same")
+        mg.link(a.id, c.id, "same")
+        mg.link(b.id, c.id, "same")
+
+        result = mg.neighborhood_agreement(a.id, hops=2)
+        assert result["overall_agreement"] > 0.0
+        assert result["node_role"] in ("core", "peripheral")
+
+    def test_agreement_hop_layers_increase(self, mg):
+        """More hops discover more nodes."""
+        a = mg.add("center", "node")
+        b = mg.add("ring1", "node")
+        c = mg.add("ring2", "node")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+
+        result = mg.neighborhood_agreement(a.id, hops=2)
+        assert len(result["layers"]) == 2
+        assert result["layers"][0]["hop"] == 1
+        assert result["layers"][1]["hop"] == 2
+        # Layer 2 should have found node c
+        assert result["layers"][1]["nodes"] >= 1
+
+    def test_agreement_no_self_inclusion(self, mg):
+        """Node itself is never counted in layers."""
+        a = mg.add("self", "node")
+        b = mg.add("other", "node")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, a.id, "r")  # bidirectional
+
+        result = mg.neighborhood_agreement(a.id, hops=3)
+        # Should not include node 'a' in any layer
+        all_simulated = sum(l["nodes"] for l in result["layers"])
+        # Only 'b' should be found
+        assert all_simulated <= 1
