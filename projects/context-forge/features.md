@@ -19,12 +19,12 @@
 - [ ] **F1**: Git history analysis — commit patterns, contributors, recent activity
 
 ### Output Formats
-- [ ] **F5**: Mermaid.js diagrams — directory structure visualization
+- [x] **F5**: Mermaid.js diagrams — directory structure visualization ✅ 2026-06-19
 - [ ] **F6**: Markdown tables — better formatted dependency/script lists
 - [ ] **F7**: TOML/YAML export — structured output for other tools
 
 ### Quality & Safety
-- [ ] **F9**: File size limits — skip huge files in analysis
+- [x] **F9**: File size limits — skip huge files in analysis ✅ 2026-06-19
 - [ ] **F10**: Validation mode — check generated files against actual codebase
 
 ### Developer Experience
