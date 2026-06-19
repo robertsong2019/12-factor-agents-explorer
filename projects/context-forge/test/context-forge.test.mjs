@@ -782,6 +782,77 @@ describe("writeOrUpdate", () => {
   });
 });
 
+describe("F9: File size limits", () => {
+  let tmpDir;
+
+  afterEach(async () => {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("scanLanguages skips files exceeding maxFileSize", async () => {
+    tmpDir = await makeFixture({
+      "small.js": "console.log('hi');",
+      "big.js": "x".repeat(5000),
+    });
+
+    const langs = await scanLanguages(tmpDir, 3, 0, [], 2000);
+    // small.js counted, big.js skipped (5000 > 2000)
+    assert.equal(langs.get("JavaScript"), 1);
+  });
+
+  it("scanLanguages counts all files when under maxFileSize", async () => {
+    tmpDir = await makeFixture({
+      "a.js": "1",
+      "b.js": "2",
+    });
+
+    const langs = await scanLanguages(tmpDir, 3, 0, [], 100000);
+    assert.equal(langs.get("JavaScript"), 2);
+  });
+
+  it("scanLanguages uses default 100KB limit when not specified", async () => {
+    tmpDir = await makeFixture({
+      "normal.js": "console.log('ok');",
+    });
+
+    const langs = await scanLanguages(tmpDir);
+    assert.equal(langs.get("JavaScript"), 1);
+  });
+
+  it("extractImports skips large files", async () => {
+    tmpDir = await makeFixture({
+      "small.js": "import express from 'express';",
+      "big.js": "/*" + "x".repeat(5000) + "*/\nimport lodash from 'lodash';",
+    });
+
+    const { allImports } = await extractImports(tmpDir, 3, 0, [], 2000);
+    assert.ok(allImports.includes("express"));
+    assert.ok(!allImports.includes("lodash"));
+  });
+
+  it("extractApiSurface skips large files", async () => {
+    tmpDir = await makeFixture({
+      "small.js": "export function tiny() { return 1; }",
+      "big.js": "/*" + "x".repeat(5000) + "*/\nexport function huge() { return 2; }",
+    });
+
+    const api = await extractApiSurface(tmpDir, 3, 0, [], 2000);
+    const names = api.map(a => a.name);
+    assert.ok(names.includes("tiny"));
+    assert.ok(!names.includes("huge"));
+  });
+
+  it("maxFileSize=0 disables limit (processes all files)", async () => {
+    tmpDir = await makeFixture({
+      "big.js": "x".repeat(10000),
+    });
+
+    // maxFileSize=0 means no limit
+    const langs = await scanLanguages(tmpDir, 3, 0, [], 0);
+    assert.equal(langs.get("JavaScript"), 1);
+  });
+});
+
 describe("resolvePath", () => {
   it("resolves absolute paths as-is", () => {
     const result = resolvePath("/usr/local/bin");

@@ -45,7 +45,9 @@ const IMPORT_PATTERNS = {
   ],
 };
 
-export async function extractImports(root, maxDepth = 3, depth = 0, gitignore = []) {
+const DEFAULT_MAX_FILE_SIZE = 1024 * 100; // 100KB — skip files larger than this
+
+export async function extractImports(root, maxDepth = 3, depth = 0, gitignore = [], maxFileSize = DEFAULT_MAX_FILE_SIZE) {
   const imports = new Map(); // { filepath: [imports] }
   const allImports = new Set(); // unique import paths
 
@@ -58,14 +60,17 @@ export async function extractImports(root, maxDepth = 3, depth = 0, gitignore = 
       if (isIgnored(relativePath, gitignore)) continue;
 
       if (e.isDirectory() && !IGNORE_DIRS.has(e.name) && !e.name.startsWith(".")) {
-        const result = await extractImports(join(root, e.name), maxDepth, depth + 1, gitignore);
+        const result = await extractImports(join(root, e.name), maxDepth, depth + 1, gitignore, maxFileSize);
         for (const [k, v] of result.imports) imports.set(k, v);
         result.allImports.forEach(i => allImports.add(i));
       } else if (e.isFile()) {
+        const fullPath = join(root, e.name);
+        const fileStat = await stat(fullPath);
+        if (fileStat.size > maxFileSize) continue;
         const ext = extname(e.name);
         const lang = LANGUAGE_MAP[ext];
         if (lang) {
-          const content = await readFile(join(root, e.name), "utf8");
+          const content = await readFile(fullPath, "utf8");
           const fileImports = [];
 
           if (lang.includes("JavaScript") || lang.includes("TypeScript")) {
@@ -241,7 +246,7 @@ const API_PATTERNS = {
   ],
 };
 
-export async function extractApiSurface(root, maxDepth = 3, depth = 0, gitignore = []) {
+export async function extractApiSurface(root, maxDepth = 3, depth = 0, gitignore = [], maxFileSize = DEFAULT_MAX_FILE_SIZE) {
   const api = []; // { file, name, type, params, visibility }
 
   if (depth >= maxDepth) return api;
@@ -253,14 +258,17 @@ export async function extractApiSurface(root, maxDepth = 3, depth = 0, gitignore
       if (isIgnored(relativePath, gitignore)) continue;
 
       if (e.isDirectory() && !IGNORE_DIRS.has(e.name) && !e.name.startsWith(".")) {
-        const sub = await extractApiSurface(join(root, e.name), maxDepth, depth + 1, gitignore);
+        const sub = await extractApiSurface(join(root, e.name), maxDepth, depth + 1, gitignore, maxFileSize);
         api.push(...sub);
       } else if (e.isFile()) {
+        const fullPath = join(root, e.name);
+        const fileStat = await stat(fullPath);
+        if (fileStat.size > maxFileSize) continue;
         const ext = extname(e.name);
         const lang = LANGUAGE_MAP[ext];
         if (!lang) continue;
 
-        const content = await readFile(join(root, e.name), "utf8");
+        const content = await readFile(fullPath, "utf8");
         const filePath = depth === 0 ? e.name : relativePath;
 
         const isTS = lang.includes("TypeScript");
@@ -476,7 +484,7 @@ export async function detectProject(root) {
   return info;
 }
 
-export async function scanLanguages(root, maxDepth = 3, depth = 0, gitignore = []) {
+export async function scanLanguages(root, maxDepth = 3, depth = 0, gitignore = [], maxFileSize = DEFAULT_MAX_FILE_SIZE) {
   const langs = new Map();
   if (depth >= maxDepth) return langs;
 
@@ -486,9 +494,13 @@ export async function scanLanguages(root, maxDepth = 3, depth = 0, gitignore = [
       const relativePath = depth === 0 ? e.name : relative(root, join(root, e.name));
       if (isIgnored(relativePath, gitignore)) continue;
       if (e.isDirectory() && !IGNORE_DIRS.has(e.name) && !e.name.startsWith(".")) {
-        const sub = await scanLanguages(join(root, e.name), maxDepth, depth + 1, gitignore);
+        const sub = await scanLanguages(join(root, e.name), maxDepth, depth + 1, gitignore, maxFileSize);
         for (const [k, v] of sub) langs.set(k, (langs.get(k) || 0) + v);
       } else if (e.isFile()) {
+        const fullPath = join(root, e.name);
+        let fileStat;
+        try { fileStat = await stat(fullPath); } catch { continue; }
+        if (maxFileSize > 0 && fileStat.size > maxFileSize) continue;
         const ext = extname(e.name);
         const lang = LANGUAGE_MAP[ext];
         if (lang) langs.set(lang, (langs.get(lang) || 0) + 1);
