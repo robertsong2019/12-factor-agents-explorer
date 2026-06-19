@@ -12077,3 +12077,105 @@ class TestWorkflowPromptSection:
         section = mg.workflow_prompt_section(wf_id)
         assert "success: 1" in section
         assert "failed: 1" in section
+
+
+class TestWorkflowPruneTips:
+    """Tests for workflow_prune_tips."""
+
+    def test_prune_all_tips(self, mg):
+        """Remove all tips from a workflow."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        mg.add_workflow_tip(wf_id, "success", "tip 1")
+        mg.add_workflow_tip(wf_id, "failure", "tip 2")
+        removed = mg.workflow_prune_tips(wf_id)
+        assert removed == 2
+        assert mg.retrieve_workflow_tips(wf_id) == []
+
+    def test_prune_by_type(self, mg):
+        """Only remove tips of specified type."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        mg.add_workflow_tip(wf_id, "success", "good")
+        mg.add_workflow_tip(wf_id, "failure", "bad")
+        removed = mg.workflow_prune_tips(wf_id, tip_type="failure")
+        assert removed == 1
+        remaining = mg.retrieve_workflow_tips(wf_id)
+        assert len(remaining) == 1
+        assert remaining[0]["tip_type"] == "success"
+
+    def test_prune_no_tips(self, mg):
+        """Pruning workflow with no tips returns 0."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        assert mg.workflow_prune_tips(wf_id) == 0
+
+    def test_prune_nonexistent_workflow(self, mg):
+        """Pruning nonexistent workflow returns 0."""
+        assert mg.workflow_prune_tips("nope") == 0
+
+
+class TestWorkflowExportImport:
+    """Tests for workflow_export / workflow_import — portable sharing."""
+
+    def test_export_basic(self, mg):
+        """Export produces a portable dict."""
+        wf_id = mg.add_workflow("deploy", [
+            {"label": "Build", "action": "build"},
+            {"label": "Push", "action": "push"},
+        ])
+        exported = mg.workflow_export(wf_id)
+        assert exported["goal"] == "deploy"
+        assert len(exported["steps"]) == 2
+        assert exported["success_count"] == 0
+
+    def test_export_includes_tips(self, mg):
+        """Exported data includes tips."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        mg.add_workflow_tip(wf_id, "success", "great tip")
+        exported = mg.workflow_export(wf_id)
+        assert len(exported["tips"]) == 1
+        assert exported["tips"][0]["content"] == "great tip"
+
+    def test_export_includes_outcomes(self, mg):
+        """Exported data includes success/failure counts."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        mg.record_workflow_outcome(wf_id, True)
+        mg.record_workflow_outcome(wf_id, True)
+        mg.record_workflow_outcome(wf_id, False)
+        exported = mg.workflow_export(wf_id)
+        assert exported["success_count"] == 2
+        assert exported["failure_count"] == 1
+
+    def test_export_nonexistent(self, mg):
+        """Exporting nonexistent returns None."""
+        assert mg.workflow_export("nope") is None
+
+    def test_import_round_trip(self, mg):
+        """Import creates equivalent workflow."""
+        wf_id = mg.add_workflow("original", [
+            {"label": "Step A", "action": "a"},
+            {"label": "Step B", "action": "b"},
+        ], tags=["test"])
+        mg.record_workflow_outcome(wf_id, True)
+        mg.add_workflow_tip(wf_id, "success", "works well")
+        exported = mg.workflow_export(wf_id)
+        new_id = mg.workflow_import(exported, tags=["imported"])
+        new_exported = mg.workflow_export(new_id)
+        assert new_exported["goal"] == "original"
+        assert len(new_exported["steps"]) == 2
+        assert new_exported["success_count"] == 1
+        assert len(new_exported["tips"]) == 1
+
+    def test_import_creates_new_id(self, mg):
+        """Imported workflow has different ID."""
+        wf_id = mg.add_workflow("original", [{"label": "s", "action": "a"}])
+        exported = mg.workflow_export(wf_id)
+        new_id = mg.workflow_import(exported)
+        assert new_id != wf_id
+
+    def test_export_import_empty_steps(self, mg):
+        """Round-trip with zero steps works."""
+        wf_id = mg.add_workflow("empty", [])
+        exported = mg.workflow_export(wf_id)
+        new_id = mg.workflow_import(exported)
+        new_exported = mg.workflow_export(new_id)
+        assert new_exported["goal"] == "empty"
+        assert len(new_exported["steps"]) == 0

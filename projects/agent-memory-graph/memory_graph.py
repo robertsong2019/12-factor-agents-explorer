@@ -9669,6 +9669,79 @@ class MemoryGraph:
                     lines.append(f"  ⚠️  {t['content']}")
         return "\n".join(lines)
 
+    def workflow_prune_tips(self, workflow_id: str,
+                            tip_type: str | None = None) -> int:
+        """Remove tips from a workflow. Returns count removed.
+
+        Args:
+            workflow_id: target workflow
+            tip_type: if provided, only remove tips of this type
+        """
+        removed = 0
+        tips = self.retrieve_workflow_tips(workflow_id, tip_type=tip_type,
+                                            limit=10000)
+        for tip in tips:
+            self.conn.execute(
+                "DELETE FROM edges WHERE source=? AND target=? AND relation='has_tip'",
+                (workflow_id, tip["tip_id"]))
+            self.conn.execute(
+                "DELETE FROM nodes WHERE id=?", (tip["tip_id"],))
+            removed += 1
+        if removed:
+            self.conn.commit()
+        return removed
+
+    def workflow_export(self, workflow_id: str) -> dict | None:
+        """Export a workflow and all its components as a portable dict.
+
+        Includes goal, steps, tips, outcomes, and stats.
+        Useful for cross-agent workflow sharing (memorywire-compatible).
+        """
+        node = self.get_node(workflow_id)
+        if not node or node.kind != "workflow":
+            return None
+        data = dict(node.data)
+        wf_data = next((w for w in self.retrieve_workflows(limit=10000)
+                        if w["id"] == workflow_id), None)
+        tips = self.retrieve_workflow_tips(workflow_id, limit=10000)
+        return {
+            "goal": node.label,
+            "steps": wf_data["steps"] if wf_data else [],
+            "success_count": data.get("success_count", 0),
+            "failure_count": data.get("failure_count", 0),
+            "tips": tips,
+            "source_trajectories": data.get("source_trajectories", []),
+            "exported_at": time.time(),
+        }
+
+    def workflow_import(self, wf_data: dict,
+                        tags: list[str] | None = None) -> str:
+        """Import a workflow from an export dict (round-trip with workflow_export).
+
+        Creates a new workflow with steps, tips, and outcome counters.
+        Does NOT import source trajectory links (they may not exist).
+
+        Returns:
+            New workflow ID.
+        """
+        wf_id = self.add_workflow(
+            wf_data.get("goal", "imported workflow"),
+            wf_data.get("steps", []),
+            tags=tags,
+        )
+        for _ in range(wf_data.get("success_count", 0)):
+            self.record_workflow_outcome(wf_id, True)
+        for _ in range(wf_data.get("failure_count", 0)):
+            self.record_workflow_outcome(wf_id, False)
+        for tip in wf_data.get("tips", []):
+            self.add_workflow_tip(
+                wf_id,
+                tip.get("tip_type", "success"),
+                tip.get("content", ""),
+                tip.get("detail", ""),
+            )
+        return wf_id
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
