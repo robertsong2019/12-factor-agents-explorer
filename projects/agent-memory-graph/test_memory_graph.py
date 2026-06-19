@@ -11974,3 +11974,106 @@ class TestWorkflowDedup:
         result = mg.workflow_dedup()
         assert result["checked"] == 0
         assert result["duplicates_found"] == 0
+
+
+class TestWorkflowTips:
+    """Tests for add_workflow_tip / retrieve_workflow_tips — ReasoningBank."""
+
+    def test_add_tip_basic(self, mg):
+        """Add a tip to a workflow."""
+        wf_id = mg.add_workflow("test wf", [{"label": "s", "action": "a"}])
+        tip_id = mg.add_workflow_tip(wf_id, "success", "Always validate input first")
+        assert tip_id
+        node = mg.get_node(tip_id)
+        assert node.kind == "workflow_tip"
+        assert node.data["tip_type"] == "success"
+
+    def test_add_tip_nonexistent_workflow(self, mg):
+        """Adding tip to nonexistent workflow returns None."""
+        assert mg.add_workflow_tip("nope", "success", "tip") is None
+
+    def test_add_tip_types(self, mg):
+        """All tip types are accepted."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        for t in ["success", "failure", "recovery", "optimization"]:
+            tip_id = mg.add_workflow_tip(wf_id, t, f"{t} tip")
+            assert tip_id
+
+    def test_retrieve_tips_all(self, mg):
+        """Retrieve all tips for a workflow."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        mg.add_workflow_tip(wf_id, "success", "tip 1")
+        mg.add_workflow_tip(wf_id, "failure", "tip 2")
+        mg.add_workflow_tip(wf_id, "recovery", "tip 3")
+        tips = mg.retrieve_workflow_tips(wf_id)
+        assert len(tips) == 3
+
+    def test_retrieve_tips_by_type(self, mg):
+        """Filter tips by type."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        mg.add_workflow_tip(wf_id, "success", "good tip")
+        mg.add_workflow_tip(wf_id, "failure", "bad tip")
+        mg.add_workflow_tip(wf_id, "success", "another good")
+        success_only = mg.retrieve_workflow_tips(wf_id, tip_type="success")
+        assert len(success_only) == 2
+        assert all(t["tip_type"] == "success" for t in success_only)
+
+    def test_retrieve_tips_empty(self, mg):
+        """Workflow with no tips returns empty list."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        assert mg.retrieve_workflow_tips(wf_id) == []
+
+    def test_add_tip_with_detail(self, mg):
+        """Tip detail is stored and retrieved."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        mg.add_workflow_tip(wf_id, "recovery", "Retry with lower temp",
+                            detail="0.7→0.3 works for structured output")
+        tips = mg.retrieve_workflow_tips(wf_id, tip_type="recovery")
+        assert tips[0]["detail"] == "0.7→0.3 works for structured output"
+
+    def test_tip_links_to_workflow(self, mg):
+        """has_tip edge connects workflow to tip."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        mg.add_workflow_tip(wf_id, "success", "tip")
+        edges = mg.conn.execute(
+            "SELECT * FROM edges WHERE source=? AND relation='has_tip'",
+            (wf_id,)
+        ).fetchall()
+        assert len(edges) == 1
+
+
+class TestWorkflowPromptSection:
+    """Tests for workflow_prompt_section — LLM context injection."""
+
+    def test_prompt_section_basic(self, mg):
+        """Generate prompt section with goal and steps."""
+        wf_id = mg.add_workflow("deploy app", [
+            {"label": "Build", "action": "build"},
+            {"label": "Push", "action": "push"},
+        ])
+        section = mg.workflow_prompt_section(wf_id)
+        assert "deploy app" in section
+        assert "Build" in section
+        assert "Push" in section
+
+    def test_prompt_section_with_tips(self, mg):
+        """Tips are included in prompt section."""
+        wf_id = mg.add_workflow("deploy", [{"label": "s", "action": "a"}])
+        mg.add_workflow_tip(wf_id, "success", "Use blue-green deployment")
+        mg.add_workflow_tip(wf_id, "failure", "Don't deploy on Fridays")
+        section = mg.workflow_prompt_section(wf_id)
+        assert "blue-green" in section
+        assert "Fridays" in section
+
+    def test_prompt_section_nonexistent(self, mg):
+        """Nonexistent workflow returns empty string."""
+        assert mg.workflow_prompt_section("nope") == ""
+
+    def test_prompt_section_includes_stats(self, mg):
+        """Success/failure counts appear in section."""
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        mg.record_workflow_outcome(wf_id, True)
+        mg.record_workflow_outcome(wf_id, False)
+        section = mg.workflow_prompt_section(wf_id)
+        assert "success: 1" in section
+        assert "failed: 1" in section

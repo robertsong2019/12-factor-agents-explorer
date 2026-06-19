@@ -9562,6 +9562,113 @@ class MemoryGraph:
             "details": merge_details,
         }
 
+    def add_workflow_tip(self, workflow_id: str, tip_type: str,
+                         content: str, detail: str = "") -> str | None:
+        """Attach a success/recovery/optimization tip to a workflow.
+
+        Inspired by ReasoningBank (ICLR 2026): distill reasoning strategies
+        from both successful and failed executions.
+
+        Args:
+            workflow_id: target workflow
+            tip_type: 'success' | 'failure' | 'recovery' | 'optimization'
+            content: the tip text (natural language guidance)
+            detail: optional supporting detail
+
+        Returns:
+            Tip node ID, or None if workflow doesn't exist.
+        """
+        if not self.get_node(workflow_id):
+            return None
+        tip_id = self.add(
+            content[:80],
+            kind="workflow_tip",
+            data={
+                "_workflow_tip": True,
+                "workflow_id": workflow_id,
+                "tip_type": tip_type,
+                "content": content,
+                "detail": detail,
+                "created": time.time(),
+            },
+        ).id
+        self.link(workflow_id, tip_id, "has_tip")
+        return tip_id
+
+    def retrieve_workflow_tips(self, workflow_id: str,
+                               tip_type: str | None = None,
+                               limit: int = 20) -> list[dict]:
+        """Retrieve tips for a workflow, optionally filtered by type.
+
+        Args:
+            workflow_id: target workflow
+            tip_type: filter by 'success'|'failure'|'recovery'|'optimization'
+            limit: max results
+
+        Returns:
+            List of {tip_id, tip_type, content, detail}
+        """
+        results = []
+        for r in self.conn.execute(
+            "SELECT target FROM edges WHERE source=? AND relation='has_tip'",
+            (workflow_id,)
+        ).fetchall():
+            node = self.get_node(r["target"])
+            if not node or not node.data.get("_workflow_tip"):
+                continue
+            if tip_type and node.data.get("tip_type") != tip_type:
+                continue
+            results.append({
+                "tip_id": node.id,
+                "tip_type": node.data.get("tip_type", ""),
+                "content": node.data.get("content", ""),
+                "detail": node.data.get("detail", ""),
+            })
+            if len(results) >= limit:
+                break
+        return results
+
+    def workflow_prompt_section(self, workflow_id: str,
+                                max_tips: int = 5) -> str:
+        """Generate an LLM-injectable prompt section for a workflow.
+
+        Includes goal, steps, and relevant tips (success strategies +
+        failure warnings). Designed for AWM-style context injection.
+
+        Returns empty string if workflow doesn't exist.
+        """
+        node = self.get_node(workflow_id)
+        if not node or node.kind != "workflow":
+            return ""
+        data = node.data
+        lines = [f"## Workflow: {node.label}"]
+        s = data.get("success_count", 0)
+        f = data.get("failure_count", 0)
+        if s or f:
+            lines.append(f"(success: {s}, failed: {f})")
+        steps = self.retrieve_workflows()
+        wf_data = next((w for w in steps if w["id"] == workflow_id), None)
+        if wf_data:
+            lines.append("")
+            lines.append("Steps:")
+            for i, step in enumerate(wf_data["steps"], 1):
+                lines.append(f"  {i}. {step['label']}")
+        tips = self.retrieve_workflow_tips(workflow_id, limit=max_tips)
+        if tips:
+            success_tips = [t for t in tips if t["tip_type"] == "success"]
+            failure_tips = [t for t in tips if t["tip_type"] in ("failure", "recovery")]
+            if success_tips:
+                lines.append("")
+                lines.append("Success strategies:")
+                for t in success_tips[:max_tips // 2]:
+                    lines.append(f"  ✅ {t['content']}")
+            if failure_tips:
+                lines.append("")
+                lines.append("Known pitfalls:")
+                for t in failure_tips[:max_tips // 2]:
+                    lines.append(f"  ⚠️  {t['content']}")
+        return "\n".join(lines)
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
