@@ -535,6 +535,60 @@ export async function getDirStructure(root, prefix = "", maxDepth = 2, depth = 0
   return out;
 }
 
+// ─── Mermaid Diagram Generation (F5) ──────────────────────────────────
+
+export async function generateMermaidDiagram(root, maxDepth = 2, depth = 0, gitignore = []) {
+  const lines = ["graph TD"];
+  const nodeIds = new Map(); // path -> id
+  let idCounter = 0;
+
+  function nodeId(path) {
+    if (!nodeIds.has(path)) nodeIds.set(path, `N${idCounter++}`);
+    return nodeIds.get(path);
+  }
+
+  async function walk(dir, parentId, dirName, currentDepth) {
+    if (currentDepth >= maxDepth) return;
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      const filtered = entries
+        .filter(e => {
+          const rp = e.name;
+          if (isIgnored(rp, gitignore)) return false;
+          return !IGNORE_DIRS.has(e.name) && !e.name.startsWith(".");
+        })
+        .sort((a, b) => {
+          if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        })
+        .slice(0, 15); // limit per level
+
+      for (const e of filtered) {
+        const fullPath = join(dir, e.name);
+        const displayName = e.isDirectory() ? `📁 ${e.name}` : `📄 ${e.name}`;
+        const id = nodeId(fullPath);
+        const label = displayName.replace(/"/g, "'");
+        lines.push(`  ${id}["${label}"]`);
+        if (parentId) lines.push(`  ${parentId} --> ${id}`);
+        if (e.isDirectory()) {
+          await walk(join(dir, e.name), id, e.name, currentDepth + 1);
+        }
+      }
+      if (filtered.length === 15 && entries.length > 15) {
+        const ellipsisId = nodeId(`${dir}__ellipsis`);
+        lines.push(`  ${ellipsisId}["... +${entries.length - 15} more"]`);
+        if (parentId) lines.push(`  ${parentId} --> ${ellipsisId}`);
+      }
+    } catch {}
+  }
+
+  const rootId = nodeId(root);
+  lines.push(`  ${rootId}["📦 ${basename(root)}"]`);
+  await walk(root, rootId, basename(root), 0);
+
+  return lines.join("\n");
+}
+
 // ─── Context Generation ──────────────────────────────────────────
 
 export function generateAgentsMd(info, langs, structure) {

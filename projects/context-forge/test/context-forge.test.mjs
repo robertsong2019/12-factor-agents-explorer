@@ -19,6 +19,7 @@ import {
   extractImports,
   extractApiSurface,
   parseConfigFiles,
+  generateMermaidDiagram,
 } from "../context-forge.mjs";
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -850,6 +851,88 @@ describe("F9: File size limits", () => {
     // maxFileSize=0 means no limit
     const langs = await scanLanguages(tmpDir, 3, 0, [], 0);
     assert.equal(langs.get("JavaScript"), 1);
+  });
+});
+
+describe("F5: Mermaid diagram", () => {
+  let tmpDir;
+
+  afterEach(async () => {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("generates valid mermaid graph TD header", async () => {
+    tmpDir = await makeFixture({ "README.md": "# project" });
+    const mermaid = await generateMermaidDiagram(tmpDir);
+    assert.ok(mermaid.startsWith("graph TD"));
+  });
+
+  it("includes root node with project name", async () => {
+    tmpDir = await makeFixture({ "index.js": "1" });
+    const mermaid = await generateMermaidDiagram(tmpDir);
+    assert.ok(mermaid.includes("📦"));
+  });
+
+  it("shows files and directories as nodes", async () => {
+    tmpDir = await makeFixture({
+      "src/app.js": "1",
+      "package.json": "{}",
+    });
+    const mermaid = await generateMermaidDiagram(tmpDir);
+    assert.ok(mermaid.includes("📄 package.json"));
+    assert.ok(mermaid.includes("📁 src"));
+    assert.ok(mermaid.includes("📄 app.js"));
+  });
+
+  it("respects maxDepth", async () => {
+    tmpDir = await makeFixture({
+      "a/b/c/deep.js": "1",
+    });
+    const mermaid = await generateMermaidDiagram(tmpDir, 1);
+    // depth 1 means only direct children of root
+    assert.ok(mermaid.includes("📁 a"));
+    assert.ok(!mermaid.includes("deep.js"));
+  });
+
+  it("respects gitignore", async () => {
+    tmpDir = await makeFixture({
+      ".gitignore": "dist",
+      "src/app.js": "1",
+      "dist/bundle.js": "2",
+    });
+    const gi = await parseGitignore(tmpDir);
+    const mermaid = await generateMermaidDiagram(tmpDir, 2, 0, gi);
+    assert.ok(mermaid.includes("📁 src"));
+    assert.ok(!mermaid.includes("📁 dist"));
+  });
+
+  it("generates edges between parent and child nodes", async () => {
+    tmpDir = await makeFixture({
+      "src/app.js": "1",
+    });
+    const mermaid = await generateMermaidDiagram(tmpDir);
+    assert.ok(mermaid.includes("-->"));
+  });
+
+  it("escapes quotes in filenames", async () => {
+    tmpDir = await makeFixture({
+      "src/normal.js": "1",
+    });
+    const mermaid = await generateMermaidDiagram(tmpDir);
+    // Ensure no unescaped double-quotes inside labels
+    const labels = mermaid.match(/\["[^"]*"\]/g) || [];
+    for (const label of labels) {
+      // label should be well-formed: ["..."]
+      assert.ok(label.startsWith("[\"") && label.endsWith("\"]"));
+    }
+  });
+
+  it("truncates dirs with >15 entries", async () => {
+    const files = {};
+    for (let i = 0; i < 20; i++) files[`f${i}.js`] = "1";
+    tmpDir = await makeFixture(files);
+    const mermaid = await generateMermaidDiagram(tmpDir);
+    assert.ok(mermaid.includes("... +"));
   });
 });
 
