@@ -11549,3 +11549,87 @@ class TestTagInducedSubgraph:
         assert "kind" in node
         assert "tags" in node
         assert "weight" in node
+
+
+# ── memory_annotate tests ─────────────────────────────────────────
+
+class TestMemoryAnnotate:
+    """Tests for memory_annotate/get/remove/search — structured metadata."""
+
+    def test_annotate_basic(self, mg):
+        """Add and retrieve an annotation."""
+        a = mg.add("test node", "fact")
+        assert mg.memory_annotate(a.id, "confidence", "0.95")
+        assert mg.annotation_get(a.id, "confidence") == "0.95"
+
+    def test_annotate_nonexistent_node(self, mg):
+        """Annotating nonexistent node returns False."""
+        assert mg.memory_annotate("nope", "key", "val") is False
+
+    def test_annotate_overwrite(self, mg):
+        """Same key overwrites previous value."""
+        a = mg.add("overwrite test", "fact")
+        mg.memory_annotate(a.id, "level", "low")
+        mg.memory_annotate(a.id, "level", "high")
+        assert mg.annotation_get(a.id, "level") == "high"
+
+    def test_annotate_multiple_keys(self, mg):
+        """Node can have multiple annotations."""
+        a = mg.add("multi", "fact")
+        mg.memory_annotate(a.id, "source", "paper")
+        mg.memory_annotate(a.id, "confidence", "0.8")
+        mg.memory_annotate(a.id, "verified", "true")
+        assert mg.annotation_get(a.id, "source") == "paper"
+        assert mg.annotation_get(a.id, "confidence") == "0.8"
+        assert mg.annotation_get(a.id, "verified") == "true"
+
+    def test_annotate_get_missing_key(self, mg):
+        """Getting nonexistent annotation returns None."""
+        a = mg.add("node", "fact")
+        assert mg.annotation_get(a.id, "nonexistent") is None
+
+    def test_annotate_remove(self, mg):
+        """Remove annotation and verify it's gone."""
+        a = mg.add("removal test", "fact")
+        mg.memory_annotate(a.id, "temp", "value")
+        assert mg.annotation_remove(a.id, "temp")
+        assert mg.annotation_get(a.id, "temp") is None
+
+    def test_annotate_remove_nonexistent(self, mg):
+        """Removing nonexistent annotation returns False."""
+        a = mg.add("node", "fact")
+        assert mg.annotation_remove(a.id, "never_added") is False
+
+    def test_annotation_search_by_key(self, mg):
+        """Search finds all nodes with a given annotation key."""
+        a = mg.add("node a", "fact")
+        b = mg.add("node b", "fact")
+        c = mg.add("node c", "fact")
+        mg.memory_annotate(a.id, "source", "paper")
+        mg.memory_annotate(b.id, "source", "blog")
+        mg.memory_annotate(c.id, "verified", "true")  # different key
+
+        results = mg.annotation_search("source")
+        assert len(results) == 2
+        labels = [r["label"] for r in results]
+        assert "node a" in labels
+        assert "node b" in labels
+
+    def test_annotation_search_by_value(self, mg):
+        """Search with value filter narrows results."""
+        a = mg.add("high confidence", "fact")
+        b = mg.add("low confidence", "fact")
+        mg.memory_annotate(a.id, "score", "high")
+        mg.memory_annotate(b.id, "score", "low")
+
+        results = mg.annotation_search("score", value="high")
+        assert len(results) == 1
+        assert results[0]["label"] == "high confidence"
+
+    def test_annotate_preserves_existing_data(self, mg):
+        """Annotation doesn't clobber existing node data."""
+        a = mg.add("data node", "fact", {"important": "yes"})
+        mg.memory_annotate(a.id, "source", "test")
+        node = mg.get_node(a.id)
+        assert node.data.get("important") == "yes"
+        assert node.data.get("_annotations", {}).get("source") == "test"

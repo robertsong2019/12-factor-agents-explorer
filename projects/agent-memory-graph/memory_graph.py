@@ -9149,6 +9149,96 @@ class MemoryGraph:
             "tags_matched": tags,
         }
 
+    # ── Memory Annotations (structured searchable metadata) ────────
+
+    def memory_annotate(self, node_id: str, key: str, value: str) -> bool:
+        """Add a structured key-value annotation to a node.
+
+        Annotations are searchable metadata stored alongside the node's data.
+        Unlike tags (flat labels), annotations have explicit key-value structure.
+        Useful for: confidence scores, source attribution, quality ratings, etc.
+
+        Args:
+            node_id: target node
+            key: annotation key (e.g., 'confidence', 'source')
+            value: annotation value (e.g., '0.95', 'paper')
+
+        Returns:
+            True if node existed and annotation was added.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return False
+        data = dict(node.data) if node.data else {}
+        if "_annotations" not in data:
+            data["_annotations"] = {}
+        data["_annotations"][key] = value
+        self.conn.execute(
+            "UPDATE nodes SET data=? WHERE id=?",
+            (json.dumps(data), node_id))
+        self.conn.commit()
+        return True
+
+    def annotation_get(self, node_id: str, key: str) -> str | None:
+        """Retrieve a specific annotation value."""
+        node = self.get_node(node_id)
+        if not node or not node.data:
+            return None
+        annotations = node.data.get("_annotations", {})
+        return annotations.get(key)
+
+    def annotation_remove(self, node_id: str, key: str) -> bool:
+        """Remove an annotation from a node. Returns True if removed."""
+        node = self.get_node(node_id)
+        if not node or not node.data:
+            return False
+        data = dict(node.data)
+        annotations = data.get("_annotations", {})
+        if key not in annotations:
+            return False
+        del annotations[key]
+        if annotations:
+            data["_annotations"] = annotations
+        else:
+            del data["_annotations"]
+        self.conn.execute(
+            "UPDATE nodes SET data=? WHERE id=?",
+            (json.dumps(data), node_id))
+        self.conn.commit()
+        return True
+
+    def annotation_search(self, key: str, value: str | None = None,
+                          limit: int = 50) -> list[dict]:
+        """Find nodes by annotation key (and optional value).
+
+        Args:
+            key: annotation key to search for
+            value: if provided, only match nodes where annotation[key] == value
+            limit: max results
+
+        Returns:
+            List of {node_id, label, kind, annotation_value}
+        """
+        results = []
+        for r in self.conn.execute(
+            "SELECT id, label, kind, data FROM nodes LIMIT ?", (limit * 5,)
+        ).fetchall():
+            data = json.loads(r["data"])
+            annotations = data.get("_annotations", {})
+            if key in annotations:
+                ann_val = annotations[key]
+                if value is not None and ann_val != value:
+                    continue
+                results.append({
+                    "node_id": r["id"],
+                    "label": r["label"],
+                    "kind": r["kind"],
+                    "annotation_value": ann_val,
+                })
+            if len(results) >= limit:
+                break
+        return results
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
