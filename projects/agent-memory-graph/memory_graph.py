@@ -9429,6 +9429,139 @@ class MemoryGraph:
             "coverage": round(coverage, 4),
         }
 
+    def workflow_compose(self, workflow_a_id: str, workflow_b_id: str,
+                         goal: str | None = None,
+                         bridge_label: str | None = None) -> str | None:
+        """Compose two workflows into a new one (AWM snowball effect).
+
+        Creates a new workflow whose steps are A's steps followed by B's steps,
+        with an optional bridge step connecting them. The new workflow references
+        both sources via extracted_from edges.
+
+        Args:
+            workflow_a_id: first workflow (prefix steps)
+            workflow_b_id: second workflow (suffix steps)
+            goal: combined goal (defaults to "A + B")
+            bridge_label: optional bridge step between A and B
+
+        Returns:
+            New workflow ID, or None if either source doesn't exist.
+        """
+        node_a = self.get_node(workflow_a_id)
+        node_b = self.get_node(workflow_b_id)
+        if not node_a or not node_b or node_a.kind != "workflow" or node_b.kind != "workflow":
+            return None
+        a_steps = self.conn.execute(
+            "SELECT target FROM edges WHERE source=? AND relation='has_step' "
+            "ORDER BY weight DESC", (workflow_a_id,)
+        ).fetchall()
+        b_steps = self.conn.execute(
+            "SELECT target FROM edges WHERE source=? AND relation='has_step' "
+            "ORDER BY weight DESC", (workflow_b_id,)
+        ).fetchall()
+        combined_steps = []
+        for s in a_steps:
+            sn = self.get_node(s["target"])
+            if sn and sn.data.get("_workflow_step"):
+                combined_steps.append({
+                    "label": sn.label,
+                    "action": sn.data.get("action", ""),
+                    "detail": sn.data.get("detail", ""),
+                })
+        if bridge_label:
+            combined_steps.append({"label": bridge_label, "action": "bridge", "detail": ""})
+        for s in b_steps:
+            sn = self.get_node(s["target"])
+            if sn and sn.data.get("_workflow_step"):
+                combined_steps.append({
+                    "label": sn.label,
+                    "action": sn.data.get("action", ""),
+                    "detail": sn.data.get("detail", ""),
+                })
+        new_goal = goal or f"{node_a.label} + {node_b.label}"
+        new_id = self.add_workflow(
+            new_goal, combined_steps,
+            source_trajectories=[workflow_a_id, workflow_b_id],
+        )
+        return new_id
+
+    def workflow_dedup(self, similarity_threshold: float = 0.8,
+                       dry_run: bool = False) -> dict:
+        """Find and merge near-duplicate workflows.
+
+        Uses goal trigram similarity to detect duplicates.
+        Merges by keeping the one with more successes and merging steps.
+
+        Args:
+            similarity_threshold: trigram Jaccard above this = duplicate
+            dry_run: if True, report only without merging
+
+        Returns:
+            {checked, duplicates_found, merged, details}
+        """
+        workflows = []
+        for r in self.conn.execute(
+            "SELECT id, label, data FROM nodes WHERE kind='workflow'"
+        ).fetchall():
+            data = json.loads(r["data"])
+            if not data.get("_workflow"):
+                continue
+            workflows.append((r["id"], r["label"], data))
+        duplicates = []
+        merged_ids = set()
+        merge_details = []
+        for i, (id_a, label_a, data_a) in enumerate(workflows):
+            if id_a in merged_ids:
+                continue
+            for j in range(i + 1, len(workflows)):
+                id_b, label_b, data_b = workflows[j]
+                if id_b in merged_ids:
+                    continue
+                la, lb = label_a.lower(), label_b.lower()
+                ta = {la[k:k+3] for k in range(len(la) - 2)}
+                tb = {lb[k:k+3] for k in range(len(lb) - 2)}
+                if not ta or not tb:
+                    continue
+                sim = len(ta & tb) / len(ta | tb)
+                if sim >= similarity_threshold:
+                    duplicates.append((id_a, id_b, sim))
+                    if not dry_run:
+                        succ_a = data_a.get("success_count", 0)
+                        succ_b = data_b.get("success_count", 0)
+                        keep_id = id_a if succ_a >= succ_b else id_b
+                        remove_id = id_b if keep_id == id_a else id_a
+                        merged_ids.add(remove_id)
+                        remove_node = self.get_node(remove_id)
+                        keep_node = self.get_node(keep_id)
+                        if remove_node and keep_node:
+                            keep_data = dict(keep_node.data)
+                            keep_data["success_count"] = (
+                                keep_data.get("success_count", 0) +
+                                remove_node.data.get("success_count", 0))
+                            keep_data["failure_count"] = (
+                                keep_data.get("failure_count", 0) +
+                                remove_node.data.get("failure_count", 0))
+                            self.conn.execute(
+                                "UPDATE nodes SET data=? WHERE id=?",
+                                (json.dumps(keep_data), keep_id))
+                            self.conn.execute(
+                                "DELETE FROM edges WHERE source=? OR target=?",
+                                (remove_id, remove_id))
+                            self.conn.execute(
+                                "DELETE FROM nodes WHERE id=?", (remove_id,))
+                            self.conn.commit()
+                        merge_details.append({
+                            "kept": keep_id,
+                            "removed": remove_id,
+                            "similarity": round(sim, 4),
+                        })
+        return {
+            "checked": len(workflows),
+            "duplicates_found": len(duplicates),
+            "merged": len(merge_details),
+            "details": merge_details,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

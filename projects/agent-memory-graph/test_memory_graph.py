@@ -11856,3 +11856,121 @@ class TestWorkflowStats:
         assert stats["used_workflows"] == 1
         assert stats["total_workflows"] == 2
         assert stats["coverage"] == 0.5
+
+
+class TestWorkflowCompose:
+    """Tests for workflow_compose — AWM snowball composition."""
+
+    def test_compose_basic(self, mg):
+        """Composing two workflows creates a new one with combined steps."""
+        wf_a = mg.add_workflow("setup", [
+            {"label": "Install", "action": "install"},
+            {"label": "Configure", "action": "config"},
+        ])
+        wf_b = mg.add_workflow("deploy", [
+            {"label": "Build", "action": "build"},
+            {"label": "Ship", "action": "ship"},
+        ])
+        new_id = mg.workflow_compose(wf_a, wf_b)
+        assert new_id
+        results = mg.retrieve_workflows()
+        composed = [r for r in results if r["id"] == new_id][0]
+        assert composed["step_count"] == 4
+
+    def test_compose_with_bridge(self, mg):
+        """Bridge step is inserted between workflows."""
+        wf_a = mg.add_workflow("prep", [{"label": "A", "action": "a"}])
+        wf_b = mg.add_workflow("finish", [{"label": "B", "action": "b"}])
+        new_id = mg.workflow_compose(wf_a, wf_b, bridge_label="Verify")
+        results = mg.retrieve_workflows()
+        composed = [r for r in results if r["id"] == new_id][0]
+        labels = [s["label"] for s in composed["steps"]]
+        assert "Verify" in labels
+        assert len(labels) == 3
+
+    def test_compose_custom_goal(self, mg):
+        """Custom goal for composed workflow."""
+        wf_a = mg.add_workflow("step one", [{"label": "A", "action": "a"}])
+        wf_b = mg.add_workflow("step two", [{"label": "B", "action": "b"}])
+        new_id = mg.workflow_compose(wf_a, wf_b, goal="full pipeline")
+        node = mg.get_node(new_id)
+        assert node.label == "full pipeline"
+
+    def test_compose_default_goal(self, mg):
+        """Default goal combines both labels."""
+        wf_a = mg.add_workflow("build", [{"label": "A", "action": "a"}])
+        wf_b = mg.add_workflow("test", [{"label": "B", "action": "b"}])
+        new_id = mg.workflow_compose(wf_a, wf_b)
+        node = mg.get_node(new_id)
+        assert "build" in node.label
+        assert "test" in node.label
+
+    def test_compose_links_sources(self, mg):
+        """Composed workflow has extracted_from edges to sources."""
+        wf_a = mg.add_workflow("a", [{"label": "A", "action": "a"}])
+        wf_b = mg.add_workflow("b", [{"label": "B", "action": "b"}])
+        new_id = mg.workflow_compose(wf_a, wf_b)
+        edges = mg.conn.execute(
+            "SELECT * FROM edges WHERE source=? AND relation='extracted_from'",
+            (new_id,)
+        ).fetchall()
+        assert len(edges) == 2
+
+    def test_compose_nonexistent_source(self, mg):
+        """Returns None if either source doesn't exist."""
+        wf_a = mg.add_workflow("real", [{"label": "A", "action": "a"}])
+        assert mg.workflow_compose(wf_a, "nonexistent") is None
+        assert mg.workflow_compose("nonexistent", wf_a) is None
+
+
+class TestWorkflowDedup:
+    """Tests for workflow_dedup — merge near-duplicate workflows."""
+
+    def test_dedup_no_duplicates(self, mg):
+        """No duplicates returns zero merges."""
+        mg.add_workflow("deploy app", [{"label": "A", "action": "a"}])
+        mg.add_workflow("cook dinner", [{"label": "B", "action": "b"}])
+        result = mg.workflow_dedup()
+        assert result["duplicates_found"] == 0
+        assert result["merged"] == 0
+
+    def test_dedup_detects_similarity(self, mg):
+        """Similar goals are detected as duplicates."""
+        mg.add_workflow("deploy application", [{"label": "A", "action": "a"}])
+        mg.add_workflow("deploy applications", [{"label": "B", "action": "b"}])
+        result = mg.workflow_dedup(dry_run=True)
+        assert result["duplicates_found"] >= 1
+
+    def test_dedup_merges(self, mg):
+        """Non-dry_run actually merges duplicates."""
+        mg.add_workflow("deploy application", [{"label": "A", "action": "a"}])
+        mg.add_workflow("deploy applications", [{"label": "B", "action": "b"}])
+        result = mg.workflow_dedup()
+        assert result["merged"] >= 1
+        remaining = mg.retrieve_workflows()
+        assert len(remaining) == 1
+
+    def test_dedup_keeps_better_workflow(self, mg):
+        """Merge keeps workflow with more successes."""
+        wf_a = mg.add_workflow("deploy application", [{"label": "A", "action": "a"}])
+        wf_b = mg.add_workflow("deploy applications", [{"label": "B", "action": "b"}])
+        mg.record_workflow_outcome(wf_a, True)
+        mg.record_workflow_outcome(wf_a, True)
+        mg.record_workflow_outcome(wf_b, True)
+        result = mg.workflow_dedup()
+        assert result["details"][0]["kept"] == wf_a
+        node = mg.get_node(wf_a)
+        assert node.data["success_count"] == 3  # 2 + 1
+
+    def test_dedup_dry_run_no_change(self, mg):
+        """Dry run doesn't modify the graph."""
+        mg.add_workflow("deploy application", [{"label": "A", "action": "a"}])
+        mg.add_workflow("deploy applications", [{"label": "B", "action": "b"}])
+        mg.workflow_dedup(dry_run=True)
+        assert len(mg.retrieve_workflows()) == 2
+
+    def test_dedup_empty_graph(self, mg):
+        """Dedup on empty graph returns zeros."""
+        result = mg.workflow_dedup()
+        assert result["checked"] == 0
+        assert result["duplicates_found"] == 0
