@@ -9239,6 +9239,196 @@ class MemoryGraph:
                 break
         return results
 
+    # ── Workflow Memory (AWM ICML 2025 / ReasoningBank ICLR 2026) ──────
+
+    def add_workflow(self, goal: str, steps: list[dict],
+                     source_trajectories: list[str] | None = None,
+                     tags: list[str] | None = None) -> str:
+        """Create a workflow node with ordered step nodes and edges.
+
+        Implements Agent Workflow Memory (AWM) pattern: store reusable
+        multi-step procedures extracted from execution trajectories.
+
+        Args:
+            goal: natural-language description of the workflow goal
+            steps: ordered list of {label, action, detail} dicts
+            source_trajectories: IDs of trajectory nodes this was extracted from
+            tags: optional tags for retrieval
+
+        Returns:
+            workflow node ID
+        """
+        wf_id = self.add(
+            goal, kind="workflow",
+            data={
+                "_workflow": True,
+                "step_count": len(steps),
+                "success_count": 0,
+                "failure_count": 0,
+                "source_trajectories": source_trajectories or [],
+            },
+            tags=tags or [],
+        ).id
+        for i, step in enumerate(steps):
+            step_node = self.add(
+                step.get("label", f"Step {i+1}"),
+                kind="workflow_step",
+                data={
+                    "_workflow_step": True,
+                    "workflow_id": wf_id,
+                    "order": i,
+                    "action": step.get("action", ""),
+                    "detail": step.get("detail", ""),
+                },
+            )
+            self.link(wf_id, step_node.id, "has_step", weight=1.0 - i * 0.01)
+            if i > 0:
+                prev = self.conn.execute(
+                    "SELECT target FROM edges WHERE source=? AND relation='has_step' "
+                    "ORDER BY weight DESC LIMIT 1 OFFSET ?",
+                    (wf_id, i - 1),
+                ).fetchone()
+                if prev:
+                    self.link(prev["target"], step_node.id, "next_step")
+        for traj_id in (source_trajectories or []):
+            if self.has_node(traj_id):
+                self.link(wf_id, traj_id, "extracted_from")
+        return wf_id
+
+    def retrieve_workflows(self, goal: str | None = None,
+                          tags: list[str] | None = None,
+                          limit: int = 10) -> list[dict]:
+        """Retrieve workflows matching goal text and/or tags.
+
+        Uses tag intersection (Jaccard) and goal trigram overlap for ranking.
+        Falls back to listing all workflows if no filters.
+
+        Returns:
+            Sorted list of {id, goal, step_count, success_count,
+                             failure_count, score, steps}
+        """
+        candidates = []
+        for r in self.conn.execute(
+            "SELECT id, label, data, tags FROM nodes WHERE kind='workflow'"
+        ).fetchall():
+            data = json.loads(r["data"])
+            if not data.get("_workflow"):
+                continue
+            score = 0.0
+            has_tag_match = True
+            if tags:
+                wf_tags = set(json.loads(r["tags"])) if r["tags"] else set()
+                overlap = len(wf_tags & set(tags))
+                total = len(wf_tags | set(tags)) or 1
+                score += overlap / total  # Jaccard
+                has_tag_match = overlap > 0
+            if not has_tag_match:
+                continue
+            if goal:
+                wf_label_lower = r["label"].lower()
+                goal_lower = goal.lower()
+                goal_trigrams = {goal_lower[i:i+3] for i in range(len(goal_lower) - 2)}
+                label_trigrams = {wf_label_lower[i:i+3] for i in range(len(wf_label_lower) - 2)}
+                if goal_trigrams and label_trigrams:
+                    score += len(goal_trigrams & label_trigrams) / len(goal_trigrams | label_trigrams)
+            success_bonus = data.get("success_count", 0) * 0.1
+            success_bonus -= data.get("failure_count", 0) * 0.05
+            score += success_bonus
+            candidates.append((score, r, data))
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        results = []
+        for score, r, data in candidates[:limit]:
+            steps_out = []
+            for s in self.conn.execute(
+                "SELECT target FROM edges WHERE source=? AND relation='has_step' "
+                "ORDER BY weight DESC", (r["id"],)
+            ).fetchall():
+                step_node = self.get_node(s["target"])
+                if step_node and step_node.data.get("_workflow_step"):
+                    steps_out.append({
+                        "label": step_node.label,
+                        "action": step_node.data.get("action", ""),
+                        "detail": step_node.data.get("detail", ""),
+                    })
+            results.append({
+                "id": r["id"],
+                "goal": r["label"],
+                "step_count": data.get("step_count", len(steps_out)),
+                "success_count": data.get("success_count", 0),
+                "failure_count": data.get("failure_count", 0),
+                "score": round(score, 4),
+                "steps": steps_out,
+            })
+        return results
+
+    def record_workflow_outcome(self, workflow_id: str, success: bool,
+                                detail: str = "") -> bool:
+        """Record execution outcome for a workflow.
+
+        Increments success/failure counter. Optional detail stored in data.
+        Returns True if workflow existed.
+        """
+        node = self.get_node(workflow_id)
+        if not node or node.kind != "workflow":
+            return False
+        data = dict(node.data) if node.data else {}
+        if success:
+            data["success_count"] = data.get("success_count", 0) + 1
+        else:
+            data["failure_count"] = data.get("failure_count", 0) + 1
+        outcomes = data.get("_outcomes", [])
+        outcomes.append({
+            "success": success,
+            "detail": detail,
+            "ts": time.time(),
+        })
+        data["_outcomes"] = outcomes[-50:]  # keep last 50
+        self.conn.execute(
+            "UPDATE nodes SET data=? WHERE id=?",
+            (json.dumps(data), workflow_id))
+        self.conn.commit()
+        return True
+
+    def workflow_stats(self) -> dict:
+        """Global workflow memory statistics.
+
+        Returns counts, success rates, and coverage metrics.
+        """
+        workflows = self.conn.execute(
+            "SELECT id, data FROM nodes WHERE kind='workflow'"
+        ).fetchall()
+        total = len(workflows)
+        total_success = 0
+        total_failure = 0
+        total_steps = 0
+        used = 0
+        for r in workflows:
+            data = json.loads(r["data"])
+            s = data.get("success_count", 0)
+            f = data.get("failure_count", 0)
+            total_success += s
+            total_failure += f
+            total_steps += data.get("step_count", 0)
+            if s + f > 0:
+                used += 1
+        step_nodes = self.conn.execute(
+            "SELECT COUNT(*) as c FROM nodes WHERE kind='workflow_step'"
+        ).fetchone()["c"]
+        avg_steps = total_steps / total if total else 0
+        total_attempts = total_success + total_failure
+        success_rate = total_success / total_attempts if total_attempts else 0.0
+        coverage = used / total if total else 0.0
+        return {
+            "total_workflows": total,
+            "total_steps": step_nodes,
+            "avg_steps_per_workflow": round(avg_steps, 1),
+            "total_success": total_success,
+            "total_failure": total_failure,
+            "success_rate": round(success_rate, 4),
+            "used_workflows": used,
+            "coverage": round(coverage, 4),
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

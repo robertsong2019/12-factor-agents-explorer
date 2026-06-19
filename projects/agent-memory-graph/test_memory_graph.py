@@ -11633,3 +11633,226 @@ class TestMemoryAnnotate:
         node = mg.get_node(a.id)
         assert node.data.get("important") == "yes"
         assert node.data.get("_annotations", {}).get("source") == "test"
+
+
+class TestAddWorkflow:
+    """Tests for add_workflow — AWM-inspired procedural memory."""
+
+    def test_add_workflow_basic(self, mg):
+        """Create a workflow with steps."""
+        wf_id = mg.add_workflow(
+            "deploy to production",
+            [
+                {"label": "Run tests", "action": "test", "detail": "npm test"},
+                {"label": "Build", "action": "build", "detail": "npm run build"},
+                {"label": "Publish", "action": "publish", "detail": "npm publish"},
+            ],
+        )
+        assert wf_id
+        node = mg.get_node(wf_id)
+        assert node.kind == "workflow"
+        assert node.data["_workflow"] is True
+        assert node.data["step_count"] == 3
+
+    def test_add_workflow_creates_step_nodes(self, mg):
+        """Each step becomes a workflow_step node."""
+        wf_id = mg.add_workflow("cook pasta", [
+            {"label": "Boil water", "action": "boil"},
+            {"label": "Add pasta", "action": "add"},
+        ])
+        steps = mg.conn.execute(
+            "SELECT * FROM nodes WHERE kind='workflow_step'"
+        ).fetchall()
+        assert len(steps) == 2
+
+    def test_add_workflow_links_steps(self, mg):
+        """Workflow has_step edges to each step."""
+        wf_id = mg.add_workflow("two step", [
+            {"label": "First", "action": "do_first"},
+            {"label": "Second", "action": "do_second"},
+        ])
+        edges = mg.conn.execute(
+            "SELECT * FROM edges WHERE source=? AND relation='has_step'",
+            (wf_id,)
+        ).fetchall()
+        assert len(edges) == 2
+
+    def test_add_workflow_next_step_chain(self, mg):
+        """Steps are chained with next_step edges."""
+        wf_id = mg.add_workflow("chained", [
+            {"label": "A", "action": "a"},
+            {"label": "B", "action": "b"},
+            {"label": "C", "action": "c"},
+        ])
+        next_edges = mg.conn.execute(
+            "SELECT * FROM edges WHERE relation='next_step'"
+        ).fetchall()
+        assert len(next_edges) >= 2
+
+    def test_add_workflow_with_tags(self, mg):
+        """Tags are stored on the workflow node."""
+        wf_id = mg.add_workflow(
+            "CI/CD pipeline",
+            [{"label": "Lint", "action": "lint"}],
+            tags=["devops", "automation"],
+        )
+        row = mg.conn.execute(
+            "SELECT tags FROM nodes WHERE id=?", (wf_id,)
+        ).fetchone()
+        tags = json.loads(row["tags"]) if row["tags"] else []
+        assert "devops" in tags
+        assert "automation" in tags
+
+    def test_add_workflow_with_source_trajectories(self, mg):
+        """Source trajectory links are created."""
+        traj = mg.add("execution trace #1", "event")
+        wf_id = mg.add_workflow(
+            "some workflow",
+            [{"label": "Step 1", "action": "act"}],
+            source_trajectories=[traj.id],
+        )
+        edges = mg.conn.execute(
+            "SELECT * FROM edges WHERE source=? AND relation='extracted_from'",
+            (wf_id,)
+        ).fetchall()
+        assert len(edges) == 1
+
+
+class TestRetrieveWorkflows:
+    """Tests for retrieve_workflows — goal/tag-based retrieval."""
+
+    def test_retrieve_all_workflows(self, mg):
+        """Retrieve returns all workflows when no filter."""
+        mg.add_workflow("task A", [{"label": "do A", "action": "a"}])
+        mg.add_workflow("task B", [{"label": "do B", "action": "b"}])
+        results = mg.retrieve_workflows()
+        assert len(results) == 2
+
+    def test_retrieve_by_tag(self, mg):
+        """Tag-based filtering."""
+        mg.add_workflow("deploy app", [{"label": "ship", "action": "ship"}],
+                        tags=["devops"])
+        mg.add_workflow("cook dinner", [{"label": "chop", "action": "chop"}],
+                        tags=["cooking"])
+        results = mg.retrieve_workflows(tags=["devops"])
+        assert len(results) == 1
+        assert "deploy" in results[0]["goal"]
+
+    def test_retrieve_by_goal_similarity(self, mg):
+        """Goal text uses trigram overlap."""
+        mg.add_workflow("deploy application to cloud", [
+            {"label": "push", "action": "push"}])
+        mg.add_workflow("cook pasta recipe", [
+            {"label": "boil", "action": "boil"}])
+        results = mg.retrieve_workflows(goal="deploy application")
+        assert results[0]["goal"] == "deploy application to cloud"
+
+    def test_retrieve_includes_steps(self, mg):
+        """Results include ordered step list."""
+        mg.add_workflow("three step flow", [
+            {"label": "Alpha", "action": "a"},
+            {"label": "Beta", "action": "b"},
+            {"label": "Gamma", "action": "c"},
+        ])
+        results = mg.retrieve_workflows()
+        assert len(results[0]["steps"]) == 3
+        assert results[0]["steps"][0]["label"] == "Alpha"
+
+    def test_retrieve_empty(self, mg):
+        """No workflows returns empty list."""
+        assert mg.retrieve_workflows() == []
+
+    def test_retrieve_ranked_by_success(self, mg):
+        """Workflows with more successes rank higher."""
+        wf_a = mg.add_workflow("similar task A", [{"label": "do", "action": "x"}])
+        wf_b = mg.add_workflow("similar task B", [{"label": "do", "action": "x"}])
+        mg.record_workflow_outcome(wf_a, True)
+        mg.record_workflow_outcome(wf_a, True)
+        mg.record_workflow_outcome(wf_b, False)
+        results = mg.retrieve_workflows(goal="similar task")
+        assert results[0]["id"] == wf_a
+
+
+class TestRecordWorkflowOutcome:
+    """Tests for record_workflow_outcome."""
+
+    def test_record_success(self, mg):
+        wf_id = mg.add_workflow("test wf", [{"label": "s1", "action": "a"}])
+        assert mg.record_workflow_outcome(wf_id, True)
+        node = mg.get_node(wf_id)
+        assert node.data["success_count"] == 1
+        assert node.data["failure_count"] == 0
+
+    def test_record_failure(self, mg):
+        wf_id = mg.add_workflow("test wf", [{"label": "s1", "action": "a"}])
+        assert mg.record_workflow_outcome(wf_id, False, "timeout")
+        node = mg.get_node(wf_id)
+        assert node.data["failure_count"] == 1
+        assert node.data["success_count"] == 0
+
+    def test_record_multiple_outcomes(self, mg):
+        wf_id = mg.add_workflow("test wf", [{"label": "s1", "action": "a"}])
+        mg.record_workflow_outcome(wf_id, True)
+        mg.record_workflow_outcome(wf_id, True)
+        mg.record_workflow_outcome(wf_id, False)
+        node = mg.get_node(wf_id)
+        assert node.data["success_count"] == 2
+        assert node.data["failure_count"] == 1
+
+    def test_record_outcome_nonexistent(self, mg):
+        assert mg.record_workflow_outcome("nope", True) is False
+
+    def test_record_outcome_non_workflow_node(self, mg):
+        """Recording outcome on non-workflow node fails."""
+        n = mg.add("just a fact", "fact")
+        assert mg.record_workflow_outcome(n.id, True) is False
+
+    def test_outcome_detail_stored(self, mg):
+        wf_id = mg.add_workflow("wf", [{"label": "s", "action": "a"}])
+        mg.record_workflow_outcome(wf_id, False, detail="step 2 failed")
+        node = mg.get_node(wf_id)
+        outcomes = node.data.get("_outcomes", [])
+        assert len(outcomes) == 1
+        assert outcomes[0]["detail"] == "step 2 failed"
+
+
+class TestWorkflowStats:
+    """Tests for workflow_stats — global workflow memory dashboard."""
+
+    def test_stats_empty(self, mg):
+        """Empty graph has zero stats."""
+        stats = mg.workflow_stats()
+        assert stats["total_workflows"] == 0
+        assert stats["success_rate"] == 0.0
+
+    def test_stats_with_workflows(self, mg):
+        """Stats reflect added workflows."""
+        mg.add_workflow("wf1", [{"label": "a", "action": "x"},
+                                  {"label": "b", "action": "y"}])
+        mg.add_workflow("wf2", [{"label": "c", "action": "z"}])
+        stats = mg.workflow_stats()
+        assert stats["total_workflows"] == 2
+        assert stats["total_steps"] == 3
+        assert stats["avg_steps_per_workflow"] == 1.5
+
+    def test_stats_success_rate(self, mg):
+        """Success rate is computed correctly."""
+        wf1 = mg.add_workflow("wf1", [{"label": "s", "action": "a"}])
+        wf2 = mg.add_workflow("wf2", [{"label": "s", "action": "a"}])
+        mg.record_workflow_outcome(wf1, True)
+        mg.record_workflow_outcome(wf1, True)
+        mg.record_workflow_outcome(wf2, False)
+        stats = mg.workflow_stats()
+        assert stats["total_success"] == 2
+        assert stats["total_failure"] == 1
+        assert stats["success_rate"] == round(2 / 3, 4)
+
+    def test_stats_coverage(self, mg):
+        """Coverage tracks used vs unused workflows."""
+        wf1 = mg.add_workflow("used", [{"label": "s", "action": "a"}])
+        mg.add_workflow("unused", [{"label": "s", "action": "a"}])
+        mg.record_workflow_outcome(wf1, True)
+        stats = mg.workflow_stats()
+        assert stats["used_workflows"] == 1
+        assert stats["total_workflows"] == 2
+        assert stats["coverage"] == 0.5
