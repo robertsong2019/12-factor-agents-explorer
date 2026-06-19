@@ -535,6 +535,63 @@ export async function getDirStructure(root, prefix = "", maxDepth = 2, depth = 0
   return out;
 }
 
+// ─── Validation Mode (F10) ────────────────────────────────────────────
+
+export async function validateContext(root, generatedFiles) {
+  const issues = [];
+  const info = await detectProject(root);
+  const gitignore = await parseGitignore(root);
+  const langs = await scanLanguages(root, 3, 0, gitignore);
+
+  for (const { file, type } of generatedFiles) {
+    const filePath = join(root, file);
+    if (!existsSync(filePath)) {
+      issues.push({ file, severity: "error", message: "File does not exist" });
+      continue;
+    }
+
+    const content = await readFile(filePath, "utf8");
+
+    // Check: referenced scripts exist in package.json
+    if (type === "agents" || type === "cursor" || type === "copilot" || type === "claude") {
+      const scriptRefs = content.matchAll(/`npm run (\w+)`/g);
+      for (const m of scriptRefs) {
+        if (!info.scripts || !(m[1] in info.scripts)) {
+          issues.push({ file, severity: "warning", message: `Script '${m[1]}' referenced but not found in package.json` });
+        }
+      }
+    }
+
+    // Check: entry points exist on disk
+    if (type === "agents") {
+      for (const ep of info.entryPoints) {
+        if (!existsSync(join(root, ep))) {
+          issues.push({ file, severity: "warning", message: `Entry point '${ep}' does not exist` });
+        }
+      }
+    }
+
+    // Check: stale update-section markers
+    const openMarkers = (content.match(/<!-- context-forge:update-section \w+ -->/g) || []).length;
+    const closeMarkers = (content.match(/<!-- \/context-forge:update-section -->/g) || []).length;
+    if (openMarkers !== closeMarkers) {
+      issues.push({ file, severity: "error", message: `Mismatched update-section markers: ${openMarkers} open, ${closeMarkers} close` });
+    }
+
+    // Check: languages detected match file content
+    if (type === "agents") {
+      const langList = [...langs.entries()].sort((a, b) => b[1] - a[1]).map(([l]) => l);
+      for (const lang of langList.slice(0, 3)) {
+        if (!content.includes(lang)) {
+          issues.push({ file, severity: "info", message: `Language '${lang}' detected but not mentioned in file` });
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
 // ─── Mermaid Diagram Generation (F5) ──────────────────────────────────
 
 export async function generateMermaidDiagram(root, maxDepth = 2, depth = 0, gitignore = []) {

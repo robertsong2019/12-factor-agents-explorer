@@ -20,6 +20,7 @@ import {
   extractApiSurface,
   parseConfigFiles,
   generateMermaidDiagram,
+  validateContext,
 } from "../context-forge.mjs";
 
 // ─── Helpers ─────────────────────────────────────────────────────
@@ -933,6 +934,83 @@ describe("F5: Mermaid diagram", () => {
     tmpDir = await makeFixture(files);
     const mermaid = await generateMermaidDiagram(tmpDir);
     assert.ok(mermaid.includes("... +"));
+  });
+});
+
+describe("F10: Validation mode", () => {
+  let tmpDir;
+
+  afterEach(async () => {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns empty issues for clean project", async () => {
+    tmpDir = await makeFixture({
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", main: "index.js", scripts: { test: "jest" } }),
+      "index.js": "console.log('hi');",
+      "AGENTS.md": "# AGENTS.md \n JavaScript\n `npm run test`",
+    });
+
+    const issues = await validateContext(tmpDir, [{ file: "AGENTS.md", type: "agents" }]);
+    // Should have at most info-level issues
+    const errors = issues.filter(i => i.severity === "error" || i.severity === "warning");
+    assert.equal(errors.length, 0);
+  });
+
+  it("detects missing file", async () => {
+    tmpDir = await makeFixture({
+      "package.json": JSON.stringify({ name: "app" }),
+    });
+
+    const issues = await validateContext(tmpDir, [{ file: "AGENTS.md", type: "agents" }]);
+    assert.ok(issues.some(i => i.severity === "error" && i.message.includes("does not exist")));
+  });
+
+  it("detects mismatched update-section markers", async () => {
+    tmpDir = await makeFixture({
+      "package.json": JSON.stringify({ name: "app" }),
+      "AGENTS.md": "# AGENTS.md\n<!-- context-forge:update-section conventions -->\nContent without closing tag\n",
+    });
+
+    const issues = await validateContext(tmpDir, [{ file: "AGENTS.md", type: "agents" }]);
+    assert.ok(issues.some(i => i.severity === "error" && i.message.includes("Mismatched")));
+  });
+
+  it("detects stale script references", async () => {
+    tmpDir = await makeFixture({
+      "package.json": JSON.stringify({ name: "app", scripts: { test: "jest" } }),
+      "AGENTS.md": "Run `npm run build` to build",
+    });
+
+    const issues = await validateContext(tmpDir, [{ file: "AGENTS.md", type: "agents" }]);
+    assert.ok(issues.some(i => i.severity === "warning" && i.message.includes("build")));
+  });
+
+  it("detects missing entry points", async () => {
+    tmpDir = await makeFixture({
+      "package.json": JSON.stringify({ name: "app", main: "index.js" }),
+      "AGENTS.md": "# AGENTS.md",
+    });
+
+    const issues = await validateContext(tmpDir, [{ file: "AGENTS.md", type: "agents" }]);
+    assert.ok(issues.some(i => i.severity === "warning" && i.message.includes("Entry point")));
+  });
+
+  it("handles multiple files", async () => {
+    tmpDir = await makeFixture({
+      "package.json": JSON.stringify({ name: "app", main: "index.js" }),
+      "index.js": "1",
+      "AGENTS.md": "# AGENTS.md",
+      ".cursorrules": "# Rules",
+    });
+
+    const issues = await validateContext(tmpDir, [
+      { file: "AGENTS.md", type: "agents" },
+      { file: ".cursorrules", type: "cursor" },
+    ]);
+    // Both files exist, so no "does not exist" errors
+    const notFound = issues.filter(i => i.message.includes("does not exist"));
+    assert.equal(notFound.length, 0);
   });
 });
 
