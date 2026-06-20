@@ -10095,6 +10095,220 @@ class MemoryGraph:
             parts.append(f"{node.label} --[{relation}]--> {next_node.label}")
         return "\n".join(parts)
 
+    # ── Q-Value Utility Scoring (MemRL-inspired) ───────────────────
+
+    def memory_qvalue(self, node_id: str,
+                      alpha: float = 0.1,
+                      gamma: float = 0.9) -> dict | None:
+        """Compute Q-value utility score for a memory node.
+
+        Inspired by MemRL (arXiv:2601.03192): memory management as a
+        learning problem.  Each node gets a Q-value reflecting its
+        demonstrated utility — how often it's accessed, how well
+        connected it is, and whether neighbors are also high-value.
+
+        Q(s) = α * immediate_reward + γ * max_neighbor_Q
+
+        immediate_reward = access_frequency_norm * 0.4
+                         + degree_norm * 0.3
+                         + weight_norm * 0.3
+
+        This is a single-pass approximation (not iterative Bellman) —
+        fast enough for real-time query routing.
+
+        Args:
+            node_id: target node
+            alpha: learning rate / immediate reward weight
+            gamma: discount factor for neighbor propagation
+
+        Returns:
+            {qvalue, components, neighbors_checked} or None if not found
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return None
+
+        stats = self.stats()
+        edge_count = stats.get("edges", 0)
+        node_count = stats.get("nodes", 1)
+        max_degree = max(2.0 * edge_count / max(node_count, 1), 1.0)
+
+        # Access frequency: how many times touched vs created
+        access_count = node.data.get("_access_count", 0)
+        age_days = max((time.time() - node.created) / 86400.0, 0.01)
+        access_freq = access_count / age_days if age_days > 0 else 0
+        access_norm = min(access_freq / 10.0, 1.0)  # cap at 10/day
+
+        # Degree normalisation
+        degree = len(self.neighbors(node_id))
+        degree_norm = degree / max_degree
+
+        # Weight normalisation (0..1)
+        weight_norm = max(0.0, min(1.0, node.weight))
+
+        immediate = (access_norm * 0.4 + degree_norm * 0.3 + weight_norm * 0.3)
+
+        # Neighbor Q: average weight of immediate neighbors as proxy
+        nbrs = self.neighbors(node_id)
+        neighbor_q = 0.0
+        if nbrs:
+            total_w = sum(
+                self.get_node(n.id).weight for n in nbrs
+                if self.get_node(n.id)
+            )
+            neighbor_q = total_w / len(nbrs)
+
+        qvalue = alpha * immediate + gamma * neighbor_q
+
+        return {
+            "qvalue": round(qvalue, 4),
+            "components": {
+                "access": round(access_norm, 4),
+                "degree": round(degree_norm, 4),
+                "weight": round(weight_norm, 4),
+                "immediate": round(immediate, 4),
+                "neighbor_avg_weight": round(neighbor_q, 4),
+            },
+            "neighbors_checked": len(nbrs),
+            "alpha": alpha,
+            "gamma": gamma,
+        }
+
+    def memory_qvalue_batch(self, top_n: int = 20,
+                            alpha: float = 0.1,
+                            gamma: float = 0.9) -> list[dict]:
+        """Compute Q-values for all nodes and return top-N ranked.
+
+        Useful for: deciding which memories to keep active, which to
+        consolidate, and which to evict.  Nodes with Q < 0.05 are
+        candidates for eviction.
+
+        Returns:
+            List of {node_id, label, kind, qvalue, components} sorted desc
+        """
+        rows = self.conn.execute(
+            "SELECT id FROM nodes ORDER BY weight DESC"
+        ).fetchall()
+
+        results = []
+        for r in rows:
+            q = self.memory_qvalue(r["id"], alpha, gamma)
+            if q:
+                node = self.get_node(r["id"])
+                results.append({
+                    "node_id": r["id"],
+                    "label": node.label,
+                    "kind": node.kind,
+                    **q,
+                })
+
+        results.sort(key=lambda x: x["qvalue"], reverse=True)
+        return results[:top_n]
+
+    # ── Drift Detection (SSGM-inspired) ────────────────────────────
+
+    def memory_drift_detect(self, node_id: str,
+                            semantic: bool = True,
+                            structural: bool = True,
+                            temporal: bool = True) -> dict | None:
+        """Detect multi-dimensional drift for a memory node.
+
+        Inspired by SSGM (arXiv:2603.11768) drift taxonomy:
+        - **Semantic drift**: node label/data diverges from neighbors
+        - **Structural drift**: degree or connectivity pattern changed
+        - **Temporal drift**: node hasn't been accessed recently
+
+        Each dimension returns a 0..1 score (0 = stable, 1 = heavily
+        drifted).  Overall drift = max of dimensions (worst case).
+
+        Returns:
+            {semantic, structural, temporal, overall, recommendation}
+            or None if node not found
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return None
+
+        results = {}
+
+        if semantic:
+            # Use semantic_divergence if available
+            div = self.semantic_divergence(node_id)
+            if div:
+                results["semantic"] = round(div.get("divergence_score", 0.0), 4)
+            else:
+                results["semantic"] = 0.0
+        else:
+            results["semantic"] = 0.0
+
+        if structural:
+            # Compare node degree to graph average
+            edge_count = self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+            node_count = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            avg_degree = (2.0 * edge_count / node_count) if node_count > 0 else 0.0
+            node_degree = len(self.neighbors(node_id))
+            if avg_degree > 0:
+                # If node has much fewer/more edges than average → drift
+                ratio = abs(node_degree - avg_degree) / max(avg_degree, 1.0)
+                results["structural"] = round(min(ratio, 1.0), 4)
+            else:
+                results["structural"] = 0.0
+        else:
+            results["structural"] = 0.0
+
+        if temporal:
+            # Days since last access
+            days_since = (time.time() - node.accessed) / 86400.0
+            # 30+ days = max temporal drift
+            results["temporal"] = round(min(days_since / 30.0, 1.0), 4)
+        else:
+            results["temporal"] = 0.0
+
+        overall = max(results.values())
+
+        # Recommendation based on dominant drift dimension
+        if overall < 0.2:
+            recommendation = "stable"
+        elif overall < 0.5:
+            dom = max(results, key=results.get)
+            recommendation = f"minor_{dom}_drift"
+        elif overall < 0.8:
+            dom = max(results, key=results.get)
+            recommendation = f"review_{dom}_drift"
+        else:
+            dom = max(results, key=results.get)
+            recommendation = f"action_{dom}_drift"
+
+        results["overall"] = round(overall, 4)
+        results["recommendation"] = recommendation
+        results["node_id"] = node_id
+        return results
+
+    def memory_drift_scan(self, threshold: float = 0.5,
+                          kinds: list[str] | None = None) -> list[dict]:
+        """Scan all nodes for drift, return those above threshold.
+
+        Args:
+            threshold: minimum overall drift score (0..1)
+            kinds: filter to specific node kinds
+
+        Returns:
+            List of drift reports sorted by overall desc
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        drifted = []
+        for r in rows:
+            if kinds:
+                node = self.get_node(r["id"])
+                if not node or node.kind not in kinds:
+                    continue
+            report = self.memory_drift_detect(r["id"])
+            if report and report["overall"] >= threshold:
+                drifted.append(report)
+
+        drifted.sort(key=lambda x: x["overall"], reverse=True)
+        return drifted
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

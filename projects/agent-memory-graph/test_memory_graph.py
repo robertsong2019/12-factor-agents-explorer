@@ -12644,3 +12644,222 @@ class TestMemoryPathExplain:
         """Missing source returns None."""
         b = mg.add("B", "concept")
         assert mg.memory_path_explain("nonexistent", b.id) is None
+
+
+# ── Q-Value Utility Scoring Tests (MemRL-inspired) ──────────────
+
+class TestMemoryQValue:
+    """Tests for memory_qvalue — RL-inspired utility scoring."""
+
+    def test_basic_qvalue(self, populated):
+        """A node gets a valid Q-value with all components."""
+        mg, a, b, c = populated
+        q = mg.memory_qvalue(a.id)
+        assert q is not None
+        assert "qvalue" in q
+        assert 0.0 <= q["qvalue"] <= 1.0
+        assert "components" in q
+        comp = q["components"]
+        assert "access" in comp
+        assert "degree" in comp
+        assert "weight" in comp
+        assert "immediate" in comp
+        assert "neighbor_avg_weight" in comp
+
+    def test_nonexistent_node(self, mg):
+        """Missing node returns None."""
+        assert mg.memory_qvalue("nonexistent") is None
+
+    def test_isolated_node_lower_than_hub(self, mg):
+        """A hub node should score higher than an isolated node."""
+        hub = mg.add("Hub", "concept")
+        isolated = mg.add("Isolated", "concept")
+        for i in range(5):
+            leaf = mg.add(f"Leaf{i}", "concept")
+            mg.link(hub.id, leaf.id, "connects")
+
+        q_hub = mg.memory_qvalue(hub.id)
+        q_iso = mg.memory_qvalue(isolated.id)
+        assert q_hub["qvalue"] > q_iso["qvalue"]
+        assert q_hub["components"]["degree"] > q_iso["components"]["degree"]
+
+    def test_custom_alpha_gamma(self, populated):
+        """Custom alpha/gamma are reflected in output."""
+        mg, a, b, c = populated
+        q = mg.memory_qvalue(a.id, alpha=0.5, gamma=0.3)
+        assert q["alpha"] == 0.5
+        assert q["gamma"] == 0.3
+
+    def test_higher_weight_higher_q(self, mg):
+        """A heavier node should have higher immediate reward."""
+        heavy = mg.add("Heavy", "concept")
+        heavy.weight = 0.95
+        mg.conn.execute("UPDATE nodes SET weight=? WHERE id=?", (0.95, heavy.id))
+        mg.conn.commit()
+        light = mg.add("Light", "concept")
+        mg.conn.execute("UPDATE nodes SET weight=? WHERE id=?", (0.05, light.id))
+        mg.conn.commit()
+
+        q_heavy = mg.memory_qvalue(heavy.id, gamma=0)
+        q_light = mg.memory_qvalue(light.id, gamma=0)
+        assert q_heavy["qvalue"] > q_light["qvalue"]
+
+    def test_batch_returns_sorted(self, populated):
+        """Batch returns top-N sorted by Q-value descending."""
+        mg, a, b, c = populated
+        d = mg.add("Extra", "concept")
+        mg.link(a.id, d.id, "related")
+
+        results = mg.memory_qvalue_batch(top_n=10)
+        assert len(results) > 0
+        assert len(results) <= 10
+        for i in range(len(results) - 1):
+            assert results[i]["qvalue"] >= results[i + 1]["qvalue"]
+
+    def test_batch_top_n_limit(self, populated):
+        """Batch respects top_n limit."""
+        mg, a, b, c = populated
+        for i in range(10):
+            n = mg.add(f"Node{i}", "concept")
+            mg.link(a.id, n.id, "connects")
+        results = mg.memory_qvalue_batch(top_n=3)
+        assert len(results) == 3
+
+    def test_batch_empty_graph(self, mg):
+        """Empty graph returns empty list."""
+        assert mg.memory_qvalue_batch() == []
+
+    def test_neighbors_checked_count(self, populated):
+        """Neighbors_checked matches actual neighbor count."""
+        mg, a, b, c = populated
+        q = mg.memory_qvalue(a.id)
+        expected = len(mg.neighbors(a.id))
+        assert q["neighbors_checked"] == expected
+
+    def test_qvalue_in_valid_range(self, populated):
+        """Q-value should always be in [0, 1] range."""
+        mg, a, b, c = populated
+        for nid in [a.id, b.id, c.id]:
+            q = mg.memory_qvalue(nid)
+            assert 0.0 <= q["qvalue"] <= 1.0
+
+
+# ── Drift Detection Tests (SSGM-inspired) ───────────────────────
+
+class TestMemoryDriftDetect:
+    """Tests for memory_drift_detect — multi-dimensional drift."""
+
+    def test_basic_drift(self, mg):
+        """A fresh node should have low drift."""
+        n = mg.add("Fresh", "concept")
+        report = mg.memory_drift_detect(n.id)
+        assert report is not None
+        assert "semantic" in report
+        assert "structural" in report
+        assert "temporal" in report
+        assert "overall" in report
+        assert "recommendation" in report
+        assert 0.0 <= report["overall"] <= 1.0
+
+    def test_nonexistent_node(self, mg):
+        """Missing node returns None."""
+        assert mg.memory_drift_detect("nonexistent") is None
+
+    def test_temporal_drift_high_for_stale(self, mg):
+        """A node not accessed in 60+ days has high temporal drift."""
+        n = mg.add("Stale", "concept")
+        # Set accessed to 60 days ago
+        old_time = time.time() - 60 * 86400
+        mg.conn.execute(
+            "UPDATE nodes SET accessed=? WHERE id=?", (old_time, n.id))
+        mg.conn.commit()
+
+        report = mg.memory_drift_detect(n.id)
+        assert report["temporal"] >= 0.9
+        assert "temporal" in report["recommendation"]
+
+    def test_temporal_drift_low_for_fresh(self, mg):
+        """A just-created node has near-zero temporal drift."""
+        n = mg.add("Fresh", "concept")
+        report = mg.memory_drift_detect(n.id)
+        assert report["temporal"] < 0.1
+
+    def test_structural_drift_isolated(self, populated):
+        """An isolated node in a connected graph has structural drift."""
+        mg, a, b, c = populated
+        isolated = mg.add("Lone", "concept")
+        # a,b,c are connected; isolated has 0 edges while avg > 0
+        report = mg.memory_drift_detect(isolated.id)
+        assert report["structural"] > 0.0
+
+    def test_semantic_drift_dimension(self, populated):
+        """Semantic dimension is computed (non-negative)."""
+        mg, a, b, c = populated
+        report = mg.memory_drift_detect(a.id)
+        assert report["semantic"] >= 0.0
+
+    def test_recommendation_stable(self, mg):
+        """A fresh, well-connected node with no semantic drift is stable."""
+        n = mg.add("Perfect", "concept")
+        report = mg.memory_drift_detect(n.id)
+        # Should be stable or very low drift (no neighbors = low semantic)
+        assert report["recommendation"] in (
+            "stable", "minor_structural_drift", "minor_temporal_drift",
+            "minor_semantic_drift")
+
+    def test_recommendation_escalation(self, mg):
+        """Stale, isolated node gets action recommendation."""
+        n = mg.add("Forgotten", "concept")
+        old_time = time.time() - 90 * 86400
+        mg.conn.execute(
+            "UPDATE nodes SET accessed=? WHERE id=?", (old_time, n.id))
+        mg.conn.commit()
+        report = mg.memory_drift_detect(n.id)
+        # 90 days → temporal = 1.0 → overall >= 0.8
+        assert report["overall"] >= 0.8
+        assert report["recommendation"].startswith("action_")
+
+    def test_selective_dimensions(self, populated):
+        """Disabling dimensions zeros them out."""
+        mg, a, b, c = populated
+        report = mg.memory_drift_detect(
+            a.id, semantic=False, structural=False, temporal=False)
+        assert report["semantic"] == 0.0
+        assert report["structural"] == 0.0
+        assert report["temporal"] == 0.0
+        assert report["overall"] == 0.0
+
+    def test_drift_scan_filters_threshold(self, populated):
+        """Scan only returns nodes above threshold."""
+        mg, a, b, c = populated
+        stale = mg.add("Ancient", "concept")
+        old_time = time.time() - 120 * 86400
+        mg.conn.execute(
+            "UPDATE nodes SET accessed=? WHERE id=?", (old_time, stale.id))
+        mg.conn.commit()
+
+        drifted = mg.memory_drift_scan(threshold=0.7)
+        ids = [d["node_id"] for d in drifted]
+        assert stale.id in ids
+        # Sorted descending
+        for i in range(len(drifted) - 1):
+            assert drifted[i]["overall"] >= drifted[i + 1]["overall"]
+
+    def test_drift_scan_kind_filter(self, mg):
+        """Kind filter excludes other types."""
+        concept = mg.add("C1", "concept")
+        event = mg.add("E1", "event")
+        old_time = time.time() - 90 * 86400
+        for n in [concept, event]:
+            mg.conn.execute(
+                "UPDATE nodes SET accessed=? WHERE id=?", (old_time, n.id))
+        mg.conn.commit()
+
+        result = mg.memory_drift_scan(threshold=0.5, kinds=["event"])
+        ids = [d["node_id"] for d in result]
+        assert event.id in ids
+        assert concept.id not in ids
+
+    def test_drift_scan_empty_graph(self, mg):
+        """Empty graph returns empty list."""
+        assert mg.memory_drift_scan() == []
