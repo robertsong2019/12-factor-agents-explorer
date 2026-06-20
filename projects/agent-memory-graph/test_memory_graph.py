@@ -12179,3 +12179,225 @@ class TestWorkflowExportImport:
         new_exported = mg.workflow_export(new_id)
         assert new_exported["goal"] == "empty"
         assert len(new_exported["steps"]) == 0
+
+
+# ── Workflow Success Patterns Tests ─────────────────────────
+
+class TestWorkflowSuccessPatterns:
+    """Cross-trajectory pattern mining from successful workflows."""
+
+    def test_finds_common_actions(self, mg):
+        """Actions appearing in multiple successful workflows are found."""
+        wf1 = mg.add_workflow("deploy app", [
+            {"label": "test", "action": "run_tests"},
+            {"label": "build", "action": "build_image"},
+            {"label": "ship", "action": "deploy"},
+        ], tags=["ci"])
+        wf2 = mg.add_workflow("deploy service", [
+            {"label": "lint", "action": "lint_code"},
+            {"label": "test", "action": "run_tests"},
+            {"label": "ship", "action": "deploy"},
+        ], tags=["ci"])
+        for _ in range(3):
+            mg.record_workflow_outcome(wf1, True)
+        for _ in range(2):
+            mg.record_workflow_outcome(wf2, True)
+        patterns = mg.workflow_success_patterns(min_workflows=2)
+        actions = [p["action"] for p in patterns]
+        assert "run_tests" in actions
+        assert "deploy" in actions
+        assert "lint_code" not in actions  # only in wf2
+
+    def test_filters_low_success_rate(self, mg):
+        """Workflows below min_success_rate are excluded."""
+        wf_good = mg.add_workflow("good", [{"label": "s", "action": "shared"}])
+        wf_bad = mg.add_workflow("bad", [{"label": "s", "action": "shared"}])
+        for _ in range(5):
+            mg.record_workflow_outcome(wf_good, True)
+        for _ in range(5):
+            mg.record_workflow_outcome(wf_bad, False)
+        patterns = mg.workflow_success_patterns(min_workflows=2, min_success_rate=0.5)
+        # wf_bad has 0% success rate so excluded; only wf_good qualifies
+        # but need >=2 workflows, so empty
+        assert len(patterns) == 0
+
+    def test_empty_when_no_workflows(self, mg):
+        """No workflows returns empty list."""
+        assert mg.workflow_success_patterns() == []
+
+    def test_empty_when_insufficient_workflows(self, mg):
+        """Single workflow doesn't meet min_workflows=2."""
+        wf = mg.add_workflow("solo", [{"label": "s", "action": "unique"}])
+        mg.record_workflow_outcome(wf, True)
+        patterns = mg.workflow_success_patterns(min_workflows=2)
+        assert len(patterns) == 0
+
+    def test_frequency_ranking(self, mg):
+        """Patterns sorted by frequency descending."""
+        wf1 = mg.add_workflow("a", [
+            {"label": "x", "action": "common"},
+            {"label": "y", "action": "rare"},
+        ])
+        wf2 = mg.add_workflow("b", [
+            {"label": "x", "action": "common"},
+        ])
+        wf3 = mg.add_workflow("c", [
+            {"label": "x", "action": "common"},
+            {"label": "z", "action": "also_rare"},
+        ])
+        for wf in [wf1, wf2, wf3]:
+            mg.record_workflow_outcome(wf, True)
+        patterns = mg.workflow_success_patterns(min_workflows=2)
+        assert patterns[0]["action"] == "common"
+        assert patterns[0]["frequency"] == 3
+
+    def test_avg_order_calculated(self, mg):
+        """Average order of action across workflows is correct."""
+        wf1 = mg.add_workflow("a", [
+            {"label": "first", "action": "step_a"},
+            {"label": "second", "action": "step_b"},
+        ])
+        wf2 = mg.add_workflow("b", [
+            {"label": "third", "action": "step_b"},
+        ])
+        mg.record_workflow_outcome(wf1, True)
+        mg.record_workflow_outcome(wf2, True)
+        patterns = mg.workflow_success_patterns(min_workflows=2)
+        step_b = next(p for p in patterns if p["action"] == "step_b")
+        # order 1 in wf1, order 0 in wf2 => avg 0.5
+        assert step_b["avg_order"] == 0.5
+
+
+# ── Node Similarity Tests ──────────────────────────────────
+
+class TestNodeSimilarity:
+    """Multi-dimensional node similarity."""
+
+    def test_identical_nodes(self, mg):
+        """Same label/tags/kind yield high composite."""
+        a = mg.add("Python", "skill", tags=["lang"])
+        b = mg.add("Python", "skill", tags=["lang"])
+        sim = mg.node_similarity(a.id, b.id)
+        assert sim["composite"] > 0.7
+        assert sim["label_similarity"] == 1.0
+        assert sim["tag_similarity"] == 1.0
+        assert sim["kind_match"] == 1.0
+
+    def test_completely_different(self, mg):
+        """Unrelated nodes have low composite."""
+        a = mg.add("Python", "skill", tags=["lang"])
+        b = mg.add("Kubernetes", "tool", tags=["infra"])
+        sim = mg.node_similarity(a.id, b.id)
+        assert sim["composite"] < 0.15
+        assert sim["kind_match"] == 0.0
+
+    def test_partial_overlap(self, mg):
+        """Partial label/tag overlap gives middle composite."""
+        a = mg.add("Python testing", "skill", tags=["lang", "test"])
+        b = mg.add("Python deploy", "skill", tags=["lang", "ops"])
+        sim = mg.node_similarity(a.id, b.id)
+        assert 0.2 < sim["composite"] < 0.9
+        assert sim["kind_match"] == 1.0
+        assert sim["tag_similarity"] > 0.0
+
+    def test_neighbor_overlap(self, mg):
+        """Shared neighbors boost similarity."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")
+        mg.link(a.id, c.id, "related")
+        mg.link(b.id, c.id, "related")
+        sim = mg.node_similarity(a.id, b.id)
+        assert sim["neighbor_similarity"] > 0.0
+
+    def test_nonexistent_node(self, mg):
+        """Missing node returns zero composite."""
+        a = mg.add("A", "concept")
+        sim = mg.node_similarity(a.id, "nonexistent")
+        assert sim["composite"] == 0.0
+
+    def test_self_similarity(self, mg):
+        """Node compared to itself is 1.0."""
+        a = mg.add("unique label", "fact", tags=["t"])
+        sim = mg.node_similarity(a.id, a.id)
+        assert sim["label_similarity"] == 1.0
+        assert sim["tag_similarity"] == 1.0
+
+
+# ── Memory Clone Tests ─────────────────────────────────────
+
+class TestMemoryClone:
+    """Node cloning with edges and annotations."""
+
+    def test_clone_basic(self, mg):
+        """Clone creates a new node with same kind/data/tags."""
+        original = mg.add("Original", "concept", {"key": "val"}, tags=["t"])
+        cloned_id = mg.memory_clone(original.id)
+        assert cloned_id is not None
+        cloned = mg.get_node(cloned_id)
+        assert cloned is not None
+        assert cloned.kind == "concept"
+        assert cloned.data.get("key") == "val"
+        # tags stored in DB, check via tag_list or direct query
+        row = mg.conn.execute("SELECT tags FROM nodes WHERE id=?", (cloned_id,)).fetchone()
+        assert "t" in json.loads(row["tags"])
+
+    def test_clone_custom_label(self, mg):
+        """Clone with new label."""
+        original = mg.add("Original", "concept")
+        cloned_id = mg.memory_clone(original.id, new_label="Custom Clone")
+        cloned = mg.get_node(cloned_id)
+        assert cloned.label == "Custom Clone"
+
+    def test_clone_deep_edges(self, mg):
+        """Deep clone copies outgoing and incoming edges."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")
+        mg.link(a.id, b.id, "points_to")
+        mg.link(c.id, a.id, "points_to")
+        cloned_id = mg.memory_clone(a.id, deep_edges=True)
+        # cloned should have outgoing to B and incoming from C
+        out = mg.conn.execute(
+            "SELECT target FROM edges WHERE source=? AND relation='points_to'",
+            (cloned_id,)
+        ).fetchall()
+        assert len(out) == 1
+        assert out[0]["target"] == b.id
+        inc = mg.conn.execute(
+            "SELECT source FROM edges WHERE target=? AND relation='points_to'",
+            (cloned_id,)
+        ).fetchall()
+        assert len(inc) == 1
+        assert inc[0]["source"] == c.id
+
+    def test_clone_no_edges(self, mg):
+        """Clone with deep_edges=False has no copied edges."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "related")
+        cloned_id = mg.memory_clone(a.id, deep_edges=False)
+        count = mg.conn.execute(
+            "SELECT COUNT(*) as c FROM edges WHERE source=?",
+            (cloned_id,)
+        ).fetchone()["c"]
+        assert count == 0
+
+    def test_clone_nonexistent(self, mg):
+        """Cloning nonexistent node returns None."""
+        assert mg.memory_clone("nonexistent") is None
+
+    def test_clone_copies_annotations(self, mg):
+        """Annotations are copied to the clone."""
+        a = mg.add("Annotated", "concept")
+        mg.memory_annotate(a.id, "priority", "high")
+        mg.memory_annotate(a.id, "owner", "team")
+        cloned_id = mg.memory_clone(a.id)
+        assert mg.annotation_get(cloned_id, "priority") == "high"
+        assert mg.annotation_get(cloned_id, "owner") == "team"
+
+    def test_clone_different_id(self, mg):
+        """Clone has a different ID from original."""
+        a = mg.add("A", "concept")
+        cloned_id = mg.memory_clone(a.id)
+        assert cloned_id != a.id

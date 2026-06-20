@@ -9742,6 +9742,173 @@ class MemoryGraph:
             )
         return wf_id
 
+    def workflow_success_patterns(self, min_workflows: int = 2,
+                                  min_success_rate: float = 0.5) -> list[dict]:
+        """Mine common action patterns across successful workflows.
+
+        AWM insight: cross-trajectory pattern mining reveals reusable building
+        blocks that no single workflow contains.  Finds actions that appear
+        across multiple high-success-rate workflows, ranked by frequency.
+
+        Args:
+            min_workflows: minimum number of workflows an action must appear in
+            min_success_rate: only consider workflows with success_rate >= this
+
+        Returns:
+            List of {action, frequency, workflow_ids, avg_order} sorted by
+            frequency descending.
+        """
+        workflows = self.conn.execute(
+            "SELECT id, data FROM nodes WHERE kind='workflow'"
+        ).fetchall()
+        qualified = []
+        for r in workflows:
+            data = json.loads(r["data"])
+            s = data.get("success_count", 0)
+            f = data.get("failure_count", 0)
+            rate = s / (s + f) if (s + f) > 0 else 0.0
+            if rate >= min_success_rate and (s + f) > 0:
+                qualified.append(r["id"])
+        if len(qualified) < min_workflows:
+            return []
+        action_map: dict[str, dict] = {}
+        for wf_id in qualified:
+            steps = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? AND relation='has_step'",
+                (wf_id,),
+            ).fetchall()
+            for step_row in steps:
+                step_node = self.get_node(step_row["target"])
+                if not step_node:
+                    continue
+                step_data = step_node.data if isinstance(step_node.data, dict) else json.loads(step_node.data)
+                action = step_data.get("action", step_node.label)
+                if action not in action_map:
+                    action_map[action] = {
+                        "action": action,
+                        "frequency": 0,
+                        "workflow_ids": [],
+                        "orders": [],
+                    }
+                entry = action_map[action]
+                if wf_id not in entry["workflow_ids"]:
+                    entry["frequency"] += 1
+                    entry["workflow_ids"].append(wf_id)
+                entry["orders"].append(step_data.get("order", 0))
+        patterns = []
+        for action, info in action_map.items():
+            if info["frequency"] >= min_workflows:
+                avg_order = sum(info["orders"]) / len(info["orders"])
+                patterns.append({
+                    "action": action,
+                    "frequency": info["frequency"],
+                    "workflow_ids": info["workflow_ids"],
+                    "avg_order": round(avg_order, 1),
+                })
+        patterns.sort(key=lambda x: x["frequency"], reverse=True)
+        return patterns
+
+    def node_similarity(self, node_a_id: str, node_b_id: str) -> dict:
+        """Compute multi-dimensional similarity between two nodes.
+
+        Combines label trigram overlap, tag Jaccard, neighborhood overlap,
+        and kind match into a composite score.
+
+        Returns:
+            {label_similarity, tag_similarity, neighbor_similarity,
+             kind_match, composite} where composite is 0~1.
+        """
+        a = self.get_node(node_a_id)
+        b = self.get_node(node_b_id)
+        if not a or not b:
+            return {"composite": 0.0}
+        # Fetch tags from DB (Node dataclass has no tags field)
+        row_a = self.conn.execute("SELECT tags FROM nodes WHERE id=?", (node_a_id,)).fetchone()
+        row_b = self.conn.execute("SELECT tags FROM nodes WHERE id=?", (node_b_id,)).fetchone()
+        # Label trigram overlap
+        def _trigrams(s: str) -> set:
+            s = s.lower().strip()
+            return {s[i:i+3] for i in range(len(s) - 2)} if len(s) >= 3 else {s}
+        ta = _trigrams(a.label)
+        tb = _trigrams(b.label)
+        label_sim = len(ta & tb) / len(ta | tb) if (ta | tb) else 0.0
+        # Tag Jaccard
+        tags_a = set(json.loads(row_a["tags"])) if row_a and row_a["tags"] else set()
+        tags_b = set(json.loads(row_b["tags"])) if row_b and row_b["tags"] else set()
+        tag_sim = len(tags_a & tags_b) / len(tags_a | tags_b) if (tags_a | tags_b) else 0.0
+        # Neighborhood overlap
+        na = {n["target"] for n in self.conn.execute(
+            "SELECT target FROM edges WHERE source=?", (node_a_id,)
+        ).fetchall()}
+        na.update(n["source"] for n in self.conn.execute(
+            "SELECT source FROM edges WHERE target=?", (node_a_id,)
+        ).fetchall())
+        nb = {n["target"] for n in self.conn.execute(
+            "SELECT target FROM edges WHERE source=?", (node_b_id,)
+        ).fetchall()}
+        nb.update(n["source"] for n in self.conn.execute(
+            "SELECT source FROM edges WHERE target=?", (node_b_id,)
+        ).fetchall())
+        neighbor_sim = len(na & nb) / len(na | nb) if (na | nb) else 0.0
+        kind_match = 1.0 if a.kind == b.kind else 0.0
+        composite = (
+            label_sim * 0.35 + tag_sim * 0.25 +
+            neighbor_sim * 0.25 + kind_match * 0.15
+        )
+        return {
+            "label_similarity": round(label_sim, 4),
+            "tag_similarity": round(tag_sim, 4),
+            "neighbor_similarity": round(neighbor_sim, 4),
+            "kind_match": kind_match,
+            "composite": round(composite, 4),
+        }
+
+    def memory_clone(self, node_id: str,
+                     new_label: str | None = None,
+                     deep_edges: bool = True) -> str | None:
+        """Clone a node with its data, tags, and optionally edges.
+
+        Creates a new node with the same kind/data/tags as the original.
+        If deep_edges=True, copies all edges (both directions) with the
+        new node as source/target.  Annotations are also copied.
+
+        Returns:
+            New node ID, or None if original doesn't exist.
+        """
+        original = self.get_node(node_id)
+        if not original:
+            return None
+        cloned = self.add(
+            new_label or f"{original.label} (clone)",
+            kind=original.kind,
+            data=original.data if isinstance(original.data, dict) else json.loads(original.data),
+            tags=json.loads(self.conn.execute("SELECT tags FROM nodes WHERE id=?", (node_id,)).fetchone()["tags"]),
+        )
+        if deep_edges:
+            outgoing = self.conn.execute(
+                "SELECT target, relation, weight FROM edges WHERE source=?",
+                (node_id,),
+            ).fetchall()
+            for e in outgoing:
+                self.link(cloned.id, e["target"], e["relation"], e["weight"])
+            incoming = self.conn.execute(
+                "SELECT source, relation, weight FROM edges WHERE target=?",
+                (node_id,),
+            ).fetchall()
+            for e in incoming:
+                self.link(e["source"], cloned.id, e["relation"], e["weight"])
+        # Copy annotations (stored in data._annotations)
+        original_data = original.data if isinstance(original.data, dict) else json.loads(original.data)
+        annotations = original_data.get("_annotations", {})
+        if annotations:
+            cloned_data = cloned.data if isinstance(cloned.data, dict) else json.loads(cloned.data)
+            cloned_data["_annotations"] = dict(annotations)
+            self.conn.execute(
+                "UPDATE nodes SET data=? WHERE id=?",
+                (json.dumps(cloned_data), cloned.id))
+            self.conn.commit()
+        return cloned.id
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
