@@ -1,206 +1,241 @@
 {
-  "lastUpdated": "2026-06-15T22:00:00Z",
-  "generatedAt": "2026-06-16 06:00 CST",
-  "actionRequired": [
-    {
-      "level": "error",
-      "job": "key-development-1",
-      "message": "Cron job 'key-development-1' (23:00 daily) is in error state — last ran 7h ago. Needs investigation."
-    }
-  ],
+  "lastUpdated": "2026-06-20T22:00:00Z",
+  "generatedAt": "2026-06-21 06:00 CST",
+  "actionRequired": [],
   "activeNow": [
     {
       "job": "dashboard-update-morning",
-      "status": "running",
-      "model": "glm-5.1"
+      "status": "running"
     }
   ],
-  "summary": {
-    "totalCronJobs": 15,
-    "healthyCrons": 14,
-    "errorCrons": 1,
-    "totalSessions": 45,
-    "activeSessions": 2,
-    "model": "glm-5.1",
-    "agent": "main",
-    "host": "VM-0-5-ubuntu"
-  },
   "crons": [
     {
       "name": "dashboard-update-morning",
-      "schedule": "0 6 * * *",
+      "schedule": "6:00 AM daily",
       "id": "f38e0365",
-      "lastRun": "2026-06-15T22:00:00Z",
-      "nextRun": "2026-06-16T22:00:00Z",
+      "lastRun": "2026-06-20T22:00:00Z",
       "status": "running",
-      "target": "isolated"
+      "errors": 0
     },
     {
       "name": "github-trending-daily",
-      "schedule": "0 7 * * * Asia/Shanghai",
+      "schedule": "7:00 AM daily",
       "id": "9b2a8701",
-      "lastRun": "~23h ago",
-      "nextRun": "in 60m",
+      "lastRun": "2026-06-20T23:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     },
     {
-      "name": "github-trending-deep-...",
-      "schedule": "0 8 * * * Asia/Shanghai",
+      "name": "github-trending-deep",
+      "schedule": "8:00 AM daily",
       "id": "2c714952",
-      "lastRun": "~22h ago",
-      "nextRun": "in 2h",
+      "lastRun": "2026-06-21T00:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     },
     {
       "name": "github-creative-evening",
-      "schedule": "0 19 * * *",
+      "schedule": "7:00 PM daily",
       "id": "610a8d6d",
-      "lastRun": "~11h ago",
-      "nextRun": "in 13h",
+      "lastRun": "2026-06-20T11:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     },
     {
       "name": "deep-exploration-evening",
-      "schedule": "0 20 * * *",
+      "schedule": "8:00 PM daily (x2)",
       "id": "265091b6",
-      "lastRun": "~10h ago",
-      "nextRun": "in 14h",
+      "lastRun": "2026-06-20T12:00:00Z",
       "status": "ok",
-      "target": "isolated"
-    },
-    {
-      "name": "deep-exploration-evening (UTC)",
-      "schedule": "0 12 * * * UTC",
-      "id": "bb46cb70",
-      "lastRun": "~10h ago",
-      "nextRun": "in 14h",
-      "status": "ok",
-      "target": "main"
+      "errors": 0
     },
     {
       "name": "code-lab-evening",
-      "schedule": "0 21 * * *",
+      "schedule": "9:00 PM daily",
       "id": "13a2f284",
-      "lastRun": "~9h ago",
-      "nextRun": "in 15h",
+      "lastRun": "2026-06-20T13:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     },
     {
       "name": "tool-development-evening",
-      "schedule": "0 22 * * *",
+      "schedule": "10:00 PM daily",
       "id": "ce2fb615",
-      "lastRun": "~8h ago",
-      "nextRun": "in 16h",
+      "lastRun": "2026-06-20T14:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     },
     {
       "name": "key-development-1",
-      "schedule": "0 23 * * *",
+      "schedule": "11:00 PM daily",
       "id": "78eac6fc",
-      "lastRun": "~7h ago",
-      "nextRun": "in 17h",
-      "status": "error",
-      "target": "isolated"
+      "lastRun": "2026-06-20T15:00:00Z",
+      "status": "ok",
+      "errors": 0
     },
     {
       "name": "key-development-2",
-      "schedule": "0 0 * * *",
+      "schedule": "12:00 AM daily",
       "id": "88679f9e",
-      "lastRun": "~6h ago",
-      "nextRun": "in 18h",
+      "lastRun": "2026-06-20T16:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     },
     {
       "name": "key-development-3",
-      "schedule": "0 1 * * *",
+      "schedule": "1:00 AM daily",
       "id": "b0fd7e8d",
-      "lastRun": "~5h ago",
-      "nextRun": "in 19h",
+      "lastRun": "2026-06-20T17:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     },
     {
       "name": "knowledge-organization",
-      "schedule": "0 2 * * *",
+      "schedule": "2:00 AM daily",
       "id": "fd0515b0",
-      "lastRun": "~4h ago",
-      "nextRun": "in 20h",
+      "lastRun": "2026-06-20T18:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     },
     {
       "name": "project-testing-morning",
-      "schedule": "0 3 * * *",
+      "schedule": "3:00 AM daily",
       "id": "f7510f1f",
-      "lastRun": "~3h ago",
-      "nextRun": "in 21h",
+      "lastRun": "2026-06-20T19:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     },
     {
       "name": "documentation-morning",
-      "schedule": "0 4 * * *",
+      "schedule": "4:00 AM daily",
       "id": "77a5bcc6",
-      "lastRun": "~2h ago",
-      "nextRun": "in 22h",
+      "lastRun": "2026-06-20T20:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     },
     {
       "name": "essay-generation-morning",
-      "schedule": "0 5 * * *",
+      "schedule": "5:00 AM daily",
       "id": "686ec55c",
-      "lastRun": "~1h ago",
-      "nextRun": "in 23h",
+      "lastRun": "2026-06-20T21:00:00Z",
       "status": "ok",
-      "target": "isolated"
+      "errors": 0
     }
   ],
   "sessions": {
-    "total": 45,
-    "recent": [
+    "totalSessions": 45,
+    "activeInLast24h": 26,
+    "recentSessions": [
       {
-        "key": "cron:...5d4df0",
-        "age": "1m ago",
+        "key": "cron:dashboard-update-morning",
+        "age": "0.0h",
         "model": "glm-5.1",
-        "tokens": "34k/205k (17%)"
+        "ctxPercent": 16,
+        "kind": "cron"
       },
       {
-        "key": "cron:...84c9cb",
-        "age": "1m ago",
+        "key": "main",
+        "age": "0.2h",
         "model": "glm-5.1",
-        "tokens": "34k/205k (17%)"
+        "ctxPercent": 31,
+        "kind": "direct"
       },
       {
-        "key": "cron:...f0496f",
-        "age": "22h ago",
+        "key": "cron:essay-generation-morning",
+        "age": "1.0h",
         "model": "glm-5.1",
-        "tokens": "39k/205k (19%)"
+        "ctxPercent": 25,
+        "kind": "cron"
       },
       {
-        "key": "cron:...7ecf9e",
-        "age": "23h ago",
+        "key": "cron:documentation-morning",
+        "age": "2.0h",
         "model": "glm-5.1",
-        "tokens": "27k/205k (13%)"
+        "ctxPercent": 32,
+        "kind": "cron"
       },
       {
-        "key": "cron:...03391e",
-        "age": "23h ago",
+        "key": "cron:project-testing-morning",
+        "age": "3.0h",
         "model": "glm-5.1",
-        "tokens": "27k/205k (13%)"
+        "ctxPercent": 29,
+        "kind": "cron"
       },
       {
-        "key": "cron:...af802b",
-        "age": "24h ago",
+        "key": "cron:knowledge-organization",
+        "age": "4.0h",
         "model": "glm-5.1",
-        "tokens": "33k/205k (16%)"
+        "ctxPercent": 43,
+        "kind": "cron"
+      },
+      {
+        "key": "cron:key-development-3",
+        "age": "5.0h",
+        "model": "glm-5.1",
+        "ctxPercent": 27,
+        "kind": "cron"
+      },
+      {
+        "key": "cron:key-development-2",
+        "age": "6.0h",
+        "model": "glm-5.1",
+        "ctxPercent": 32,
+        "kind": "cron"
+      },
+      {
+        "key": "cron:key-development-1",
+        "age": "7.0h",
+        "model": "glm-5.1",
+        "ctxPercent": 23,
+        "kind": "cron"
+      },
+      {
+        "key": "cron:tool-development-evening",
+        "age": "8.0h",
+        "model": "glm-5.1",
+        "ctxPercent": 29,
+        "kind": "cron"
+      },
+      {
+        "key": "cron:code-lab-evening",
+        "age": "9.0h",
+        "model": "glm-5.1",
+        "ctxPercent": 45,
+        "kind": "cron"
+      },
+      {
+        "key": "cron:deep-exploration-evening",
+        "age": "10.0h",
+        "model": "glm-5.1",
+        "ctxPercent": 57,
+        "kind": "cron"
+      },
+      {
+        "key": "cron:github-creative-evening",
+        "age": "11.0h",
+        "model": "glm-5.1",
+        "ctxPercent": 52,
+        "kind": "cron"
       }
     ]
+  },
+  "systemHealth": {
+    "model": "glm-5.1",
+    "cronJobs": 14,
+    "allCronsHealthy": true,
+    "uptime": "nominal",
+    "errorsToday": 0
+  },
+  "projectStats": {
+    "testCounts": {
+      "agent-memory-graph": 1307,
+      "agent-context-store": 1454,
+      "structured-output-toolkit": 438,
+      "agent-task-cli": 882,
+      "total": 4081
+    },
+    "testGrowth7d": "+867 tests (+27%)",
+    "streakDays": 142,
+    "recentMilestone": "agent-context-store: 3 analytics pipelines complete (measure→diagnose→recommend→act)"
   }
 }
