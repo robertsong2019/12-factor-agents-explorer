@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-1133-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1436-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -1397,13 +1397,152 @@ mg2.from_memorywire(wire)  # → 120 (imported nodes)
 
 ---
 
+### Agentic Workflow Memory (AWM)
+
+> 从经验中学习的程序性记忆 — 记录成功/失败的工作流，挖掘跨轨迹模式，辅助 Agent 决策。
+
+#### Workflow 生命周期
+
+```python
+# 记录一个工作流
+wf_id = mg.add_workflow(
+    ["search_docs", "read_api", "write_code", "run_tests"],
+    outcome="success",
+    context={"task": "add feature X"}
+)
+
+# 检索相似工作流
+results = mg.retrieve_workflows("search_docs", limit=5)
+
+# 记录结果
+mg.record_workflow_outcome(wf_id, "success")
+
+# 统计
+stats = mg.workflow_stats()
+# {'total': 42, 'successful': 35, 'failed': 7, 'success_rate': 0.83}
+
+# 组合 + 去重
+mg.workflow_compose(wf_id_1, wf_id_2)  # 合并两个工作流
+mg.workflow_dedup()  # 去重相似工作流
+
+# Tip 管理
+mg.add_workflow_tip(wf_id, "always check types first")
+tips = mg.retrieve_workflow_tips(wf_id)
+mg.workflow_prompt_section(task="coding")  # 生成 LLM 上下文片段
+
+# 剪枝 + 导出/导入
+mg.workflow_prune_tips(max_tips=100)
+mg.workflow_export()  # → JSON
+mg.workflow_import(data)  # 批量导入
+
+# 跨轨迹模式挖掘 (Cycle 141)
+patterns = mg.workflow_success_patterns(min_frequency=2)
+# [{'actions': ['search', 'read', 'implement'], 'frequency': 5, 'success_rate': 0.9}]
+
+# 标签检索 (Cycle 142)
+results = mg.workflow_retrieve_by_tag(["coding", "debug"], match_all=False)
+```
+
+#### 图差分与度分析
+
+```python
+# 人类可读的图差异摘要 (Cycle 142)
+summary = mg.graph_diff_summary(mg2)
+# 'Added 3 nodes, removed 1, changed 5 edges'
+
+# 紧凑的度分布 (Cycle 142)
+deg = mg.node_degree_summary(node_id)
+# {'in_degree': 3, 'out_degree': 2, 'total': 5, 'by_relation': {'rel_a': 2}}
+```
+
+#### 标签关联与路径解释
+
+```python
+# 标签共现网络 (Cycle 143)
+net = mg.tag_correlation_network(min_cooccurrence=2)
+# {'edges': [{'tag_a': 'python', 'tag_b': 'async', 'weight': 5, 'correlation': 0.8}],
+#  'strongest': {'tags': ('python', 'async'), 'correlation': 0.8}}
+
+# 叙事路径渲染 (Cycle 143)
+narrative = mg.memory_path_explain(start_id, end_id)
+# 'Rust → contrasts_with → TypeScript → used_by → React'
+```
+
+### 记忆 Q-Value 与漂移检测
+
+> MemRL (arXiv:2601.03192) + SSGM (arXiv:2603.11768) 启发的记忆质量评估。
+
+```python
+# Q-Value — 单节点效用评分 (Cycle 144)
+q = mg.memory_qvalue(node_id)
+# {'q_value': 0.72, 'components': {'frequency': 0.3, 'degree': 0.2, 'weight': 0.15, 'neighbor': 0.07}}
+
+# 批量 Q-Value 排序
+ranking = mg.memory_qvalue_batch(top_n=10)
+# [{'node_id': 5, 'label': 'Python', 'q_value': 0.85}, ...]
+
+# 漂移检测 — 三维度 (Cycle 144)
+drift = mg.memory_drift_detect(node_id)
+# {'semantic_drift': 0.12, 'structural_drift': 0.34, 'temporal_drift': 0.56,
+#  'overall': 0.34, 'recommendation': 'review'}
+
+# 批量漂移扫描
+scan = mg.memory_drift_scan(threshold=0.3)
+# [{'node_id': 7, 'overall': 0.42, 'recommendation': 'action'}, ...]
+```
+
+### 技能发现与利用率报告
+
+> EvoSkill (arXiv:2603.02766) + SAGE (arXiv:2512.17102) 启发。
+
+```python
+# 从成功工作流中挖掘技能 (Cycle 145)
+skills = mg.discover_skills(min_frequency=2, min_success_rate=0.7)
+# [{'actions': ('search', 'read'), 'frequency': 8, 'success_rate': 0.88,
+#   'retention_score': 0.75}]
+
+# 执行仪表盘 (Cycle 145)
+report = mg.memory_utilization_report()
+# {'q_value_distribution': {...}, 'drift_summary': {...},
+#  'workflow_coverage': 0.65, 'recommendations': [...]}
+```
+
+### 记忆强化与差距分析
+
+```python
+# 基于结果调整权重 (Cycle 146)
+mg.memory_reinforce(node_id, outcome="positive", boost=0.1)
+# weight: 0.5 → 0.6, audit trail updated
+mg.memory_reinforce(node_id, outcome="negative", boost=0.1)
+# weight: 0.6 → 0.54 (decay)
+
+# 失败驱动的技能差距 (Cycle 146)
+gaps = mg.skill_gap_analysis(min_failures=2)
+# [{'missing_step': 'validate_input', 'gap_severity': 0.7,
+#   'failed_workflows': 3, 'successful_with_step': 5}]
+```
+
+### 注意力评分与合并优先级
+
+```python
+# 时间注意力分数 (Cycle 147)
+attention = mg.memory_attention_score(node_id, recency_window_hours=24)
+# {'score': 0.68, 'components': {'recency_boost': 0.8, 'reinforcement_velocity': 0.5, 'neighbor_activity': 0.6}}
+
+# 合并/驱逐优先级 (Cycle 147)
+priority = mg.consolidation_priority(limit=10)
+# [{'node_id': 12, 'priority': 0.82, 'drift': 0.5, 'q_value': 0.2, 'attention': 0.1}]
+```
+
+---
+
 ## 测试
 
 ```bash
 python3 -m pytest test_memory_graph.py -q
 ```
 
-1156 个测试覆盖所有 API。
+1436 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -1425,6 +1564,11 @@ python3 -m pytest test_memory_graph.py -q
 16. **网络拓扑分析** — degree_distribution (Shannon 度分布熵) + network_summary (综合仪表盘) + k_hop_neighbors + common_neighbors + graph_entropy + connectivity_frontier + degree_centrality_normalized (Freeman) + edge_density_subgraph + weighted_degree + neighborhood_census 量化记忆网络的多维度拓扑特征
 17. **多智能体记忆合并** — merge_crdt 实现 CRDT-based 多 Agent 记忆图合并，支持 LWW (Last-Write-Wins)、OR-Set (Add-Remove Set) 和 Trust-weighted 三种合并策略，确保分布式场景下的记忆一致性
 18. **向量时钟与增量同步** — vector_clock 因果追踪 + subscribe pub/sub 事件通知 + get_changes/apply_changes 增量 delta 同步，实现多 Agent 间因果一致的记忆同步，支持 LWW/OR-Set/Trust 冲突解决策略
+19. **Agentic Workflow Memory (AWM)** — add_workflow/retrieve_workflows/record_workflow_outcome + workflow_compose/dedup + tip 管理 + success_patterns 跨轨迹模式挖掘 + retrieve_by_tag 标签检索，构建 Agent 的程序性记忆：从经验中学习成功路径
+20. **记忆 Q-Value 与漂移检测** — memory_qvalue (MemRL 启发) 用访问频率/度/权重/邻居传播近似 Q 值，memory_drift_detect (SSGM 启发) 从语义/结构/时间三维度检测记忆漂移，服务于 evict/consolidate 决策
+21. **技能发现与利用率** — discover_skills (EvoSkill/SAGE 启发) 从成功 workflow 中挖掘共现行动对，memory_utilization_report 汇总 Q 值分布/漂移/覆盖率/建议的执行仪表盘
+22. **记忆强化与差距分析** — memory_reinforce 根据观察结果调整权重并记录审计轨迹，skill_gap_analysis (EvoSkill) 对比失败/成功 workflow 找出缺失的中间步骤
+23. **注意力评分与合并优先级** — memory_attention_score 结合时效性/强化速度/邻居活跃度的时间注意力分数，consolidation_priority 综合 drift×(1-Q)×(1-attention) 排序合并/驱逐候选
 
 ## 许可
 
