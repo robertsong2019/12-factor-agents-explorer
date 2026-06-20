@@ -904,6 +904,88 @@ export async function writeOrUpdate(filePath, content, options) {
   console.log(`✅ Written: ${filePath}`);
 }
 
+// ─── Diff Preview (F12) ───────────────────────────────────────────────────
+
+export function generateDiff(existing, updated) {
+  const existingLines = existing.split("\n");
+  const updatedLines = updated.split("\n");
+  const result = [];
+
+  // Simple LCS-based diff
+  const n = existingLines.length;
+  const m = updatedLines.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (existingLines[i - 1] === updatedLines[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  // Backtrack to produce diff
+  const diffs = [];
+  let i = n, j = m;
+  while (i > 0 && j > 0) {
+    if (existingLines[i - 1] === updatedLines[j - 1]) {
+      diffs.unshift({ type: "context", line: existingLines[i - 1], oldLine: i, newLine: j });
+      i--; j--;
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      diffs.unshift({ type: "removed", line: existingLines[i - 1], oldLine: i });
+      i--;
+    } else {
+      diffs.unshift({ type: "added", line: updatedLines[j - 1], newLine: j });
+      j--;
+    }
+  }
+  while (i > 0) {
+    diffs.unshift({ type: "removed", line: existingLines[i - 1], oldLine: i });
+    i--;
+  }
+  while (j > 0) {
+    diffs.unshift({ type: "added", line: updatedLines[j - 1], newLine: j });
+    j--;
+  }
+
+  // Condense: keep up to 3 context lines around changes
+  const changeIdxs = diffs.map((d, idx) => d.type !== "context" ? idx : -1).filter(idx => idx >= 0);
+  if (changeIdxs.length === 0) return [];
+
+  const keep = new Set();
+  for (const idx of changeIdxs) {
+    for (let k = Math.max(0, idx - 3); k <= Math.min(diffs.length - 1, idx + 3); k++) {
+      keep.add(k);
+    }
+  }
+
+  // Add separators between non-contiguous kept ranges
+  const sortedKeep = [...keep].sort((a, b) => a - b);
+  let lastIdx = -2;
+  for (const idx of sortedKeep) {
+    if (idx > lastIdx + 1 && lastIdx >= 0) {
+      result.push({ type: "separator" });
+    }
+    result.push(diffs[idx]);
+    lastIdx = idx;
+  }
+
+  return result;
+}
+
+export function formatDiff(diffs) {
+  if (diffs.length === 0) return "(no changes)";
+  const lines = [];
+  for (const d of diffs) {
+    if (d.type === "added") lines.push(`+ ${d.line}`);
+    else if (d.type === "removed") lines.push(`- ${d.line}`);
+    else if (d.type === "separator") lines.push("...");
+    else lines.push(`  ${d.line}`);
+  }
+  return lines.join("\n");
+}
+
 // ─── Main ────────────────────────────────────────────────────────
 
 async function main() {
