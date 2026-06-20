@@ -10309,6 +10309,174 @@ class MemoryGraph:
         drifted.sort(key=lambda x: x["overall"], reverse=True)
         return drifted
 
+    # ── Skill Discovery (EvoSkill/SAGE-inspired) ───────────────────
+
+    def discover_skills(self, min_frequency: int = 2,
+                        min_success_rate: float = 0.5) -> list[dict]:
+        """Discover reusable skill candidates from workflow memory.
+
+        Inspired by EvoSkill (arXiv:2603.02766) failure-driven discovery
+        and SAGE (arXiv:2512.17102) sequential rollout.  This method:
+
+        1. Mines common action sequences from successful workflows
+        2. Identifies actions that co-occur frequently (skill candidates)
+        3. Checks if those actions appear in failed workflows (failure signal)
+        4. Ranks by Pareto retention: frequency * (1 - failure_contamination)
+
+        Unlike workflow_success_patterns which just counts individual actions,
+        this finds **paired action sequences** — the building blocks of skills.
+
+        Returns:
+            List of {action_pair, frequency, success_workflows,
+                     failure_workflows, pareto_score} sorted desc.
+        """
+        # Get successful workflows
+        workflows = self.conn.execute(
+            "SELECT id, data FROM nodes WHERE kind='workflow'"
+        ).fetchall()
+
+        success_seqs: dict[str, list[str]] = {}  # wf_id → ordered actions
+        failure_seqs: dict[str, list[str]] = {}
+
+        for r in workflows:
+            data = json.loads(r["data"])
+            s = data.get("success_count", 0)
+            f = data.get("failure_count", 0)
+            total = s + f
+            if total == 0:
+                continue
+
+            steps = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? AND relation='has_step'",
+                (r["id"],),
+            ).fetchall()
+
+            actions = []
+            for step_row in steps:
+                step_node = self.get_node(step_row["target"])
+                if step_node:
+                    sd = step_node.data if isinstance(step_node.data, dict) else json.loads(step_node.data)
+                    actions.append(sd.get("action", step_node.label))
+
+            if s > f:
+                success_seqs[r["id"]] = actions
+            elif f > s:
+                failure_seqs[r["id"]] = actions
+
+        # Find co-occurring action pairs in success sequences
+        pair_stats: dict[tuple[str, str], dict] = {}
+        for wf_id, actions in success_seqs.items():
+            seen_pairs = set()
+            for i in range(len(actions) - 1):
+                for j in range(i + 1, len(actions)):
+                    pair = tuple(sorted((actions[i], actions[j])))
+                    if pair not in seen_pairs:
+                        seen_pairs.add(pair)
+                        if pair not in pair_stats:
+                            pair_stats[pair] = {
+                                "action_pair": list(pair),
+                                "frequency": 0,
+                                "success_workflows": [],
+                                "failure_workflows": [],
+                            }
+                        pair_stats[pair]["frequency"] += 1
+                        pair_stats[pair]["success_workflows"].append(wf_id)
+
+        # Check contamination in failure sequences
+        for wf_id, actions in failure_seqs.items():
+            action_set = set(actions)
+            for pair, info in pair_stats.items():
+                if pair[0] in action_set and pair[1] in action_set:
+                    info["failure_workflows"].append(wf_id)
+
+        # Pareto scoring: frequency * (1 - failure_contamination)
+        results = []
+        for pair, info in pair_stats.items():
+            if info["frequency"] < min_frequency:
+                continue
+            sf = len(info["success_workflows"])
+            ff = len(info["failure_workflows"])
+            rate = sf / (sf + ff) if (sf + ff) > 0 else 0.0
+            if rate < min_success_rate:
+                continue
+            pareto = info["frequency"] * (1.0 - ff / max(sf + ff, 1))
+            results.append({
+                "action_pair": info["action_pair"],
+                "frequency": info["frequency"],
+                "success_workflows": sf,
+                "failure_workflows": ff,
+                "success_rate": round(rate, 4),
+                "pareto_score": round(pareto, 4),
+            })
+
+        results.sort(key=lambda x: x["pareto_score"], reverse=True)
+        return results
+
+    # ── Memory Utilization Report ──────────────────────────────────
+
+    def memory_utilization_report(self) -> dict:
+        """Executive summary of memory store health and usage.
+
+        Combines Q-value distribution, drift scan, workflow coverage,
+        and kind distribution into a single dashboard report.
+
+        Returns:
+            {total_nodes, by_kind, avg_qvalue, top_qvalue_nodes,
+             drifted_nodes, workflow_coverage, recommendations}
+        """
+        stats = self.stats()
+        total = stats.get("nodes", 0)
+
+        if total == 0:
+            return {
+                "total_nodes": 0,
+                "by_kind": {},
+                "avg_qvalue": 0.0,
+                "top_qvalue_nodes": [],
+                "drifted_nodes": [],
+                "workflow_coverage": 0.0,
+                "recommendations": ["empty_store"],
+            }
+
+        # Kind distribution
+        by_kind = stats.get("by_kind", {})
+
+        # Q-value stats (sample up to 50 for speed)
+        q_batch = self.memory_qvalue_batch(top_n=50)
+        q_values = [q["qvalue"] for q in q_batch]
+        avg_q = sum(q_values) / len(q_values) if q_values else 0.0
+
+        # Drift scan (threshold 0.5)
+        drifted = self.memory_drift_scan(threshold=0.5)
+
+        # Workflow coverage
+        wf_stats = self.workflow_stats()
+        wf_coverage = wf_stats.get("coverage", 0.0)
+
+        # Build recommendations
+        recs = []
+        if avg_q < 0.1:
+            recs.append("low_utilization")
+        if len(drifted) > total * 0.3:
+            recs.append("high_drift_ratio")
+        if wf_coverage < 0.3:
+            recs.append("low_workflow_coverage")
+        if not recs:
+            recs.append("healthy")
+
+        return {
+            "total_nodes": total,
+            "by_kind": by_kind,
+            "avg_qvalue": round(avg_q, 4),
+            "top_qvalue_nodes": [
+                {"label": q["label"], "qvalue": q["qvalue"]}
+                for q in q_batch[:5]
+            ],
+            "drifted_count": len(drifted),
+            "workflow_coverage": round(wf_coverage, 4),
+            "recommendations": recs,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

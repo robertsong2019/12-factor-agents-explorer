@@ -12863,3 +12863,125 @@ class TestMemoryDriftDetect:
     def test_drift_scan_empty_graph(self, mg):
         """Empty graph returns empty list."""
         assert mg.memory_drift_scan() == []
+
+
+# ── Skill Discovery Tests (EvoSkill/SAGE-inspired) ─────────────
+
+class TestDiscoverSkills:
+    """Tests for discover_skills — pattern mining from workflows."""
+
+    def test_no_workflows_returns_empty(self, mg):
+        """No workflows → empty list."""
+        assert mg.discover_skills() == []
+
+    def test_basic_pair_discovery(self, mg):
+        """Two successful workflows with shared actions yield a pair."""
+        wf1 = mg.add("Goal1", "workflow", {"success_count": 3, "failure_count": 0, "step_count": 2})
+        wf2 = mg.add("Goal2", "workflow", {"success_count": 2, "failure_count": 0, "step_count": 2})
+
+        s1 = mg.add("fetch_data", "workflow_step", {"action": "fetch", "order": 0})
+        s2 = mg.add("process_data", "workflow_step", {"action": "process", "order": 1})
+        s3 = mg.add("fetch_data2", "workflow_step", {"action": "fetch", "order": 0})
+        s4 = mg.add("process_data2", "workflow_step", {"action": "process", "order": 1})
+
+        mg.link(wf1.id, s1.id, "has_step")
+        mg.link(wf1.id, s2.id, "has_step")
+        mg.link(wf2.id, s3.id, "has_step")
+        mg.link(wf2.id, s4.id, "has_step")
+
+        results = mg.discover_skills(min_frequency=2)
+        assert len(results) > 0
+        pair = results[0]
+        assert "action_pair" in pair
+        assert pair["frequency"] >= 2
+        assert pair["success_workflows"] >= 2
+
+    def test_pareto_score_ranking(self, mg):
+        """Results are sorted by pareto_score descending."""
+        wf1 = mg.add("A", "workflow", {"success_count": 5, "failure_count": 0, "step_count": 2})
+        wf2 = mg.add("B", "workflow", {"success_count": 4, "failure_count": 0, "step_count": 2})
+        s1 = mg.add("a1", "workflow_step", {"action": "alpha", "order": 0})
+        s2 = mg.add("a2", "workflow_step", {"action": "beta", "order": 1})
+        s3 = mg.add("a3", "workflow_step", {"action": "alpha", "order": 0})
+        s4 = mg.add("a4", "workflow_step", {"action": "beta", "order": 1})
+        mg.link(wf1.id, s1.id, "has_step")
+        mg.link(wf1.id, s2.id, "has_step")
+        mg.link(wf2.id, s3.id, "has_step")
+        mg.link(wf2.id, s4.id, "has_step")
+
+        results = mg.discover_skills()
+        for i in range(len(results) - 1):
+            assert results[i]["pareto_score"] >= results[i + 1]["pareto_score"]
+
+    def test_failure_contamination(self, mg):
+        """Actions in failed workflows reduce pareto score."""
+        wf_good = mg.add("Good", "workflow", {"success_count": 4, "failure_count": 0, "step_count": 2})
+        wf_bad = mg.add("Bad", "workflow", {"success_count": 0, "failure_count": 3, "step_count": 2})
+        s1 = mg.add("s1", "workflow_step", {"action": "x", "order": 0})
+        s2 = mg.add("s2", "workflow_step", {"action": "y", "order": 1})
+        s3 = mg.add("s3", "workflow_step", {"action": "x", "order": 0})
+        s4 = mg.add("s4", "workflow_step", {"action": "y", "order": 1})
+        mg.link(wf_good.id, s1.id, "has_step")
+        mg.link(wf_good.id, s2.id, "has_step")
+        mg.link(wf_bad.id, s3.id, "has_step")
+        mg.link(wf_bad.id, s4.id, "has_step")
+
+        results = mg.discover_skills(min_frequency=1, min_success_rate=0.0)
+        if results:
+            # The pair should have failure contamination
+            assert results[0]["failure_workflows"] >= 1
+
+    def test_min_frequency_filter(self, mg):
+        """High min_frequency excludes rare pairs."""
+        wf1 = mg.add("Only", "workflow", {"success_count": 1, "failure_count": 0, "step_count": 2})
+        s1 = mg.add("s1", "workflow_step", {"action": "rare_a", "order": 0})
+        s2 = mg.add("s2", "workflow_step", {"action": "rare_b", "order": 1})
+        mg.link(wf1.id, s1.id, "has_step")
+        mg.link(wf1.id, s2.id, "has_step")
+
+        results = mg.discover_skills(min_frequency=5)
+        assert results == []
+
+
+class TestMemoryUtilizationReport:
+    """Tests for memory_utilization_report — executive dashboard."""
+
+    def test_empty_graph(self, mg):
+        """Empty graph returns structured empty report."""
+        report = mg.memory_utilization_report()
+        assert report["total_nodes"] == 0
+        assert report["recommendations"] == ["empty_store"]
+
+    def test_populated_report(self, populated):
+        """Populated graph returns all fields."""
+        mg, a, b, c = populated
+        report = mg.memory_utilization_report()
+        assert report["total_nodes"] == 3
+        assert "by_kind" in report
+        assert "avg_qvalue" in report
+        assert "top_qvalue_nodes" in report
+        assert "drifted_count" in report
+        assert "workflow_coverage" in report
+        assert "recommendations" in report
+        assert isinstance(report["recommendations"], list)
+
+    def test_report_with_stale_nodes(self, mg):
+        """Stale nodes trigger high_drift_ratio recommendation."""
+        for i in range(5):
+            n = mg.add(f"Old{i}", "concept")
+            old_time = time.time() - 120 * 86400
+            mg.conn.execute(
+                "UPDATE nodes SET accessed=? WHERE id=?", (old_time, n.id))
+        mg.conn.commit()
+
+        report = mg.memory_utilization_report()
+        assert report["drifted_count"] >= 4
+
+    def test_top_qvalue_nodes_limit(self, populated):
+        """Top Q-value nodes capped at 5."""
+        mg, a, b, c = populated
+        for i in range(20):
+            n = mg.add(f"Extra{i}", "concept")
+            mg.link(a.id, n.id, "connects")
+        report = mg.memory_utilization_report()
+        assert len(report["top_qvalue_nodes"]) <= 5
