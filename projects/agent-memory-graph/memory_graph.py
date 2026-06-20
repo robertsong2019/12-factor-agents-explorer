@@ -10477,6 +10477,154 @@ class MemoryGraph:
             "recommendations": recs,
         }
 
+    # ── Memory Reinforcement (MemRL operational) ───────────────────
+
+    def memory_reinforce(self, node_id: str, outcome: str,
+                         boost: float = 0.1) -> dict | None:
+        """Reinforce a memory node based on observed outcome.
+
+        Operationalises the MemRL insight: memory management is a learning
+        problem.  Each outcome adjusts the node's weight, simulating
+        Q-value updates without a full RL training loop.
+
+        - "positive": weight += boost (capped at 1.0)
+        - "negative": weight -= boost (floored at 0.01)
+        - "neutral":  weight unchanged, but touch (update accessed)
+
+        Records the reinforcement event in node metadata for auditability.
+
+        Args:
+            node_id: target node
+            outcome: "positive" | "negative" | "neutral"
+            boost: weight delta (default 0.1)
+
+        Returns:
+            {node_id, outcome, old_weight, new_weight, boost} or None
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return None
+
+        old_weight = node.weight
+
+        if outcome == "positive":
+            new_weight = min(1.0, old_weight + boost)
+        elif outcome == "negative":
+            new_weight = max(0.01, old_weight - boost)
+        elif outcome == "neutral":
+            new_weight = old_weight
+        else:
+            return None
+
+        # Update weight, accessed time, and record event
+        now = time.time()
+        data = node.data if isinstance(node.data, dict) else json.loads(node.data)
+        history = data.setdefault("_reinforcement_history", [])
+        history.append({
+            "outcome": outcome,
+            "boost": boost,
+            "old_weight": round(old_weight, 4),
+            "new_weight": round(new_weight, 4),
+            "timestamp": now,
+        })
+        # Keep only last 50 events
+        if len(history) > 50:
+            data["_reinforcement_history"] = history[-50:]
+
+        self.conn.execute(
+            "UPDATE nodes SET weight=?, accessed=?, data=? WHERE id=?",
+            (new_weight, now, json.dumps(data), node_id),
+        )
+        self.conn.commit()
+
+        return {
+            "node_id": node_id,
+            "outcome": outcome,
+            "old_weight": round(old_weight, 4),
+            "new_weight": round(new_weight, 4),
+            "boost": boost,
+        }
+
+    def skill_gap_analysis(self, min_failures: int = 1) -> list[dict]:
+        """Identify missing skills from failed workflow patterns.
+
+        Insight from EvoSkill (arXiv:2603.02766): failures reveal which
+        action transitions are missing.  If workflow A fails and workflow
+        B succeeds, and A has steps [x, z] while B has [x, y, z], then
+        action 'y' is a **skill gap** — a missing intermediate step.
+
+        This method compares failed workflows to successful ones with
+        overlapping actions, and identifies intermediate actions present
+        in successes but absent in failures.
+
+        Returns:
+            List of {missing_action, in_workflows, failed_workflows,
+                     gap_severity} sorted by gap_severity desc
+        """
+        workflows = self.conn.execute(
+            "SELECT id, data FROM nodes WHERE kind='workflow'"
+        ).fetchall()
+
+        success_actions: dict[str, set[str]] = {}
+        failure_actions: dict[str, set[str]] = {}
+
+        for r in workflows:
+            data = json.loads(r["data"])
+            s = data.get("success_count", 0)
+            f = data.get("failure_count", 0)
+            total = s + f
+            if total == 0:
+                continue
+
+            steps = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? AND relation='has_step'",
+                (r["id"],),
+            ).fetchall()
+
+            actions = set()
+            for step_row in steps:
+                step_node = self.get_node(step_row["target"])
+                if step_node:
+                    sd = step_node.data if isinstance(step_node.data, dict) else json.loads(step_node.data)
+                    actions.add(sd.get("action", step_node.label))
+
+            if s > f:
+                success_actions[r["id"]] = actions
+            elif f >= min_failures:
+                failure_actions[r["id"]] = actions
+
+        # For each failure, find overlapping successes and identify missing
+        gap_map: dict[str, dict] = {}
+        for fail_id, fail_acts in failure_actions.items():
+            for succ_id, succ_acts in success_actions.items():
+                overlap = fail_acts & succ_acts
+                if len(overlap) < 1:
+                    continue
+                missing = succ_acts - fail_acts
+                for action in missing:
+                    if action not in gap_map:
+                        gap_map[action] = {
+                            "missing_action": action,
+                            "in_workflows": [],
+                            "failed_workflows": [],
+                            "gap_severity": 0,
+                        }
+                    gap_map[action]["in_workflows"].append(succ_id)
+                    gap_map[action]["failed_workflows"].append(fail_id)
+
+        # Severity = how many distinct failures would benefit
+        results = []
+        for action, info in gap_map.items():
+            unique_failures = len(set(info["failed_workflows"]))
+            unique_successes = len(set(info["in_workflows"]))
+            info["in_workflows"] = unique_successes
+            info["failed_workflows"] = unique_failures
+            info["gap_severity"] = unique_failures * unique_successes
+            results.append(info)
+
+        results.sort(key=lambda x: x["gap_severity"], reverse=True)
+        return results
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

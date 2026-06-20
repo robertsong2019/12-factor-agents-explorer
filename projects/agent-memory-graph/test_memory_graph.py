@@ -12985,3 +12985,143 @@ class TestMemoryUtilizationReport:
             mg.link(a.id, n.id, "connects")
         report = mg.memory_utilization_report()
         assert len(report["top_qvalue_nodes"]) <= 5
+
+
+# ── Memory Reinforcement Tests (MemRL operational) ─────────────
+
+class TestMemoryReinforce:
+    """Tests for memory_reinforce — weight adjustment by outcome."""
+
+    def test_positive_reinforcement(self, mg):
+        """Positive outcome increases weight."""
+        n = mg.add("Test", "concept")
+        mg.conn.execute("UPDATE nodes SET weight=0.5 WHERE id=?", (n.id,))
+        mg.conn.commit()
+        result = mg.memory_reinforce(n.id, "positive", boost=0.2)
+        assert result is not None
+        assert result["old_weight"] == 0.5
+        assert result["new_weight"] == 0.7
+
+    def test_negative_reinforcement(self, mg):
+        """Negative outcome decreases weight."""
+        n = mg.add("Test", "concept")
+        mg.conn.execute("UPDATE nodes SET weight=0.5 WHERE id=?", (n.id,))
+        mg.conn.commit()
+        result = mg.memory_reinforce(n.id, "negative", boost=0.3)
+        assert result["new_weight"] == 0.2
+
+    def test_weight_cap_at_1(self, mg):
+        """Weight capped at 1.0."""
+        n = mg.add("Test", "concept")
+        mg.conn.execute("UPDATE nodes SET weight=0.9 WHERE id=?", (n.id,))
+        mg.conn.commit()
+        result = mg.memory_reinforce(n.id, "positive", boost=0.5)
+        assert result["new_weight"] == 1.0
+
+    def test_weight_floor_at_001(self, mg):
+        """Weight floored at 0.01."""
+        n = mg.add("Test", "concept")
+        mg.conn.execute("UPDATE nodes SET weight=0.05 WHERE id=?", (n.id,))
+        mg.conn.commit()
+        result = mg.memory_reinforce(n.id, "negative", boost=0.5)
+        assert result["new_weight"] == 0.01
+
+    def test_neutral_updates_accessed(self, mg):
+        """Neutral outcome updates accessed time without weight change."""
+        n = mg.add("Test", "concept")
+        old_accessed = n.accessed
+        time.sleep(0.01)
+        result = mg.memory_reinforce(n.id, "neutral")
+        assert result["new_weight"] == result["old_weight"]
+        updated = self.get_node(mg, n.id)
+        assert updated.accessed > old_accessed
+
+    def get_node(self, mg, node_id):
+        return mg.get_node(node_id)
+
+    def test_nonexistent_node(self, mg):
+        """Missing node returns None."""
+        assert mg.memory_reinforce("nonexistent", "positive") is None
+
+    def test_invalid_outcome(self, mg):
+        """Invalid outcome returns None."""
+        n = mg.add("Test", "concept")
+        assert mg.memory_reinforce(n.id, "invalid") is None
+
+    def test_reinforcement_history_recorded(self, mg):
+        """Reinforcement events are stored in node metadata."""
+        n = mg.add("Test", "concept")
+        mg.memory_reinforce(n.id, "positive")
+        mg.memory_reinforce(n.id, "negative")
+        updated = mg.get_node(n.id)
+        data = updated.data if isinstance(updated.data, dict) else json.loads(updated.data)
+        history = data.get("_reinforcement_history", [])
+        assert len(history) == 2
+        assert history[0]["outcome"] == "positive"
+        assert history[1]["outcome"] == "negative"
+
+    def test_history_capped_at_50(self, mg):
+        """History is capped at 50 entries."""
+        n = mg.add("Test", "concept")
+        for _ in range(55):
+            mg.memory_reinforce(n.id, "positive", boost=0.001)
+        updated = mg.get_node(n.id)
+        data = updated.data if isinstance(updated.data, dict) else json.loads(updated.data)
+        assert len(data["_reinforcement_history"]) == 50
+
+
+# ── Skill Gap Analysis Tests ───────────────────────────────────
+
+class TestSkillGapAnalysis:
+    """Tests for skill_gap_analysis — missing step detection."""
+
+    def test_no_workflows_returns_empty(self, mg):
+        """No workflows → empty list."""
+        assert mg.skill_gap_analysis() == []
+
+    def test_finds_missing_step(self, mg):
+        """Identifies intermediate step present in success but not failure."""
+        # Successful workflow: [fetch, validate, store]
+        wf_good = mg.add("Good", "workflow", {"success_count": 3, "failure_count": 0, "step_count": 3})
+        s1 = mg.add("g1", "workflow_step", {"action": "fetch", "order": 0})
+        s2 = mg.add("g2", "workflow_step", {"action": "validate", "order": 1})
+        s3 = mg.add("g3", "workflow_step", {"action": "store", "order": 2})
+        mg.link(wf_good.id, s1.id, "has_step")
+        mg.link(wf_good.id, s2.id, "has_step")
+        mg.link(wf_good.id, s3.id, "has_step")
+
+        # Failed workflow: [fetch, store] (missing validate)
+        wf_bad = mg.add("Bad", "workflow", {"success_count": 0, "failure_count": 2, "step_count": 2})
+        s4 = mg.add("b1", "workflow_step", {"action": "fetch", "order": 0})
+        s5 = mg.add("b2", "workflow_step", {"action": "store", "order": 1})
+        mg.link(wf_bad.id, s4.id, "has_step")
+        mg.link(wf_bad.id, s5.id, "has_step")
+
+        gaps = mg.skill_gap_analysis()
+        actions = [g["missing_action"] for g in gaps]
+        assert "validate" in actions
+
+    def test_gap_severity_ranking(self, mg):
+        """Results sorted by gap_severity descending."""
+        results = mg.skill_gap_analysis()
+        for i in range(len(results) - 1):
+            assert results[i]["gap_severity"] >= results[i + 1]["gap_severity"]
+
+    def test_no_overlap_no_gap(self, mg):
+        """No shared actions between success and failure → no gap."""
+        wf_good = mg.add("Good", "workflow", {"success_count": 2, "failure_count": 0, "step_count": 1})
+        wf_bad = mg.add("Bad", "workflow", {"success_count": 0, "failure_count": 2, "step_count": 1})
+        s1 = mg.add("s1", "workflow_step", {"action": "alpha", "order": 0})
+        s2 = mg.add("s2", "workflow_step", {"action": "omega", "order": 0})
+        mg.link(wf_good.id, s1.id, "has_step")
+        mg.link(wf_bad.id, s2.id, "has_step")
+
+        gaps = mg.skill_gap_analysis()
+        assert gaps == []
+
+    def test_all_succeed_no_gaps(self, mg):
+        """All workflows succeed → no gaps."""
+        wf = mg.add("Good", "workflow", {"success_count": 3, "failure_count": 0, "step_count": 1})
+        s = mg.add("s", "workflow_step", {"action": "x", "order": 0})
+        mg.link(wf.id, s.id, "has_step")
+        assert mg.skill_gap_analysis() == []
