@@ -47,7 +47,8 @@ const IMPORT_PATTERNS = {
 
 const DEFAULT_MAX_FILE_SIZE = 1024 * 100; // 100KB — skip files larger than this
 
-export async function extractImports(root, maxDepth = 3, depth = 0, gitignore = [], maxFileSize = DEFAULT_MAX_FILE_SIZE) {
+export async function extractImports(root, maxDepth = 3, depth = 0, gitignore = [], maxFileSize = DEFAULT_MAX_FILE_SIZE, _origRoot = null) {
+  const origRoot = _origRoot || root;
   const imports = new Map(); // { filepath: [imports] }
   const allImports = new Set(); // unique import paths
 
@@ -56,11 +57,11 @@ export async function extractImports(root, maxDepth = 3, depth = 0, gitignore = 
   try {
     const entries = await readdir(root, { withFileTypes: true });
     for (const e of entries) {
-      const relativePath = depth === 0 ? e.name : relative(root, join(root, e.name));
+      const relativePath = relative(origRoot, join(root, e.name));
       if (isIgnored(relativePath, gitignore)) continue;
 
       if (e.isDirectory() && !IGNORE_DIRS.has(e.name) && !e.name.startsWith(".")) {
-        const result = await extractImports(join(root, e.name), maxDepth, depth + 1, gitignore, maxFileSize);
+        const result = await extractImports(join(root, e.name), maxDepth, depth + 1, gitignore, maxFileSize, origRoot);
         for (const [k, v] of result.imports) imports.set(k, v);
         result.allImports.forEach(i => allImports.add(i));
       } else if (e.isFile()) {
@@ -592,6 +593,86 @@ export async function validateContext(root, generatedFiles) {
   return issues;
 }
 
+// ─── Git History Analysis (F1) ───────────────────────────────────────────
+
+import { execSync } from "node:child_process";
+
+export async function analyzeGitHistory(root, maxCommits = 20) {
+  const result = {
+    isRepo: false,
+    totalCommits: 0,
+    contributors: [],
+    recentCommits: [],
+    commitFrequency: {},
+    topFilesChanged: [],
+  };
+
+  try {
+    // Check if it's a git repo
+    execSync("git rev-parse --git-dir", { cwd: root, stdio: "pipe", timeout: 5000 });
+    result.isRepo = true;
+  } catch {
+    return result;
+  }
+
+  const run = (cmd) => {
+    try {
+      return execSync(cmd, { cwd: root, encoding: "utf8", stdio: "pipe", timeout: 5000 }).trim();
+    } catch {
+      return "";
+    }
+  };
+
+  // Total commits
+  const totalStr = run("git rev-list --count HEAD");
+  result.totalCommits = parseInt(totalStr, 10) || 0;
+
+  // Contributors
+  const contributorStr = run("git shortlog -sn HEAD");
+  result.contributors = contributorStr
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^\s*(\d+)\s+(.+)$/);
+      return match ? { name: match[2].trim(), commits: parseInt(match[1], 10) } : null;
+    })
+    .filter(Boolean)
+    .slice(0, 10);
+
+  // Recent commits
+  const logStr = run(`git log --format="%H|%an|%ad|%s" --date=short -n ${maxCommits}`);
+  result.recentCommits = logStr
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [hash, author, date, ...subjectParts] = line.split("|");
+      return { hash: hash.slice(0, 7), author, date, subject: subjectParts.join("|") };
+    });
+
+  // Commit frequency by day of week
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const freqStr = run("git log --format=%ad --date=short -n 200");
+  const freqMap = {};
+  for (const line of freqStr.split("\n").filter(Boolean)) {
+    const day = dayNames[new Date(line).getDay()];
+    if (day) freqMap[day] = (freqMap[day] || 0) + 1;
+  }
+  result.commitFrequency = freqMap;
+
+  // Top changed files
+  const filesStr = run(`git log --name-only --format="" -n ${maxCommits * 3}`);
+  const fileCount = {};
+  for (const line of filesStr.split("\n").filter(Boolean)) {
+    fileCount[line] = (fileCount[line] || 0) + 1;
+  }
+  result.topFilesChanged = Object.entries(fileCount)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([file, count]) => ({ file, changes: count }));
+
+  return result;
+}
+
 // ─── Mermaid Diagram Generation (F5) ──────────────────────────────────
 
 export async function generateMermaidDiagram(root, maxDepth = 2, depth = 0, gitignore = []) {
@@ -648,7 +729,7 @@ export async function generateMermaidDiagram(root, maxDepth = 2, depth = 0, giti
 
 // ─── Context Generation ──────────────────────────────────────────
 
-export function generateAgentsMd(info, langs, structure) {
+export function generateAgentsMd(info, langs, structure, gitInfo = null) {
   const langList = [...langs.entries()].sort((a, b) => b[1] - a[1]).map(([l, c]) => `${l} (${c} files)`);
   const primaryLang = langList[0] || "Unknown";
 
@@ -686,6 +767,13 @@ ${Object.keys(info.deps).length
 ## Config Files
 
 ${info.configFiles?.length ? info.configFiles.map(f => `- \`${f}\``).join("\n") : "- (none detected)"}
+
+${gitInfo && gitInfo.isRepo ? `## Git Activity
+
+- **Total commits:** ${gitInfo.totalCommits}
+${gitInfo.contributors.length ? `- **Top contributors:** ${gitInfo.contributors.slice(0, 5).map(c => `${c.name} (${c.commits})`).join(", ")}` : ""}
+${gitInfo.topFilesChanged.length ? `- **Most changed:** ${gitInfo.topFilesChanged.slice(0, 5).map(f => `\`${f.file}\` (${f.changes}x)`).join(", ")}` : ""}
+` : ""}
 
 ## Conventions
 
@@ -874,9 +962,10 @@ async function main() {
   }
 
   const structure = await getDirStructure(root, "", 2, 0, gitignore);
+  const gitInfo = await analyzeGitHistory(root);
 
   const generators = {
-    agents: { file: "AGENTS.md", gen: () => generateAgentsMd(info, langs, structure) },
+    agents: { file: "AGENTS.md", gen: () => generateAgentsMd(info, langs, structure, gitInfo) },
     cursor: { file: ".cursorrules", gen: () => generateCursorRules(info, langs, structure) },
     copilot: { file: ".github/copilot-instructions.md", gen: () => generateCopilotInstructions(info) },
     claude: { file: ".claude/CLAUDE.md", gen: () => generateClaudeMd(info, langs, structure) },

@@ -16,7 +16,7 @@
 - [x] **F2**: Import statement analysis — actual imports from source files (not just package.json) ✅ 2026-06-17
 - [x] **F3**: API surface extraction — exported functions/classes/methods from source files ✅ 2026-06-18
 - [x] **F4**: Configuration file parser — tsconfig, eslint, prettier, docker, vite/webpack/tailwind ✅ 2026-06-18
-- [ ] **F1**: Git history analysis — commit patterns, contributors, recent activity
+- [x] **F1**: Git history analysis — commit patterns, contributors, recent activity ✅ 2026-06-20
 
 ### Output Formats
 - [x] **F5**: Mermaid.js diagrams — directory structure visualization ✅ 2026-06-19

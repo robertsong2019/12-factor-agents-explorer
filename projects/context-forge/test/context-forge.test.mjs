@@ -477,9 +477,9 @@ describe("getDirStructure", () => {
   });
 
   it("limits output to 30 items", async () => {
-    tmpDir = await makeFixture({});
-    const files = Array.from({ length: 35 }, (_, i) => [`f${i}.js`, "1"]);
-    await makeFixture(Object.fromEntries(files));
+    const files = {};
+    for (let i = 0; i < 35; i++) files[`f${i}.js`] = "1";
+    tmpDir = await makeFixture(files);
 
     const structure = await getDirStructure(tmpDir);
     assert.ok(structure.includes("... ("));
@@ -679,6 +679,47 @@ describe("generateAgentsMd", () => {
     assert.ok(md.includes("JavaScript (10 files)"));
     assert.ok(md.includes("**Frameworks:** Express, React"));
   });
+
+  it("includes git activity section when gitInfo is provided", () => {
+    const info = {
+      root: "/my-project",
+      pkg: { name: "my-app", version: "1.0.0" },
+      entryPoints: ["index.js"],
+      scripts: {},
+      deps: {},
+      frameworks: [],
+      configFiles: [],
+    };
+    const langs = new Map([["JavaScript", 5]]);
+    const gitInfo = {
+      isRepo: true,
+      totalCommits: 42,
+      contributors: [{ name: "Alice", commits: 30 }, { name: "Bob", commits: 12 }],
+      recentCommits: [],
+      commitFrequency: { Mon: 10, Wed: 20 },
+      topFilesChanged: [{ file: "src/app.js", changes: 15 }],
+    };
+    const md = generateAgentsMd(info, langs, "", gitInfo);
+    assert.ok(md.includes("## Git Activity"));
+    assert.ok(md.includes("**Total commits:** 42"));
+    assert.ok(md.includes("Alice (30)"));
+    assert.ok(md.includes("src/app.js"));
+  });
+
+  it("omits git section when gitInfo is null", () => {
+    const info = {
+      root: "/my-project",
+      pkg: { name: "my-app", version: "1.0.0" },
+      entryPoints: ["index.js"],
+      scripts: {},
+      deps: {},
+      frameworks: [],
+      configFiles: [],
+    };
+    const langs = new Map();
+    const md = generateAgentsMd(info, langs, "", null);
+    assert.ok(!md.includes("## Git Activity"));
+  });
 });
 
 describe("generateCursorRules", () => {
@@ -772,7 +813,7 @@ describe("writeOrUpdate", () => {
 ## Conventions
 
 <!-- context-forge:update-section conventions -->
-<!-- context-forge:update-section -->
+<!-- /context-forge:update-section -->
 
 ## Notes
 `;
