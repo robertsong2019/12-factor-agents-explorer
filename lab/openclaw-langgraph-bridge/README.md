@@ -89,6 +89,36 @@ Returns a router function that visits steps in order, skipping completed ones.
 ### `conditionalRouter(field, mapping, fallback)`
 Routes based on a state field value.
 
+### `Supervisor` class
+Dynamic agent management with health tracking, circuit breaker, and strategies (round-robin / least-busy / weighted).
+
+```ts
+const sup = new Supervisor({ strategy: "round-robin", maxFailures: 3 });
+sup.register({ id: "researcher", role: "researcher", systemPrompt: "...", executor: async (t) => "..." });
+
+// Select next agent
+const agent = sup.selectAgent();
+
+// Record outcomes
+sup.recordSuccess("researcher", 150);
+sup.recordFailure("researcher", 500);
+
+// Per-agent metrics (latency percentiles, throughput, error rate)
+sup.getMetrics("researcher");
+// { totalRequests: 42, successCount: 40, failureCount: 2, successRate: 0.95,
+//   errorRate: 0.05, avgLatency: 152, p50Latency: 130, p95Latency: 280, p99Latency: 450, throughputPerMin: 5 }
+
+// Pool-wide aggregate metrics
+sup.getPoolMetrics();
+// { totalRequests: 120, totalErrors: 5, overallErrorRate: 0.04, avgLatency: 140,
+//   p50Latency: 120, p95Latency: 250, p99Latency: 400, activeAgents: 3, circuitOpenAgents: 0, throughputPerMin: 15 }
+
+// State management
+sup.saveState();    // snapshot for persistence
+sup.loadState(s);   // restore
+sup.toPool();       // convert to AgentPool
+```
+
 ## License
 
 MIT
