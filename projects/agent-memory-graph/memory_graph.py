@@ -10024,6 +10024,77 @@ class MemoryGraph:
             "by_relation": by_relation,
         }
 
+    def tag_correlation_network(self, min_co_occurrence: int = 2) -> dict:
+        """Build a tag co-occurrence correlation network.
+
+        Analyzes which tags appear together on the same nodes and returns
+        a weighted graph of tag pairs.  Useful for discovering latent
+        semantic structure in the knowledge graph.
+
+        Args:
+            min_co_occurrence: minimum times two tags must co-occur
+
+        Returns:
+            {nodes: [{tag, frequency}], edges: [{source, target, weight}], summary}
+        """
+        rows = self.conn.execute(
+            "SELECT tags FROM nodes WHERE tags != '[]'"
+        ).fetchall()
+        tag_freq: dict[str, int] = {}
+        pair_freq: dict[tuple[str, str], int] = {}
+        for r in rows:
+            tags = sorted(set(json.loads(r["tags"])))
+            for t in tags:
+                tag_freq[t] = tag_freq.get(t, 0) + 1
+            for i in range(len(tags)):
+                for j in range(i + 1, len(tags)):
+                    pair = (tags[i], tags[j])
+                    pair_freq[pair] = pair_freq.get(pair, 0) + 1
+        nodes = [
+            {"tag": t, "frequency": f}
+            for t, f in sorted(tag_freq.items(), key=lambda x: x[1], reverse=True)
+        ]
+        edges = [
+            {"source": a, "target": b, "weight": w}
+            for (a, b), w in sorted(pair_freq.items(), key=lambda x: x[1], reverse=True)
+            if w >= min_co_occurrence
+        ]
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "total_tags": len(nodes),
+            "total_correlations": len(edges),
+            "strongest_correlation": edges[0] if edges else None,
+        }
+
+    def memory_path_explain(self, source_id: str, target_id: str) -> str | None:
+        """Explain the path between two nodes as a narrative string.
+
+        Finds the shortest path, then renders edge labels as a readable
+        chain.  Useful for LLM context injection and debugging.
+
+        Returns:
+            Human-readable path string, or None if no path / nodes missing.
+        """
+        path = self.shortest_path(source_id, target_id)
+        if not path:
+            return None
+        if len(path) == 1:
+            node = self.get_node(path[0])
+            return f"{node.label} (same node)"
+        parts = []
+        for i in range(len(path) - 1):
+            node = self.get_node(path[i])
+            next_node = self.get_node(path[i + 1])
+            edge = self.conn.execute(
+                "SELECT relation FROM edges WHERE source=? AND target=? "
+                "ORDER BY weight DESC LIMIT 1",
+                (path[i], path[i + 1]),
+            ).fetchone()
+            relation = edge["relation"] if edge else "→"
+            parts.append(f"{node.label} --[{relation}]--> {next_node.label}")
+        return "\n".join(parts)
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

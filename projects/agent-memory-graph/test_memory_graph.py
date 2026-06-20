@@ -12546,3 +12546,101 @@ class TestNodeDegreeSummary:
     def test_nonexistent_node(self, mg):
         """Missing node returns None."""
         assert mg.node_degree_summary("nonexistent") is None
+
+
+# ── Tag Correlation Network Tests ──────────────────────────
+
+class TestTagCorrelationNetwork:
+    """Tag co-occurrence correlation graph."""
+
+    def test_finds_correlated_tags(self, mg):
+        """Tags appearing together on multiple nodes are correlated."""
+        mg.add("A", "concept", tags=["python", "ai"])
+        mg.add("B", "concept", tags=["python", "ai"])
+        mg.add("C", "concept", tags=["python", "web"])
+        result = mg.tag_correlation_network(min_co_occurrence=2)
+        pair_tags = [(e["source"], e["target"]) for e in result["edges"]]
+        assert ("ai", "python") in pair_tags
+        assert result["total_correlations"] >= 1
+
+    def test_min_co_occurrence_filter(self, mg):
+        """Low co-occurrence pairs are filtered out."""
+        mg.add("A", "concept", tags=["x", "y"])
+        mg.add("B", "concept", tags=["x", "z"])
+        result = mg.tag_correlation_network(min_co_occurrence=5)
+        assert result["total_correlations"] == 0
+
+    def test_node_frequency(self, mg):
+        """Tag nodes include correct frequency."""
+        mg.add("A", tags=["t1"])
+        mg.add("B", tags=["t1", "t2"])
+        mg.add("C", tags=["t2"])
+        result = mg.tag_correlation_network()
+        freq_map = {n["tag"]: n["frequency"] for n in result["nodes"]}
+        assert freq_map["t1"] == 2
+        assert freq_map["t2"] == 2
+
+    def test_empty_graph(self, mg):
+        """No tagged nodes returns empty network."""
+        result = mg.tag_correlation_network()
+        assert result["total_tags"] == 0
+        assert result["total_correlations"] == 0
+        assert result["strongest_correlation"] is None
+
+    def test_strongest_correlation(self, mg):
+        """Strongest correlation is the highest-weight edge."""
+        for _ in range(5):
+            mg.add("node", tags=["a", "b"])
+        mg.add("solo", tags=["a", "c"])
+        result = mg.tag_correlation_network()
+        strongest = result["strongest_correlation"]
+        assert strongest is not None
+        assert set([strongest["source"], strongest["target"]]) == {"a", "b"}
+        assert strongest["weight"] == 5
+
+
+# ── Memory Path Explain Tests ──────────────────────────────
+
+class TestMemoryPathExplain:
+    """Narrative path explanation."""
+
+    def test_direct_connection(self, mg):
+        """Single-hop path rendered as A --[rel]--> B."""
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "knows")
+        explanation = mg.memory_path_explain(a.id, b.id)
+        assert explanation is not None
+        assert "Alice" in explanation
+        assert "Bob" in explanation
+        assert "[knows]" in explanation
+
+    def test_multi_hop_path(self, mg):
+        """Multi-hop path rendered as chain."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")
+        mg.link(a.id, b.id, "rel1")
+        mg.link(b.id, c.id, "rel2")
+        explanation = mg.memory_path_explain(a.id, c.id)
+        assert explanation is not None
+        assert "[rel1]" in explanation
+        assert "[rel2]" in explanation
+
+    def test_same_node(self, mg):
+        """Source == target returns same node message."""
+        a = mg.add("Self", "concept")
+        explanation = mg.memory_path_explain(a.id, a.id)
+        assert explanation is not None
+        assert "same node" in explanation
+
+    def test_no_path(self, mg):
+        """Disconnected nodes return None."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        assert mg.memory_path_explain(a.id, b.id) is None
+
+    def test_nonexistent_source(self, mg):
+        """Missing source returns None."""
+        b = mg.add("B", "concept")
+        assert mg.memory_path_explain("nonexistent", b.id) is None
