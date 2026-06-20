@@ -12401,3 +12401,148 @@ class TestMemoryClone:
         a = mg.add("A", "concept")
         cloned_id = mg.memory_clone(a.id)
         assert cloned_id != a.id
+
+
+# ── Graph Diff Summary Tests ───────────────────────────────
+
+class TestGraphDiffSummary:
+    """Human-readable graph comparison."""
+
+    def test_identical_graphs(self, mg):
+        """No differences."""
+        other = MemoryGraph()
+        # both empty
+        assert mg.graph_diff_summary(other) == "Graphs are identical."
+
+    def test_shows_node_count_diff(self, mg):
+        """Summary mentions node counts."""
+        mg.add("A", "concept")
+        other = MemoryGraph()
+        summary = mg.graph_diff_summary(other)
+        assert "Nodes only in self: 1" in summary
+        assert "identical" not in summary
+
+    def test_shows_modified_nodes(self, mg):
+        """Summary shows field modifications."""
+        other = MemoryGraph()
+        n = mg.add("Original", "concept")
+        # insert same ID with different kind into other
+        import time, uuid
+        other.conn.execute(
+            "INSERT INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            (n.id, "Original", "event", "{}", time.time(), time.time(), 1.0, "[]")
+        )
+        other.conn.commit()
+        summary = mg.graph_diff_summary(other)
+        assert "Modified" in summary
+
+    def test_shows_edge_diff(self, mg):
+        """Summary shows edge differences."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "related")
+        other = MemoryGraph()
+        other.add(a.label, a.kind)
+        other.add(b.label, b.kind)
+        summary = mg.graph_diff_summary(other)
+        assert "Edges only in self: 1" in summary
+
+
+# ── Workflow Retrieve By Tag Tests ─────────────────────────
+
+class TestWorkflowRetrieveByTag:
+    """Tag-based workflow retrieval."""
+
+    def test_find_by_single_tag(self, mg):
+        """Find workflows with a specific tag."""
+        wf1 = mg.add_workflow("deploy", [{"label": "s", "action": "a"}], tags=["ci"])
+        wf2 = mg.add_workflow("test", [{"label": "s", "action": "b"}], tags=["ci", "unit"])
+        mg.record_workflow_outcome(wf1, True)
+        mg.record_workflow_outcome(wf2, True)
+        results = mg.workflow_retrieve_by_tag(["ci"])
+        assert len(results) == 2
+
+    def test_match_all_requires_all_tags(self, mg):
+        """match_all=True requires every tag."""
+        mg.add_workflow("a", [{"label": "s", "action": "x"}], tags=["ci"])
+        mg.add_workflow("b", [{"label": "s", "action": "y"}], tags=["ci", "deploy"])
+        results = mg.workflow_retrieve_by_tag(["ci", "deploy"], match_all=True)
+        assert len(results) == 1
+        assert results[0]["goal"] == "b"
+
+    def test_any_match(self, mg):
+        """match_all=False (default) matches any tag."""
+        mg.add_workflow("a", [{"label": "s", "action": "x"}], tags=["ci"])
+        mg.add_workflow("b", [{"label": "s", "action": "y"}], tags=["deploy"])
+        results = mg.workflow_retrieve_by_tag(["ci", "deploy"], match_all=False)
+        assert len(results) == 2
+
+    def test_sorted_by_success_rate(self, mg):
+        """Results sorted by success_rate descending."""
+        wf1 = mg.add_workflow("low", [{"label": "s", "action": "a"}], tags=["t"])
+        wf2 = mg.add_workflow("high", [{"label": "s", "action": "b"}], tags=["t"])
+        mg.record_workflow_outcome(wf1, False)
+        mg.record_workflow_outcome(wf1, False)
+        for _ in range(5):
+            mg.record_workflow_outcome(wf2, True)
+        results = mg.workflow_retrieve_by_tag(["t"])
+        assert results[0]["goal"] == "high"
+        assert results[0]["success_rate"] == 1.0
+
+    def test_no_matching_tag(self, mg):
+        """No matching workflows returns empty."""
+        mg.add_workflow("a", [{"label": "s", "action": "x"}], tags=["ci"])
+        assert mg.workflow_retrieve_by_tag(["nonexistent"]) == []
+
+    def test_limit_respected(self, mg):
+        """Limit caps results."""
+        for i in range(5):
+            mg.add_workflow(f"wf{i}", [{"label": "s", "action": "a"}], tags=["t"])
+        results = mg.workflow_retrieve_by_tag(["t"], limit=3)
+        assert len(results) == 3
+
+
+# ── Node Degree Summary Tests ──────────────────────────────
+
+class TestNodeDegreeSummary:
+    """Compact degree breakdown."""
+
+    def test_basic_counts(self, mg):
+        """In/out/total degree correct."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")
+        mg.link(a.id, b.id, "points_to")
+        mg.link(a.id, c.id, "points_to")
+        mg.link(b.id, a.id, "references")
+        summary = mg.node_degree_summary(a.id)
+        assert summary["out_degree"] == 2
+        assert summary["in_degree"] == 1
+        assert summary["total"] == 3
+
+    def test_by_relation_breakdown(self, mg):
+        """Per-relation counts are correct."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")
+        mg.link(a.id, b.id, "related")
+        mg.link(c.id, a.id, "related")
+        mg.link(a.id, c.id, "has")
+        summary = mg.node_degree_summary(a.id)
+        assert "related" in summary["by_relation"]
+        assert summary["by_relation"]["related"]["out"] == 1
+        assert summary["by_relation"]["related"]["in"] == 1
+        assert summary["by_relation"]["has"]["out"] == 1
+
+    def test_isolated_node(self, mg):
+        """No edges = zero degree."""
+        a = mg.add("Solo", "concept")
+        summary = mg.node_degree_summary(a.id)
+        assert summary["total"] == 0
+        assert summary["in_degree"] == 0
+        assert summary["out_degree"] == 0
+        assert summary["by_relation"] == {}
+
+    def test_nonexistent_node(self, mg):
+        """Missing node returns None."""
+        assert mg.node_degree_summary("nonexistent") is None

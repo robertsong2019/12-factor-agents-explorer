@@ -9909,6 +9909,121 @@ class MemoryGraph:
             self.conn.commit()
         return cloned.id
 
+    def graph_diff_summary(self, other: 'MemoryGraph') -> str:
+        """Human-readable summary of differences between two graphs.
+
+        Complements graph_diff() with a formatted multi-line string suitable
+        for logging, reports, or LLM context injection.
+
+        Returns:
+            Newline-separated summary string.
+        """
+        diff = self.graph_diff(other)
+        lines = []
+        n_self = len(diff["nodes_only_self"])
+        n_other = len(diff["nodes_only_other"])
+        n_mod = len(diff["nodes_modified"])
+        n_eself = len(diff["edges_only_self"])
+        n_eother = len(diff["edges_only_other"])
+        total = n_self + n_other + n_mod + n_eself + n_eother
+        if total == 0:
+            return "Graphs are identical."
+        lines.append(f"Graph Diff Summary ({total} differences):")
+        if n_self:
+            lines.append(f"  Nodes only in self: {n_self}")
+        if n_other:
+            lines.append(f"  Nodes only in other: {n_other}")
+        if n_mod:
+            fields = {}
+            for m in diff["nodes_modified"]:
+                fields[m["field"]] = fields.get(m["field"], 0) + 1
+            detail = ", ".join(f"{k}:{v}" for k, v in sorted(fields.items()))
+            lines.append(f"  Modified nodes: {n_mod} ({detail})")
+        if n_eself:
+            lines.append(f"  Edges only in self: {n_eself}")
+        if n_eother:
+            lines.append(f"  Edges only in other: {n_eother}")
+        return "\n".join(lines)
+
+    def workflow_retrieve_by_tag(self, tags: list[str],
+                                 match_all: bool = False,
+                                 limit: int = 10) -> list[dict]:
+        """Retrieve workflows by tag intersection.
+
+        Complements retrieve_workflows (goal-based) with tag-based filtering.
+        Useful for domain-scoped workflow lookup (e.g., tags=['ci', 'deploy']).
+
+        Args:
+            tags: tags to match
+            match_all: if True require all tags (AND), else any (OR)
+            limit: max results
+
+        Returns:
+            List of workflow dicts with goal, tags, success_rate, step_count.
+        """
+        workflows = self.conn.execute(
+            "SELECT id, label, data, tags FROM nodes WHERE kind='workflow'"
+        ).fetchall()
+        results = []
+        target_tags = set(tags)
+        for r in workflows:
+            wf_tags = set(json.loads(r["tags"])) if r["tags"] else set()
+            if match_all:
+                if not target_tags.issubset(wf_tags):
+                    continue
+            else:
+                if not (target_tags & wf_tags):
+                    continue
+            data = json.loads(r["data"])
+            s = data.get("success_count", 0)
+            f = data.get("failure_count", 0)
+            rate = s / (s + f) if (s + f) > 0 else 0.0
+            results.append({
+                "id": r["id"],
+                "goal": r["label"],
+                "tags": sorted(wf_tags),
+                "success_rate": round(rate, 4),
+                "step_count": data.get("step_count", 0),
+                "success_count": s,
+                "failure_count": f,
+            })
+            if len(results) >= limit:
+                break
+        results.sort(key=lambda x: x["success_rate"], reverse=True)
+        return results
+
+    def node_degree_summary(self, node_id: str) -> dict | None:
+        """Compact in/out/total degree breakdown for a node.
+
+        Returns:
+            {in_degree, out_degree, total, by_relation: {relation: count}}
+            or None if node doesn't exist.
+        """
+        if not self.has_node(node_id):
+            return None
+        outgoing = self.conn.execute(
+            "SELECT relation, COUNT(*) as c FROM edges WHERE source=? GROUP BY relation",
+            (node_id,),
+        ).fetchall()
+        incoming = self.conn.execute(
+            "SELECT relation, COUNT(*) as c FROM edges WHERE target=? GROUP BY relation",
+            (node_id,),
+        ).fetchall()
+        out_by_rel = {r["relation"]: r["c"] for r in outgoing}
+        in_by_rel = {r["relation"]: r["c"] for r in incoming}
+        by_relation = {}
+        for rel in set(out_by_rel) | set(in_by_rel):
+            by_relation[rel] = {
+                "out": out_by_rel.get(rel, 0),
+                "in": in_by_rel.get(rel, 0),
+            }
+        return {
+            "in_degree": sum(in_by_rel.values()),
+            "out_degree": sum(out_by_rel.values()),
+            "total": sum(in_by_rel.values()) + sum(out_by_rel.values()),
+            "by_relation": by_relation,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
