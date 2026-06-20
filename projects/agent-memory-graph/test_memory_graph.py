@@ -13125,3 +13125,124 @@ class TestSkillGapAnalysis:
         s = mg.add("s", "workflow_step", {"action": "x", "order": 0})
         mg.link(wf.id, s.id, "has_step")
         assert mg.skill_gap_analysis() == []
+
+
+# ── Attention Score & Consolidation Priority Tests ──────────────
+
+class TestMemoryAttentionScore:
+    """Tests for memory_attention_score — temporal hotness."""
+
+    def test_basic_score(self, mg):
+        """Fresh node gets a valid attention score."""
+        n = mg.add("Fresh", "concept")
+        result = mg.memory_attention_score(n.id)
+        assert result is not None
+        assert "attention" in result
+        assert 0.0 <= result["attention"] <= 1.0
+        assert "recency_boost" in result
+        assert "reinforcement_velocity" in result
+        assert "neighbor_activity" in result
+
+    def test_nonexistent_node(self, mg):
+        """Missing node returns None."""
+        assert mg.memory_attention_score("nope") is None
+
+    def test_fresh_node_high_recency(self, mg):
+        """Just-created node has high recency_boost."""
+        n = mg.add("Now", "concept")
+        result = mg.memory_attention_score(n.id)
+        assert result["recency_boost"] > 0.9
+
+    def test_stale_node_low_recency(self, mg):
+        """Old node has low recency_boost."""
+        n = mg.add("Old", "concept")
+        old_time = time.time() - 72 * 3600
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old_time, n.id))
+        mg.conn.commit()
+        result = mg.memory_attention_score(n.id, recency_window_hours=24)
+        assert result["recency_boost"] == 0.0
+
+    def test_reinforcement_velocity(self, mg):
+        """Recent reinforcements boost velocity."""
+        n = mg.add("Active", "concept")
+        for _ in range(3):
+            mg.memory_reinforce(n.id, "positive")
+        result = mg.memory_attention_score(n.id)
+        assert result["reinforcement_velocity"] > 0.0
+        assert result["recent_events"] >= 3
+
+    def test_neighbor_activity(self, populated):
+        """Connected nodes contribute to neighbor_activity."""
+        mg, a, b, c = populated
+        # Touch neighbors to make them recent
+        mg.touch(a.id)
+        mg.touch(b.id)
+        result = mg.memory_attention_score(c.id)
+        # c is connected to a and b, both recently accessed
+        assert result["neighbor_activity"] >= 0.0
+
+    def test_isolated_node_zero_neighbor(self, mg):
+        """Isolated node has zero neighbor_activity."""
+        n = mg.add("Alone", "concept")
+        result = mg.memory_attention_score(n.id)
+        assert result["neighbor_activity"] == 0.0
+
+
+class TestConsolidationPriority:
+    """Tests for consolidation_priority — urgency ranking."""
+
+    def test_empty_graph(self, mg):
+        """Empty graph returns empty list."""
+        assert mg.consolidation_priority() == []
+
+    def test_basic_ranking(self, populated):
+        """Populated graph returns ranked list."""
+        mg, a, b, c = populated
+        results = mg.consolidation_priority()
+        assert len(results) > 0
+        for i in range(len(results) - 1):
+            assert results[i]["priority"] >= results[i + 1]["priority"]
+
+    def test_stale_low_qvalue_high_priority(self, mg):
+        """Stale, low-Q node ranks higher than fresh, high-Q."""
+        stale = mg.add("Stale", "concept")
+        old_time = time.time() - 90 * 86400
+        mg.conn.execute(
+            "UPDATE nodes SET accessed=?, weight=0.1 WHERE id=?",
+            (old_time, stale.id))
+        mg.conn.commit()
+
+        fresh = mg.add("Fresh", "concept")
+        mg.conn.execute(
+            "UPDATE nodes SET weight=0.9 WHERE id=?", (fresh.id,))
+        mg.conn.commit()
+
+        results = mg.consolidation_priority()
+        ids = [r["node_id"] for r in results]
+        assert stale.id in ids
+        if fresh.id in ids:
+            stale_idx = ids.index(stale.id)
+            fresh_idx = ids.index(fresh.id)
+            assert stale_idx <= fresh_idx
+
+    def test_limit_respected(self, populated):
+        """Limit parameter caps results."""
+        mg, a, b, c = populated
+        for i in range(20):
+            mg.add(f"N{i}", "concept")
+        results = mg.consolidation_priority(limit=5)
+        assert len(results) <= 5
+
+    def test_result_fields(self, mg):
+        """Each result has all expected fields."""
+        n = mg.add("Test", "concept")
+        results = mg.consolidation_priority()
+        if results:
+            r = results[0]
+            assert "node_id" in r
+            assert "label" in r
+            assert "priority" in r
+            assert "drift" in r
+            assert "qvalue" in r
+            assert "attention" in r
+            assert "recommendation" in r

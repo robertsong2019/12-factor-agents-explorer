@@ -10625,6 +10625,125 @@ class MemoryGraph:
         results.sort(key=lambda x: x["gap_severity"], reverse=True)
         return results
 
+    # ── Memory Attention Score ─────────────────────────────────────
+
+    def memory_attention_score(self, node_id: str,
+                               recency_window_hours: float = 24.0) -> dict | None:
+        """Compute attention score — how "hot" a node is right now.
+
+        Combines recent reinforcement events, access recency, and
+        neighbor activity into a single 0..1 score.  Unlike Q-value
+        (which is structural), attention is temporal — it decays.
+
+        Attention = recency_boost * 0.4
+                  + reinforcement_velocity * 0.4
+                  + neighbor_activity * 0.2
+
+        Use cases: prioritise which memories to surface in context,
+        identify trending topics, detect attention sinkholes.
+
+        Returns:
+            {attention, recency_boost, reinforcement_velocity,
+             neighbor_activity, recent_events} or None
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return None
+
+        now = time.time()
+        window_sec = recency_window_hours * 3600
+
+        # Recency boost: how recently was this node accessed?
+        age_sec = now - node.accessed
+        recency_boost = max(0.0, 1.0 - age_sec / window_sec)
+
+        # Reinforcement velocity: rate of recent positive/negative events
+        data = node.data if isinstance(node.data, dict) else json.loads(node.data)
+        history = data.get("_reinforcement_history", [])
+        recent_events = [
+            e for e in history
+            if (now - e.get("timestamp", 0)) < window_sec
+        ]
+        max_possible = 10  # normalize: 10 events in window = velocity 1.0
+        reinforcement_velocity = min(len(recent_events) / max_possible, 1.0)
+
+        # Neighbor activity: average recency of neighbor access
+        nbrs = self.neighbors(node_id)
+        if nbrs:
+            neighbor_recencies = []
+            for n in nbrs:
+                n_age = now - n.accessed
+                neighbor_recencies.append(max(0.0, 1.0 - n_age / window_sec))
+            neighbor_activity = sum(neighbor_recencies) / len(neighbor_recencies)
+        else:
+            neighbor_activity = 0.0
+
+        attention = (
+            recency_boost * 0.4
+            + reinforcement_velocity * 0.4
+            + neighbor_activity * 0.2
+        )
+
+        return {
+            "attention": round(attention, 4),
+            "recency_boost": round(recency_boost, 4),
+            "reinforcement_velocity": round(reinforcement_velocity, 4),
+            "neighbor_activity": round(neighbor_activity, 4),
+            "recent_events": len(recent_events),
+        }
+
+    def consolidation_priority(self, limit: int = 20) -> list[dict]:
+        """Rank nodes by consolidation urgency.
+
+        Combines drift score, Q-value, and attention into a priority
+        ranking.  High-priority nodes are those that are:
+        - Drifting (semantic/structural/temporal)
+        - Low Q-value (low demonstrated utility)
+        - Low attention (not recently active)
+
+        These are prime candidates for: consolidation, archival, or eviction.
+
+        Returns:
+            List of {node_id, label, priority, drift, qvalue, attention}
+            sorted by priority descending
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+
+        results = []
+        for r in rows:
+            node = self.get_node(r["id"])
+            if not node:
+                continue
+
+            drift = self.memory_drift_detect(r["id"])
+            q = self.memory_qvalue(r["id"])
+            att = self.memory_attention_score(r["id"])
+
+            if not (drift and q and att):
+                continue
+
+            # Priority = drift * (1 - qvalue) * (1 - attention)
+            # High drift + low Q + low attention = high priority
+            priority = (
+                drift["overall"]
+                * (1.0 - q["qvalue"])
+                * (1.0 - att["attention"])
+            )
+
+            results.append({
+                "node_id": r["id"],
+                "label": node.label,
+                "kind": node.kind,
+                "priority": round(priority, 4),
+                "drift": drift["overall"],
+                "qvalue": q["qvalue"],
+                "attention": att["attention"],
+                "recommendation": drift["recommendation"],
+            })
+
+        results.sort(key=lambda x: x["priority"], reverse=True)
+        return results[:limit]
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
