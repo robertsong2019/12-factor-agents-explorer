@@ -575,4 +575,140 @@ describe("Supervisor", () => {
     const s = new Supervisor();
     assert.deepEqual(s.healthReport(), []);
   });
+
+  // ── getMetrics ─────────────────────────────────
+  it("getMetrics returns undefined for unknown agent", () => {
+    const s = new Supervisor();
+    assert.equal(s.getMetrics("nope"), undefined);
+  });
+
+  it("getMetrics returns zeroed stats for new agent", () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    const m = s.getMetrics("a");
+    assert.equal(m.totalRequests, 0);
+    assert.equal(m.successRate, 0);
+    assert.equal(m.errorRate, 0);
+    assert.equal(m.p50Latency, 0);
+    assert.equal(m.p95Latency, 0);
+    assert.equal(m.p99Latency, 0);
+    assert.equal(m.throughputPerMin, 0);
+  });
+
+  it("getMetrics computes success/error rates", async () => {
+    const s = new Supervisor({ maxFailures: 10 });
+    let call = 0;
+    s.register({
+      id: "a", description: "",
+      config: { executor: async () => { call++; if (call === 2) throw new Error("boom"); return "ok"; } },
+      capabilities: ["*"],
+    });
+    await s.execute("t1"); // success
+    await assert.rejects(() => s.execute("t2")); // failure
+    await s.execute("t3"); // success
+    const m = s.getMetrics("a");
+    assert.equal(m.totalRequests, 3);
+    assert.equal(m.successCount, 2);
+    assert.equal(m.failureCount, 1);
+    assert.ok(m.successRate > 0.6 && m.successRate < 0.7);
+    assert.ok(m.errorRate > 0.3 && m.errorRate < 0.34);
+  });
+
+  it("getMetrics computes latency percentiles from history", async () => {
+    const s = new Supervisor({ maxHistory: 100 });
+    s.register({
+      id: "a", description: "",
+      config: { executor: async () => { await new Promise(r => setTimeout(r, 5)); return "ok"; } },
+      capabilities: ["*"],
+    });
+    for (let i = 0; i < 10; i++) await s.execute(`t${i}`);
+    const m = s.getMetrics("a");
+    assert.equal(m.totalRequests, 10);
+    assert.ok(m.p50Latency >= 0);
+    assert.ok(m.p95Latency >= m.p50Latency);
+    assert.ok(m.p99Latency >= m.p95Latency);
+    assert.ok(m.avgLatency >= 0);
+  });
+
+  it("getMetrics tracks throughput (requests in last 60s)", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    for (let i = 0; i < 5; i++) await s.execute(`t${i}`);
+    const m = s.getMetrics("a");
+    assert.equal(m.throughputPerMin, 5); // all 5 are recent
+  });
+
+  it("getMetrics avgLatency is rounded", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    await s.execute("t1");
+    const m = s.getMetrics("a");
+    // Should be rounded to 2 decimal places
+    const decimals = (m.avgLatency.toString().split(".")[1] || "").length;
+    assert.ok(decimals <= 2);
+  });
+
+  // ── getPoolMetrics ────────────────────────────────
+  it("getPoolMetrics returns zeros for no agents", () => {
+    const s = new Supervisor();
+    const m = s.getPoolMetrics();
+    assert.equal(m.totalRequests, 0);
+    assert.equal(m.overallErrorRate, 0);
+    assert.equal(m.activeAgents, 0);
+    assert.equal(m.circuitOpenAgents, 0);
+  });
+
+  it("getPoolMetrics aggregates across agents", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    await s.execute("t1"); // a
+    await s.execute("t2"); // b
+    const m = s.getPoolMetrics();
+    assert.equal(m.totalRequests, 2);
+    assert.equal(m.totalErrors, 0);
+    assert.equal(m.overallErrorRate, 0);
+    assert.equal(m.activeAgents, 2);
+    assert.equal(m.circuitOpenAgents, 0);
+    assert.equal(m.throughputPerMin, 2);
+  });
+
+  it("getPoolMetrics tracks circuit-open agents", async () => {
+    const s = new Supervisor({ maxFailures: 1 });
+    s.register({
+      id: "bad", description: "",
+      config: { executor: async () => { throw new Error("boom"); } },
+      capabilities: ["*"],
+    });
+    s.register(makeRole("good"));
+    await assert.rejects(() => s.execute("t1")); // bad circuit opens
+    const m = s.getPoolMetrics();
+    assert.equal(m.circuitOpenAgents, 1);
+    assert.equal(m.activeAgents, 1);
+    assert.equal(m.totalRequests, 1);
+    assert.equal(m.totalErrors, 1);
+    assert.ok(m.overallErrorRate > 0);
+  });
+
+  it("getPoolMetrics computes pool-wide percentiles", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    for (let i = 0; i < 6; i++) await s.execute(`t${i}`);
+    const m = s.getPoolMetrics();
+    // 6 total events across 2 agents
+    assert.ok(m.p50Latency >= 0);
+    assert.ok(m.p95Latency >= m.p50Latency);
+    assert.ok(m.p99Latency >= m.p95Latency);
+  });
+
+  it("getPoolMetrics avgLatency is averaged across agents", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    await s.execute("t1");
+    await s.execute("t2");
+    const m = s.getPoolMetrics();
+    assert.ok(m.avgLatency >= 0);
+  });
 });

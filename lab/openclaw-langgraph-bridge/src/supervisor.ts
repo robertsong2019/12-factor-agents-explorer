@@ -388,6 +388,105 @@ export class Supervisor {
     throw lastError ?? new Error(`delegate failed after ${attempts} attempts`);
   }
 
+  /** Compute latency percentiles from sorted durations */
+  private _percentiles(durations: number[]): { p50: number; p95: number; p99: number } {
+    if (durations.length === 0) return { p50: 0, p95: 0, p99: 0 };
+    const sorted = [...durations].sort((a, b) => a - b);
+    const idx = (p: number) => Math.min(sorted.length - 1, Math.floor(p * sorted.length));
+    return {
+      p50: sorted[idx(0.50)],
+      p95: sorted[idx(0.95)],
+      p99: sorted[idx(0.99)],
+    };
+  }
+
+  /** Detailed metrics for a specific agent including latency percentiles */
+  getMetrics(agentId: string): {
+    totalRequests: number;
+    successCount: number;
+    failureCount: number;
+    successRate: number;
+    errorRate: number;
+    avgLatency: number;
+    p50Latency: number;
+    p95Latency: number;
+    p99Latency: number;
+    throughputPerMin: number;
+  } | undefined {
+    const h = this.health.get(agentId);
+    if (!h) return undefined;
+    // Compute from history for accuracy (failureCount is consecutive, not cumulative)
+    const successTotal = h.history.filter(e => e.event === "success").length;
+    const failureTotal = h.history.filter(e => e.event === "failure").length;
+    const total = successTotal + failureTotal;
+    const durations = h.history.map(e => e.duration);
+    const pct = this._percentiles(durations);
+    // Throughput: requests in the last 60s of history
+    const now = Date.now();
+    const recentCount = h.history.filter(e => now - e.ts < 60_000).length;
+    return {
+      totalRequests: total,
+      successCount: successTotal,
+      failureCount: failureTotal,
+      successRate: total === 0 ? 0 : successTotal / total,
+      errorRate: total === 0 ? 0 : failureTotal / total,
+      avgLatency: Math.round(h.avgDuration * 100) / 100,
+      p50Latency: pct.p50,
+      p95Latency: pct.p95,
+      p99Latency: pct.p99,
+      throughputPerMin: recentCount,
+    };
+  }
+
+  /** Aggregate metrics across all agents */
+  getPoolMetrics(): {
+    totalRequests: number;
+    totalErrors: number;
+    overallErrorRate: number;
+    avgLatency: number;
+    p50Latency: number;
+    p95Latency: number;
+    p99Latency: number;
+    activeAgents: number;
+    circuitOpenAgents: number;
+    throughputPerMin: number;
+  } {
+    const entries = [...this.health.entries()];
+    const allDurations: number[] = [];
+    let totalReqs = 0;
+    let totalErrs = 0;
+    let totalAvgDur = 0;
+    let activeAgents = 0;
+    let circuitOpen = 0;
+    let recentCount = 0;
+    const now = Date.now();
+    for (const [, h] of entries) {
+      const sCount = h.history.filter(e => e.event === "success").length;
+      const fCount = h.history.filter(e => e.event === "failure").length;
+      totalReqs += sCount + fCount;
+      totalErrs += fCount;
+      totalAvgDur += h.avgDuration;
+      allDurations.push(...h.history.map(e => e.duration));
+      if (h.failureCount < this.maxFailures) activeAgents++;
+      if (h.circuit === "open") circuitOpen++;
+      recentCount += h.history.filter(e => now - e.ts < 60_000).length;
+    }
+    const pct = this._percentiles(allDurations);
+    const count = entries.length;
+    return {
+      totalRequests: totalReqs,
+      totalErrors: totalErrs,
+      overallErrorRate: totalReqs === 0 ? 0 : totalErrs / totalReqs,
+      avgLatency: count === 0 ? 0 : Math.round((totalAvgDur / count) * 100) / 100,
+      p50Latency: pct.p50,
+      p95Latency: pct.p95,
+      p99Latency: pct.p99,
+      activeAgents,
+      circuitOpenAgents: circuitOpen,
+      throughputPerMin: recentCount,
+    };
+  }
+
   /** Per-agent health report */
   healthReport(): Array<{ agentId: string; healthy: boolean; failureCount: number; avgDuration: number; capabilities: string[] }> {
     return [...this.health.entries()].map(([id, h]) => {
