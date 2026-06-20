@@ -15,12 +15,29 @@
 
 ---
 
-## Current Focus (2026-06-14)
+## Current Focus (2026-06-20)
 
 ### Active Theme
-Autoresearch 方法论实践 - **连续119天零回滚率** 🏆。06-13 晚: structured-output-toolkit 178→273 (+95, 5 cycles, **完整质量分析与聚合工具链**: confidenceScore + temperatureSchedule + validationSummary + diffResults + aggregateReport); agent-task-cli Round 33 (783→805, Cache.copy + EventBus.before + Storage.avg); 两项新深度研究 (Trust Propagation Algorithms + Hybrid Retrieval Beyond RRF)。06-12~13: agent-context-store 931→963 (+32, fingerprint toolkit 闭环); structured-output-toolkit 123→178 (+55, **完整可靠性栈**)。**最高优先级**: README → npm publish (三项目均已远超发布门槛: agent-context-store 963 + agent-memory-graph 916 + structured-output-toolkit 273 = 2152 tests)。
+Autoresearch 方法论实践 - **连续140天零回滚率** 🏆。06-19→06-20 **agent-memory-graph +agent-context-store +151 tests**: agent-memory-graph 1213→1307 (Workflow Memory/Procedural Memory 全套14 APIs: add_workflow/retrieve/record_outcome/compose/dedup/tips/prompt_section/prune/export/import/stats + memory_decay/neighborhood_agreement/proximity/tag_induced_subgraph/annotate); agent-context-store 1347→1404 (analytics executive layer: tag_audit_all/duplicate_graph/core_sample + tag_health_report/merge_suggestions/density_map)。06-19 晚深度研究: Agent Workflow Memory (AWM ICML 2025 +51.1% WebArena + ReasoningBank ICLR 2026 + Trace2Skill OOD +57.65%)。06-19 技术随笔发表: 语义分歧检测 consolidation。context-forge 50→84 (+34, 3 features)。**最高优先级**: README → npm publish (四项目: agent-memory-graph 1307 + agent-context-store 1404 + structured-output-toolkit 438 + agent-task-cli 882 = **4031 tests**)。
 
-### 🔑 最新关键洞察 (06-12~13)
+### 🔑 最新关键洞察 (06-19~20)
+- **Agent Workflow Memory: Trajectory → Reusable Skills** ✅ (06-19): AWM(ICML 2025) workflow induction +51.1% WebArena + ReasoningBank(ICLR 2026) 成功+失败双向学习 + Trace2Skill(Alibaba+ETH) 并行128子代理 OOD +57.65% + SKILL.nb selective formalization+gated execution + MS Foundry Build 2026 Procedural Memory生产化. **核心洞察**: (1)执行≠反思≠教学(35B执行>122B但122B教学>35B); (2)失败>成功(60-75%失败率最丰富信号); (3)Skill=NL+Code+Gate; (4)并行蒸馏>顺序; (5)Procedural Memory进入生产. **已落地**: agent-memory-graph Workflow Memory 全套14 APIs (add_workflow/retrieve/record_outcome/compose/dedup + tips[success/failure/recovery/optimization] + prompt_section + prune + export/import + stats) — AWM研究到生产仅3小时. ~200行可运行TS原型验证
+- **Memory Consolidation for Long-Running Agents** ✅ (06-18): GAM(ICLR 2026)分层图记忆=Episodic Buffer+Topic Associative Network, 语义分歧检测触发consolidation(非时间/大小). Letta Sleep-Time=异步记忆整理并发模型. AgeMem=RL-trained GRPO(discard 0→0.08). Evo-Memory/ReMem(Google DeepMind): ALFWorld 22.6→11.5步. **核心洞察**: 语义边界触发>固定时间/大小; Episodic-Semantic分离=写隔离; 经验复用≠对话回放(49%步数减少); RL记忆策略>固定规则; Sleep-Time是并发模型. **已落地**: agent-memory-graph consolidation pipeline 全套 (semantic_divergence + divergence_scan + consolidate_memory + retention_score + memory_evict + cluster_seeds + seed_expansion + consolidation_report + consolidation_pipeline) — GAM研究到生产仅4小时
+- **Vector Clocks + Event Subscribe** ✅ (06-18): HLC(ts+counter+node)因果排序 + SQLite triggers→_changes表→EventEmitter三层订阅 + 3层粒度(global/table/filter). ~180行可运行TS原型. agent-memory-graph = 唯一HLC+CRDT+Graph+Subscribe四合一
+- **Multi-Agent Memory Coordination 全景** ✅ (06-17): SIGARCH 2026 三层内存层次 + CoAgent串行化OCC(5%误判) + CodeCRDT观察驱动stigmergy(21.1%延迟降低) + Delta-State CRDT(HLC时钟)。**核心洞察**: CRDT处理结构收敛, LLM处理语义冲突; 观察驱动协调>消息传递; 语义冲突检测是图原生差异化
+- **cr-sqlite Production CRDT Upgrade Path** ✅ (06-17): 应用层CRDT→原生扩展零重写(crsql_as_crr)。列级Lamport时钟>行级LWW。「Agent Memory is a CRDT Problem」已成2026共识
+- **Information-Theoretic Analytics 全闭合** ✅ (06-18~19): agent-context-store 从 similarity triangle 扩展为完整分析+信息论工具链。**Symmetric**: JS divergence; **Asymmetric**: KL divergence (Laplace smoothing); **Categorical**: PMI (co-occur/avoid); **Global**: Shannon entropy; **Tag-weighting**: IDF; **Embedding**: coverage/drift/outlier_rank; **Pairwise 5维**: cosine+NCD+overlap+jaccard+embedding; **Batch**: similarity_matrix + heatmap(top-k sparse); **Tag quality**: entropy→conditional_entropy→information_gain→batch(recommendations); **Temporal**: centroid_drift (quartile time-slice evolution)
+- **CRDT 多 Agent 记忆合并从研究到生产仅6小时** ✅ (06-16): merge_crdt 到 agent-memory-graph (LWW-Register + OR-Set + Trust-weighted)。**npm生态唯一 CRDT多Agent记忆合并图记忆库**
+- **Similarity Triangle → Full Pairwise Toolkit** ✅ (06-17→18): tag_jaccard (categorical) + content_similarity (lexical, cosine TF) + embedding_distance (semantic) + content_overlap (set containment) + content_zip_similarity (NCD compression) = **5维 pairwise similarity**
+- **Cross-Provider Schema 适配层完整闭环** ✅: Zod → JSON Schema → Provider(OpenAI/Gemini/Anthropic)适配 → API请求 → 响应解析 → 归一化 → 质量审计。SchemaAdapterFactory(缓存+兼容性检查) + ResponseNormalizer(stripNulls/coerceNumbers/qualityReport) + SchemaDiff(逐字段对比+复杂度评分) + SchemaGenerator(15+ Zod类型转换)。structured-output-toolkit 定位升级为 "generation + validation + consensus + recovery + scoring + monitoring + versioning + **cross-provider adaptation**"
+- **Context Engineering 落地** ✅: content_fold (ICLR 2026 Context Folding: head_tail/head/tail/outline) + content_squash (prefix key merging) + content_outline (markdown heading extraction) 三原语已集成到 agent-context-store
+- **System-2 Memory Policy 确立** (ICLR 2026): 记忆管理已从系统问题→**学习策略问题**。InfMem PreThink早停=3x加速; MemSearcher 3B+智能记忆>7B笨记忆(+12%); Hindsight四网络认知分离(fact/experience/belief/summary)~30行改动; 缺少temporal信号——补齐后等同TEMPR架构
+- **GraphRAG-Bench (ICLR 2026) 实证**: GraphRAG 在单跳事实不如 vanilla RAG (49% vs 68%)，但多跳推理显著领先 (51% vs 41%)，时间查询碾压 (49% vs 26%)。**结论: GraphRAG 是复杂查询加速器，不是银弹。** LazyGraphRAG 模式更适合 Agent 动态记忆。
+- **Structured Output 完整可靠性栈** ✅: ConsensusGenerator (ahead-by-k voting, MAKER-inspired) + ValidationSandwich (三层: syntax→schema→semantic) + ErrorRecoveryAgent (自纠正重试 + 温度升级 + 最优部分匹配 fallback)。
+- **Fingerprint Toolkit 闭环** ✅: fingerprint(单条SHA-256) → batch(批量) → audit(全库) → changed(对比检测) → diff(结构化{added,removed,changed})。
+- **tag管理全集完成** ✅: ensure(添加) + untag(移除) + rename(重命名) + prune(清理稀有) + merge(合并) + top(排行) + stats(统计) + intersection/union/complement/symmetric_difference(布尔代数)。
+- **memorywire 兼容是 npm 发布战略加分项**: README 应标注 "memorywire-compatible" + "only native graph traversal"。
+- **竞品更新**: graph-memory v2.0 (OpenClaw插件, 已npm发布, 无图算法套件); Codebase-Memory (arXiv:2603.27277, 900⭐/4周, Tree-Sitter+Louvain+SQLite)。**差异化依然成立**: agent-memory-graph 将是唯一 Leiden + 图算法30+ + 向量 + BM25 四合一。
 - **Agent Memory 标准化正在发生**: memorywire (arXiv:2606.01138) 5 ops × 4 types, 计划提交 MCP-WG + IETF at v0.5。Agent File (.af) = "Docker for stateful agents"。**图记忆是 memorywire + .af 都不覆盖的空白** — agent-memory-graph 正好填补。
 - **GraphRAG-Bench (ICLR 2026) 实证**: GraphRAG 在单跳事实不如 vanilla RAG (49% vs 68%)，但多跳推理显著领先 (51% vs 41%)，时间查询碾压 (49% vs 26%)。**结论: GraphRAG 是复杂查询加速器，不是银弹。** LazyGraphRAG 模式（延迟社区检测到查询时）更适合 Agent 动态记忆。
 - **Structured Output 完整可靠性栈** ✅: ConsensusGenerator (ahead-by-k voting, MAKER-inspired) + ValidationSandwich (三层: syntax→schema→semantic) + ErrorRecoveryAgent (自纠正重试 + 温度升级 + 最优部分匹配 fallback)。55行→1284行 src。
@@ -29,25 +46,42 @@ Autoresearch 方法论实践 - **连续119天零回滚率** 🏆。06-13 晚: st
 - **memorywire 兼容是 npm 发布战略加分项**: README 应标注 "memorywire-compatible" + "only native graph traversal"。添加 no-scope-delete guard (5行安全修复) + toMemorywireFormat() 导出 (~50行)。
 - **竞品更新**: graph-memory v2.0 (OpenClaw插件, 已npm发布, 无图算法套件); Codebase-Memory (arXiv:2603.27277, 900⭐/4周, Tree-Sitter+Louvain+SQLite)。**差异化依然成立**: agent-memory-graph 将是唯一 Leiden + 图算法30+ + 向量 + BM25 四合一。
 
-### ⚠️ 关键发现
-- **agent-context-store 代码未持久化问题**: 05-08→05-11 的代码到97 tests但未持久化到 workspace，05-12 重建基线为69 tests。**教训: 每次实验完成后必须确认代码已持久化到 lab/ 目录并 git commit。**
-- **agent-context-store API 完备度评估 (05-23)**: 50+ API方法，覆盖完整生命周期 — CRUD/batch/CAS/TTL/snapshot/counters/collections/集合运算/JSON convenience/transactions/tag management/content utilities。**已进入可发布状态**，下一步: README + npm publish。
-- **agent-memory-graph 增长模式 (05-25~26)**: 从53到110 tests，57个新tests在4个autoresearch cycle内完成，零回滚。**API已从基础原型进化为生产级graph memory**: CRUD → batch → export/import → graph traversal → prune → aggregate → subgraph。下一个自然方向: diff(图同步)+compact(节点合并)+unified search。
+- **Agent Observability & Evaluation 2026** ✅ (06-19): OTel GenAI Semantic Conventions v1.41六层架构 + DeepEval三层评估栈(TaskCompletion/StepEfficiency/ToolCorrectness/PlanAdherence/ArgumentCorrectness/PlanQuality) + Cost Attribution四维(per-prompt/per-agent/per-user/per-model). **核心洞察**: (1)"Instrument once, switch backends"已现实(OpenLLMetry/OpenInference互操作); (2)Agent Eval ≠ LLM Eval(trajectory>output); (3)Cost tracking是killer feature; (4)gen_ai.agent.*/gen_ai.memory.*提案正在标准化(OTel SEMCONV issue #35) — agent-memory-graph可提前对齐; (5)Multi-Agent handoff tracing是下一前沿(openclaw-langgraph-bridge天然集成点). 现有lab/agent-observability(166 tests)已有OTLP导出+causal links+critical path——下一步: gen_ai.*属性对齐+CostAggregator+det eval metrics. 2段可运行TS代码已验证
 
-### Next Actions
-- [ ] **[06-13 新研究] agent-memory-graph: Adaptive Fusion 策略** — [笔记](catalyst-research/exploration-notes/2026-06-13-hybrid-retrieval-fusion-beyond-rrf.md) ✅ 6种融合算法对比+3/3 assertions pass。核心发现: k=60对小语料次优(k=20 gap是k=60的3-5x); CombMNZ共识奖励天然适合三路; Weaviate已从RRF切到RSF; Adaptive是差异化机会(无系统同时做adaptive+三路)。下一步: k值自适应+共识奖励(~30行) → adaptive查询路由(~80行) → Graph路weighted bonus重设计
+### ⚠️ 关键发现
+- **agent-memory-graph 已突破 1307 tests** (06-20): 06-19 evening 3-cycle 1213→1250 (+37: memory_decay/neighborhood_agreement/proximity/tag_induced_subgraph/annotate) + 06-19 code lab 4-cycle 1250→1307 (+57: Workflow Memory 14 APIs — AWM ICML 2025 Procedural Memory). **npm生态唯一图分析+向量+BM25+Adaptive Fusion+RL Memory+CRDT多Agent合并+语义Consolidation+Workflow Memory八合一**。
+- **agent-context-store 已突破 1404 tests** (06-20): 06-19 1347→1360 (+13 evening) + 06-20 凌晨 1360→1404 (+44: tag_audit_all/content_duplicate_graph/core_sample + tag_health_report/merge_suggestions/density_map). **Analytics executive layer 完成**: tag health one-call report + duplicate merge action plan + embedding distribution shape classification. **API 总量 530+ methods**.
+- **structured-output-toolkit 已突破 438 tests** (06-17): 421→438 (+17, schemaCompleteness 生产就绪评分 + mergeSchemas 冲突解决模式)。GitHub repo created + pushed。
+- **agent-task-cli 已突破 882 tests** (06-16)。
+- **agent-context-store 代码未持久化问题**: 05-08→05-11 的代码到97 tests但未持久化到 workspace，05-12 重建基线为69 tests。**教训: 每次实验完成后必须确认代码已持久化到 lab/ 目录并 git commit。**
+
+### Next Actions (Updated 2026-06-20 evening)
+- [ ] **[06-20 新研究] Agent Skill Discovery & Reuse: From Workflow Memory to Self-Improving Skill Libraries** — [笔记](catalyst-research/exploration-notes/2026-06-20-agent-skill-discovery-self-improving-libraries.md) ✅ ~200行可运行 TypeScript SkillDiscoveryEngine (failure-driven discovery loop: detect→propose→validate→retrieve→apply, 4/4 assertions pass). Experience Compression Spectrum (arXiv:2604.15877) 统一 memory/skills/rules 为压缩谱系. EvoSkill (Sentient/VT, arXiv:2603.02766) failure-driven discovery + Pareto retention: OfficeQA +7.3%, SealQA +12.1%, cross-task transfer SealQA→BrowseComp +5.3%. SAGE (Amazon, arXiv:2512.17102) RL + Sequential Rollout: +8.9% SGC, −59% tokens. SkillRL (ICLR 2026) recursive skill-augmented RL: 7B beats GPT-4o, 10-20× data compression. MemoryArena (ICML 2026) interdependent multi-session agentic benchmark: LoCoMo-saturating models collapse on agentic tasks. **核心洞察**: (1)Memory→Skill→Rule是压缩谱系不是分离系统; (2)Failure是主要信号(60-75%); (3)SkillRL 10-20×压缩验证procedural memory thesis; (4)Cross-task skill transfer实证; (5)Benchmark从recall→agency. **下一步**: agent-memory-graph 添加 discover_skills() API ~100行 +20 tests / README skill positioning / MemoryArena benchmark
+- [ ] **[06-19 新研究 A] Agent Workflow Memory: Trajectory → Reusable Skills** — [笔记](catalyst-research/exploration-notes/2026-06-19-agent-workflow-memory-trajectory-to-skill.md) ✅ ~200行可运行 TypeScript. **✅ 已落地**: agent-memory-graph Workflow Memory 14 APIs (add_workflow/retrieve/record_outcome/compose/dedup/tips/prompt_section/prune/export/import/stats). **下一步**: Hindsight Mini recovery tip~50行 / OpenClaw Skill validation gate / README添加Procedural Memory定位
+- [ ] **[06-19 新研究 B] Agent Observability & Evaluation 2026** — [笔记](catalyst-research/exploration-notes/2026-06-19-agent-observability-evaluation-2026.md) ✅ OTel GenAI Semantic Conventions v1.41六层架构(client/agent/MCP/events/metrics/provider) + Agent Eval三层栈(end-to-end/trajectory/component: TaskCompletion+StepEfficiency+ToolCorrectness+ArgumentCorrectness+PlanAdherence+PlanQuality) + Multi-Agent handoff tracing(parent-child span propagation) + Cost Attribution(per-prompt/per-agent/per-user, gen_ai.client.token.usage histogram) + Instrumentation生态(OpenLLMetry vs OpenInference vs 原生OTel互操作). 2段可运行TS代码(GenAI属性对齐+CostAggregator ~120行 + deterministic eval metrics ~100行)已验证. **核心洞察**: (1)"Instrument once, switch backends"已现实; (2)OTel GenAI未稳定但de facto标准已形成(89%用户认为vendor compliance critical); (3)Agent Eval ≠ LLM Eval(trajectory路径>final output); (4)Cost tracking是observability killer feature; (5)Multi-Agent handoff是下一个前沿. **下一步**: lab/agent-observability集成gen_ai.*属性+CostAggregator(~120行, +20 tests) + ToolCorrectness/StepEfficiency metrics(~80行, +15 tests)
+- [ ] **[06-18 新研究] Memory Consolidation for Long-Running Agents** — [笔记](catalyst-research/exploration-notes/2026-06-18-memory-consolidation-long-running-agents.md) ✅ GAM(ICLR 2026)语义边界触发consolidation + Letta Sleep-Time异步记忆整理 + AgeMem RL-trained GRPO统一LTM+STM + Evo-Memory/ReMem(Google DeepMind)经验复用vs对话回放(ALFWorld 22.6→11.5步). ~200行可运行TS原型(ConsolidationController+divergence detector+clustering pipeline)已验证. **核心洞察**: (1)语义边界>时间/大小触发; (2)Episodic-Semantic分离=写隔离; (3)经验复用≠对话回放(49%步数减少); (4)RL记忆策略>固定规则; (5)Sleep-Time是并发模型. **✅ 已落地**: consolidation pipeline 全套 (semantic_divergence + consolidate_memory + retention_score + memory_evict + cluster_seeds + consolidation_report + consolidation_pipeline). **下一步**: src/analysis/divergence.ts 增强 (~60行) + strategy节点类型 (~40行) + README定位升级
+- [ ] **[06-18 新研究] Vector Clocks + Event Subscribe: Multi-Agent Memory Coordination** — [笔记](catalyst-research/exploration-notes/2026-06-18-vector-clock-event-subscribe-multi-agent-memory.md) ✅ HLC因果排序(ts+counter+node) + SQLite triggers→_changes表→EventEmitter三层订阅 + 3层粒度(global/table/filter) + 竞品矩阵更新(agent-memory-graph=唯一HLC+CRDT+Graph+Subscribe四合一). ~180行可运行TS原型已验证. 下一步: src/clock/hlc.ts + src/subscribe/notifier.ts + 15 tests
+- [x] **agent-memory-graph: Adaptive Fusion 实现** ✅ 2026-06-14 — QDAP-Lite查询分类 + Entropy修正 + Exp4Fuse共识奖励 + 自适应k值。从研究到生产仅1天。commits 49b93f3/01129d1/3328d11/3c2b85e
+  - [x] **[06-14 新研究] Adaptive Fusion: Self-Tuning** — [笔记](catalyst-research/exploration-notes/2026-06-14-adaptive-fusion-self-tuning-retrieval.md) ✅ 7策略对比+3/3 pass
+  - [x] **[06-14 新研究] RL-Trained Memory Management** — [笔记](catalyst-research/exploration-notes/2026-06-14-rl-trained-memory-management.md) ✅ Memory-R1/AgeMem/Mem-T/MemoryArena, 5/5 pass
+  - [x] **LearnableMemoryManager 实现** — score_memory_ops + decide_memory_op + execute_memory_op + memory_decision_log
+  - [x] **Memory Audit + FiFA** — memory_audit(健康评分) + fifa_forget(有界遗忘) + memory_compact
+  - [x] **Feedback Learning** — memory_feedback(在线阈值调优) + memory_stats_summary
+  - **下一步**: README 中标注 Adaptive Fusion + RL Memory 为核心差异化; Graph路 weighted bonus 重设计
 - [ ] **[06-13 新研究] a2a-trust-prototype: Trust Propagation Algorithms 集成** — [笔记](catalyst-research/exploration-notes/2026-06-13-trust-propagation-algorithms.md) ✅ EigenTrust幂迭代+BetaTrust贝叶斯+FIRE多源融合 ~200行可运行TS代码已验证。核心发现: 直接经验信任>纯声誉15-20%但冷启动必须用EigenTrust; A2A协议无内置信任层=市场机会; PBFT容忍上限1/3恶意; memorywire缺少trust字段=标准化空白。下一步: 集成3算法到TrustEngine + Trust-tagged Agent Cards + memorywire trust扩展
 - [x] **agent-memory-graph: sqlite-vec 集成** ✅ 2026-06-06 — 10 vector APIs (add_embedding, search_similar, search_hybrid RRF, batch ops, filtered search, stats), 537→627 tests。三路融合 BM25+Vector+Graph 已实现。
   - [三路融合研究笔记](catalyst-research/exploration-notes/2026-06-06-three-way-hybrid-search-bm25-vector-graph.md)
   - [嵌入策略研究笔记](catalyst-research/exploration-notes/2026-06-06-embedding-strategies-sqlite-vec-agent-memory.md)
+- [x] **[06-15 新研究] Hindsight Mini + RL-Trained Memory Integration** — [笔记](catalyst-research/exploration-notes/2026-06-15-hindsight-mini-rl-memory-integration.md) ✅ AgentHER四阶段管线 + Multi-Judge验证(97.7%精度) + Severity Weighting + Zero-Training ECHO模式。核心发现: 失败轨迹是最大数据源(60-75%失败率)而非噪声; NOOP是最重要操作(RL与HER对齐); Multi-Judge降低标签噪声5.9%→2.3%; Reflect输出可作为memory_audit输入驱动阈值更新。可运行TypeScript原型(~200行)含demo验证输出。下一步: 集成到lab/hindsight-mini/ + agent-context-store/changelog + agent-observability/Tracer闭环
+- [x] **[06-15 新研究] System-2 Memory Policy (Post-ICLR 2026)** — [笔记](catalyst-research/exploration-notes/2026-06-15-system2-memory-policy-iclr2026.md) ✅ InfMem PreThink-Retrieve-Write协议 + MemSearcher多上下文GRPO + Hindsight四网络认知分离 + Memory-R1。核心发现: (1)记忆管理已从系统问题变为学习策略问题; (2)3B+智能记忆>7B+笨记忆(+12%); (3)认知类型分离(fact/experience/belief/summary)是低成本的检索精度提升; (4)缺少temporal信号——补齐后等同TEMPR; (5)PreThink早停=3x加速。2段可运行Python代码(System2Controller~80行 + AdaptiveFusionRetriever~70行)。下一步: epistemic_type字段 → System2MemoryController → temporal信号 → README定位为"学习策略的结构化记忆基底"
 - [ ] **创建 lab/openclaw-mcp-server/ (无状态架构)** — 06-03 深度研究完成: 2026-07-28 RC 移除握手/会话，无状态协议核心。代码种子: Streamable HTTP + 3 tools + 5/5 tests ✅。架构决策: 无状态 HTTP，不用会话管理 — [研究笔记](catalyst-research/exploration-notes/2026-06-03-mcp-protocol-2026-midyear.md) ✅ 含可运行代码
 - [ ] **MCP Tasks 适配层** — sessions_spawn → MCP Task 映射。Tasks Extension 已从实验升级为正式 Extension
 - [ ] **创建 lab/a2a-trust-prototype/** — 06-03 研究完成，有可运行代码种子(ES256签名+TrustEngine+中间件)。下一步: TypeScript项目骨架+测试
   - **[06-13 新研究]** Trust Propagation Algorithms → [笔记](catalyst-research/exploration-notes/2026-06-13-trust-propagation-algorithms.md) ✅ **EigenTrust幂迭代+BetaTrust贝叶斯+FIRE多源融合** ~200行可运行TS代码已验证。关键洞察: (1)直接经验信任>纯声誉15-20%但冷启动必须用EigenTrust; (2)A2A协议无内置信任层=市场机会; (3)信任衰减是安全必需非可选; (4)PBFT容忍上限1/3恶意; (5)memorywire缺少trust字段=标准化空白。下一步: 集成3算法到TrustEngine + Trust-tagged Agent Cards + memorywire trust扩展
-- [ ] **agent-memory-graph: Leiden 社区检测 — TS实现待集成** — GraphRAG最后一块拼图。**TypeScript完整实现已验证** ✅: 三阶段(FastLocalMove+Refinement+Aggregation), 测试图→3社区 Q≈0.55, seed可复现。~200行核心逻辑。**npm生态无原生TS Leiden实现 = 差异化机会**。关键洞察: Leiden比Louvain更快(20-150%)且更好(16%的Louvain社区内部不连通); FastLocalMove用队列跳过稳定节点; γ-resolution参数控制粒度。下一步: 提取到agent-memory-graph src/analysis/leiden.ts + 20+ tests。— [TS研究笔记](catalyst-research/exploration-notes/2026-06-11-leiden-community-detection.md) ✅ 含完整可运行TS代码(三阶段+模块度+示例) | [Python研究笔记](catalyst-research/exploration-notes/2026-06-10-leiden-community-detection.md) ✅
-- [ ] **agent-memory-graph: README + npm publish** — 916 tests, 251+ APIs。sqlite-vec + GraphRAG + 图分析全套。定位: "唯一图分析+向量+BM25三合一SQLite Agent记忆库"。memorywire-compatible + no-scope-delete guard
+- [ ] **agent-memory-graph: Leiden 社区检测 — TS实现待集成** — GraphRAG最后一块拼图。**TypeScript完整实现已验证** ✅。~200行核心逻辑。**npm生态无原生TS Leiden实现 = 差异化机会**。下一步: 提取到 src/analysis/leiden.ts + 20+ tests
+- [ ] **agent-memory-graph: README + npm publish** — **1074 tests**, 270+ APIs。sqlite-vec + GraphRAG + 图分析全套 + **Adaptive Fusion (QDAP+Entropy+Exp4Fuse)** + **RL-Trained Memory (LearnableMemoryManager+FiFA+Feedback)**。定位: "唯一图分析+向量+BM25+Adaptive Fusion+RL Memory 五合一SQLite Agent记忆库"
 - [ ] **agent-memory-graph: closeness_vitality + spectral_radius** — 06-09 key-dev-3 next steps: 节点关键性(wiener_index下降) + 邻接矩阵最大特征值 → ✅ 06-09 完成 (811→824)
-- [ ] **agent-context-store: README + npm publish** — 963 tests, 360+ APIs。LLM context export + tag布尔代数全集 + fingerprint toolkit 闭环 + 向量搜索全套。定位: "最完备SQLite Agent上下文存储(diff/patch+标签+快照+事务+向量+fingerprint)"
+- [ ] **agent-context-store: README + npm publish** — **1039 tests**, 390+ APIs。LLM context export + tag布尔代数全集 + fingerprint toolkit 闭环 + 向量搜索全套 + embedding分析(cohesion/outliers/centroid/radius) + **Context Engineering primitives (fold/squash/outline)**。定位: "最完备SQLite Agent上下文存储(diff/patch+标签+快照+事务+向量+fingerprint+context folding)"
 - [ ] **a2a-trust-prototype: 完善 V1 功能** — lab/ 已创建 (crypto+trust-engine+agent-card+middleware骨架)，今晚研究深化: 5条关键洞察(Signed Agent Cards+per-skill粒度+双向信任+ANS集成+Sybil防御)。下一步: Trust event 双方签名 + 双向评分 + Trust report导出 + langgraph-bridge Supervisor集成 — [今晚研究笔记](catalyst-research/exploration-notes/2026-06-02-a2a-trust-protocol.md) ✅ 代码已验证通过
 - [ ] **structured-output-toolkit: 创建 lab/ 项目** — v2研究完成: SchemaRegistry版本化迁移 + SandwichClient(验证三明治+错误反馈重试) + StreamingStructuredClient(流式增量合并) + Provider适配器设计。5个测试全部通过 — [v2研究笔记](catalyst-research/exploration-notes/2026-06-02-structured-output-toolkit.md) ✅ 含可运行JS代码(零依赖)
 - [x] **X42 协议研究** ✅ 2026-06-04 — 跨边界信任治理层，含 ScopedTokenManager+链式哈希审计+信任衰减，与 a2a-trust-prototype 互补 — [笔记](catalyst-research/exploration-notes/2026-06-04-x42-protocol-trust-governance.md)
@@ -65,7 +99,7 @@ Autoresearch 方法论实践 - **连续119天零回滚率** 🏆。06-13 晚: st
 - [ ] **openclaw-langgraph-bridge: 实现 supervisor() 工厂函数** — 基于 LangGraph.js subgraph + Command API，目标 5+ tests — [研究笔记](catalyst-research/exploration-notes/2026-05-26-langgraph-bridge-patterns.md) ✅ 含可运行路由代码
 - [ ] **openclaw-langgraph-bridge: 添加 Command + interrupt() 支持** — 适配 OpenClaw /approve 审批流
 - [ ] **openclaw-langgraph-bridge: 实现 fanOut() + aggregate()** — 基于 Send 的 Map-Reduce 模式
-- [ ] **structured-output-toolkit: README + npm publish** — 273 tests, 2185+ lines src。ConsensusGenerator + ValidationSandwich + ErrorRecoveryAgent + confidenceScore + temperatureSchedule + validationSummary + diffResults + aggregateReport。**完整质量分析与聚合工具链 (5 cycles in one evening)**。定位: "TypeScript structured output reliability toolkit (validation + consensus + recovery + scoring + aggregation)"
+- [ ] **structured-output-toolkit: README + npm publish** — **421 tests**, 4200+ lines src。完整栈: generation(ConsensusGenerator + ValidationSandwich + ErrorRecoveryAgent) + scoring(confidenceScore + temperatureSchedule + validationSummary + diffResults + aggregateReport) + monitoring(MetricsCollector) + versioning(SchemaRegistry) + **cross-provider adaptation(SchemaAdapterFactory + ResponseNormalizer + SchemaDiff + SchemaGenerator/Zod→JSON Schema)**。定位: "TypeScript structured output reliability toolkit — generation + validation + consensus + recovery + scoring + monitoring + versioning + cross-provider adaptation"
   - **[新研究 05-29]** 跨 Provider Schema 适配层 — [笔记](catalyst-research/exploration-notes/2026-05-29-structured-output-cross-provider.md) ✅ 含可运行 SchemaAdapterFactory (OpenAI/Gemini/Anthropic)
   - 核心发现: Schema Fragmentation 是真实生产痛点; Anthropic Tool Use 间接路径有隐藏成本; `additionalProperties` 语义跨 Provider 不同
   - **下一步**: 将 SchemaAdapterFactory 集成到 lab 项目 + 添加 Provider 响应解析器 + Schema 兼容性测试矩阵
@@ -226,7 +260,45 @@ Autoresearch 方法论实践 - **连续119天零回滚率** 🏆。06-13 晚: st
 
 ---
 
-## Next Actions (Updated 2026-06-14)
+## Next Actions (Updated 2026-06-17)
+
+### [06-18 新研究] cr-sqlite: Production-Grade CRDT Replication Upgrade Path
+- [x] **cr-sqlite 深度研究** ✅ 2026-06-17 晚 → 06-18 补录 — [笔记](catalyst-research/exploration-notes/2026-06-17-cr-sqlite-production-crdt-upgrade-path.md) ✅ ~200行可运行 TypeScript (CrSqliteCompat 列级因果时钟合并, 5/5 assertions pass)
+  - **5关键洞察**: (1)应用层 CRDT → 原生扩展是零重写升级路径; (2)列级 Lamport 时钟 > 行级 LWW; (3)SQLite-Memory 是直接竞品但无图分析; (4)cr-sqlite v2 将支持自定义合并函数; (5)「Agent Memory is a CRDT Problem」已成 2026 共识
+  - **3下一步**: README 添加 "Path to Distributed"; 添加 enable_sync/get_changes/apply_changes ~60行; Block-Level LWW ~50行
+
+### [06-18 新研究] Multi-Agent Memory Coordination: From CRDT Substrates to Observation-Driven Convergence
+- [x] **Multi-Agent Memory Coordination 深度研究** ✅ 2026-06-17 晚 → 06-18 补录 — [笔记](catalyst-research/exploration-notes/2026-06-17-multi-agent-memory-coordination.md) ✅ ~200行可运行 TypeScript (DeltaStateCRDT + AgentMemoryCoordinator, 3/3 assertions pass)
+  - **5关键洞察**: (1)内存协调是分层问题; (2)观察驱动协调>消息传递; (3)CoAgent选择性回滚是缺失恢复原语; (4)cr-sqlite是分布式复制生产路径; (5)语义冲突检测是图原生差异化
+  - **新兴项目**: MisakaNet / Omnigraph / Vestige / Dakera / Lorg / Memanto
+  - **3下一步**: vector_clock + subscribe() ~80行; cr-sqlite兼容性研究 ~2h; 图遍历语义冲突检测 ~100行
+
+### [06-17 新研究 C] cr-sqlite: Production-Grade CRDT Replication Upgrade Path
+- [x] **cr-sqlite 深度研究** ✅ 2026-06-17 晚 — [笔记](catalyst-research/exploration-notes/2026-06-17-cr-sqlite-production-crdt-upgrade-path.md) ✅ ~200行可运行 TypeScript (CrSqliteCompat 列级因果时钟合并, 5/5 assertions pass)
+  - **5核心概念**: cr-sqlite v1 History-free CRDTs + v2 Causal Event Log (开发中) + 列级 Lamport 时钟 (per-column 非 per-row) + SQLite Sync Block-Level LWW (逐行合并, 专为 agent memory 设计) + SQLite-Memory (sqlite.ai 完整 agent memory + CRDT sync 系统)
+  - **5关键洞察**: (1)应用层 CRDT → 原生扩展是零重写升级路径 — `crsql_as_crr()` 只标记需同步的表; (2)列级因果时钟 > 行级 LWW 是 agent 多写场景刚需 (不同 agent 更新不同字段零冲突); (3)SQLite-Memory 是直接竞品但无图分析 — agent-memory-graph 差异化成立; (4)cr-sqlite v2 Causal Event Log 将支持自定义合并函数 → 可替代当前 trust-weighted merge; (5)"Agent Memory is a CRDT Problem" 已成 2026 共识 (Cloudflare/wal.sh/SQLite AI 三源汇聚)
+  - **竞品全景更新**: sqlite-memory (sqlite.ai, C扩展+Block-Level LWW) / SQLite Sync (sqlite.ai, CRDT sync for SQLite) / cr-sqlite (vlcn-io, 2163 commits 37 releases)
+  - **3下一步**: (1)README 添加 "Path to Distributed" 章节; (2)添加 enable_sync/get_changes/apply_changes 接口与 cr-sqlite API 对齐 ~60行; (3)Block-Level LWW for content fields ~50行
+
+### [06-17 新研究] Multi-Agent Memory Coordination: From CRDT Substrates to Observation-Driven Convergence
+- [x] **Multi-Agent Memory Coordination 深度研究** ✅ 2026-06-17 晚 — [笔记](catalyst-research/exploration-notes/2026-06-17-multi-agent-memory-coordination.md) ✅ ~200行可运行 TypeScript (DeltaStateCRDT + AgentMemoryCoordinator, 3/3 assertions pass)
+  - **5核心概念**: SIGARCH 2026 三层内存层次(I/O+cache+memory) + CoAgent串行化并发控制(通知OCC, 5%误判率) + CodeCRDT观察驱动协调(stigmergy模式, 21.1%延迟降低) + Delta-State CRDT(LWW/OR-Set/MV-Register+HLC时钟) + cr-sqlite(CRDT原生SQLite复制扩展)
+  - **5关键洞察**: (1)内存协调是分层问题——CRDT处理结构收敛, LLM处理语义冲突, 两层之间是生产系统生死线; (2)观察驱动协调>消息传递——agent-memory-graph作为共享基座正是正确架构; (3)CoAgent选择性回滚是缺失的恢复原语——conflict_detected事件+策略模式~30行; (4)cr-sqlite是分布式多Agent复制的生产路径——单进程到分布式升级=加载扩展; (5)语义冲突检测是差异化——图遍历发现key间语义关联是npm生态无人覆盖能力
+  - **新兴项目全景**: MisakaNet(Git-based swarm memory via GitHub Issues) / Omnigraph(typed graph DB branch+merge like Git, Rust) / Vestige(FSRS-6 decay spaced repetition) / Dakera(Rust 87.8% LoCoMo, 83 MCP tools) / Lorg(hash-chained trust scores) / Memanto(information-theoretic retrieval)
+  - **3下一步**: (1)agent-memory-graph 添加 vector_clock + subscribe() ~80行 +15 tests → npm生态唯一多Agent协调基座; (2)cr-sqlite兼容性研究 ~2h → 单进程到分布式升级路径; (3)图遍历语义冲突检测 ~100行 → graph-native差异化
+
+### [06-16 新研究 B] RL-Trained Memory Management: PreThink Protocol & System-2 Control
+- [x] **RL-Trained Memory 深度研究 (Round 2)** ✅ 2026-06-16 晚 — [笔记](catalyst-research/exploration-notes/2026-06-16-rl-memory-management.md) ✅ 含可运行 TypeScript (PreThink-Retrieve-Write controller, 已验证)
+  - **5核心概念**: MemAgent (ICLR 2026 Oral, RLVR long-context); InfMem (ICLR 2026 Workshop Oral, PreThink-Retrieve-Write + SFT→RL, +10-12% acc, 3.9× faster); Memory-R1 (ACL 2026, 171 citations, ADD/UPDATE/DELETE/NOOP); Mem-α (RL for complex memory construction); Hindsight (4-way fusion, 83.6% vs GPT-4o 60.2%)
+  - **5关键洞察**: (1)3B+智能记忆>7B笨记忆(+12%)——记忆架构>参数量; (2)PreThink-Retrieve-Write 是通用 agent 记忆协议,不限于长文档; (3)认知类型分离是零成本检索精度提升; (4)SFT→RL pipeline 比 pure RLVR 更稳定; (5)evidence-aware 压缩保留 bridging evidence > 均匀摘要
+  - **4下一步**: (1)agent-memory-graph 原型 PreThink 控制器 ~200行; (2)认知类型感知检索路由 ~100行; (3)evidence-aware 图路径压缩; (4)跟踪 Memory-R2 + Mem-α
+
+### [06-16 新研究] Multi-Agent Memory Consensus: Consistency, Conflict Resolution & CRDT-Inspired Design
+- [x] **Multi-Agent Memory Consensus 深度研究** ✅ 2026-06-16 — [笔记](catalyst-research/exploration-notes/2026-06-16-multi-agent-memory-consensus.md) ✅ ~300行可运行 TypeScript (MultiAgentMemoryStore, 4/4 assertions pass)
+  - **5核心概念**: Memory Consistency Models (SIGARCH 2026, L1/L2/L3 hierarchy); Deterministic Conflict Resolution (BM25+max(serial) 87.2% vs Zep KG 7.0%); CRDTs for Agent State (LWW-Register/OR-Set/MV-Register/G-Counter); AMA 4-role pipeline (Retriever→Judge→Refresher→Constructor); SSGM Governance (Write Filtering Gate + ABAC + Reversible)
+  - **5关键洞察**: (1)Memory consistency 是分布式系统问题不是 AI 问题——借用 40 年研究成果; (2)“Don't Ask LLM to Track Freshness”——确定性 max(serial) 击败复杂 KG; (3)CRDTs 是多 Agent 记忆同步的缺失原语——A2A 无共享状态层=Gossip+CRDT 机会; (4)关注点分离: Detection vs Resolution vs Governance 三层; (5)36.9% 多 Agent 失败来自记忆错位而非能力不足
+  - **实现**: MultiAgentMemoryStore (~300行 TS 零依赖) 含 LWW/OR-Set/MV-Register/trust-weighted 4种 merge 策略 + scope 隔离(public/team/private) + gossip delta-sync + changelog 审计
+  - **3下一步**: (1)agent-memory-graph 添加 CRDT merge_crdt (~50行) — npm 生态唯一多 Agent 记忆同步; (2)写 memorywire v0.2 Multi-Agent Sync 提案; (3)gossip delta-sync 原型加入 lab/a2a-trust-prototype/
 
 ### [06-14 新研究] RL-Trained Agent Memory Management
 - [x] **RL-Trained Memory Management 深度研究** ✅ 2026-06-14 — [笔记](catalyst-research/exploration-notes/2026-06-14-rl-trained-memory-management.md) ✅ 含可运行 TypeScript (LearnableMemoryManager, 5/5 assertions pass)
@@ -591,8 +663,110 @@ curl -X POST "https://api.tavily.com/search" \
   - **API总量: 284+ methods**
 - 连续100→101天零回滚率 🏆
 
-### 2026-06-13
-- ✅ **Trust Propagation Algorithms 深度研究** — EigenTrust幂迭代 + BetaTrust贝叶斯 + FIRE多源融合, ~200行可运行TS代码已验证。关键: 直接经验>纯声誉15-20%但冷启动必须用EigenTrust; A2A协议无内置信任层=市场机会; PBFT容忍上限1/3恶意; memorywire缺少trust字段=标准化空白 — [笔记](catalyst-research/exploration-notes/2026-06-13-trust-propagation-algorithms.md) ✅
+### 2026-06-20
+- ✅ **agent-context-store key-dev 2-cycle 凌晨** — 1360→1379 (+19, Cycle 139): tag_audit_all (batch tag audit, alignment-filtered worst-first) + content_duplicate_graph (union-find connected components of near-duplicates) + embedding_core_sample (semantic centre extraction). Zero regressions
+- ✅ **agent-context-store key-dev 3-cycle 凌晨** — 1379→1404 (+25, Cycle 140): tag_health_report (executive summary with auto-recommendations, converges IG_batch + audit_all) + content_merge_suggestions (duplicate clusters → actionable merge targets with canonical=longest) + embedding_density_map (outlier score histogram with shape classification: bimodal/uniform/skewed/peaked). **Analytics executive layer 完成**. Zero regressions
+- 连续140天零回滚率 🏆
+- **四项目测试总量突破 4031** (agent-memory-graph 1307 + agent-context-store 1404 + structured-output-toolkit 438 + agent-task-cli 882)
+
+### 2026-06-19
+- ✅ **agent-context-store key-dev 2-cycle 凌晨** — 1298→1347 (+49, 2 cycles, 2 keep, 零回滚)
+  - Cycle 135 (0c8eb49): embedding_centroid_drift (quartile time-slice centroids, temporal semantic evolution) + content_similarity_matrix (N×N batch, 3 metrics) + tag_information_gain (H(store)-H(store|tag), per-tag value). +24 tests
+  - Cycle 136 (719a2c5): tag_information_gain_batch (percentile ranking + high/low value recommendations) + content_similarity_heatmap (sparse top-k adjacency, 3 metrics) + embedding_outlier_rank (outlier/peripheral/core classification). +25 tests
+  - **First temporal analytics API** (centroid_drift) + **first batch-ranking with recommendations** (tag_IG_batch) + **sparse scalability** (heatmap)
+- 连续137天零回滚率 🏆
+- **四项目测试总量突破 3880** (agent-memory-graph 1213 + agent-context-store 1347 + structured-output-toolkit 438 + agent-task-cli 882)
+- ✅ **agent-memory-graph evening 3-cycle** — 1213→1250 (+37): memory_decay (configurable exponential decay with half-life) + neighborhood_agreement (multi-hop BFS semantic agreement, node role classification) + memory_proximity (trigram semantic neighbourhood) + tag_induced_subgraph (full subgraph by tag) + memory_annotate (structured key-value annotations) + annotation_get/remove/search. 6 new APIs
+- ✅ **Agent Workflow Memory 深度研究** — AWM(ICML 2025)+ReasoningBank(ICLR 2026)+Trace2Skill+SKILL.nb+MS Foundry. ~200行TS原型. 5 key insights
+- ✅ **agent-memory-graph code lab Workflow Memory** — 1250→1307 (+57, 4 cycles): 14 workflow APIs (add/retrieve/record_outcome/compose/dedup/tips[4 types]/prompt_section/prune/export/import/stats). Procedural Memory 从研究到生产3小时
+- ✅ **context-forge 3-cycle** — 50→84 (+34): F9 file size limits + F5 Mermaid diagrams + F10 validation mode. 3 features, 20 new tests
+- ✅ **技术随笔发表** — "别再定时压缩记忆了：语义分歧检测才是 Agent 记忆整理的正确触发器" [link](https://robertsong2019.github.io/posts/semantic-divergence-consolidation-2026-06.html)
+
+### 2026-06-18
+- ✅ **agent-context-store key-dev 2-cycle 凌晨** — 1192→1242 (+50, 2 cycles, 2 keep, 零回滚)
+  - Cycle 132: embedding_diversity_profile (10-bucket直方图+熵一致性校验) + content_overlap (Szymkiewicz–Simpson集合包含) + tag_suggest (TF-IDF跨维度桥: 内容→标签) (+25, commit 6936421)
+  - Cycle 133: tag_audit (闭合tag_suggest循环: Jaccard alignment+missing/redundant) + content_ngrams (多词短语检测, 可配置n) + embedding_outlier_score (标准化语义异常度 dist/mean_dist) (+25, commit 022161c)
+  - **Pairwise Similarity 全集完成**: cosine(magnitude) + NCD(bytes) + overlap(containment) + jaccard(categorical) + embedding(semantic)
+  - **Tag 质量闭环**: tag_suggest(生成) → tag_audit(评估)
+- ✅ **agent-context-store evening autoresearch 3-cycle** — 1242→1288 (+46, 3 cycles, 3 keep, 零回滚)
+  - Cycle 134 (7a6261b): store_entropy (global Shannon entropy) + content_jensen_shannon (symmetric bounded KL). +18 tests
+  - Cycle 135 (01c3270): tag_idf (discriminative tag scoring) + embedding_coverage (store-level stats) + embedding_missing_keys (backfill targets). +14 tests
+  - Cycle 136 (9a35525): content_kl_divergence (asymmetric KL, Laplace smoothing) + tag_pmi (co-occur/avoid). +14 tests
+  - **Information-theoretic analytics now complete**: symmetric(JS) + asymmetric(KL) + categorical(PMI) + global(entropy) + tag-weighting(IDF) + embedding coverage
+- ✅ **Vector Clocks + Event Subscribe 深度研究** — HLC(ts+counter+node) + SQLite triggers→_changes→EventEmitter + 3-layer subscribe ~180行 TS — [笔记](catalyst-research/exploration-notes/2026-06-18-vector-clock-event-subscribe-multi-agent-memory.md)
+- ✅ **Memory Consolidation for Long-Running Agents 深度研究** — GAM(ICLR 2026) + Letta Sleep-Time + AgeMem GRPO + Evo-Memory/ReMem ~200行 TS — [笔记](catalyst-research/exploration-notes/2026-06-18-memory-consolidation-long-running-agents.md)
+- ✅ **agent-memory-graph code lab evening 4-cycle** — 1133→1213 (+80, 4 cycles, 4 keep, 零回滚)
+  - Cycle 1 (681569c): semantic_divergence + divergence_scan + consolidate_memory (GAM ICLR 2026). Per-node drift detection + batch diagnostics + 4-strategy consolidation. +22 tests
+  - Cycle 2 (ed9ec32): retention_score (4-component: importance*0.3+recency*0.25+connectivity*0.25+divergence*0.2) + memory_evict (budget-limited smart eviction). +13 tests
+  - Cycle 3 (f978971): cluster_seeds + seed_expansion + consolidation_report (cluster lifecycle: discover→expand→health dashboard). +12 tests
+  - Cycle 4 (169d80b): consolidation_pipeline (one-shot GAM orchestrator: scan→consolidate→evict→report, dry_run + budget control). +10 tests
+  - **Memory consolidation pipeline complete**: divergence detection → consolidation strategy → retention scoring → smart eviction → cluster lifecycle → one-shot pipeline
+- 连续134→135天零回滚率 🏆
+- **四项目测试总量突破 3695** (agent-memory-graph 1133 + agent-context-store 1288 + structured-output-toolkit 438 + agent-task-cli 882)
+
+### 2026-06-17
+- ✅ **agent-context-store evening autoresearch 3-cycle** — 1115→1144 (+29, 3 cycles, 3 keep, 零回滚)
+  - tag_coherence (NMI-based tag共现一致性) + content_complexity (Flesch Reading Ease + grade level) (+16, commit 8edfb7d)
+  - structured-output-toolkit 421→438 (+17): schemaCompleteness (生产就绪0-100评分) + mergeSchemas (冲突解决: a-wins/b-wins/deep-merge)。GitHub repo created + pushed (commit cd08e9f)
+  - content_gzip_ratio (信息密度 gzip压缩率) + tag_diversity_index (Gini-Simpson多样性) (+13, commit e6357c1)
+- ✅ **Multi-Agent Memory Coordination 深度研究** — SIGARCH 2026 + CoAgent + CodeCRDT + Delta-State CRDT ~200行 TS (3/3 pass) — [笔记](catalyst-research/exploration-notes/2026-06-17-multi-agent-memory-coordination.md)
+- ✅ **cr-sqlite Production CRDT Upgrade 研究** — 列级Lamport时钟 + crsql_as_crr + 竞品矩阵 ~200行 TS (5/5 pass) — [笔记](catalyst-research/exploration-notes/2026-06-17-cr-sqlite-production-crdt-upgrade-path.md)
+- ✅ **agent-context-store key-dev 2-cycle 凌晨** — 1077→1115 (+38, 2 cycles, 2 keep, 零回滚)
+  - Cycle 125: content_similarity + content_keywords (TF-IDF) + tag_entropy (+19, commit e876f57)
+  - Cycle 126: tag_correlation + content_similarity_batch + embedding_diversity (+19, commit 49856b3)
+- 连续126→128天零回滚率 🏆
+  - Cycle 125: content_similarity (cosine TF vectors, completes similarity triangle) + content_keywords (TF-IDF) + tag_entropy (Shannon bits) (+19, commit e876f57)
+  - Cycle 126: tag_correlation (co-occurrence matrix) + content_similarity_batch (batch lexical search) + embedding_diversity (Shannon entropy of similarity distribution) (+19, commit 49856b3)
+  - **Similarity Triangle 完成**: tag_jaccard(categorical) + content_similarity(lexical) + embedding_distance(semantic)
+  - **信息论分析全套**: tag_entropy + embedding_diversity + content_keywords(TF-IDF)
+- 连续126天零回滚率 🏆
+- **四项目测试总量突破 3551** (agent-memory-graph 1133 + agent-context-store 1115 + structured-output-toolkit 421 + agent-task-cli 882)
+
+### 2026-06-16
+- ✅ **agent-memory-graph code-lab 5-cycle** — 1094→1133 (+39, 5 cycles, 5 keep, 零回滚)
+  - Cycle 1: weighted_degree + weighted_degree_all + neighborhood_census (+8, commit b0abefe)
+  - Cycle 2: **merge_crdt** — CRDT-based multi-agent merge (LWW/OR-Set/Trust-weighted), from 06-16 Multi-Agent Memory Consensus research (+8, commit 0e962ad)
+  - Cycle 3: graph_entropy (Shannon degree distribution entropy) + connectivity_frontier (BFS hop census) (+9, commit d41759c)
+  - Cycle 4: degree_centrality_normalized (Freeman's) + edge_density_subgraph (induced subgraph density) (+9, commit da42108)
+  - Cycle 5: Graph路 weighted bonus redesign — edge weight proportional RRF contribution (+5, commit a5076c7)
+  - **npm生态唯一 CRDT多Agent记忆合并** 图记忆库
+- ✅ **agent-context-store key-dev 2-cycle** — 1039→1077 (+38, 2 cycles, 零回滚)
+  - tag_jaccard + content_sections + content_read_time (+12, commit f20f0a0)
+  - tag_density + content_sections_all + embedding_search_keys (+17, commit 2f9d44d)
+- ✅ **agent-task-cli Round 36** — 868→882 (+14)。Storage.where(predicate) + chunk(size) + count() (commit b6cfc9c)
+- ✅ **Multi-Agent Memory Consensus 深度研究** — CRDTs (LWW/OR-Set/MV-Register) + AMA 4-role + SSGM Governance + ~300行可运行 TS (4/4 pass) — [笔记](catalyst-research/exploration-notes/2026-06-16-multi-agent-memory-consensus.md)
+- ✅ **RL-Trained Memory Management Round 2 研究** — PreThink-Retrieve-Write + MemAgent + Memory-R1 + Mem-α + Hindsight ~150行 TS — [笔记](catalyst-research/exploration-notes/2026-06-16-rl-memory-management.md)
+- ✅ **agent-memory-graph evening 3-cycle** — 1076→1094 (+18, 3 cycles, 3 keep, 零回滚): degree_distribution + network_summary (a947648); k_hop_neighbors + common_neighbors (8e79262)
+- 连续123→124天零回滚率 🏆
+
+### 2026-06-15
+- ✅ **agent-memory-graph modularity flaky fix** — 1063→1064 (+1 fix)。`test_modularity_nonnegative_connected` 修复: 随机化节点处理顺序(种子RNG, Louvain/Leiden标准实践) + `_compute_modularity` helper提取 + 负Q单社区fallback。commit 6615f5b
+- ✅ **agent-context-store Context Engineering primitives** — 1027→1039 (+12)。content_fold(ICLR 2026 Context Folding: head_tail/head/tail/outline策略) + content_squash(prefix key merging + tag继承) + content_outline(markdown heading提取)。commit 79be99c
+- ✅ **agent-memory-graph graph exploration** — 1064→1074 (+10)。random_walk(seeded + restart probability + weighted edges) + graph_sample(BFS/DFS/random_walk)。commit c6568df
+- ✅ **structured-output-toolkit 跨Provider Schema适配层** — 315→421 (+106, 4 cycles, 4 keep, 零回滚)
+  - SchemaAdapterFactory (+37, commit 600684c): OpenAIAdapter(additionalProperties:false递归) + GeminiAdapter(items type推断) + AnthropicAdapter(tool_use包装) + 缓存(hit/miss统计) + 兼容性检查器
+  - ResponseNormalizer (+28, commit 2605ff3): stripNulls/coerceNumbers/coerceBooleans/trimStrings + Provider-specific解析(Anthropic tool_use解包, OpenAI markdown fence清理, Gemini多part合并) + qualityReport(字段级审计) + WeakSet循环引用保护
+  - SchemaDiff (+18, commit 13512ab): 逐字段对比(added/removed/changed/enum/items/required) + checkProviderCoverage(三Provider兼容性) + schemaComplexity(加权评分0-100)
+  - SchemaGenerator (+23, commit 0083898): zodToJsonSchema(15+类型零依赖转换) + simplifySchema + schemaStats
+  - **跨Provider完整链路**: Zod → JSON Schema → Provider适配 → API请求 → 响应解析 → 归一化 → 质量审计
+  - **定位升级**: "generation + validation + consensus + recovery + scoring + monitoring + versioning + cross-provider adaptation"
+- ✅ **System-2 Memory Policy 深度研究 (ICLR 2026)** — InfMem PreThink-Retrieve-Write + MemSearcher多上下文GRPO + Hindsight四网络认知分离 + Memory-R1。核心发现: 记忆管理已从系统问题→学习策略问题; 3B+智能记忆>7B笨记忆(+12%); PreThink早停=3x加速。2段可运行Python代码(System2Controller~80行 + AdaptiveFusionRetriever~70行) — [笔记](catalyst-research/exploration-notes/2026-06-15-system2-memory-policy-iclr2026.md)
+- ✅ **Hindsight Mini + RL-Trained Memory Integration 研究** — AgentHER四阶段 + Multi-Judge验证(97.7%精度) + Severity Weighting + ECHO零训练模式。核心: 失败轨迹是最大数据源(60-75%); NOOP是最重要操作; Multi-Judge降低标签噪声。可运行TS原型~200行 — [笔记](catalyst-research/exploration-notes/2026-06-15-hindsight-mini-rl-memory-integration.md)
+- ✅ **agent-task-cli Round 35** — 845→868 (+23)。Storage.create(NX pattern) + Cache.incrTo(ceiling increment) + PriorityQueue.peekAt(Nth peek)。commit 44c29f7
+- 连续122天零回滚率 🏆
+- **四项目测试总量突破 3402** (agent-memory-graph 1074 + agent-context-store 1039 + structured-output-toolkit 421 + agent-task-cli 868)
+
+### 2026-06-14
+- ✅ **Adaptive Fusion 从研究到实现** ✅ — agent-memory-graph 998→1046 (+48, 4 cycles, 零回滚)。QDAP-Lite查询分类(exact/semantic/relational) + Shannon Entropy修正(ICML VecDB 2025) + Exp4Fuse共识奖励 + 自适应k值(10-20)。7个研究策略中4个落地为生产代码。commit 49b93f3
+- ✅ **RL-Trained Memory Management 全栈实现** ✅ — LearnableMemoryManager(Memory-R1启发 4操作评分) + memory_audit(全局健康0-100) + fifa_forget(FiFA有界遗忘, MemoryArena ICLR 2026) + memory_compact(相似度合并) + memory_feedback(AgeMem在线阈值学习) + memory_stats_summary。commits 01129d1/3328d11/3c2b85e
+- ✅ **structured-output-toolkit 315** — 273→315 (+42)。MetricsCollector(p50/p95/latency/success tracking) + SchemaRegistry(版本化+BFS migration chain)。commits d16a134/b811e3b
+- ✅ **agent-task-cli 826** — 815→826 (+11)。Cache keysByPrefix/exportJSON/importJSON round-trip。commit e6c2eca
+- ✅ **agent-context-store 1027** — 963→1027 (+64, 4 cron cycles)。12 new APIs: tag_normalize/outliers/word_count/merge_all/centroid/line_count/cohesion/line_range/split_key/within_radius/distance/paragraph_count
+- ✅ **Adaptive Fusion 深度研究** — 7策略对比(QDAP/Entropy/Exp4Fuse/WRRF/Adaptive RAG), 3/3 pass — [笔记](catalyst-research/exploration-notes/2026-06-14-adaptive-fusion-self-tuning-retrieval.md)
+- ✅ **RL-Trained Memory Management 深度研究** — Memory-R1(ACL 2026)/AgeMem/Mem-T/MemFactory/MemoryArena(ICLR 2026), 5/5 pass — [笔记](catalyst-research/exploration-notes/2026-06-14-rl-trained-memory-management.md)
+- 连续121天零回滚率 🏆
+
+### 2026-06-13 — EigenTrust幂迭代 + BetaTrust贝叶斯 + FIRE多源融合, ~200行可运行TS代码已验证。关键: 直接经验>纯声誉15-20%但冷启动必须用EigenTrust; A2A协议无内置信任层=市场机会; PBFT容忍上限1/3恶意; memorywire缺少trust字段=标准化空白 — [笔记](catalyst-research/exploration-notes/2026-06-13-trust-propagation-algorithms.md) ✅
 - ✅ **Hybrid Retrieval Beyond RRF 深度研究** — 6种融合算法对比(RRF/Weighted/CombSUM/CombMNZ/RSF/Adaptive) + Tensor Rank Fusion前沿 + Weaviate产业信号。~250行可运行TS代码, 3/3 assertions pass。关键: k=60对小语料次优(k=20 gap是k=60的3-5x); CombMNZ共识奖励天然适合三路; Adaptive是差异化机会 — [笔记](catalyst-research/exploration-notes/2026-06-13-hybrid-retrieval-fusion-beyond-rrf.md) ✅
 - ✅ **structured-output-toolkit 5-cycle evening marathon** — 178→273 (+95, 5 cycles, 5 keep, 零回滚)
   - confidenceScore (ef48bbd): 多因子质量评分(0-1), syntax/schema/semantic/consensus/recovery加权, 14 tests
@@ -1201,5 +1375,5 @@ curl -X POST "https://api.tavily.com/search" \
 
 ---
 
-*Last updated: 2026-06-14 02:00*
-*Next review: 2026-06-15*
+*Last updated: 2026-06-18 02:00*
+*Next review: 2026-06-19*
