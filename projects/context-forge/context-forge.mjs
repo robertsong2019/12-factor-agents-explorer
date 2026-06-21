@@ -10,6 +10,7 @@
  *   --dry-run         Print to stdout instead of writing files
  *   --update          Update existing files, preserving manual sections
  *   --json            Output analysis as JSON
+ *   --format <fmt>    Output analysis as structured format (json|toml|yaml)
  */
 
 import { readdir, readFile, writeFile, stat, mkdir } from "node:fs/promises";
@@ -765,6 +766,49 @@ export function invalidateCache(root) {
   }
 }
 
+// ─── Template System (F13) ─────────────────────────────────────
+
+export function applyTemplate(template, data) {
+  if (typeof template !== "string") return "";
+  return template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (match, path) => {
+    const parts = path.split(".");
+    let value = data;
+    for (const part of parts) {
+      if (value == null) return ""; // null-safe, empty for missing paths
+      value = value[part];
+    }
+    if (value == null) return "";
+    if (Array.isArray(value)) return value.join(", ");
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  });
+}
+
+export function validateTemplate(template, availableKeys) {
+  if (typeof template !== "string") return { valid: false, missing: [] };
+  const regex = /\{\{(\w+(?:\.\w+)*)\}\}/g;
+  const missing = [];
+  let match;
+  while ((match = regex.exec(template)) !== null) {
+    const topKey = match[1].split(".")[0];
+    if (!availableKeys.includes(topKey)) {
+      missing.push(match[1]);
+    }
+  }
+  return { valid: missing.length === 0, missing };
+}
+
+export function extractTemplateVars(template) {
+  if (typeof template !== "string") return [];
+  const regex = /\{\{(\w+(?:\.\w+)*)\}\}/g;
+  const vars = new Set();
+  let match;
+  while ((match = regex.exec(template)) !== null) {
+    vars.add(match[1]);
+  }
+  return [...vars];
+}
+
 // ─── Table Formatters (F6) ──────────────────────────────────────
 
 export function formatScriptsTable(scripts, max = 20) {
@@ -1041,6 +1085,222 @@ export function formatDiff(diffs) {
   return lines.join("\n");
 }
 
+// ─── Structured Export Formats (F7) ────────────────────────────────
+
+/**
+ * Export analysis data as TOML.
+ * Zero-dependency TOML serializer — handles strings, numbers, booleans,
+ * arrays, and flat/nested objects.
+ */
+export function exportTOML(data) {
+  const lines = [];
+
+  function escapeStr(s) {
+    if (s === "") return '""';
+    // Basic TOML string escaping
+    return '"' + String(s)
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n')
+      .replace(/\t/g, '\\t')
+      .replace(/\r/g, '\\r') + '"';
+  }
+
+  function formatVal(v) {
+    if (v === null || v === undefined) return '""';
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    if (typeof v === 'number') return String(v);
+    if (Array.isArray(v)) {
+      if (v.length === 0) return '[]';
+      const items = v.map(item =>
+        typeof item === 'object' && item !== null
+          ? '{ ' + Object.entries(item).map(([k, val]) => `${k} = ${formatVal(val)}`).join(', ') + ' }'
+          : formatVal(item)
+      );
+      // Multi-line array for readability if any item is complex
+      if (items.some(i => i.length > 40)) {
+        return '[\n' + items.map(i => '  ' + i).join(',\n') + '\n]';
+      }
+      return '[' + items.join(', ') + ']';
+    }
+    if (typeof v === 'object') return escapeStr(JSON.stringify(v));
+    return escapeStr(String(v));
+  }
+
+  function writeTable(prefix, obj) {
+    const scalarKeys = [];
+    const tableKeys = [];
+    const arrayTableKeys = [];
+
+    for (const [k, v] of Object.entries(obj)) {
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+        tableKeys.push(k);
+      } else if (Array.isArray(v) && v.length > 0 && v.every(i => typeof i === 'object' && i !== null)) {
+        arrayTableKeys.push(k);
+      } else {
+        scalarKeys.push(k);
+      }
+    }
+
+    if (scalarKeys.length > 0 || prefix === '') {
+      if (prefix) lines.push(`[${prefix}]`);
+      for (const k of scalarKeys) {
+        lines.push(`${k} = ${formatVal(obj[k])}`);
+      }
+      if (prefix && scalarKeys.length > 0) lines.push('');
+    }
+
+    for (const k of tableKeys) {
+      const newPrefix = prefix ? `${prefix}.${k}` : k;
+      writeTable(newPrefix, obj[k]);
+    }
+
+    for (const k of arrayTableKeys) {
+      const tablePath = prefix ? `${prefix}.${k}` : k;
+      for (const item of obj[k]) {
+        lines.push(`[[${tablePath}]]`);
+        for (const [ik, iv] of Object.entries(item)) {
+          if (iv !== null && typeof iv === 'object' && !Array.isArray(iv)) {
+            // Nested object in array-of-tables — inline it
+            lines.push(`${ik} = ${formatVal(iv)}`);
+          } else {
+            lines.push(`${ik} = ${formatVal(iv)}`);
+          }
+        }
+        lines.push('');
+      }
+    }
+  }
+
+  writeTable('', data);
+  return lines.join('\n');
+}
+
+/**
+ * Export analysis data as YAML.
+ * Zero-dependency YAML serializer — handles strings, numbers, booleans,
+ * arrays, and nested objects with proper indentation.
+ */
+export function exportYAML(data) {
+  const lines = [];
+
+  function needsQuote(s) {
+    if (s === '') return true;
+    // Quote if starts with special chars, contains ': ', '#', or is a YAML keyword
+    if (/^[\-?:,[\]{}#&*!|>'"%@`]/.test(s)) return true;
+    if (/:\s/.test(s)) return true;
+    if (/\s+$/.test(s)) return true;
+    if (/^(true|false|null|yes|no|~)$/i.test(s)) return true;
+    if (/^\d/.test(s) && !/^\d+$/.test(s)) return true;
+    return false;
+  }
+
+  function formatScalar(v) {
+    if (v === null || v === undefined) return 'null';
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    if (typeof v === 'number') return String(v);
+    const s = String(v);
+    if (/[\n\r\t]/.test(s) || s.includes('\\n') || s.includes('\\t')) {
+      return JSON.stringify(s);  // Use double-quoted style for multiline/special
+    }
+    if (needsQuote(s)) return JSON.stringify(s);
+    return s;
+  }
+
+  function writeValue(value, indent) {
+    const pad = '  '.repeat(indent);
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        lines.push(`${pad}[]`);
+        return;
+      }
+      for (const item of value) {
+        if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+          const entries = Object.entries(item);
+          if (entries.length === 0) {
+            lines.push(`${pad}- {}`);
+          } else {
+            lines.push(`${pad}-`);
+            for (const [k, v] of entries) {
+              if (v !== null && typeof v === 'object') {
+                lines.push(`${pad}  ${k}:`);
+                writeValue(v, indent + 2);
+              } else {
+                lines.push(`${pad}  ${k}: ${formatScalar(v)}`);
+              }
+            }
+          }
+        } else if (Array.isArray(item)) {
+          lines.push(`${pad}-`);
+          writeValue(item, indent + 1);
+        } else {
+          lines.push(`${pad}- ${formatScalar(item)}`);
+        }
+      }
+      return;
+    }
+
+    if (value !== null && typeof value === 'object') {
+      const entries = Object.entries(value);
+      if (entries.length === 0) {
+        lines.push(`${pad}{}`);
+        return;
+      }
+      for (const [k, v] of entries) {
+        if (Array.isArray(v) && v.length === 0) {
+          lines.push(`${pad}${k}: []`);
+        } else if (v !== null && typeof v === 'object' && Object.keys(v).length === 0) {
+          lines.push(`${pad}${k}: {}`);
+        } else if (v !== null && typeof v === 'object') {
+          lines.push(`${pad}${k}:`);
+          writeValue(v, indent + 1);
+        } else {
+          lines.push(`${pad}${k}: ${formatScalar(v)}`);
+        }
+      }
+      return;
+    }
+
+    lines.push(`${pad}${formatScalar(value)}`);
+  }
+
+  writeValue(data, 0);
+  return lines.join('\n');
+}
+
+/**
+ * Build a structured analysis object suitable for TOML/YAML/JSON export.
+ */
+export function buildExportData(info, langs, importData, apiSurface, configData, gitInfo) {
+  return {
+    project: {
+      name: info.name || 'unknown',
+      type: info.type || 'unknown',
+      version: info.version || null,
+      description: info.description || null,
+    },
+    languages: Object.fromEntries(langs),
+    frameworks: [...new Set(info.frameworks || [])],
+    entryPoints: info.entryPoints || [],
+    scripts: info.scripts || {},
+    dependencies: info.dependencies || {},
+    devDependencies: info.devDependencies || {},
+    imports: {
+      total: importData?.allImports?.length || 0,
+      unique: importData?.allImports ? [...new Set(importData.allImports)].length : 0,
+    },
+    apiSurfaceCount: apiSurface?.length || 0,
+    apiSurface: (apiSurface || []).slice(0, 50),
+    configs: configData || {},
+    git: gitInfo ? {
+      totalCommits: gitInfo.totalCommits || 0,
+      contributors: (gitInfo.contributors || []).slice(0, 20),
+      recentCommits: (gitInfo.recentCommits || []).slice(0, 10),
+    } : null,
+  };
+}
+
 // ─── Main ────────────────────────────────────────────────────────
 
 async function main() {
@@ -1057,6 +1317,13 @@ async function main() {
     dryRun: args.includes("--dry-run"),
     update: args.includes("--update"),
     json: args.includes("--json"),
+    format: (() => {
+      const eq = args.find(a => a.startsWith("--format="));
+      if (eq) return eq.split("=")[1];
+      const idx = args.indexOf("--format");
+      if (idx >= 0 && idx + 1 < args.length && !args[idx + 1].startsWith("--")) return args[idx + 1];
+      return undefined;
+    })(),
   };
 
   const root = resolvePath(projectPath);
@@ -1078,23 +1345,29 @@ async function main() {
   info.apiSurface = apiSurface;
   info.configData = configData;
 
-  if (options.json) {
-    console.log(JSON.stringify({
-      languages: Object.fromEntries(langs),
-      frameworks: [...new Set(info.frameworks)],
-      entryPoints: info.entryPoints,
-      scripts: info.scripts,
-      configFiles: info.configFiles,
-      gitignore,
-      imports: {
-        total: importData.allImports.length,
-        unique: [...new Set(importData.allImports)].length,
-        byFile: Object.fromEntries(importData.imports),
-      },
-      apiSurface: apiSurface.slice(0, 100),
-      apiSurfaceCount: apiSurface.length,
-      configs: configData,
-    }, null, 2));
+  // Handle structured export formats: --json, --format=toml, --format=yaml
+  const exportFormat = options.format || (options.json ? 'json' : null);
+  if (exportFormat) {
+    const exportData = buildExportData(info, langs, importData, apiSurface, configData, null);
+    if (exportFormat === 'json') {
+      // JSON includes extra fields not in the standard export object
+      console.log(JSON.stringify({
+        ...exportData,
+        gitignore,
+        imports: {
+          ...exportData.imports,
+          byFile: Object.fromEntries(importData.imports),
+        },
+        apiSurface: apiSurface.slice(0, 100),
+      }, null, 2));
+    } else if (exportFormat === 'toml') {
+      console.log(exportTOML(exportData));
+    } else if (exportFormat === 'yaml') {
+      console.log(exportYAML(exportData));
+    } else {
+      console.error(`❌ Unknown format: ${exportFormat}. Use: json, toml, yaml`);
+      process.exit(1);
+    }
     return;
   }
 
