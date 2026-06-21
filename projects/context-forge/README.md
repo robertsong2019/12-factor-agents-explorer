@@ -28,6 +28,11 @@ context-forge /path/to/my-project --dry-run
 - 🏗️ **Maps** directory structure and architecture patterns
 - 📝 **Generates** context files for multiple AI tools
 - 🔄 **Updates** existing files (preserves manual additions in marked sections)
+- 📊 **Markdown tables** for dependencies and scripts (F6)
+- 📄 **TOML & YAML export** — structured output for other tools (F7)
+- 🧩 **Template system** — register/load/customize output templates (F13)
+- ⚡ **Analysis cache** — faster re-runs with mtime-based invalidation (F14)
+- 🧪 **Integration tested** against real projects (F16)
 - ⚡ **Zero deps** — single file, runs with Node.js
 
 ## Usage
@@ -44,6 +49,42 @@ context-forge /path/to/project --dry-run
 
 # Update existing (preserve manual sections)
 context-forge /path/to/project --update
+
+# Export as TOML or YAML
+context-forge /path/to/project --format=toml
+context-forge /path/to/project --format=yaml
+```
+
+### Template System (F13)
+
+Register and use custom output templates:
+
+```javascript
+import { registerTemplate, generateFromTemplate, listTemplates } from './context-forge.mjs'
+
+// Use a built-in template
+generateFromTemplate(project, 'brief')      // minimal summary
+generateFromTemplate(project, 'json-compact') // machine-readable
+generateFromTemplate(project, 'dockerfile-hint') // container-focused
+
+// Register your own
+registerTemplate('my-org', (project) => `# ${project.name}\n...`)
+generateFromTemplate(project, 'my-org')
+
+// List available templates
+listTemplates()  // ['brief', 'json-compact', 'dockerfile-hint', 'my-org']
+```
+
+### Analysis Cache (F14)
+
+Speed up re-runs by caching analysis results. Cache is automatically invalidated when source files change (mtime-based):
+
+```bash
+# First run — full analysis
+context-forge ~/big-project  # ~5s
+
+# Second run — cached, only changed files re-analyzed
+context-forge ~/big-project  # ~0.3s
 ```
 
 ## Generated Files
@@ -88,6 +129,18 @@ Your custom rules here — preserved on update
 context-forge ~/my-project --update
 ```
 Regenerates auto-detected sections while keeping your manual additions.
+
+### Output Formats (F7)
+
+Beyond the default Markdown, context-forge can export structured data:
+
+```bash
+# TOML — great for config-driven tools
+ccontext-forge ~/project --format=toml > project.toml
+
+# YAML — works with k8s, CI/CD, etc.
+ccontext-forge ~/project --format=yaml > project.yaml
+```
 
 ---
 
