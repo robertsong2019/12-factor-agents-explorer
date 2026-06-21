@@ -727,6 +727,24 @@ export async function generateMermaidDiagram(root, maxDepth = 2, depth = 0, giti
   return lines.join("\n");
 }
 
+// ─── Table Formatters (F6) ──────────────────────────────────────
+
+export function formatScriptsTable(scripts, max = 20) {
+  const entries = Object.entries(scripts).slice(0, max);
+  if (entries.length === 0) return "- (none defined)";
+  const rows = entries.map(([k, v]) => `| \`${k}\` | ${v} |`);
+  const more = Object.keys(scripts).length > max ? `\n| ... | _${Object.keys(scripts).length - max} more_ |` : "";
+  return `| Script | Command |\n|--------|---------|\n${rows.join("\n")}${more}`;
+}
+
+export function formatDepsTable(deps, max = 20) {
+  const entries = Object.entries(deps).slice(0, max);
+  if (entries.length === 0) return "- (none)";
+  const rows = entries.map(([k, v]) => `| \`${k}\` | ${v} |`);
+  const more = Object.keys(deps).length > max ? `\n| ... | _${Object.keys(deps).length - max} more_ |` : "";
+  return `| Package | Version |\n|---------|---------|\n${rows.join("\n")}${more}`;
+}
+
 // ─── Context Generation ──────────────────────────────────────────
 
 export function generateAgentsMd(info, langs, structure, gitInfo = null) {
@@ -754,15 +772,11 @@ ${info.entryPoints.length ? info.entryPoints.map(e => `- \`${e}\``).join("\n") :
 
 ## Key Scripts
 
-${Object.keys(info.scripts).length
-    ? Object.entries(info.scripts).map(([k, v]) => `- \`npm run ${k}\` → ${v}`).join("\n")
-    : "- (none defined)"}
+${formatScriptsTable(info.scripts)}
 
 ## Key Dependencies
 
-${Object.keys(info.deps).length
-    ? Object.entries(info.deps).slice(0, 15).map(([k, v]) => `- ${k}: ${v}`).join("\n") + (Object.keys(info.deps).length > 15 ? `\n- ... (${Object.keys(info.deps).length - 15} more)` : "")
-    : "- (none)"}
+${formatDepsTable(info.deps)}
 
 ## Config Files
 
@@ -823,6 +837,9 @@ ${info.entryPoints.map(e => `- ${e}`).join("\n") || "- (auto-detect)"}
 - Write tests for new features
 - Run tests before committing: ${info.scripts.test || "npm test"}
 
+## Scripts
+${formatScriptsTable(info.scripts)}
+
 ## Architecture
 - Read existing code before making changes
 - Follow the established directory structure
@@ -847,7 +864,7 @@ ${frameworks.length ? `Frameworks: ${frameworks.join(", ")}` : ""}
 - Write tests for new functionality
 
 ## Scripts
-${Object.entries(info.scripts).map(([k, v]) => `- \`npm run ${k}\`: ${v}`).join("\n") || "- (none)"}
+${formatScriptsTable(info.scripts)}
 `;
 }
 
@@ -864,7 +881,7 @@ ${[...langs.entries()].sort((a, b) => b[1] - a[1]).map(([l]) => `- ${l}`).join("
 ${[...new Set(info.frameworks)].map(f => `- ${f}`).join("\n")}
 
 ## Commands
-${Object.entries(info.scripts).map(([k]) => `- \`npm run ${k}\``).join("\n") || "- (check package.json)"}
+${formatScriptsTable(info.scripts)}
 
 ## Structure
 \`\`\`

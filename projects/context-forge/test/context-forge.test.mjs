@@ -21,6 +21,8 @@ import {
   parseConfigFiles,
   generateMermaidDiagram,
   validateContext,
+  formatScriptsTable,
+  formatDepsTable,
 } from "../context-forge.mjs";
 
 // ─── Helpers ─────────────────────────────────────────────────────
