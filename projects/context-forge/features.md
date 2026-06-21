@@ -20,8 +20,8 @@
 
 ### Output Formats
 - [x] **F5**: Mermaid.js diagrams — directory structure visualization ✅ 2026-06-19
-- [ ] **F6**: Markdown tables — better formatted dependency/script lists
-- [ ] **F7**: TOML/YAML export — structured output for other tools
+- [x] **F6**: Markdown tables — better formatted dependency/script lists ✅ 2026-06-21
+- [x] **F7**: TOML/YAML export — structured output for other tools ✅ 2026-06-21
 
 ### Quality & Safety
 - [x] **F9**: File size limits — skip huge files in analysis ✅ 2026-06-19
@@ -31,7 +31,7 @@
 - [ ] **F11**: Watch mode — regenerate on file changes
 - [x] **F12**: Diff preview — show what would change before updating ✅ 2026-06-20
 - [ ] **F13**: Template system — customizable output templates
-- [ ] **F14**: Cache analysis results — faster re-runs
+- [x] **F14**: Cache analysis results — faster re-runs ✅ 2026-06-21
 
 ### Testing & Documentation
 - [x] **F15**: Unit tests for core functions
