@@ -30,7 +30,7 @@
 ### Developer Experience
 - [ ] **F11**: Watch mode — regenerate on file changes
 - [x] **F12**: Diff preview — show what would change before updating ✅ 2026-06-20
-- [ ] **F13**: Template system — customizable output templates
+- [x] **F13**: Template system — customizable output templates ✅ 2026-06-21
 - [x] **F14**: Cache analysis results — faster re-runs ✅ 2026-06-21
 
 ### Testing & Documentation
