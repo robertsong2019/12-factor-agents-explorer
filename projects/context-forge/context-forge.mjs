@@ -1346,17 +1346,17 @@ export function exportYAML(data) {
 export function buildExportData(info, langs, importData, apiSurface, configData, gitInfo) {
   return {
     project: {
-      name: info.name || 'unknown',
-      type: info.type || 'unknown',
-      version: info.version || null,
-      description: info.description || null,
+      name: info.name || info.pkg?.name || 'unknown',
+      type: info.type || info.pkg?.type || 'unknown',
+      version: info.version || info.pkg?.version || null,
+      description: info.description || info.pkg?.description || null,
     },
     languages: Object.fromEntries(langs),
     frameworks: [...new Set(info.frameworks || [])],
     entryPoints: info.entryPoints || [],
-    scripts: info.scripts || {},
-    dependencies: info.dependencies || {},
-    devDependencies: info.devDependencies || {},
+    scripts: info.scripts || info.pkg?.scripts || {},
+    dependencies: info.dependencies || info.deps || info.pkg?.dependencies || {},
+    devDependencies: info.devDependencies || info.pkg?.devDependencies || {},
     imports: {
       total: importData?.allImports?.length || 0,
       unique: importData?.allImports ? [...new Set(importData.allImports)].length : 0,
