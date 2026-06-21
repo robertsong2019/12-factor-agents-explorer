@@ -35,7 +35,7 @@
 
 ### Testing & Documentation
 - [x] **F15**: Unit tests for core functions
-- [ ] **F16**: Integration tests with real projects
+- [x] **F16**: Integration tests with real projects ✅ 2026-06-21
 - [ ] **F17**: Performance benchmarks on large repos
 - [ ] **F18**: Documentation examples for each generated file type
 
