@@ -809,6 +809,77 @@ export function extractTemplateVars(template) {
   return [...vars];
 }
 
+// ─── Template Registry (F13) ───────────────────────────────────────
+
+/**
+ * Built-in named templates that can be referenced via --template=<name>.
+ * Users can override these or add custom ones via registerTemplate().
+ */
+const _templateRegistry = new Map();
+
+export function registerTemplate(name, template) {
+  if (typeof name !== 'string' || typeof template !== 'string') {
+    throw new TypeError('registerTemplate requires (name: string, template: string)');
+  }
+  _templateRegistry.set(name, template);
+}
+
+export function getTemplate(name) {
+  return _templateRegistry.get(name) || null;
+}
+
+export function listTemplates() {
+  return [..._templateRegistry.keys()];
+}
+
+export function removeTemplate(name) {
+  return _templateRegistry.delete(name);
+}
+
+export function clearTemplates() {
+  _templateRegistry.clear();
+}
+
+// Initialize with built-in templates
+registerTemplate('brief', `# {{project.name}} Context Brief
+
+Type: {{project.type}} | Version: {{project.version}}
+Description: {{project.description}}
+
+## Languages
+{{languages}}
+
+## Key Entry Points
+{{entryPoints}}
+
+## Frameworks
+{{frameworks}}
+`);
+
+registerTemplate('json-compact', `{"name":"{{project.name}}","type":"{{project.type}}","version":"{{project.version}}","langs":[{{languages}}],"entry":[{{entryPoints}}]}`);
+
+registerTemplate('dockerfile-hint', `# Dockerfile hints for {{project.name}}
+# Project type: {{project.type}}
+# Primary entry: {{entryPoints}}
+# Dependencies: {{dependencies}}
+# Use this info to choose the right base image and build steps.
+`);
+
+/**
+ * Generate output from a named template using analysis data.
+ * Falls back to inline template string if name not found.
+ */
+export function generateFromTemplate(templateOrName, data) {
+  let template;
+  if (_templateRegistry.has(templateOrName)) {
+    template = _templateRegistry.get(templateOrName);
+  } else {
+    template = templateOrName; // treat as inline template string
+  }
+  const result = applyTemplate(template, data);
+  return result;
+}
+
 // ─── Table Formatters (F6) ──────────────────────────────────────
 
 export function formatScriptsTable(scripts, max = 20) {
