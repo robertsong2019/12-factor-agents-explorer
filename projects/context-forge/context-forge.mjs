@@ -14,7 +14,7 @@
 
 import { readdir, readFile, writeFile, stat, mkdir } from "node:fs/promises";
 import { join, basename, extname, relative, sep } from "node:path";
-import { existsSync as fsExistsSync } from "node:fs";
+import { existsSync as fsExistsSync, unlinkSync as fsUnlinkSync } from "node:fs";
 
 export const existsSync = fsExistsSync;
 
@@ -725,6 +725,44 @@ export async function generateMermaidDiagram(root, maxDepth = 2, depth = 0, giti
   await walk(root, rootId, basename(root), 0);
 
   return lines.join("\n");
+}
+
+// ─── Analysis Cache (F14) ─────────────────────────────────────
+
+export async function loadCache(root) {
+  const cachePath = join(root, ".context-forge-cache.json");
+  if (!fsExistsSync(cachePath)) return null;
+  try {
+    const raw = JSON.parse(await readFile(cachePath, "utf8"));
+    // Check root directory mtime hasn't changed since cache was saved
+    const rootStat = await stat(root);
+    // Allow 2-second tolerance for filesystem mtime granularity
+    if (raw.rootMtime && Math.abs(rootStat.mtimeMs - raw.rootMtime) <= 2000) {
+      return raw;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCache(root, data) {
+  const cachePath = join(root, ".context-forge-cache.json");
+  const rootStat = await stat(root);
+  const cache = {
+    rootMtime: rootStat.mtimeMs,
+    version: 1,
+    ...data,
+  };
+  await writeFile(cachePath, JSON.stringify(cache, null, 2), "utf8");
+  return cache;
+}
+
+export function invalidateCache(root) {
+  const cachePath = join(root, ".context-forge-cache.json");
+  if (fsExistsSync(cachePath)) {
+    try { fsUnlinkSync(cachePath); } catch {}
+  }
 }
 
 // ─── Table Formatters (F6) ──────────────────────────────────────
