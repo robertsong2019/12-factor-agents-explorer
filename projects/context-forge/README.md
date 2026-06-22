@@ -33,6 +33,21 @@ context-forge /path/to/my-project --dry-run
 - 🧩 **Template system** — register/load/customize output templates (F13)
 - ⚡ **Analysis cache** — faster re-runs with mtime-based invalidation (F14)
 - 🧪 **Integration tested** against real projects (F16)
+- 📊 **Complexity analysis** — Shannon diversity, category scoring, 0-100 metrics (F17)
+- 🔄 **Project comparison** — diff two analyses with trend detection (F18)
+- 🏥 **Health score & stale detection** — 8-check project health, A-F grade (F19)
+- 📊 **Dependency graph** — adjacency list, circular deps, visual format (F20)
+- 🔧 **Tech stack inference** — 35+ signatures, confidence scoring (F21)
+- 👯 **Duplicate detection** — shared imports + identical signatures (F22)
+- 📈 **Project statistics** — maturity, config coverage, test/code ratio (F23)
+- 🚪 **Entry point analysis** — type classification, orphan detection (F24)
+- ⚠️ **Dependency risk audit** — pinning, abandoned packages, A-F grading (F25)
+- 🎯 **Quality signals** — 6 dimensions: typesafety, testing, linting, formatting, CI, docs (F26)
+- 🏗️ **Monorepo workspace** — pnpm/npm/yarn/turbo/lerna/nx detection (F27)
+- 📝 **TODO extraction** — scan and categorize TODO/FIXME/HACK comments (F28)
+- 🔐 **Env var detection** — find hardcoded env references and secrets (F29)
+- 📜 **License detection** — SPDX identification + compatibility checks (F30)
+- ⏳ **Bi-temporal validity** — time-window edge tracking, point-in-time queries (F31)
 - ⚡ **Zero deps** — single file, runs with Node.js
 
 ## Usage
@@ -140,6 +155,186 @@ ccontext-forge ~/project --format=toml > project.toml
 
 # YAML — works with k8s, CI/CD, etc.
 ccontext-forge ~/project --format=yaml > project.yaml
+```
+
+---
+
+## Advanced Analysis (F17–F27)
+
+### Complexity Analysis (F17)
+
+```javascript
+import { analyzeComplexity, summarizeAnalysis } from './context-forge.mjs'
+
+const complexity = analyzeComplexity(info, langs, importData, apiSurface, configData)
+// { diversityIndex: 2.31,         // Shannon entropy
+//   category: 'moderate',          // minimal|simple|moderate|complex
+//   score: 67,                     // 0-100
+//   factors: { languages: 3, deps: 24, exports: 45 } }
+
+const summary = summarizeAnalysis(info, langs, complexity)
+// Markdown report string for documentation
+```
+
+### Project Comparison (F18)
+
+```javascript
+import { compareProjects, formatComparison } from './context-forge.mjs'
+
+const changes = compareProjects(beforeAnalysis, afterAnalysis)
+// { languages: {added: [...], removed: [...]}, deps: {...}, trends: {...} }
+
+const report = formatComparison(changes)  // Markdown diff report
+```
+
+### Health Score & Stale Detection (F19)
+
+```javascript
+import { detectStaleFiles, computeHealthScore } from './context-forge.mjs'
+
+const stale = await detectStaleFiles(root, generatedFiles)
+// Files referenced in context that no longer exist
+
+const health = computeHealthScore(info, langs, importData, apiSurface, configData, issues)
+// { score: 82, grade: 'B+', checks: {entryPoints: 'pass', scripts: 'warn', ...} }
+```
+
+### Dependency Graph (F20)
+
+```javascript
+import { buildDependencyGraph, findCircularDependencies, formatDependencyGraph } from './context-forge.mjs'
+
+const graph = buildDependencyGraph(importData)
+// { adjacency: { './db': ['./db/users', './db/posts'], ... },
+//   reverse: { ... }, stats: { totalModules: 20, totalEdges: 35 } }
+
+const circles = findCircularDependencies(importData)  // → [['./a', './b', './a']]
+const report  = formatDependencyGraph(graph)           // → Markdown table
+```
+
+### Tech Stack Inference (F21)
+
+```javascript
+import { inferTechStack, formatTechStack } from './context-forge.mjs'
+
+const stack = inferTechStack(info, langs, importData, configData)
+// { Frontend: [{name: 'React', confidence: 0.95}],
+//   Backend:  [{name: 'Express', confidence: 0.80}],
+//   Testing:  [{name: 'Vitest', confidence: 0.90}] }
+```
+
+### Duplicate Detection (F22)
+
+```javascript
+import { findDuplicateImports, formatDuplicateReport } from './context-forge.mjs'
+
+const dups = findDuplicateImports(importData)
+// { shared: [{imports: ['lodash'], count: 5}],
+//   identical: [{signature: 'default-export', files: [...]}] }
+```
+
+### Project Statistics (F23)
+
+```javascript
+import { computeProjectStats, formatProjectStats } from './context-forge.mjs'
+
+const stats = computeProjectStats(info, langs, importData, apiSurface, configData, complexity)
+// { maturity: 'beta', testToCodeRatio: 0.35, configCoverage: 0.80, topLanguages: [...] }
+```
+
+### Entry Point Analysis (F24)
+
+```javascript
+import { analyzeEntryPoints, formatEntryPointAnalysis } from './context-forge.mjs'
+
+const entries = analyzeEntryPoints(info, importData, apiSurface)
+// [{ file: 'src/index.ts', type: 'entry', importedBy: 12, isOrphan: false }]
+```
+
+### Dependency Risk Audit (F25)
+
+```javascript
+import { auditDependencies, formatRiskAudit } from './context-forge.mjs'
+
+const audit = auditDependencies(info)
+// { riskGrade: 'B', issues: [{type: 'unpinned', pkg: 'lodash'}], score: 72 }
+```
+
+### Quality Signals (F26)
+
+```javascript
+import { detectQualitySignals, formatQualitySignals } from './context-forge.mjs'
+
+const quality = detectQualitySignals(info, langs, importData, apiSurface, configData)
+// { overall: 'B', dimensions: { typesafety: 'A', testing: 'B', linting: 'C', ... } }
+```
+
+### Monorepo Workspace (F27)
+
+```javascript
+import { detectWorkspaces, analyzeWorkspace, formatWorkspaceAnalysis } from './context-forge.mjs'
+
+const workspaces = await detectWorkspaces(root)
+// ['packages/*', 'apps/*']
+
+const analysis = await analyzeWorkspace(root, workspaces)
+// { packages: [{name, path, deps, internalDeps}], internalLinks: [...] }
+```
+
+## Code Scanning (F28–F30)
+
+### TODO Extraction (F28)
+
+```javascript
+import { extractTODOComments, formatTODOReport } from './context-forge.mjs'
+
+const todos = await extractTODOComments(root)
+// [{ file: 'src/db.ts', line: 42, type: 'TODO', author: 'alice', text: 'refactor' }]
+```
+
+### Environment Variable Detection (F29)
+
+```javascript
+import { detectEnvVars, formatEnvVarsReport } from './context-forge.mjs'
+
+const env = await detectEnvVars(root)
+// { declared: ['DATABASE_URL', 'PORT'], hardcoded: [{file, line, var}], missing: [...] }
+```
+
+### License Detection (F30)
+
+```javascript
+import { detectLicense, formatLicenseInfo } from './context-forge.mjs'
+
+const license = await detectLicense(root)
+// { spdx: 'MIT', source: 'package.json', compatible: ['Apache-2.0', 'BSD-3-Clause'] }
+```
+
+## Bi-Temporal Validity (F31)
+
+Time-window edge tracking for dependency graphs.
+
+```javascript
+import {
+  edge_set_validity, edge_invalidate, edge_valid_at,
+  temporal_snapshot, edge_temporal_history
+} from './context-forge.mjs'
+
+// Set validity window on an edge
+edge_set_validity(graph, './a', './b', { valid_from: '2026-01-01', valid_until: '2026-06-01' })
+
+// Invalidate an edge (with audit trail)
+edge_invalidate(graph, './a', './b', { reason: 'refactored out' })
+
+// Check if edge was valid at a specific time
+edge_valid_at(graph, './a', './b', '2026-03-15')  // → true
+
+// Time-travel: all valid edges at time T
+temporal_snapshot(graph, '2026-03-15')
+
+// Per-node temporal history
+edge_temporal_history(graph, './a')
+// [{ edge: './a→./b', valid_from: ..., valid_until: ..., status: 'invalidated' }]
 ```
 
 ---
