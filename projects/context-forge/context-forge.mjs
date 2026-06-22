@@ -1577,6 +1577,117 @@ export function formatComparison(changes) {
   return lines.join('\n');
 }
 
+// ─── Stale File Detection ──────────────────────────────────────
+
+export async function detectStaleFiles(root, generatedFiles) {
+  const stale = [];
+  const info = await detectProject(root);
+
+  for (const { file } of generatedFiles) {
+    const filePath = join(root, file);
+    if (!existsSync(filePath)) continue;
+
+    const content = await readFile(filePath, "utf8");
+
+    // Extract file path references from content (e.g., `src/index.js`, `./lib/utils.ts`)
+    const pathPattern = /[A-Za-z_][\w-]*(?:\.[\w-]+)+[\w./-]*/g;
+    const checked = new Set();
+
+    for (const m of content.matchAll(pathPattern)) {
+      const ref = m[0];
+      if (checked.has(ref)) continue;
+      checked.add(ref);
+
+      // Skip URLs, version numbers, node_modules
+      if (/^\d/.test(ref) || ref.includes('://') || ref.startsWith('node_modules')) continue;
+      // Skip the generated file itself
+      if (ref === file) continue;
+      // Skip common non-file patterns
+      if (!/\.(js|ts|mjs|jsx|tsx|py|go|rs|java|c|cpp|h|rb|php|sh|json|ya?ml|toml|md)$/i.test(ref)) continue;
+
+      const relPath = ref.startsWith('./') ? ref.slice(2) : ref;
+      const absPath = join(root, relPath);
+
+      if (!existsSync(absPath)) {
+        stale.push({ file, reference: ref, message: `Referenced file '${ref}' not found` });
+      }
+    }
+
+    // Check for stale entry points
+    for (const ep of info.entryPoints || []) {
+      if (!existsSync(join(root, ep))) {
+        stale.push({ file, reference: ep, message: `Entry point '${ep}' does not exist` });
+      }
+    }
+  }
+
+  // Deduplicate by file+reference
+  const seen = new Set();
+  return stale.filter(s => {
+    const key = `${s.file}:${s.reference}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ─── Project Health Score ───────────────────────────────────────
+
+export function computeHealthScore(info, langs, importData, apiSurface, configData, validationIssues) {
+  const checks = [];
+  const issues = validationIssues || [];
+  const errorCount = issues.filter(i => i.severity === 'error').length;
+  const warningCount = issues.filter(i => i.severity === 'warning').length;
+
+  // 1. Entry points exist
+  const entryPoints = info.entryPoints || [];
+  const entryValid = entryPoints.length > 0;
+  checks.push({ name: 'entryPoints', passed: entryValid, detail: entryValid ? `${entryPoints.length} found` : 'none detected' });
+
+  // 2. Scripts defined
+  const scripts = info.scripts || info.pkg?.scripts || {};
+  const scriptCount = Object.keys(scripts).length;
+  const scriptsOk = scriptCount > 0;
+  checks.push({ name: 'scripts', passed: scriptsOk, detail: `${scriptCount} scripts` });
+
+  // 3. Dependencies documented
+  const depCount = Object.keys(info.dependencies || info.pkg?.dependencies || {}).length;
+  const depsOk = depCount > 0;
+  checks.push({ name: 'dependencies', passed: depsOk, detail: `${depCount} packages` });
+
+  // 4. No validation errors
+  const noErrors = errorCount === 0;
+  checks.push({ name: 'noErrors', passed: noErrors, detail: `${errorCount} errors` });
+
+  // 5. No validation warnings
+  const noWarnings = warningCount === 0;
+  checks.push({ name: 'noWarnings', passed: noWarnings, detail: `${warningCount} warnings` });
+
+  // 6. Languages detected
+  const langOk = langs.size > 0;
+  checks.push({ name: 'languages', passed: langOk, detail: `${langs.size} detected` });
+
+  // 7. Config files present
+  const configOk = configData && Object.keys(configData).length > 0;
+  checks.push({ name: 'configs', passed: configOk, detail: configOk ? `${Object.keys(configData).length} found` : 'none' });
+
+  // 8. API surface detected
+  const apiOk = apiSurface && apiSurface.length > 0;
+  checks.push({ name: 'apiSurface', passed: apiOk, detail: apiOk ? `${apiSurface.length} exports` : 'none' });
+
+  const passed = checks.filter(c => c.passed).length;
+  const score = Math.round((passed / checks.length) * 100);
+
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 75) grade = 'B';
+  else if (score >= 50) grade = 'C';
+  else if (score >= 25) grade = 'D';
+  else grade = 'F';
+
+  return { score, grade, passed: passed, total: checks.length, checks };
+}
+
 export function buildExportData(info, langs, importData, apiSurface, configData, gitInfo) {
   return {
     project: {
