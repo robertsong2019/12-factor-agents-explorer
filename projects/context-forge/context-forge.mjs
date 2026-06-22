@@ -2009,6 +2009,154 @@ export function formatDuplicateReport(duplicates) {
   return lines.join('\n');
 }
 
+// ─── Project Statistics (F23) ───────────────────────────────────
+
+export function computeProjectStats(info, langs, importData, apiSurface, configData, complexity) {
+  const langEntries = [...langs.entries()].sort((a, b) => b[1] - a[1]);
+  const totalFiles = langEntries.reduce((s, [, c]) => s + c, 0);
+  const allDeps = { ...(info.dependencies || info.pkg?.dependencies || {}) };
+  const allDevDeps = { ...(info.devDependencies || info.pkg?.devDependencies || {}) };
+  const depCount = Object.keys(allDeps).length;
+  const devDepCount = Object.keys(allDevDeps).length;
+  const scriptCount = Object.keys(info.scripts || info.pkg?.scripts || {}).length;
+  const entryCount = (info.entryPoints || []).length;
+
+  // Dependency ratio (deps per file)
+  const depToFileRatio = totalFiles > 0 ? Math.round((depCount / totalFiles) * 100) / 100 : 0;
+
+  // Test-to-code ratio (approximation: count test files from imports)
+  const testFilePattern = /^(test|tests|spec|specs|__tests__)[/\\]|\.(test|spec)\./;
+  let testFileCount = 0;
+  if (importData?.imports) {
+    for (const [file] of importData.imports) {
+      if (testFilePattern.test(file)) testFileCount++;
+    }
+  }
+  const codeFileCount = Math.max(totalFiles - testFileCount, 1);
+  const testToCodeRatio = Math.round((testFileCount / codeFileCount) * 100) / 100;
+
+  // Config coverage (% of expected configs present)
+  const expectedConfigs = ['tsconfig.json', '.eslintrc', '.prettierrc', 'Dockerfile', 'package.json', 'README.md'];
+  const presentConfigs = (configData ? Object.keys(configData) : []).concat(info.configFiles || []);
+  const configCoverage = expectedConfigs.filter(c =>
+    presentConfigs.some(p => p.includes(c.replace(/^\./, '')))
+  ).length / expectedConfigs.length;
+
+  // Maturity indicators
+  const hasReadme = !!(info.configFiles || []).some(f => f.includes('README')) || !!(info.readme);
+  const hasLicense = !!(info.configFiles || []).some(f => f.includes('LICENSE')) || !!(info.license);
+  const hasCI = !!(info.configFiles || []).some(f => f.includes('workflows')) || !!(configData && configData['.github/workflows']);
+  const hasTests = testFileCount > 0;
+  const hasDocker = !!(info.configFiles || []).some(f => f.includes('Dockerfile'));
+
+  const maturityChecks = { hasReadme, hasLicense, hasCI, hasTests, hasDocker };
+  const maturityScore = Object.values(maturityChecks).filter(Boolean).length / 5;
+
+  return {
+    fileStats: { total: totalFiles, code: codeFileCount, tests: testFileCount, testToCodeRatio },
+    depStats: { production: depCount, dev: devDepCount, total: depCount + devDepCount, depToFileRatio },
+    scriptCount,
+    entryCount,
+    apiSurfaceCount: apiSurface?.length || 0,
+    configCoverage: Math.round(configCoverage * 100) / 100,
+    maturity: { ...maturityChecks, score: Math.round(maturityScore * 100) / 100, grade: maturityScore >= 0.8 ? 'A' : maturityScore >= 0.6 ? 'B' : maturityScore >= 0.4 ? 'C' : 'D' },
+    topLanguages: langEntries.slice(0, 5).map(([lang, count]) => ({ language: lang, files: count, pct: totalFiles > 0 ? Math.round((count / totalFiles) * 100) : 0 })),
+  };
+}
+
+export function formatProjectStats(stats) {
+  const lines = ['# Project Statistics', ''];
+  lines.push('## Files');
+  lines.push(`| Metric | Value |`);
+  lines.push(`|--------|-------|`);
+  lines.push(`| Total Files | ${stats.fileStats.total} |`);
+  lines.push(`| Code Files | ${stats.fileStats.code} |`);
+  lines.push(`| Test Files | ${stats.fileStats.tests} |`);
+  lines.push(`| Test/Code Ratio | ${stats.fileStats.testToCodeRatio} |`);
+  lines.push('');
+  lines.push('## Dependencies');
+  lines.push(`| Production Deps | ${stats.depStats.production} |`);
+  lines.push(`| Dev Deps | ${stats.depStats.dev} |`);
+  lines.push(`| Total Deps | ${stats.depStats.total} |`);
+  lines.push(`| Dep/File Ratio | ${stats.depStats.depToFileRatio} |`);
+  lines.push('');
+  lines.push('## Maturity');
+  lines.push(`- README: ${stats.maturity.hasReadme ? '✅' : '❌'}`);
+  lines.push(`- License: ${stats.maturity.hasLicense ? '✅' : '❌'}`);
+  lines.push(`- CI/CD: ${stats.maturity.hasCI ? '✅' : '❌'}`);
+  lines.push(`- Tests: ${stats.maturity.hasTests ? '✅' : '❌'}`);
+  lines.push(`- Docker: ${stats.maturity.hasDocker ? '✅' : '❌'}`);
+  lines.push(`- **Score: ${stats.maturity.grade} (${Math.round(stats.maturity.score * 100)}%)**`);
+  lines.push('');
+  lines.push('## Top Languages');
+  for (const { language, files, pct } of stats.topLanguages) {
+    lines.push(`- ${language}: ${files} (${pct}%)`);
+  }
+  return lines.join('\n');
+}
+
+// ─── Entry Point Analysis (F24) ──────────────────────────────────
+
+export function analyzeEntryPoints(info, importData, apiSurface) {
+  const entryPoints = info.entryPoints || [];
+  const importMap = importData?.imports || new Map();
+  const apiSet = new Set((apiSurface || []).map(a => a.name));
+
+  return entryPoints.map(ep => {
+    const epNormalized = ep.replace(/^\.\//, '').replace(/^\//, '');
+    // Check if entry point is in the import graph (other files import it)
+    const importedBy = [];
+    for (const [file, deps] of importMap) {
+      if (deps.some(d => d.includes(epNormalized) || epNormalized.includes(d))) {
+        importedBy.push(file);
+      }
+    }
+
+    // Check if entry point exports API surface
+    const exports = [];
+    for (const api of apiSurface || []) {
+      if (api.file && (api.file.includes(epNormalized) || epNormalized.includes(api.file))) {
+        exports.push(api.name);
+      }
+    }
+
+    // Classify entry point type
+    let type = 'unknown';
+    if (ep.includes('bin/') || ep.includes('cli')) type = 'cli';
+    else if (ep.includes('server') || ep.includes('app')) type = 'server';
+    else if (ep.includes('index') || ep.includes('main')) type = 'library';
+    else if (ep.includes('test')) type = 'test';
+
+    return {
+      path: ep,
+      type,
+      importedBy: importedBy.sort(),
+      importedByCount: importedBy.length,
+      exports: exports.slice(0, 20),
+      exportCount: exports.length,
+      isOrphan: importedBy.length === 0 && exports.length === 0,
+    };
+  });
+}
+
+export function formatEntryPointAnalysis(analysis) {
+  const lines = ['# Entry Point Analysis', ''];
+  for (const ep of analysis) {
+    lines.push(`## ${ep.path}`);
+    lines.push(`- **Type:** ${ep.type}`);
+    lines.push(`- **Imported by:** ${ep.importedByCount} file${ep.importedByCount !== 1 ? 's' : ''}`);
+    if (ep.importedBy.length > 0 && ep.importedBy.length <= 5) {
+      for (const f of ep.importedBy) lines.push(`  - ${f}`);
+    }
+    lines.push(`- **Exports:** ${ep.exportCount}`);
+    if (ep.isOrphan) {
+      lines.push(`- ⚠️ **Orphaned** — not imported or exported`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
 export function buildExportData(info, langs, importData, apiSurface, configData, gitInfo) {
   return {
     project: {
