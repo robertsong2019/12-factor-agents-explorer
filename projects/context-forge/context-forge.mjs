@@ -1343,6 +1343,100 @@ export function exportYAML(data) {
 /**
  * Build a structured analysis object suitable for TOML/YAML/JSON export.
  */
+// ─── Complexity Analysis ─────────────────────────────────────────
+
+export function analyzeComplexity(info, langs, importData, apiSurface, configData) {
+  const langEntries = [...langs.entries()];
+  const totalFiles = langEntries.reduce((s, [, c]) => s + c, 0);
+  const totalDeps = Object.keys(info.dependencies || info.pkg?.dependencies || {}).length;
+  const totalDevDeps = Object.keys(info.devDependencies || info.pkg?.devDependencies || {}).length;
+  const totalScripts = Object.keys(info.scripts || info.pkg?.scripts || {}).length;
+  const totalEntryPoints = (info.entryPoints || []).length;
+  const totalImports = importData?.allImports?.length || 0;
+  const uniqueImports = importData?.allImports ? new Set(importData.allImports).size : 0;
+  const apiCount = apiSurface?.length || 0;
+  const configCount = configData ? Object.keys(configData).length : 0;
+
+  // Language diversity (Shannon entropy, normalized 0-1)
+  let entropy = 0;
+  for (const [, count] of langEntries) {
+    if (count > 0 && totalFiles > 0) {
+      const p = count / totalFiles;
+      entropy -= p * Math.log2(p);
+    }
+  }
+  const maxEntropy = Math.log2(Math.max(langEntries.length, 1));
+  const languageDiversity = maxEntropy > 0 ? entropy / maxEntropy : 0;
+
+  // Dominant language share (0-1)
+  const dominantShare = totalFiles > 0
+    ? Math.max(...langEntries.map(([, c]) => c)) / totalFiles
+    : 0;
+
+  // Complexity score (0-100): weighted sum of factors
+  const depScore = Math.min(totalDeps * 2, 30);    // max 30 from deps
+  const fileScore = Math.min(totalFiles, 25);        // max 25 from files
+  const importScore = Math.min(uniqueImports, 20);   // max 20 from unique imports
+  const apiScore = Math.min(apiCount, 15);           // max 15 from API surface
+  const configScore = Math.min(configCount * 2, 10); // max 10 from configs
+  const complexityScore = Math.round(depScore + fileScore + importScore + apiScore + configScore);
+
+  // Size category
+  const category = complexityScore < 20 ? 'minimal'
+    : complexityScore < 40 ? 'small'
+    : complexityScore < 60 ? 'medium'
+    : complexityScore < 80 ? 'large'
+    : 'enterprise';
+
+  return {
+    totalFiles,
+    totalDeps,
+    totalDevDeps,
+    totalScripts,
+    totalEntryPoints,
+    totalImports,
+    uniqueImports,
+    apiCount,
+    configCount,
+    languageDiversity: Math.round(languageDiversity * 100) / 100,
+    dominantShare: Math.round(dominantShare * 100) / 100,
+    dominantLanguage: langEntries.sort((a, b) => b[1] - a[1])[0]?.[0] || 'unknown',
+    complexityScore,
+    category,
+  };
+}
+
+export function summarizeAnalysis(info, langs, complexity) {
+  const lines = [];
+  const c = complexity || {};
+  lines.push(`# Analysis Summary`);
+  lines.push('');
+  lines.push(`**Project:** ${info.name || info.pkg?.name || 'unknown'}`);
+  lines.push(`**Type:** ${info.type || 'unknown'}`);
+  lines.push(`**Complexity:** ${c.complexityScore ?? 'N/A'}/100 (${c.category ?? 'unknown'})`);
+  lines.push('');
+  lines.push('## Metrics');
+  lines.push(`| Metric | Value |`);
+  lines.push(`|--------|-------|`);
+  lines.push(`| Files | ${c.totalFiles ?? 'N/A'} |`);
+  lines.push(`| Dependencies | ${c.totalDeps ?? 'N/A'} |`);
+  lines.push(`| Dev Dependencies | ${c.totalDevDeps ?? 'N/A'} |`);
+  lines.push(`| Scripts | ${c.totalScripts ?? 'N/A'} |`);
+  lines.push(`| Entry Points | ${c.totalEntryPoints ?? 'N/A'} |`);
+  lines.push(`| Unique Imports | ${c.uniqueImports ?? 'N/A'} |`);
+  lines.push(`| API Surface | ${c.apiCount ?? 'N/A'} |`);
+  lines.push(`| Languages | ${langs.size} |`);
+  lines.push(`| Language Diversity | ${c.languageDiversity ?? 'N/A'} |`);
+  lines.push(`| Dominant Language | ${c.dominantLanguage ?? 'N/A'} (${Math.round((c.dominantShare || 0) * 100)}%) |`);
+  lines.push('');
+  lines.push('## Language Breakdown');
+  for (const [lang, count] of [...langs.entries()].sort((a, b) => b[1] - a[1])) {
+    const pct = c.totalFiles > 0 ? Math.round((count / c.totalFiles) * 100) : 0;
+    lines.push(`- **${lang}**: ${count} files (${pct}%)`);
+  }
+  return lines.join('\n');
+}
+
 export function buildExportData(info, langs, importData, apiSurface, configData, gitInfo) {
   return {
     project: {
