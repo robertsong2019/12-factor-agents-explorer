@@ -1437,6 +1437,146 @@ export function summarizeAnalysis(info, langs, complexity) {
   return lines.join('\n');
 }
 
+// ─── Project Comparison ──────────────────────────────────────────
+
+export function compareProjects(before, after) {
+  const changes = {
+    added: [],
+    removed: [],
+    changed: [],
+    summary: { totalChanges: 0, trend: 'stable' },
+  };
+
+  // Compare languages
+  const beforeLangs = new Map(before.languages || []);
+  const afterLangs = new Map(after.languages || []);
+  const allLangs = new Set([...beforeLangs.keys(), ...afterLangs.keys()]);
+  for (const lang of allLangs) {
+    const b = beforeLangs.get(lang) || 0;
+    const a = afterLangs.get(lang) || 0;
+    if (b === 0 && a > 0) {
+      changes.added.push({ type: 'language', name: lang, value: a });
+    } else if (a === 0 && b > 0) {
+      changes.removed.push({ type: 'language', name: lang, value: b });
+    } else if (a !== b) {
+      changes.changed.push({ type: 'language', name: lang, before: b, after: a, delta: a - b });
+    }
+  }
+
+  // Compare dependencies
+  const beforeDeps = new Map(Object.entries(before.dependencies || {}));
+  const afterDeps = new Map(Object.entries(after.dependencies || {}));
+  const allDeps = new Set([...beforeDeps.keys(), ...afterDeps.keys()]);
+  for (const dep of allDeps) {
+    const b = beforeDeps.get(dep);
+    const a = afterDeps.get(dep);
+    if (!b && a) {
+      changes.added.push({ type: 'dependency', name: dep, value: a });
+    } else if (b && !a) {
+      changes.removed.push({ type: 'dependency', name: dep, value: b });
+    } else if (b !== a) {
+      changes.changed.push({ type: 'dependency', name: dep, before: b, after: a });
+    }
+  }
+
+  // Compare scripts
+  const beforeScripts = new Map(Object.entries(before.scripts || {}));
+  const afterScripts = new Map(Object.entries(after.scripts || {}));
+  const allScripts = new Set([...beforeScripts.keys(), ...afterScripts.keys()]);
+  for (const script of allScripts) {
+    const b = beforeScripts.get(script);
+    const a = afterScripts.get(script);
+    if (!b && a) {
+      changes.added.push({ type: 'script', name: script, value: a });
+    } else if (b && !a) {
+      changes.removed.push({ type: 'script', name: script, value: b });
+    } else if (b !== a) {
+      changes.changed.push({ type: 'script', name: script, before: b, after: a });
+    }
+  }
+
+  // Compare entry points
+  const beforeEP = new Set(before.entryPoints || []);
+  const afterEP = new Set(after.entryPoints || []);
+  for (const ep of afterEP) {
+    if (!beforeEP.has(ep)) changes.added.push({ type: 'entryPoint', name: ep });
+  }
+  for (const ep of beforeEP) {
+    if (!afterEP.has(ep)) changes.removed.push({ type: 'entryPoint', name: ep });
+  }
+
+  // Compare complexity if available
+  if (before.complexityScore !== undefined && after.complexityScore !== undefined) {
+    const delta = after.complexityScore - before.complexityScore;
+    if (delta !== 0) {
+      changes.changed.push({
+        type: 'complexity',
+        name: 'complexityScore',
+        before: before.complexityScore,
+        after: after.complexityScore,
+        delta,
+      });
+    }
+  }
+
+  // Compute summary
+  changes.summary.totalChanges = changes.added.length + changes.removed.length + changes.changed.length;
+  if (changes.summary.totalChanges === 0) {
+    changes.summary.trend = 'stable';
+  } else if (changes.added.length > changes.removed.length) {
+    changes.summary.trend = 'growing';
+  } else if (changes.removed.length > changes.added.length) {
+    changes.summary.trend = 'shrinking';
+  } else {
+    changes.summary.trend = 'changing';
+  }
+
+  return changes;
+}
+
+export function formatComparison(changes) {
+  const lines = [];
+  const { added, removed, changed, summary } = changes;
+
+  lines.push(`# Project Comparison`);
+  lines.push('');
+  lines.push(`**Total changes:** ${summary.totalChanges}`);
+  lines.push(`**Trend:** ${summary.trend}`);
+  lines.push('');
+
+  if (added.length > 0) {
+    lines.push('## Added ✅');
+    for (const item of added) {
+      const val = item.value ? ` (${item.value})` : '';
+      lines.push(`- [${item.type}] ${item.name}${val}`);
+    }
+    lines.push('');
+  }
+
+  if (removed.length > 0) {
+    lines.push('## Removed ❌');
+    for (const item of removed) {
+      const val = item.value ? ` (${item.value})` : '';
+      lines.push(`- [${item.type}] ${item.name}${val}`);
+    }
+    lines.push('');
+  }
+
+  if (changed.length > 0) {
+    lines.push('## Changed 🔄');
+    for (const item of changed) {
+      if (item.delta !== undefined) {
+        const sign = item.delta > 0 ? '+' : '';
+        lines.push(`- [${item.type}] ${item.name}: ${item.before} → ${item.after} (${sign}${item.delta})`);
+      } else {
+        lines.push(`- [${item.type}] ${item.name}: ${item.before} → ${item.after}`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
 export function buildExportData(info, langs, importData, apiSurface, configData, gitInfo) {
   return {
     project: {
