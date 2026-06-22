@@ -13246,3 +13246,169 @@ class TestConsolidationPriority:
             assert "qvalue" in r
             assert "attention" in r
             assert "recommendation" in r
+
+
+# ══════════════════════════════════════════════════════════════
+# Bi-Temporal Validity Tracking Tests
+# ══════════════════════════════════════════════════════════════
+
+class TestBiTemporalValidity:
+    """Tests for edge bi-temporal validity: set_validity, invalidate, valid_at, snapshot, history."""
+
+    def test_edge_set_validity_basic(self, mg):
+        """Set validity window on an edge and verify stored properties."""
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "knows")
+        t0 = time.time() - 100
+        result = mg.edge_set_validity(a.id, b.id, "knows", valid_from=t0)
+        assert result is not None
+        assert result["valid_from"] == t0
+        assert result["valid_until"] is None  # open-ended
+
+    def test_edge_set_validity_with_until(self, mg):
+        """Set both valid_from and valid_until."""
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        t0 = time.time() - 200
+        t1 = time.time() - 50
+        result = mg.edge_set_validity(a.id, b.id, "r", valid_from=t0, valid_until=t1)
+        assert result["valid_from"] == t0
+        assert result["valid_until"] == t1
+
+    def test_edge_set_validity_nonexistent_edge(self, mg):
+        """Setting validity on non-existent edge returns None."""
+        result = mg.edge_set_validity("nope", "nada", "relation")
+        assert result is None
+
+    def test_edge_invalidate_basic(self, mg):
+        """Invalidate an edge and verify valid_until is set."""
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "works_with")
+        before = time.time()
+        result = mg.edge_invalidate(a.id, b.id, "works_with", invalidated_by="system")
+        after = time.time()
+        assert result is not None
+        assert result["valid_until"] is not None
+        assert before <= result["valid_until"] <= after
+        assert result["invalidated_by"] == "system"
+
+    def test_edge_invalidate_idempotent(self, mg):
+        """Invalidating an already-invalidated edge is a no-op."""
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        first = mg.edge_invalidate(a.id, b.id, "r")
+        time.sleep(0.01)
+        second = mg.edge_invalidate(a.id, b.id, "r")
+        assert first["valid_until"] == second["valid_until"]  # unchanged
+
+    def test_edge_invalidate_nonexistent(self, mg):
+        """Invalidating non-existent edge returns None."""
+        assert mg.edge_invalidate("x", "y", "z") is None
+
+    def test_edge_valid_at_no_temporal(self, mg):
+        """Edge without temporal info is always valid."""
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.edge_valid_at(a.id, b.id, "r") is True
+        assert mg.edge_valid_at(a.id, b.id, "r", timestamp=0) is True
+
+    def test_edge_valid_at_within_window(self, mg):
+        """Edge is valid within [valid_from, valid_until)."""
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        t0 = 1000.0
+        t1 = 2000.0
+        mg.edge_set_validity(a.id, b.id, "r", valid_from=t0, valid_until=t1)
+        assert mg.edge_valid_at(a.id, b.id, "r", timestamp=1500) is True
+        assert mg.edge_valid_at(a.id, b.id, "r", timestamp=t0) is True
+
+    def test_edge_valid_at_outside_window(self, mg):
+        """Edge is invalid outside the validity window."""
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        t0 = 1000.0
+        t1 = 2000.0
+        mg.edge_set_validity(a.id, b.id, "r", valid_from=t0, valid_until=t1)
+        assert mg.edge_valid_at(a.id, b.id, "r", timestamp=500) is False   # before
+        assert mg.edge_valid_at(a.id, b.id, "r", timestamp=t1) is False    # at valid_until
+        assert mg.edge_valid_at(a.id, b.id, "r", timestamp=3000) is False  # after
+
+    def test_edge_valid_at_after_invalidation(self, mg):
+        """Edge invalidated is no longer valid at current time."""
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        mg.edge_invalidate(a.id, b.id, "r")
+        assert mg.edge_valid_at(a.id, b.id, "r") is False  # now
+
+    def test_edge_valid_at_nonexistent_edge(self, mg):
+        """Non-existent edge is not valid."""
+        assert mg.edge_valid_at("x", "y", "z") is False
+
+    def test_temporal_snapshot_all_valid(self, mg):
+        """Snapshot includes all edges without temporal info."""
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r1")
+        mg.link(b.id, c.id, "r2")
+        snap = mg.temporal_snapshot()
+        assert len(snap) == 2
+
+    def test_temporal_snapshot_with_invalidation(self, mg):
+        """Snapshot excludes invalidated edges at current time."""
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r1")
+        mg.link(b.id, c.id, "r2")
+        mg.edge_invalidate(a.id, b.id, "r1")
+        snap = mg.temporal_snapshot()
+        assert len(snap) == 1
+        assert snap[0].source == b.id
+        assert snap[0].target == c.id
+
+    def test_temporal_snapshot_time_travel(self, mg):
+        """Snapshot at past timestamp includes edges valid then."""
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        old_t = time.time() - 500
+        mg.edge_set_validity(a.id, b.id, "r", valid_from=old_t)
+        mg.edge_invalidate(a.id, b.id, "r")
+        # At old_t + 100, edge should be valid
+        snap = mg.temporal_snapshot(timestamp=old_t + 100)
+        assert len(snap) == 1
+        # Now, edge should be invalid
+        snap_now = mg.temporal_snapshot()
+        assert len(snap_now) == 0
+
+    def test_edge_temporal_history(self, mg):
+        """Temporal history returns sorted entries for a node's edges."""
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "old_relation")
+        mg.link(a.id, c.id, "new_relation")
+        t_old = time.time() - 300
+        t_new = time.time() - 50
+        mg.edge_set_validity(a.id, b.id, "old_relation", valid_from=t_old)
+        mg.edge_set_validity(a.id, c.id, "new_relation", valid_from=t_new)
+        mg.edge_invalidate(a.id, b.id, "old_relation", invalidated_by="upgrade")
+        history = mg.edge_temporal_history(a.id, direction="outgoing")
+        assert len(history) == 2
+        # Sorted by valid_from descending → newer first
+        assert history[0]["valid_from"] >= history[1]["valid_from"]
+        # old_relation should be invalidated
+        old_entry = [h for h in history if h["relation"] == "old_relation"][0]
+        assert old_entry["status"] == "invalidated"
+        assert old_entry["invalidated_by"] == "upgrade"
+        new_entry = [h for h in history if h["relation"] == "new_relation"][0]
+        assert new_entry["status"] == "valid"

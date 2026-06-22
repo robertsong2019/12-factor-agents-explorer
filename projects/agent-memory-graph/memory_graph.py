@@ -10744,6 +10744,153 @@ class MemoryGraph:
         results.sort(key=lambda x: x["priority"], reverse=True)
         return results[:limit]
 
+    # ── Bi-Temporal Validity Tracking ──────────────────────────────
+    #
+    # Inspired by Temporal Knowledge Graphs (T-KG) research.
+    # Every edge can have a validity window [valid_from, valid_until].
+    # Invalidated edges record *who* invalidated them and *when*.
+    # This enables time-travel queries: "what was true at time T?"
+    #
+    # Storage: leverages the existing edge_props JSON column — zero
+    # schema migration required.
+
+    def edge_set_validity(self, source_id: str, target_id: str,
+                          relation: str, valid_from: float = None,
+                          valid_until: float = None) -> dict | None:
+        """Set bi-temporal validity window on an edge.
+
+        Args:
+            valid_from:  Unix timestamp from which the edge is valid.
+                         Default: now (edge creation time).
+            valid_until: Unix timestamp after which the edge is invalid.
+                         None means open-ended (still valid).
+
+        Returns the stored validity dict, or None if edge doesn't exist.
+        """
+        edge = self.get_edge(source_id, target_id, relation)
+        if not edge:
+            return None
+        now = time.time()
+        props = self.edge_properties(source_id, target_id, relation) or {}
+        props["_temporal"] = {
+            "valid_from": valid_from if valid_from is not None else now,
+            "valid_until": valid_until,          # None = open-ended
+            "invalidated_by": props.get("_temporal", {}).get("invalidated_by"),
+            "set_at": now,
+        }
+        self.set_edge_properties(source_id, target_id, relation, props)
+        self.conn.commit()
+        return props["_temporal"]
+
+    def edge_invalidate(self, source_id: str, target_id: str,
+                        relation: str, invalidated_by: str = None) -> dict | None:
+        """Mark an edge as no longer valid.
+
+        Sets valid_until to now and records who invalidated it.
+        Idempotent — calling twice is a no-op.
+
+        Args:
+            invalidated_by: Identifier (node id or label) of the agent
+                            or process that caused invalidation.
+
+        Returns the updated validity dict, or None if edge doesn't exist.
+        """
+        edge = self.get_edge(source_id, target_id, relation)
+        if not edge:
+            return None
+        now = time.time()
+        props = self.edge_properties(source_id, target_id, relation) or {}
+        existing = props.get("_temporal", {})
+        if existing.get("valid_until") is not None:
+            return existing  # already invalidated — idempotent
+        props["_temporal"] = {
+            "valid_from": existing.get("valid_from", now),
+            "valid_until": now,
+            "invalidated_by": invalidated_by,
+            "set_at": now,
+        }
+        self.set_edge_properties(source_id, target_id, relation, props)
+        self.conn.commit()
+        return props["_temporal"]
+
+    def edge_valid_at(self, source_id: str, target_id: str,
+                      relation: str, timestamp: float = None) -> bool:
+        """Check whether an edge was valid at the given time.
+
+        An edge is valid at *timestamp* if:
+        - The edge exists.
+        - valid_from <= timestamp (or no temporal info → always valid).
+        - valid_until is None or valid_until > timestamp.
+
+        Default timestamp: now.
+        """
+        edge = self.get_edge(source_id, target_id, relation)
+        if not edge:
+            return False
+        ts = timestamp if timestamp is not None else time.time()
+        props = self.edge_properties(source_id, target_id, relation) or {}
+        temporal = props.get("_temporal")
+        if not temporal:
+            return True  # no temporal constraint → always valid
+        if temporal["valid_from"] > ts:
+            return False
+        vu = temporal.get("valid_until")
+        if vu is not None and vu <= ts:
+            return False
+        return True
+
+    def temporal_snapshot(self, timestamp: float = None) -> list[Edge]:
+        """Return all edges valid at the given timestamp.
+
+        Useful for time-travel queries: "what did the graph look like
+        at time T?"  Edges without temporal info are always included.
+
+        Returns a list of Edge namedtuples.
+        """
+        ts = timestamp if timestamp is not None else time.time()
+        rows = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges"
+        ).fetchall()
+        result = []
+        for r in rows:
+            props = self.edge_properties(r["source"], r["target"], r["relation"])
+            temporal = (props or {}).get("_temporal")
+            if not temporal:
+                result.append(Edge(r["source"], r["target"], r["relation"], r["weight"]))
+                continue
+            if temporal["valid_from"] <= ts:
+                vu = temporal.get("valid_until")
+                if vu is None or vu > ts:
+                    result.append(Edge(r["source"], r["target"], r["relation"], r["weight"]))
+        return result
+
+    def edge_temporal_history(self, node_id: str,
+                              direction: str = "both") -> list[dict]:
+        """Return temporal history of edges connected to a node.
+
+        Each entry includes the edge triple, validity window, and
+        invalidation info (if any).  Sorted by valid_from descending.
+
+        direction: 'outgoing', 'incoming', or 'both'.
+        """
+        edges = self.edges_of(node_id, direction=direction)
+        history = []
+        for e in edges:
+            props = self.edge_properties(e.source, e.target, e.relation)
+            temporal = (props or {}).get("_temporal")
+            if temporal:
+                history.append({
+                    "source": e.source,
+                    "target": e.target,
+                    "relation": e.relation,
+                    "valid_from": temporal["valid_from"],
+                    "valid_until": temporal.get("valid_until"),
+                    "invalidated_by": temporal.get("invalidated_by"),
+                    "status": "invalidated" if temporal.get("valid_until") is not None else "valid",
+                })
+        history.sort(key=lambda x: x["valid_from"], reverse=True)
+        return history
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
