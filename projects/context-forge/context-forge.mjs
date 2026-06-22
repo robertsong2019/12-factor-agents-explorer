@@ -2380,6 +2380,166 @@ export function formatQualitySignals(result) {
   return lines.join('\n');
 }
 
+// ─── Monorepo Workspace Analysis (F27) ──────────────────────────
+
+export async function detectWorkspaces(root) {
+  const files = await readdir(root).catch(() => []);
+  const workspaces = [];
+
+  // pnpm-workspace.yaml
+  if (files.includes('pnpm-workspace.yaml')) {
+    try {
+      const content = await readFile(join(root, 'pnpm-workspace.yaml'), 'utf8');
+      const packages = content.split('\n')
+        .filter(l => l.trim().startsWith('- '))
+        .map(l => l.trim().slice(2).trim().replace(/["']/g, ''));
+      workspaces.push({ manager: 'pnpm', config: 'pnpm-workspace.yaml', globs: packages });
+    } catch {}
+  }
+
+  // package.json workspaces field
+  if (files.includes('package.json')) {
+    try {
+      const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+      if (pkg.workspaces) {
+        const globs = Array.isArray(pkg.workspaces) ? pkg.workspaces : (pkg.workspaces.packages || []);
+        workspaces.push({ manager: 'npm/yarn', config: 'package.json:workspaces', globs });
+      }
+    } catch {}
+  }
+
+  // turbo.json
+  if (files.includes('turbo.json')) {
+    workspaces.push({ manager: 'turborepo', config: 'turbo.json', globs: [] });
+  }
+
+  // lerna.json
+  if (files.includes('lerna.json')) {
+    try {
+      const lerna = JSON.parse(await readFile(join(root, 'lerna.json'), 'utf8'));
+      const globs = lerna.packages || ['packages/*'];
+      workspaces.push({ manager: 'lerna', config: 'lerna.json', globs });
+    } catch {}
+  }
+
+  // nx.json
+  if (files.includes('nx.json')) {
+    workspaces.push({ manager: 'nx', config: 'nx.json', globs: [] });
+  }
+
+  return workspaces;
+}
+
+export function matchGlob(path, glob) {
+  // Simple glob matching: supports * and **
+  // e.g. 'packages/*' matches 'packages/foo', 'packages/bar/baz' does NOT match 'packages/foo/bar'
+  // '**' matches any depth
+  const regexStr = glob
+    .replace(/\./g, '\\.')
+    .replace(/\*\*/g, '{{DOUBLE_STAR}}')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\{\{DOUBLE_STAR\}\}/g, '.*');
+  return new RegExp(`^${regexStr}$`).test(path);
+}
+
+export async function analyzeWorkspace(root, workspaceGlobs) {
+  const packages = [];
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+
+  for (const glob of workspaceGlobs) {
+    // Handle simple patterns like 'packages/*'
+    if (glob.endsWith('/*')) {
+      const dir = glob.slice(0, -2);
+      const dirEntries = await readdir(join(root, dir), { withFileTypes: true }).catch(() => []);
+      for (const e of dirEntries) {
+        if (!e.isDirectory() || e.name.startsWith('.') || e.name === 'node_modules') continue;
+        const pkgPath = join(dir, e.name);
+        const pkgInfo = await readPackageJson(join(root, pkgPath));
+        if (pkgInfo) {
+          packages.push({ path: pkgPath, name: pkgInfo.name || e.name, ...pkgInfo });
+        }
+      }
+    }
+  }
+
+  // Analyze inter-package dependencies
+  const packageNames = new Set(packages.map(p => p.name).filter(Boolean));
+  const internalDeps = [];
+  for (const pkg of packages) {
+    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    for (const [dep, version] of Object.entries(deps)) {
+      if (packageNames.has(dep)) {
+        internalDeps.push({ from: pkg.name, to: dep, version, type: pkg.devDependencies?.[dep] ? 'dev' : 'prod' });
+      }
+    }
+  }
+
+  return {
+    packages: packages.map(p => ({
+      name: p.name,
+      path: p.path,
+      version: p.version,
+      deps: Object.keys(p.dependencies || {}).length,
+      devDeps: Object.keys(p.devDependencies || {}).length,
+      private: p.private || false,
+    })),
+    internalDeps,
+    stats: {
+      totalPackages: packages.length,
+      internalDepLinks: internalDeps.length,
+      avgDepsPerPackage: packages.length > 0
+        ? Math.round(packages.reduce((s, p) => s + Object.keys(p.dependencies || {}).length, 0) / packages.length * 100) / 100
+        : 0,
+    },
+  };
+}
+
+async function readPackageJson(pkgRoot) {
+  try {
+    const content = await readFile(join(pkgRoot, 'package.json'), 'utf8');
+    return JSON.parse(content);
+  } catch {
+    return null;
+  }
+}
+
+export function formatWorkspaceAnalysis(workspaces, analysis) {
+  const lines = ['# Workspace Analysis', ''];
+
+  if (workspaces.length === 0) {
+    lines.push('No monorepo workspaces detected.');
+    return lines.join('\n');
+  }
+
+  lines.push('## Workspace Managers');
+  for (const ws of workspaces) {
+    lines.push(`- **${ws.manager}** (${ws.config})`);
+    if (ws.globs.length > 0) lines.push(`  Globs: ${ws.globs.join(', ')}`);
+  }
+  lines.push('');
+
+  if (analysis && analysis.packages.length > 0) {
+    lines.push(`## Packages (${analysis.stats.totalPackages})`);
+    lines.push(`| Package | Version | Deps | DevDeps | Private |`);
+    lines.push(`|---------|---------|------|---------|---------|`);
+    for (const pkg of analysis.packages) {
+      lines.push(`| ${pkg.name} | ${pkg.version || '-'} | ${pkg.deps} | ${pkg.devDeps} | ${pkg.private ? 'yes' : 'no'} |`);
+    }
+    lines.push('');
+    lines.push(`**Stats:** ${analysis.stats.totalPackages} packages, ${analysis.stats.internalDepLinks} internal links, avg ${analysis.stats.avgDepsPerPackage} deps/pkg`);
+
+    if (analysis.internalDeps.length > 0) {
+      lines.push('');
+      lines.push('## Internal Dependencies');
+      for (const dep of analysis.internalDeps) {
+        lines.push(`- ${dep.from} → ${dep.to} (${dep.type})`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
 export function buildExportData(info, langs, importData, apiSurface, configData, gitInfo) {
   return {
     project: {
