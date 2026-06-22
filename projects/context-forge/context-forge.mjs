@@ -1688,6 +1688,327 @@ export function computeHealthScore(info, langs, importData, apiSurface, configDa
   return { score, grade, passed: passed, total: checks.length, checks };
 }
 
+// ─── Dependency Graph Analysis (F20) ──────────────────────────────
+
+export function buildDependencyGraph(importData) {
+  const { imports: byFile, allImports } = importData;
+  const nodes = [];
+  const edges = [];
+  const nodeSet = new Set();
+
+  // File nodes
+  for (const [file] of byFile) {
+    if (!nodeSet.has(file)) {
+      nodeSet.add(file);
+      nodes.push({ id: file, type: 'file' });
+    }
+  }
+  // Package nodes
+  for (const pkg of allImports) {
+    if (!nodeSet.has(pkg)) {
+      nodeSet.add(pkg);
+      nodes.push({ id: pkg, type: 'package' });
+    }
+  }
+  // Edges: file → package
+  for (const [file, deps] of byFile) {
+    for (const dep of deps) {
+      edges.push({ from: file, to: dep });
+    }
+  }
+
+  // Adjacency list (file → [packages])
+  const adjacency = {};
+  for (const [file, deps] of byFile) {
+    adjacency[file] = [...new Set(deps)];
+  }
+
+  // Reverse adjacency (package → [files])
+  const reverseAdjacency = {};
+  for (const [file, deps] of byFile) {
+    for (const dep of deps) {
+      if (!reverseAdjacency[dep]) reverseAdjacency[dep] = [];
+      reverseAdjacency[dep].push(file);
+    }
+  }
+
+  // Most depended-upon packages (sorted by usage count)
+  const packageUsage = Object.entries(reverseAdjacency)
+    .map(([pkg, files]) => ({ package: pkg, usedBy: files.length, files: files.sort() }))
+    .sort((a, b) => b.usedBy - a.usedBy);
+
+  return {
+    nodes,
+    edges,
+    adjacency,
+    reverseAdjacency,
+    packageUsage,
+    stats: {
+      totalNodes: nodes.length,
+      totalEdges: edges.length,
+      fileNodes: nodes.filter(n => n.type === 'file').length,
+      packageNodes: nodes.filter(n => n.type === 'package').length,
+      avgDepsPerFile: byFile.size > 0 ? Math.round((edges.length / byFile.size) * 100) / 100 : 0,
+      maxDepsFile: packageUsage.length > 0 ? { file: null, count: 0 } : null,
+    },
+  };
+}
+
+export function findCircularDependencies(importData) {
+  const { imports: byFile } = importData;
+  const visited = new Set();
+  const inStack = new Set();
+  const cycles = [];
+
+  function dfs(node, path) {
+    if (inStack.has(node)) {
+      const cycleStart = path.indexOf(node);
+      cycles.push(path.slice(cycleStart).concat(node));
+      return;
+    }
+    if (visited.has(node)) return;
+
+    visited.add(node);
+    inStack.add(node);
+    path.push(node);
+
+    const deps = byFile.get(node) || [];
+    for (const dep of deps) {
+      if (byFile.has(dep)) {
+        dfs(dep, path);
+      }
+    }
+
+    path.pop();
+    inStack.delete(node);
+  }
+
+  for (const [file] of byFile) {
+    if (!visited.has(file)) {
+      dfs(file, []);
+    }
+  }
+
+  return cycles;
+}
+
+export function formatDependencyGraph(graph) {
+  const lines = ['# Dependency Graph', ''];
+  lines.push(`| Metric | Value |`);
+  lines.push(`|--------|-------|`);
+  lines.push(`| File Nodes | ${graph.stats.totalNodes - graph.stats.packageNodes} |`);
+  lines.push(`| Package Nodes | ${graph.stats.packageNodes} |`);
+  lines.push(`| Total Edges | ${graph.stats.totalEdges} |`);
+  lines.push(`| Avg Deps/File | ${graph.stats.avgDepsPerFile} |`);
+  lines.push('');
+  lines.push('## Top Packages by Usage');
+  for (const { package: pkg, usedBy, files } of graph.packageUsage.slice(0, 10)) {
+    lines.push(`- **${pkg}** — ${usedBy} file${usedBy !== 1 ? 's' : ''}`);
+  }
+  return lines.join('\n');
+}
+
+// ─── Tech Stack Inference (F21) ──────────────────────────────────
+
+const STACK_SIGNATURES = {
+  // Frontend frameworks
+  react: { deps: ['react', 'react-dom'], lang: ['JavaScript (React)', 'TypeScript (React)'], category: 'Frontend' },
+  vue: { deps: ['vue'], lang: ['Vue'], category: 'Frontend' },
+  svelte: { deps: ['svelte'], lang: ['Svelte'], category: 'Frontend' },
+  angular: { deps: ['@angular/core'], lang: ['TypeScript'], category: 'Frontend' },
+  next: { deps: ['next'], lang: null, category: 'Frontend' },
+  nuxt: { deps: ['nuxt'], lang: null, category: 'Frontend' },
+  // Backend
+  express: { deps: ['express'], lang: null, category: 'Backend' },
+  fastify: { deps: ['fastify'], lang: null, category: 'Backend' },
+  koa: { deps: ['koa'], lang: null, category: 'Backend' },
+  nest: { deps: ['@nestjs/core'], lang: null, category: 'Backend' },
+  flask: { deps: ['flask'], lang: ['Python'], category: 'Backend' },
+  django: { deps: ['django'], lang: ['Python'], category: 'Backend' },
+  fastapi: { deps: ['fastapi'], lang: ['Python'], category: 'Backend' },
+  actix: { deps: ['actix-web'], lang: ['Rust'], category: 'Backend' },
+  axum: { deps: ['axum'], lang: ['Rust'], category: 'Backend' },
+  gin: { deps: ['gin-gonic/gin', 'github.com/gin-gonic/gin'], lang: ['Go'], category: 'Backend' },
+  rocket: { deps: ['rocket'], lang: ['Rust'], category: 'Backend' },
+  // Build tools
+  vite: { deps: ['vite'], lang: null, category: 'Build Tool' },
+  webpack: { deps: ['webpack'], lang: null, category: 'Build Tool' },
+  rollup: { deps: ['rollup'], lang: null, category: 'Build Tool' },
+  esbuild: { deps: ['esbuild'], lang: null, category: 'Build Tool' },
+  turbo: { deps: ['turbo', '@turbo/tooling'], lang: null, category: 'Build Tool' },
+  // Testing
+  jest: { deps: ['jest'], lang: null, category: 'Testing' },
+  vitest: { deps: ['vitest'], lang: null, category: 'Testing' },
+  mocha: { deps: ['mocha'], lang: null, category: 'Testing' },
+  pytest: { deps: ['pytest'], lang: ['Python'], category: 'Testing' },
+  // Database / ORM
+  prisma: { deps: ['@prisma/client', 'prisma'], lang: null, category: 'Database' },
+  drizzle: { deps: ['drizzle-orm'], lang: null, category: 'Database' },
+  typeorm: { deps: ['typeorm'], lang: null, category: 'Database' },
+  sequelize: { deps: ['sequelize'], lang: null, category: 'Database' },
+  sqlalchemy: { deps: ['sqlalchemy'], lang: ['Python'], category: 'Database' },
+  // Styling
+  tailwind: { deps: ['tailwindcss'], lang: null, category: 'Styling' },
+  styled: { deps: ['styled-components'], lang: null, category: 'Styling' },
+  emotion: { deps: ['@emotion/react'], lang: null, category: 'Styling' },
+  // Mobile
+  expo: { deps: ['expo'], lang: null, category: 'Mobile' },
+  reactnative: { deps: ['react-native'], lang: null, category: 'Mobile' },
+  // DevOps
+  docker: { deps: null, lang: null, category: 'DevOps', configFile: 'Dockerfile' },
+  ci: { deps: null, lang: null, category: 'DevOps', configFile: '.github/workflows' },
+};
+
+export function inferTechStack(info, langs, importData, configData) {
+  const allDeps = new Set([
+    ...Object.keys(info.dependencies || info.pkg?.dependencies || {}),
+    ...Object.keys(info.devDependencies || info.pkg?.devDependencies || {}),
+    ...(importData?.allImports || []),
+  ]);
+  const langSet = new Set([...langs.keys()].flatMap(l => [l, l.split(' ')[0]]));
+  const configKeys = configData ? new Set(Object.keys(configData)) : new Set();
+  const detected = [];
+
+  for (const [name, sig] of Object.entries(STACK_SIGNATURES)) {
+    let depMatch = false;
+    let langMatch = false;
+    let configMatch = false;
+
+    if (sig.deps) {
+      depMatch = sig.deps.some(d => {
+        // Handle scoped and unscoped package names
+        const normalized = d.replace(/^github\.com\//, '');
+        return allDeps.has(d) || allDeps.has(normalized) ||
+          [...allDeps].some(dep => dep === d || dep.startsWith(d + '@'));
+      });
+    }
+    if (sig.lang) {
+      langMatch = sig.lang.some(l =>
+        [...langSet].some(ls => ls.includes(l)));
+    }
+    if (sig.configFile) {
+      configMatch = configKeys.has(sig.configFile) ||
+        [...configKeys].some(k => k.startsWith(sig.configFile));
+    }
+
+    // Require at least a dep match or config match; lang is a bonus signal
+    if (depMatch || configMatch) {
+      detected.push({
+        name,
+        category: sig.category,
+        confidence: (depMatch ? 0.5 : 0) + (langMatch ? 0.3 : 0) + (configMatch ? 0.2 : 0),
+        signals: {
+          dependency: depMatch,
+          language: langMatch,
+          config: configMatch,
+        },
+      });
+    }
+  }
+
+  // Group by category, sort by confidence
+  const byCategory = {};
+  for (const d of detected) {
+    if (!byCategory[d.category]) byCategory[d.category] = [];
+    byCategory[d.category].push(d);
+  }
+  for (const cat of Object.keys(byCategory)) {
+    byCategory[cat].sort((a, b) => b.confidence - a.confidence);
+  }
+
+  return {
+    stack: detected.sort((a, b) => b.confidence - a.confidence),
+    byCategory,
+    summary: detected.map(d => `${d.name} (${d.category}, ${Math.round(d.confidence * 100)}%)`),
+  };
+}
+
+export function formatTechStack(stack) {
+  const lines = ['# Tech Stack', ''];
+  const categories = Object.keys(stack.byCategory).sort();
+  for (const cat of categories) {
+    lines.push(`## ${cat}`);
+    for (const { name, confidence, signals } of stack.byCategory[cat]) {
+      const sigFlags = [
+        signals.dependency ? 'dep' : '',
+        signals.language ? 'lang' : '',
+        signals.config ? 'cfg' : '',
+      ].filter(Boolean).join('+');
+      lines.push(`- **${name}** — ${Math.round(confidence * 100)}% (${sigFlags})`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+// ─── Duplicate Import Detection (F22) ────────────────────────────
+
+export function findDuplicateImports(importData) {
+  const { imports: byFile, allImports } = importData;
+  const importFiles = {}; // import → [files]
+
+  for (const [file, deps] of byFile) {
+    for (const dep of deps) {
+      if (!importFiles[dep]) importFiles[dep] = [];
+      importFiles[dep].push(file);
+    }
+  }
+
+  // Find files with identical import sets
+  const importSignature = {};
+  for (const [file, deps] of byFile) {
+    const sig = [...new Set(deps)].sort().join('|');
+    if (!importSignature[sig]) importSignature[sig] = [];
+    importSignature[sig].push(file);
+  }
+  const duplicateSignatures = Object.entries(importSignature)
+    .filter(([, files]) => files.length > 1)
+    .map(([sig, files]) => ({ signature: sig, files }))
+    .sort((a, b) => b.files.length - a.files.length);
+
+  // Most imported packages (potential shared utility candidates)
+  const sharedImports = Object.entries(importFiles)
+    .filter(([, files]) => files.length > 1)
+    .map(([pkg, files]) => ({ package: pkg, fileCount: files.length, files: files.sort() }))
+    .sort((a, b) => b.fileCount - a.fileCount);
+
+  return {
+    sharedImports,
+    duplicateSignatures,
+    stats: {
+      totalTracked: Object.keys(importFiles).length,
+      sharedCount: sharedImports.length,
+      duplicateGroups: duplicateSignatures.length,
+      maxSharedUsage: sharedImports.length > 0 ? sharedImports[0].fileCount : 0,
+    },
+  };
+}
+
+export function formatDuplicateReport(duplicates) {
+  const lines = ['# Import Analysis', ''];
+  lines.push(`| Metric | Value |`);
+  lines.push(`|--------|-------|`);
+  lines.push(`| Tracked Packages | ${duplicates.stats.totalTracked} |`);
+  lines.push(`| Shared Packages | ${duplicates.stats.sharedCount} |`);
+  lines.push(`| Duplicate Groups | ${duplicates.stats.duplicateGroups} |`);
+  lines.push(`| Max Usage Count | ${duplicates.stats.maxSharedUsage} |`);
+  lines.push('');
+  if (duplicates.sharedImports.length > 0) {
+    lines.push('## Most Shared Packages (extraction candidates)');
+    for (const { package: pkg, fileCount } of duplicates.sharedImports.slice(0, 10)) {
+      lines.push(`- **${pkg}** — used in ${fileCount} files`);
+    }
+  }
+  if (duplicates.duplicateSignatures.length > 0) {
+    lines.push('');
+    lines.push('## Files with Identical Imports');
+    for (const { files } of duplicates.duplicateSignatures.slice(0, 5)) {
+      lines.push(`- ${files.join(', ')}`);
+    }
+  }
+  return lines.join('\n');
+}
+
 export function buildExportData(info, langs, importData, apiSurface, configData, gitInfo) {
   return {
     project: {
