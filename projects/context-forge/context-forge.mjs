@@ -2157,6 +2157,229 @@ export function formatEntryPointAnalysis(analysis) {
   return lines.join('\n');
 }
 
+// ─── Dependency Risk Audit (F25) ────────────────────────────────
+
+const RISK_INDICATORS = {
+  // Known potentially risky packages (supply chain concerns, abandoned)
+  abandoned: ['gulp-util', 'request', 'node-uuid', 'left-pad', 'core-js@2'],
+  // Packages with known security concerns patterns
+  riskyPrefixes: ['rm-pkg', 'cross-spawn'],
+};
+
+export function auditDependencies(info) {
+  const deps = { ...(info.dependencies || info.pkg?.dependencies || {}) };
+  const devDeps = { ...(info.devDependencies || info.pkg?.devDependencies || {}) };
+  const allDeps = { ...deps, ...devDeps };
+  const entries = Object.entries(allDeps);
+
+  // Version analysis
+  let pinned = 0, caretRange = 0, tildeRange = 0, exactRange = 0, gitUrl = 0, latestTag = 0;
+  const flagged = [];
+
+  for (const [name, version] of entries) {
+    const v = String(version).trim();
+
+    // Version type classification
+    if (v.startsWith('git+') || v.startsWith('github:') || v.startsWith('https://')) {
+      gitUrl++;
+      flagged.push({ name, version: v, risk: 'medium', reason: 'Git URL dependency — no version pinning' });
+    } else if (v.startsWith('^')) {
+      caretRange++;
+    } else if (v.startsWith('~')) {
+      tildeRange++;
+    } else if (v === 'latest' || v === '*') {
+      latestTag++;
+      flagged.push({ name, version: v, risk: 'high', reason: `Uses '${v}' — unpinned, non-reproducible builds` });
+    } else if (/^\d+\.\d+\.\d+/.test(v)) {
+      exactRange++;
+      pinned++;
+    }
+
+    // Check abandoned packages
+    if (RISK_INDICATORS.abandoned.some(a => {
+      const [pkg, ver] = a.split('@');
+      return name === pkg && (!ver || v.includes(ver));
+    })) {
+      flagged.push({ name, version: v, risk: 'high', reason: 'Package is abandoned/deprecated' });
+    }
+
+    // Check risky prefixes
+    if (RISK_INDICATORS.riskyPrefixes.some(p => name.startsWith(p))) {
+      flagged.push({ name, version: v, risk: 'low', reason: 'Package prefix warrants review' });
+    }
+  }
+
+  // Duplicate dependency check (same package in deps and devDeps)
+  const duplicates = Object.keys(deps).filter(d => d in devDeps);
+  for (const d of duplicates) {
+    flagged.push({ name: d, version: deps[d], risk: 'low', reason: 'Listed in both dependencies and devDependencies' });
+  }
+
+  const total = entries.length || 1;
+  const pinRate = Math.round((pinned / total) * 100) / 100;
+  const flexibilityRate = Math.round(((caretRange + tildeRange) / total) * 100) / 100;
+
+  // Overall risk score (0-100, lower is better)
+  const riskScore = Math.min(100, flagged.filter(f => f.risk === 'high').length * 15 +
+    flagged.filter(f => f.risk === 'medium').length * 8 +
+    flagged.filter(f => f.risk === 'low').length * 3 +
+    (latestTag * 10) + (gitUrl * 5) + Math.round((1 - pinRate) * 10));
+
+  return {
+    total: entries.length,
+    versionTypes: { pinned, caret: caretRange, tilde: tildeRange, exact: exactRange, git: gitUrl, latest: latestTag },
+    pinRate,
+    flexibilityRate,
+    flagged: flagged.sort((a, b) => {
+      const order = { high: 0, medium: 1, low: 2 };
+      return order[a.risk] - order[b.risk];
+    }),
+    duplicates,
+    riskScore,
+    riskGrade: riskScore < 15 ? 'A' : riskScore < 30 ? 'B' : riskScore < 50 ? 'C' : riskScore < 75 ? 'D' : 'F',
+  };
+}
+
+export function formatRiskAudit(audit) {
+  const lines = ['# Dependency Risk Audit', ''];
+  lines.push(`**Risk Grade: ${audit.riskGrade} (${audit.riskScore}/100)**`);
+  lines.push('');
+  lines.push('## Version Pinning');
+  lines.push(`| Type | Count |`);
+  lines.push(`|------|-------|`);
+  lines.push(`| Exact/Pinned | ${audit.versionTypes.pinned} |`);
+  lines.push(`| Caret (^) | ${audit.versionTypes.caret} |`);
+  lines.push(`| Tilde (~) | ${audit.versionTypes.tilde} |`);
+  lines.push(`| Git URL | ${audit.versionTypes.git} |`);
+  lines.push(`| Latest/* | ${audit.versionTypes.latest} |`);
+  lines.push(`| **Pin Rate** | **${Math.round(audit.pinRate * 100)}%** |`);
+  lines.push('');
+
+  if (audit.flagged.length > 0) {
+    lines.push('## Flagged Dependencies');
+    for (const { name, version, risk, reason } of audit.flagged) {
+      const icon = risk === 'high' ? '🔴' : risk === 'medium' ? '🟡' : '🔵';
+      lines.push(`${icon} **${name}@${version}** (${risk}) — ${reason}`);
+    }
+  }
+
+  if (audit.duplicates.length > 0) {
+    lines.push('');
+    lines.push('## Duplicated Dependencies');
+    for (const d of audit.duplicates) {
+      lines.push(`- ${d} (in both deps and devDeps)`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ─── Code Quality Signals (F26) ──────────────────────────────────
+
+export function detectQualitySignals(info, langs, importData, apiSurface, configData) {
+  const signals = {
+    typesafety: { score: 0, indicators: [] },
+    testing: { score: 0, indicators: [] },
+    linting: { score: 0, indicators: [] },
+    formatting: { score: 0, indicators: [] },
+    ci: { score: 0, indicators: [] },
+    documentation: { score: 0, indicators: [] },
+  };
+
+  const allDeps = new Set([
+    ...Object.keys(info.dependencies || info.pkg?.dependencies || {}),
+    ...Object.keys(info.devDependencies || info.pkg?.devDependencies || {}),
+    ...(importData?.allImports || []),
+  ]);
+  const configKeys = configData ? new Set(Object.keys(configData)) : new Set();
+  const configFileStrs = (info.configFiles || []).join(' ');
+
+  // Type safety
+  if (allDeps.has('typescript')) { signals.typesafety.indicators.push('TypeScript dependency'); signals.typesafety.score += 30; }
+  const tsFiles = [...langs.keys()].some(k => k.includes('TypeScript'));
+  if (tsFiles) { signals.typesafety.indicators.push('TypeScript files present'); signals.typesafety.score += 20; }
+  if (configKeys.has('tsconfig.json') || configFileStrs.includes('tsconfig')) { signals.typesafety.indicators.push('tsconfig.json'); signals.typesafety.score += 15; }
+  if (allDeps.has('@types/node') || allDeps.has('@types/react')) { signals.typesafety.indicators.push('@types packages'); signals.typesafety.score += 10; }
+
+  // Testing
+  for (const framework of ['jest', 'vitest', 'mocha', 'pytest', '@testing-library']) {
+    if (allDeps.has(framework)) { signals.testing.indicators.push(`${framework} detected`); signals.testing.score += 25; break; }
+  }
+  const testPattern = /^(test|tests|spec|__tests__)[/\\]|\.(test|spec)\./;
+  let testFileCount = 0;
+  if (importData?.imports) {
+    for (const [file] of importData.imports) {
+      if (testPattern.test(file)) testFileCount++;
+    }
+  }
+  if (testFileCount > 0) { signals.testing.indicators.push(`${testFileCount} test files`); signals.testing.score += Math.min(30, testFileCount * 3); }
+  if (configFileStrs.includes('jest.config') || configFileStrs.includes('vitest.config')) { signals.testing.indicators.push('Test config file'); signals.testing.score += 10; }
+
+  // Linting
+  for (const linter of ['eslint', 'biome', ' tslint']) {
+    if (allDeps.has(linter.trim()) || configFileStrs.includes(linter.trim())) {
+      signals.linting.indicators.push(`${linter.trim()} configured`);
+      signals.linting.score += 30;
+      break;
+    }
+  }
+  if (configKeys.has('.eslintrc') || configFileStrs.includes('eslintrc')) { signals.linting.indicators.push('.eslintrc present'); signals.linting.score += 15; }
+
+  // Formatting
+  for (const fmt of ['prettier', 'dprint']) {
+    if (allDeps.has(fmt) || configFileStrs.includes(fmt)) {
+      signals.formatting.indicators.push(`${fmt} configured`);
+      signals.formatting.score += 25;
+      break;
+    }
+  }
+
+  // CI/CD
+  if (configFileStrs.includes('workflows') || configKeys.has('.github/workflows')) { signals.ci.indicators.push('GitHub Actions'); signals.ci.score += 30; }
+  if (configFileStrs.includes('Dockerfile') || configKeys.has('Dockerfile')) { signals.ci.indicators.push('Docker'); signals.ci.score += 15; }
+  if (configFileStrs.includes('docker-compose') || configKeys.has('docker-compose.yml')) { signals.ci.indicators.push('docker-compose'); signals.ci.score += 10; }
+  if (configFileStrs.includes('.gitlab-ci') || configFileStrs.includes('Jenkinsfile')) { signals.ci.indicators.push('CI config'); signals.ci.score += 25; }
+
+  // Documentation
+  if (configFileStrs.includes('README')) { signals.documentation.indicators.push('README'); signals.documentation.score += 20; }
+  if (configFileStrs.includes('LICENSE') || info.license) { signals.documentation.indicators.push('LICENSE'); signals.documentation.score += 15; }
+  if (configFileStrs.includes('CONTRIBUTING') || configFileStrs.includes('CODE_OF_CONDUCT')) { signals.documentation.indicators.push('Contributing guidelines'); signals.documentation.score += 10; }
+  if (configFileStrs.includes('CHANGELOG')) { signals.documentation.indicators.push('CHANGELOG'); signals.documentation.score += 10; }
+
+  // Cap scores at 100
+  for (const key of Object.keys(signals)) {
+    signals[key].score = Math.min(100, signals[key].score);
+  }
+
+  const overall = Math.round(Object.values(signals).reduce((s, v) => s + v.score, 0) / Object.keys(signals).length);
+
+  return {
+    signals,
+    overall,
+    grade: overall >= 80 ? 'A' : overall >= 60 ? 'B' : overall >= 40 ? 'C' : overall >= 20 ? 'D' : 'F',
+  };
+}
+
+export function formatQualitySignals(result) {
+  const lines = ['# Code Quality Signals', ''];
+  lines.push(`**Overall: ${result.grade} (${result.overall}/100)**`);
+  lines.push('');
+
+  const labels = { typesafety: 'Type Safety', testing: 'Testing', linting: 'Linting', formatting: 'Formatting', ci: 'CI/CD', documentation: 'Documentation' };
+  for (const [key, { score, indicators }] of Object.entries(result.signals)) {
+    const bar = '█'.repeat(Math.round(score / 10)) + '░'.repeat(10 - Math.round(score / 10));
+    lines.push(`## ${labels[key]} — ${score}/100`);
+    lines.push(`\`${bar}\``);
+    if (indicators.length > 0) {
+      for (const ind of indicators) lines.push(`- ✅ ${ind}`);
+    } else {
+      lines.push('- ⚠️ No signals detected');
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
 export function buildExportData(info, langs, importData, apiSurface, configData, gitInfo) {
   return {
     project: {
