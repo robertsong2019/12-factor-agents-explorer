@@ -2664,6 +2664,331 @@ async function main() {
   console.log(`\n✨ Done! ${options.dryRun ? "(dry run — no files written)" : "Context files generated."}`);
 }
 
+// ─── F28: TODO/FIXME Comment Extraction ─────────────────────────────────
+
+const TODO_PATTERNS = [
+  { regex: /\bTODO\b[\s:)?]?\s*(.*)/gi, type: 'TODO', priority: 'medium' },
+  { regex: /\bFIXME\b[\s:)?]?\s*(.*)/gi, type: 'FIXME', priority: 'high' },
+  { regex: /\bHACK\b[\s:)?]?\s*(.*)/gi, type: 'HACK', priority: 'high' },
+  { regex: /\bXXX\b[\s:)?]?\s*(.*)/gi, type: 'XXX', priority: 'high' },
+  { regex: /\bBUG\b[\s:)?]?\s*(.*)/gi, type: 'BUG', priority: 'critical' },
+  { regex: /\bNOTE\b[\s:)?]?\s*(.*)/gi, type: 'NOTE', priority: 'low' },
+];
+
+const TODO_FILE_EXTENSIONS = new Set([
+  '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt',
+  '.c', '.cpp', '.h', '.hpp', '.cs', '.php',
+  '.swift', '.scala', '.sh', '.bash', '.zsh',
+  '.vue', '.svelte', '.astro',
+  '.css', '.scss', '.less',
+  '.html', '.xml', '.yaml', '.yml', '.toml', '.ini',
+  '.sql', '.graphql', '.gql',
+]);
+
+export async function extractTODOComments(root, maxDepth = 3, depth = 0, gitignore = [], maxFileSize = DEFAULT_MAX_FILE_SIZE) {
+  const results = [];
+  const ignored = gitignore.length > 0 ? gitignore : ['.git', 'node_modules', 'dist', 'build', '.next'];
+
+  async function scan(dir, d) {
+    if (d > maxDepth) return;
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (ignored.includes(entry.name)) continue;
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await scan(fullPath, d + 1);
+      } else if (entry.isFile()) {
+        const ext = extname(entry.name).toLowerCase();
+        if (!TODO_FILE_EXTENSIONS.has(ext)) continue;
+        let st;
+        try { st = await stat(fullPath); } catch { continue; }
+      if (st.size > maxFileSize) continue;
+        let content;
+        try { content = await readFile(fullPath, 'utf-8'); } catch { continue; }
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          for (const pat of TODO_PATTERNS) {
+            pat.regex.lastIndex = 0;
+            const match = pat.regex.exec(lines[i]);
+            if (match) {
+              results.push({
+                file: relative(root, fullPath),
+                line: i + 1,
+                type: pat.type,
+                priority: pat.priority,
+                text: (match[1] || '').trim() || lines[i].trim(),
+              });
+              break; // one match per line is enough
+            }
+          }
+        }
+      }
+    }
+  }
+
+  await scan(root, depth);
+  // Sort: critical > high > medium > low, then by file/line
+  const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+  results.sort((a, b) => {
+    const pd = priorityOrder[a.priority] - priorityOrder[b.priority];
+    if (pd !== 0) return pd;
+    if (a.file !== b.file) return a.file.localeCompare(b.file);
+    return a.line - b.line;
+  });
+  return results;
+}
+
+export function formatTODOReport(todos) {
+  if (!todos || todos.length === 0) return 'No TODO/FIXME comments found. ✅';
+  const lines = [];
+  const byType = {};
+  for (const t of todos) {
+    if (!byType[t.type]) byType[t.type] = [];
+    byType[t.type].push(t);
+  }
+  const typeOrder = ['BUG', 'FIXME', 'HACK', 'XXX', 'TODO', 'NOTE'];
+  const emoji = { BUG: '🐛', FIXME: '🔧', HACK: '⚡', XXX: '⚠️', TODO: '📝', NOTE: '💡' };
+  lines.push(`### TODO/FIXME Report (${todos.length} items)`);
+  lines.push('');
+  for (const type of typeOrder) {
+    if (!byType[type]) continue;
+    lines.push(`#### ${emoji[type] || '📝'} ${type} (${byType[type].length})`);
+    for (const item of byType[type]) {
+      const text = item.text.length > 80 ? item.text.slice(0, 77) + '...' : item.text;
+      lines.push(`- \`${item.file}:${item.line}\` — ${text}`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+// ─── F29: Environment Variable Detection ────────────────────────────────
+
+const ENV_PATTERNS = {
+  javascript: [
+    /process\.env\.([A-Z_][A-Z0-9_]*)/g,
+    /process\.env\[['"]([A-Z_][A-Z0-9_]*)['"]\]/g,
+  ],
+  typescript: [
+    /process\.env\.([A-Z_][A-Z0-9_]*)/g,
+    /process\.env\[['"]([A-Z_][A-Z0-9_]*)['"]\]/g,
+  ],
+  python: [
+    /os\.environ\.get\(['"]([A-Z_][A-Z0-9_]*)['"]/g,
+    /os\.environ\[['"]([A-Z_][A-Z0-9_]*)['"]\]/g,
+    /os\.getenv\(['"]([A-Z_][A-Z0-9_]*)['"]/g,
+  ],
+  go: [
+    /os\.Getenv\(['"]([A-Z_][A-Z0-9_]*)['"]/g,
+  ],
+  rust: [
+    /std::env::var\(['"]([A-Z_][A-Z0-9_]*)['"]/g,
+    /env::var\(['"]([A-Z_][A-Z0-9_]*)['"]/g,
+  ],
+};
+
+const ENV_FILE_EXTENSIONS = {
+  '.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript', '.jsx': 'javascript',
+  '.ts': 'typescript', '.tsx': 'typescript',
+  '.py': 'python',
+  '.go': 'go',
+  '.rs': 'rust',
+};
+
+const DOTENV_LINE = /^\s*([A-Z_][A-Z0-9_]*)\s*=/;
+
+export async function detectEnvVars(root, maxDepth = 3, depth = 0, gitignore = [], maxFileSize = DEFAULT_MAX_FILE_SIZE) {
+  const found = {};
+  const ignored = gitignore.length > 0 ? gitignore : ['.git', 'node_modules', 'dist', 'build', '.next'];
+
+  // Also check for .env files
+  const envFiles = [];
+
+  async function scan(dir, d) {
+    if (d > maxDepth) return;
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (ignored.includes(entry.name)) continue;
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await scan(fullPath, d + 1);
+      } else if (entry.isFile()) {
+        // Check for .env files
+        if (/^\.env(\.|$)/.test(entry.name)) {
+          let content;
+          try { content = await readFile(fullPath, 'utf-8'); } catch { continue; }
+          for (const line of content.split('\n')) {
+            const m = DOTENV_LINE.exec(line);
+            if (m && !found[m[1]]) {
+              found[m[1]] = { name: m[1], source: 'dotenv', file: relative(root, fullPath) };
+            }
+          }
+          envFiles.push(relative(root, fullPath));
+          continue;
+        }
+      const ext = extname(entry.name).toLowerCase();
+      const lang = ENV_FILE_EXTENSIONS[ext];
+      if (!lang) continue;
+      let st;
+      try { st = await stat(fullPath); } catch { continue; }
+      if (st.size > maxFileSize) continue;
+        let content;
+        try { content = await readFile(fullPath, 'utf-8'); } catch { continue; }
+        const patterns = ENV_PATTERNS[lang] || [];
+        for (const pat of patterns) {
+          pat.lastIndex = 0;
+          let m;
+          while ((m = pat.exec(content)) !== null) {
+            const varName = m[1];
+            if (!found[varName]) {
+              const lineNum = content.slice(0, m.index).split('\n').length;
+              found[varName] = { name: varName, source: lang, file: relative(root, fullPath), line: lineNum };
+            }
+          }
+        }
+      }
+    }
+  }
+
+  await scan(root, depth);
+  const vars = Object.values(found).sort((a, b) => a.name.localeCompare(b.name));
+  return { vars, envFiles };
+}
+
+export function formatEnvVarsReport(envData) {
+  const { vars, envFiles } = envData;
+  if (!vars || vars.length === 0) return 'No environment variables detected.';
+  const lines = [];
+  lines.push(`### Environment Variables (${vars.length} found)`);
+  lines.push('');
+  if (envFiles.length > 0) {
+    lines.push('**Dotenv files found:**');
+    for (const f of envFiles) lines.push(`- \`${f}\``);
+    lines.push('');
+  }
+  lines.push('| Variable | Source | File |');
+  lines.push('|----------|--------|------|');
+  for (const v of vars) {
+    lines.push(`| \`${v.name}\` | ${v.source} | ${v.file}${v.line ? ':' + v.line : ''} |`);
+  }
+  return lines.join('\n');
+}
+
+// ─── F30: License Detection ─────────────────────────────────────────────
+
+const LICENSE_KEYWORDS = [
+  { id: 'MIT', patterns: [/MIT License/i, /Permission is hereby granted, free of charge/i] },
+  { id: 'Apache-2.0', patterns: [/Apache License,? Version 2\.0/i, /Licensed under the Apache License, Version 2\.0/i] },
+  { id: 'BSD-2-Clause', patterns: [/Redistribution and use in source and binary forms.*with or without modification.*Redistributions of source code/i] },
+  { id: 'BSD-3-Clause', patterns: [/Neither the name of.*nor the names of its contributors may be/i] },
+  { id: 'GPL-3.0', patterns: [/GNU GENERAL PUBLIC LICENSE[\s\S]*?Version 3/i, /GPL-3(?:\.0)?(?:\s|$)/i] },
+  { id: 'GPL-2.0', patterns: [/GNU GENERAL PUBLIC LICENSE[\s\S]*?Version 2/i, /GPL-2(?:\.0)?(?:\s|$)/i] },
+  { id: 'LGPL-3.0', patterns: [/GNU LESSER GENERAL PUBLIC LICENSE/i, /LGPL-3/i] },
+  { id: 'AGPL-3.0', patterns: [/GNU AFFERO GENERAL PUBLIC LICENSE/i, /AGPL-3/i] },
+  { id: 'Unlicense', patterns: [/This is free and unencumbered software released into the public domain/i] },
+  { id: 'ISC', patterns: [/ISC License/i] },
+  { id: 'MPL-2.0', patterns: [/Mozilla Public License,? Version 2\.0/i, /MPL-2\.0/i] },
+  { id: 'CC0-1.0', patterns: [/Creative Commons Zero.*CC0/i, /CC0 1\.0/i] },
+];
+
+export async function detectLicense(root) {
+  const result = { id: null, source: null, file: null, confidence: 'none' };
+
+  // 1. Check package.json license field
+  try {
+    const pkgContent = await readFile(join(root, 'package.json'), 'utf-8');
+    const pkg = JSON.parse(pkgContent);
+    if (pkg.license) {
+      result.id = typeof pkg.license === 'string' ? pkg.license : (pkg.license.type || pkg.license);
+      result.source = 'package.json';
+      result.confidence = 'high';
+      return result;
+    }
+  } catch {}
+
+  // 2. Check pyproject.toml
+  try {
+    const pyContent = await readFile(join(root, 'pyproject.toml'), 'utf-8');
+    const m = pyContent.match(/license\s*=\s*["']([^"']+)['"]/i);
+    if (m) {
+      result.id = m[1];
+      result.source = 'pyproject.toml';
+      result.confidence = 'high';
+      return result;
+    }
+  } catch {}
+
+  // 3. Check Cargo.toml
+  try {
+    const cargoContent = await readFile(join(root, 'Cargo.toml'), 'utf-8');
+    const m = cargoContent.match(/license\s*=\s*["']([^"']+)['"]/i);
+    if (m) {
+      result.id = m[1];
+      result.source = 'Cargo.toml';
+      result.confidence = 'high';
+      return result;
+    }
+  } catch {}
+
+  // 4. Scan LICENSE files
+  const licenseFileNames = ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENSE-MIT', 'LICENSE-APACHE', 'COPYING', 'COPYING.md', 'NOTICE'];
+  for (const fname of licenseFileNames) {
+    try {
+      const content = await readFile(join(root, fname), 'utf-8');
+      for (const lic of LICENSE_KEYWORDS) {
+        for (const pat of lic.patterns) {
+          if (pat.test(content)) {
+            result.id = lic.id;
+            result.source = fname;
+            result.file = fname;
+            result.confidence = 'high';
+            return result;
+          }
+        }
+      }
+      // File exists but no pattern matched — low confidence
+      result.source = fname;
+      result.file = fname;
+      result.confidence = 'low';
+    } catch {}
+  }
+
+  // 5. Check README for license mentions
+  for (const rfname of ['README.md', 'README.rst', 'README.txt']) {
+    try {
+      const content = await readFile(join(root, rfname), 'utf-8');
+      const m = content.match(/licen[sc]e\s*:?\s*([A-Za-z0-9\-+.]+)/i);
+      if (m) {
+        result.id = m[1];
+        result.source = rfname;
+        result.confidence = 'low';
+        return result;
+      }
+    } catch {}
+  }
+
+  return result;
+}
+
+export function formatLicenseInfo(license) {
+  if (!license || license.confidence === 'none') {
+    return 'No license detected. ⚠️';
+  }
+  const confidenceEmoji = { high: '🟢', low: '🟡' };
+  const lines = [
+    `### License`,
+    '',
+    `- **License:** ${license.id || 'Unknown'}`,
+    `- **Source:** ${license.source}`,
+  ];
+  if (license.file) lines.push(`- **File:** \`${license.file}\``);
+  lines.push(`- **Confidence:** ${confidenceEmoji[license.confidence] || '⚪'} ${license.confidence}`);
+  return lines.join('\n');
+}
+
 export function resolvePath(p) {
   return p.startsWith("/") ? p : join(process.cwd(), p);
 }
