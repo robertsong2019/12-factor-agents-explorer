@@ -39,6 +39,10 @@
 - [ ] **F17**: Performance benchmarks on large repos
 - [ ] **F18**: Documentation examples for each generated file type
 
+### Security & Quality
+- [x] **F32**: Secret detection — scan source for API keys, tokens, passwords ✅ 2026-06-23
+- [x] **F33**: Documentation readability analysis — A-F scoring with 15+ metrics ✅ 2026-06-23
+
 ## Priorities
 **Round 1 (Core):** F1, F2, F3 — Better codebase understanding
 **Round 2 (Output):** F5, F6 — Better visualization
