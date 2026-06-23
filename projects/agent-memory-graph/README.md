@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-1436-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1429-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -1536,13 +1536,49 @@ priority = mg.consolidation_priority(limit=10)
 
 ---
 
+### OWASP ASI06: Provenance & Quarantine (Cycle 149)
+
+Track memory origin and quarantine untrusted memories (OWASP ASI06 defense).
+
+```python
+# Set provenance — WHERE memory came from, HOW MUCH to trust it
+mg.node_set_provenance(
+    "person:alice",
+    source="user_input",       # where it came from
+    trust_level=0.8,           # 0.0-1.0 confidence
+    parents=["person:bob"]     # derived-from nodes
+)
+
+# Quarantine a suspicious memory — excluded from recall/search/neighbors
+mg.node_quarantine("person:alice", reason="suspected injection")
+
+# Release from quarantine
+mg.node_unquarantine("person:alice")
+
+# List all quarantined nodes
+mg.quarantine_list()
+# [{'id': 'person:eve', 'label': 'Eve', 'kind': 'person',
+#   'trust_level': 0.1, 'source': 'external_api',
+#   'quarantine_reason': 'auto: trust_level below 0.3'}]
+
+# Auto-quarantine low-trust nodes (batch)
+newly_quarantined = mg.quarantine_scan(trust_threshold=0.3)
+# ['person:eve', 'concept:unverified_1']
+```
+
+**Schema additions:** `source`, `trust_level`, `parents`, `quarantined`, `quarantine_reason` columns on `nodes` table.
+
+**Retrieval safety:** `recall()`, `search_by_tag()`, and `neighbors()` automatically exclude quarantined nodes.
+
+---
+
 ## 测试
 
 ```bash
 python3 -m pytest test_memory_graph.py -q
 ```
 
-1436 个测试覆盖所有 API。
+1429 个测试覆盖所有 API。
 
 ## 设计思路
 

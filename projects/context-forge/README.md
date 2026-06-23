@@ -48,6 +48,8 @@ context-forge /path/to/my-project --dry-run
 - 🔐 **Env var detection** — find hardcoded env references and secrets (F29)
 - 📜 **License detection** — SPDX identification + compatibility checks (F30)
 - ⏳ **Bi-temporal validity** — time-window edge tracking, point-in-time queries (F31)
+- 🔐 **Secret scanner** — detect API keys, tokens, passwords, private keys with risk levels (F32)
+- 📖 **Doc readability** — A-F grade scoring, heading hierarchy, paragraph/sentence analysis (F33)
 - ⚡ **Zero deps** — single file, runs with Node.js
 
 ## Usage
@@ -336,6 +338,76 @@ temporal_snapshot(graph, '2026-03-15')
 edge_temporal_history(graph, './a')
 // [{ edge: './a→./b', valid_from: ..., valid_until: ..., status: 'invalidated' }]
 ```
+
+---
+
+## Security Scanning (F32)
+
+Detect potential secrets and sensitive information in your codebase.
+
+```javascript
+import { detectSecrets, formatSecretReport } from './context-forge.mjs'
+
+// Scan project for secrets
+const findings = await detectSecrets('./my-project')
+
+// Format as markdown report
+console.log(formatSecretReport(findings))
+// ### Security Scan
+// Found **3** potential secret(s): 🔴 1 high · 🟡 1 medium · 🔵 1 low
+// - 🔴 **[HIGH]** AWS Access Key
+//   `./config/aws.js:12` — `accessKeyId: 'AKIA...'`
+// ...
+```
+
+**Features:**
+- 20+ pattern types: AWS keys, GitHub tokens, GitLab tokens, Slack tokens, private keys, generic API keys, passwords, JWTs, connection strings
+- 3 risk levels: **high** (active credentials), **medium** (likely secrets), **low** (potential references)
+- Deduplication by file+line+type
+- Sorted by risk (high → medium → low)
+- Ignores `.git`, `node_modules`, `.env.example`, etc.
+
+---
+
+## Documentation Readability (F33)
+
+Score documentation quality with 15+ metrics and actionable suggestions.
+
+```javascript
+import { analyzeDocReadability, formatReadabilityReport } from './context-forge.mjs'
+
+const content = fs.readFileSync('README.md', 'utf-8')
+const analysis = analyzeDocReadability(content)
+
+console.log(formatReadabilityReport(analysis))
+// ### Documentation Readability
+// **Score: 85/100 (Grade: B)**
+// | Metric | Value |
+// | Words | 1200 |
+// | Headings | 12 (depth: H1-H4) |
+// ...
+```
+
+**Metrics tracked:**
+
+| Category | Metrics |
+|----------|---------|
+| Structure | Heading count, max depth, hierarchy issues (skipped levels) |
+| Paragraphs | Count, average length, longest paragraph |
+| Sentences | Count, average word length |
+| Code | Block count, code-to-text ratio |
+| Links | Count, density |
+| Lists | Item count |
+
+**Scoring penalties:**
+- Avg paragraph > 150 words → −10
+- Avg sentence > 25 words → −10
+- Heading hierarchy skip → −5 per issue
+- Long doc with no headings → −15
+- Code blocks > 50% of document → −10
+- No links in 300+ word docs → −5
+
+**Grade scale:** A (90+) · B (80+) · C (70+) · D (60+) · F (<60)
 
 ---
 
