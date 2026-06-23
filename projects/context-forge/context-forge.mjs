@@ -2989,6 +2989,154 @@ export function formatLicenseInfo(license) {
   return lines.join('\n');
 }
 
+// --- F32: Secret Detection ---
+
+const SECRET_HIGH_PATTERNS = [
+  // AWS Access Key ID (20 chars)
+  { regex: /AKIA[0-9A-Z]{16}/g, type: 'aws_access_key', description: 'AWS Access Key ID' },
+  // AWS Secret Access Key (40 chars base64)
+  { regex: /aws_secret_access_key\s*[=:]\s*['"]([A-Za-z0-9/+=]{40})['"]/gi, type: 'aws_secret_key', description: 'AWS Secret Access Key' },
+  // GitHub token (classic + fine-grained)
+  { regex: /gh[pousr]_[A-Za-z0-9]{36,255}/g, type: 'github_token', description: 'GitHub Token' },
+  // Generic API key (key/apikey/secret assignments with 20+ char values)
+  { regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key)\s*[=:]\s*['"]([A-Za-z0-9_\-]{20,})['"]/gi, type: 'api_key', description: 'API Key' },
+  // Bearer token
+  { regex: /Bearer\s+[A-Za-z0-9_\-\.]{20,}/g, type: 'bearer_token', description: 'Bearer Token' },
+  // Private key blocks
+  { regex: /-----BEGIN\s+(RSA\s+|EC\s+|OPENSSH\s+|PGP\s+)?PRIVATE\s+KEY-----/g, type: 'private_key', description: 'Private Key Block' },
+  // Slack token
+  { regex: /xox[baprs]-[A-Za-z0-9-]{10,}/g, type: 'slack_token', description: 'Slack Token' },
+  // Stripe key
+  { regex: /(?:sk|pk|rk)_(?:test_)?(?:live_)?[A-Za-z0-9]{20,}/g, type: 'stripe_key', description: 'Stripe API Key' },
+  // JWT tokens
+  { regex: /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*/g, type: 'jwt_token', description: 'JWT Token' },
+];
+
+const SECRET_MEDIUM_PATTERNS = [
+  // Password assignments
+  { regex: /(?:password|passwd|pwd)\s*[=:]\s*['"]([^'"]{6,})['"]/gi, type: 'password', description: 'Password Assignment' },
+  // Token assignments
+  { regex: /(?:token|auth[_-]?token|access[_-]?token)\s*[=:]\s*['"]([^'"]{10,})['"]/gi, type: 'token', description: 'Token Assignment' },
+  // Generic high-entropy strings assigned to vars (32+ hex/base64)
+  { regex: /(?:secret|key|hash|salt|nonce)\s*[=:]\s*['"]([a-f0-9]{32,}|[A-Za-z0-9+/]{32,}={0,2})['"]/gi, type: 'high_entropy', description: 'High-Entropy String' },
+  // Database URLs with credentials
+  { regex: /(?:mongodb|postgres|postgresql|mysql|redis|amqp)\+?:\/\/[^:\s]+:[^@\s]+@[\w.-]+/gi, type: 'db_url', description: 'Database URL with Credentials' },
+];
+
+const SECRET_LOW_PATTERNS = [
+  // Variable names that suggest secrets (but no value)
+  { regex: /(?:var|let|const|function)\s+\w*(?:api[_-]?key|secret|password|token|credential)\w*/gi, type: 'naming_hint', description: 'Variable Name Suggests Secret' },
+  // process.env access
+  { regex: /process\.env\.\w*(?:KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)\w*/gi, type: 'env_reference', description: 'Environment Variable Reference' },
+  // .env file key names
+  { regex: /^\s*(?:AWS_|GITHUB_|STRIPE_|SLACK_|DATABASE_|DB_)?(?:SECRET|TOKEN|API_KEY|PASSWORD)\s*=/gim, type: 'dotenv_key', description: '.env File Secret Key' },
+];
+
+const SECRET_FILE_EXTENSIONS = new Set([
+  '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt',
+  '.c', '.cpp', '.h', '.hpp', '.cs', '.php',
+  '.sh', '.bash', '.zsh',
+  '.vue', '.svelte',
+  '.env', '.env.local', '.env.production', '.env.development',
+  '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf',
+  '.json',
+  '.pem', '.key', '.crt', '.p12', '.pfx',
+]);
+
+const SECRET_IGNORED_DIRS = ['.git', 'node_modules', 'dist', 'build', '.next', 'vendor', '__pycache__', '.cache', 'coverage'];
+
+export async function detectSecrets(root, maxDepth = 4, depth = 0, gitignore = [], maxFileSize = DEFAULT_MAX_FILE_SIZE) {
+  const findings = [];
+  const ignored = gitignore.length > 0 ? gitignore : SECRET_IGNORED_DIRS;
+
+  async function scan(dir, d) {
+    if (d > maxDepth) return;
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (ignored.includes(entry.name)) continue;
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await scan(fullPath, d + 1);
+      } else {
+        const ext = extname(entry.name);
+        const lowerName = entry.name.toLowerCase();
+        const isEnvFile = lowerName.startsWith('.env');
+        if (!SECRET_FILE_EXTENSIONS.has(ext) && !isEnvFile) continue;
+        let st;
+        try { st = await stat(fullPath); } catch { continue; }
+        if (stat.size > maxFileSize || stat.size === 0) continue;
+        let content;
+        try { content = await readFile(fullPath, 'utf-8'); } catch { continue; }
+        const lines = content.split('\n');
+        const allPatterns = [
+          ...SECRET_HIGH_PATTERNS.map(p => ({ ...p, risk: 'high' })),
+          ...SECRET_MEDIUM_PATTERNS.map(p => ({ ...p, risk: 'medium' })),
+          ...SECRET_LOW_PATTERNS.map(p => ({ ...p, risk: 'low' })),
+        ];
+        for (const pattern of allPatterns) {
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            pattern.regex.lastIndex = 0;
+            const match = pattern.regex.exec(line);
+            if (match) {
+              findings.push({
+                file: fullPath.replace(root, '.').replace(/^\.\//, ''),
+                line: i + 1,
+                type: pattern.type,
+                risk: pattern.risk,
+                description: pattern.description,
+                snippet: line.trim().slice(0, 120),
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  await scan(root, depth);
+  // Deduplicate by file+line+type
+  const seen = new Set();
+  const deduped = findings.filter(f => {
+    const key = `${f.file}:${f.line}:${f.type}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  deduped.sort((a, b) => {
+    const riskOrder = { high: 0, medium: 1, low: 2 };
+    if (riskOrder[a.risk] !== riskOrder[b.risk]) return riskOrder[a.risk] - riskOrder[b.risk];
+    return a.file.localeCompare(b.file);
+  });
+  return deduped;
+}
+
+export function formatSecretReport(findings) {
+  if (findings.length === 0) {
+    return '### Security Scan\n\n✅ No potential secrets detected.';
+  }
+  const counts = { high: 0, medium: 0, low: 0 };
+  for (const f of findings) counts[f.risk]++;
+  const emoji = { high: '🔴', medium: '🟡', low: '🔵' };
+  const lines = [
+    '### Security Scan',
+    '',
+    `Found **${findings.length}** potential secret(s): ${emoji.high} ${counts.high} high · ${emoji.medium} ${counts.medium} medium · ${emoji.low} ${counts.low} low`,
+    '',
+  ];
+  for (const f of findings) {
+    lines.push(`- ${emoji[f.risk]} **[${f.risk.toUpperCase()}]** ${f.description}`);
+    lines.push(`  \`${f.file}:${f.line}\` — \`${f.snippet}\``);
+  }
+  if (counts.high > 0) {
+    lines.push('');
+    lines.push('> ⚠️ **Action required:** High-risk secrets detected. Rotate keys immediately.');
+  }
+  return lines.join('\n');
+}
+
 export function resolvePath(p) {
   return p.startsWith("/") ? p : join(process.cwd(), p);
 }
