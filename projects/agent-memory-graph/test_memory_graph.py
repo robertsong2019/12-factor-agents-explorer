@@ -10095,7 +10095,7 @@ class TestMergeCRDT:
     def test_lww_conflict_newer_wins(self, mg):
         # Create a local node with old timestamp
         mg.conn.execute(
-            "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
             ("shared1", "old_label", "fact", '{}', 1000.0, 1000.0, 1.0, '[]'))
         # Other graph has newer version
         other = {"nodes": [{"id": "shared1", "label": "new_label", "kind": "fact",
@@ -10109,7 +10109,7 @@ class TestMergeCRDT:
     def test_lww_older_skipped(self, mg):
         # Local is newer
         mg.conn.execute(
-            "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
             ("shared2", "new_label", "fact", '{}', 2000.0, 2000.0, 1.0, '[]'))
         other = {"nodes": [{"id": "shared2", "label": "old_label", "kind": "fact",
                             "data": {}, "created": 1000.0, "accessed": 1000.0,
@@ -10131,7 +10131,7 @@ class TestMergeCRDT:
 
     def test_trust_weighted(self, mg):
         mg.conn.execute(
-            "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
             ("t1", "local", "fact", '{}', 1000.0, 1000.0, 0.5, '[]'))
         other = {"nodes": [{"id": "t1", "label": "remote", "kind": "fact",
                             "data": {"v": 1}, "created": 1000.0, "accessed": 1000.0,
@@ -12429,7 +12429,7 @@ class TestGraphDiffSummary:
         # insert same ID with different kind into other
         import time, uuid
         other.conn.execute(
-            "INSERT INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
             (n.id, "Original", "event", "{}", time.time(), time.time(), 1.0, "[]")
         )
         other.conn.commit()
@@ -13412,3 +13412,138 @@ class TestBiTemporalValidity:
         assert old_entry["invalidated_by"] == "upgrade"
         new_entry = [h for h in history if h["relation"] == "new_relation"][0]
         assert new_entry["status"] == "valid"
+
+    # ── OWASP ASI06: Provenance & Quarantine Tests ──────────────
+
+    def test_node_set_provenance_basic(self, mg):
+        """Set source, trust_level, and parents on a node."""
+        a = mg.add("Fact A")
+        b = mg.add("Fact B")
+        assert mg.node_set_provenance(a.id, source="web_search", trust_level=0.6, parents=[b.id])
+        row = mg.conn.execute("SELECT source, trust_level, parents FROM nodes WHERE id=?", (a.id,)).fetchone()
+        assert row["source"] == "web_search"
+        assert row["trust_level"] == 0.6
+        assert json.loads(row["parents"]) == [b.id]
+
+    def test_node_set_provenance_partial(self, mg):
+        """Setting only some provenance fields leaves others unchanged."""
+        a = mg.add("Fact A")
+        mg.node_set_provenance(a.id, trust_level=0.3)
+        # Set source separately
+        mg.node_set_provenance(a.id, source="user_input")
+        row = mg.conn.execute("SELECT source, trust_level FROM nodes WHERE id=?", (a.id,)).fetchone()
+        assert row["source"] == "user_input"
+        assert row["trust_level"] == 0.3  # Still there from first call
+
+    def test_node_set_provenance_clamps_trust(self, mg):
+        """Trust level is clamped to [0, 1]."""
+        a = mg.add("Fact A")
+        mg.node_set_provenance(a.id, trust_level=1.5)
+        row = mg.conn.execute("SELECT trust_level FROM nodes WHERE id=?", (a.id,)).fetchone()
+        assert row["trust_level"] == 1.0
+        mg.node_set_provenance(a.id, trust_level=-0.5)
+        row = mg.conn.execute("SELECT trust_level FROM nodes WHERE id=?", (a.id,)).fetchone()
+        assert row["trust_level"] == 0.0
+
+    def test_node_set_provenance_nonexistent(self, mg):
+        """Setting provenance on nonexistent node returns False."""
+        assert not mg.node_set_provenance("nonexistent", trust_level=0.5)
+
+    def test_node_quarantine_basic(self, mg):
+        """Quarantine marks a node and stores reason."""
+        a = mg.add("Suspicious fact")
+        assert mg.node_quarantine(a.id, reason="unverified source")
+        row = mg.conn.execute("SELECT quarantined, quarantine_reason FROM nodes WHERE id=?", (a.id,)).fetchone()
+        assert row["quarantined"] == 1
+        assert row["quarantine_reason"] == "unverified source"
+
+    def test_node_quarantine_default_reason(self, mg):
+        """Quarantine without reason uses 'unspecified'."""
+        a = mg.add("Suspicious fact")
+        mg.node_quarantine(a.id)
+        row = mg.conn.execute("SELECT quarantine_reason FROM nodes WHERE id=?", (a.id,)).fetchone()
+        assert row["quarantine_reason"] == "unspecified"
+
+    def test_node_quarantine_nonexistent(self, mg):
+        """Quarantine on nonexistent node returns False."""
+        assert not mg.node_quarantine("nonexistent")
+
+    def test_node_unquarantine(self, mg):
+        """Unquarantine clears quarantine flag and reason."""
+        a = mg.add("Fact A")
+        mg.node_quarantine(a.id, reason="testing")
+        assert mg.node_unquarantine(a.id)
+        row = mg.conn.execute("SELECT quarantined, quarantine_reason FROM nodes WHERE id=?", (a.id,)).fetchone()
+        assert row["quarantined"] == 0
+        assert row["quarantine_reason"] is None
+
+    def test_quarantine_list(self, mg):
+        """Quarantine list returns all quarantined nodes."""
+        a = mg.add("Fact A")
+        b = mg.add("Fact B")
+        c = mg.add("Fact C")
+        mg.node_quarantine(a.id, "reason1")
+        mg.node_quarantine(b.id, "reason2")
+        ql = mg.quarantine_list()
+        assert len(ql) == 2
+        labels = {item["label"] for item in ql}
+        assert labels == {"Fact A", "Fact B"}
+
+    def test_quarantine_list_empty(self, mg):
+        """Quarantine list on clean graph is empty."""
+        assert mg.quarantine_list() == []
+
+    def test_quarantine_scan_auto(self, mg):
+        """Scan auto-quarantines nodes below trust threshold."""
+        a = mg.add("Low trust fact")
+        b = mg.add("High trust fact")
+        c = mg.add("Medium trust fact")
+        mg.node_set_provenance(a.id, trust_level=0.1)
+        mg.node_set_provenance(b.id, trust_level=0.9)
+        mg.node_set_provenance(c.id, trust_level=0.2)
+        quarantined = mg.quarantine_scan(trust_threshold=0.3)
+        assert a.id in quarantined
+        assert c.id in quarantined
+        assert b.id not in quarantined
+        # Should be exactly 2
+        assert len(quarantined) == 2
+
+    def test_quarantine_scan_no_double_quarantine(self, mg):
+        """Scan does not re-quarantine already quarantined nodes."""
+        a = mg.add("Fact A")
+        mg.node_set_provenance(a.id, trust_level=0.1)
+        mg.node_quarantine(a.id, "manual")
+        result = mg.quarantine_scan(trust_threshold=0.3)
+        assert a.id not in result  # Already quarantined, skip
+
+    def test_recall_excludes_quarantined(self, mg):
+        """Recall does not return quarantined nodes."""
+        a = mg.add("Python guide")
+        b = mg.add("Python malware")  # Will be quarantined
+        mg.node_quarantine(b.id, "adversarial content")
+        results = mg.recall("Python")
+        labels = [r.label for r in results]
+        assert "Python guide" in labels
+        assert "Python malware" not in labels
+
+    def test_search_by_tag_excludes_quarantined(self, mg):
+        """search_by_tag excludes quarantined nodes."""
+        a = mg.add("Safe fact")
+        b = mg.add("Unsafe fact")
+        mg.add_tag(a.id, "important")
+        mg.add_tag(b.id, "important")
+        mg.node_quarantine(b.id, "untrusted")
+        results = mg.search_by_tag("important")
+        labels = [r.label for r in results]
+        assert "Safe fact" in labels
+        assert "Unsafe fact" not in labels
+
+    def test_quarantine_unquarantine_cycle(self, mg):
+        """Full quarantine → unquarantine → recall works again."""
+        a = mg.add("Recovered fact")
+        mg.node_quarantine(a.id, "under review")
+        assert mg.recall("Recovered") == []
+        mg.node_unquarantine(a.id)
+        results = mg.recall("Recovered")
+        assert len(results) == 1
+        assert results[0].label == "Recovered fact"

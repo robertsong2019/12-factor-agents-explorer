@@ -91,6 +91,18 @@ class MemoryGraph:
                 PRIMARY KEY (source, target, relation)
             );
         """)
+        # Schema migration: add provenance + quarantine columns (backward compatible)
+        existing_cols = {row[1] for row in self.conn.execute("PRAGMA table_info(nodes)").fetchall()}
+        migrations = [
+            ("source", "TEXT DEFAULT NULL"),
+            ("trust_level", "REAL DEFAULT 1.0"),
+            ("parents", "TEXT DEFAULT '[]'"),
+            ("quarantined", "INTEGER DEFAULT 0"),
+            ("quarantine_reason", "TEXT DEFAULT NULL"),
+        ]
+        for col, typedef in migrations:
+            if col not in existing_cols:
+                self.conn.execute(f"ALTER TABLE nodes ADD COLUMN {col} {typedef}")
         # FTS5 full-text index for BM25 search
         try:
             self.conn.execute("""
@@ -111,7 +123,7 @@ class MemoryGraph:
             created=time.time(), accessed=time.time(), weight=1.0
         )
         self.conn.execute(
-            "INSERT INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
             (node.id, node.label, node.kind, json.dumps(node.data),
              node.created, node.accessed, node.weight, json.dumps(tags or []))
         )
@@ -171,7 +183,7 @@ class MemoryGraph:
             )
             tags = item.get("tags", [])
             self.conn.execute(
-                "INSERT INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
                 (node.id, node.label, node.kind, json.dumps(node.data),
                  node.created, node.accessed, node.weight, json.dumps(tags))
             )
@@ -229,9 +241,9 @@ class MemoryGraph:
                 self._fts_sync_node(nid)
         self.conn.commit()
 
-    def search_by_tag(self, tag: str) -> list[Node]:
-        """Return all nodes with a given tag."""
-        rows = self.conn.execute("SELECT * FROM nodes").fetchall()
+    def search_by_tag(self, tag: str) -> list[Node]:  # noqa: F811
+        """Return all nodes with a given tag (excludes quarantined)."""
+        rows = self.conn.execute("SELECT * FROM nodes WHERE quarantined = 0").fetchall()
         results = []
         for r in rows:
             tags_list = json.loads(r["tags"])
@@ -262,7 +274,7 @@ class MemoryGraph:
         """按关键词召回记忆，访问过的记忆强度增加。"""
         now = time.time()
         rows = self.conn.execute(
-            "SELECT * FROM nodes WHERE label LIKE ? ORDER BY weight DESC LIMIT ?",
+            "SELECT * FROM nodes WHERE label LIKE ? AND quarantined = 0 ORDER BY weight DESC LIMIT ?",
             (f"%{query}%", limit)
         ).fetchall()
 
@@ -418,7 +430,7 @@ class MemoryGraph:
             self.conn.execute("DELETE FROM nodes")
         for n in data.get("nodes", []):
             self.conn.execute(
-                "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
                 (n["id"], n["label"], n["kind"], json.dumps(n.get("data", {})),
                  n.get("created", time.time()), n.get("accessed", time.time()),
                  n.get("weight", 1.0), json.dumps(n.get("tags", [])))
@@ -944,7 +956,7 @@ class MemoryGraph:
             return None
         new_id = uuid.uuid4().hex[:12]
         self.conn.execute(
-            "INSERT INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
             (new_id, new_label or row["label"], row["kind"], row["data"],
              time.time(), time.time(), row["weight"], row["tags"])
         )
@@ -2527,7 +2539,7 @@ class MemoryGraph:
         """直接用指定 ID 插入节点（内部方法，用于 import）。"""
         now = time.time()
         self.conn.execute(
-            "INSERT OR IGNORE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
             (nid, label, kind, "{}", now, now, weight, json.dumps(tags or []))
         )
         self.conn.commit()
@@ -8036,7 +8048,7 @@ class MemoryGraph:
 
             now = time.time()
             self.conn.execute(
-                "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
                 (node_id, content, kind,
                  json.dumps(meta.get("data", {})),
                  meta.get("created", now), meta.get("accessed", now),
@@ -8089,7 +8101,7 @@ class MemoryGraph:
                 if isinstance(tags, str):
                     tags = [tags]
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
                     (nid, node.get("label", ""), node.get("kind", "fact"),
                      json.dumps(node.get("data", {})),
                      node.get("created", time.time()), node.get("accessed", time.time()),
@@ -8115,7 +8127,7 @@ class MemoryGraph:
                 # OR-Set: preserve both versions
                 merged_id = f"{nid}::crdt::{int(node.get('accessed', 0))}"
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
                     (merged_id, node.get("label", ""), node.get("kind", "fact"),
                      json.dumps(node.get("data", {})),
                      node.get("created", time.time()), node.get("accessed", time.time()),
@@ -8359,7 +8371,7 @@ class MemoryGraph:
                 if "_vc" not in data:
                     data["_vc"] = {agent_id: 1}
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
                     (nid, node.get("label", ""), node.get("kind", "fact"),
                      json.dumps(data),
                      node.get("created", time.time()), node.get("accessed", time.time()),
@@ -10890,6 +10902,92 @@ class MemoryGraph:
                 })
         history.sort(key=lambda x: x["valid_from"], reverse=True)
         return history
+
+    # ── OWASP ASI06: Provenance & Quarantine ──────────────────
+
+    def node_set_provenance(self, node_id: str, source: str = None,
+                            trust_level: float = None,
+                            parents: list[str] = None) -> bool:
+        """Set provenance metadata on a node (OWASP ASI06 defense).
+
+        Tracks WHERE a memory came from (source), HOW MUCH to trust it
+        (trust_level 0-1), and WHICH nodes derived it (parents).
+        Enables quarantine of untrusted/contaminated memory chains.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return False
+        updates, params = [], []
+        if source is not None:
+            updates.append("source = ?")
+            params.append(source)
+        if trust_level is not None:
+            updates.append("trust_level = ?")
+            params.append(max(0.0, min(1.0, trust_level)))
+        if parents is not None:
+            updates.append("parents = ?")
+            params.append(json.dumps(parents))
+        if not updates:
+            return False
+        params.append(node_id)
+        self.conn.execute(f"UPDATE nodes SET {', '.join(updates)} WHERE id = ?", params)
+        self.conn.commit()
+        return True
+
+    def node_quarantine(self, node_id: str, reason: str = "") -> bool:
+        """Quarantine a node — excluded from retrieval (recall/search/neighbors).
+
+        Use when a memory is suspected of being contaminated, adversarial,
+        or otherwise untrustworthy (OWASP ASI06).
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return False
+        self.conn.execute(
+            "UPDATE nodes SET quarantined = 1, quarantine_reason = ? WHERE id = ?",
+            (reason or "unspecified", node_id)
+        )
+        self.conn.commit()
+        return True
+
+    def node_unquarantine(self, node_id: str) -> bool:
+        """Release a node from quarantine."""
+        node = self.get_node(node_id)
+        if not node:
+            return False
+        self.conn.execute(
+            "UPDATE nodes SET quarantined = 0, quarantine_reason = NULL WHERE id = ?",
+            (node_id,)
+        )
+        self.conn.commit()
+        return True
+
+    def quarantine_list(self) -> list[dict]:
+        """List all quarantined nodes with reasons."""
+        rows = self.conn.execute(
+            "SELECT id, label, kind, trust_level, source, quarantine_reason "
+            "FROM nodes WHERE quarantined = 1 ORDER BY label"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def quarantine_scan(self, trust_threshold: float = 0.3) -> list[str]:
+        """Auto-quarantine nodes with trust_level below threshold.
+
+        Returns list of newly quarantined node IDs.
+        """
+        rows = self.conn.execute(
+            "SELECT id FROM nodes WHERE quarantined = 0 AND trust_level < ?",
+            (trust_threshold,)
+        ).fetchall()
+        quarantined_ids = []
+        for r in rows:
+            self.conn.execute(
+                "UPDATE nodes SET quarantined = 1, quarantine_reason = ? WHERE id = ?",
+                (f"auto: trust_level below {trust_threshold}", r["id"])
+            )
+            quarantined_ids.append(r["id"])
+        self.conn.commit()
+        return quarantined_ids
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
