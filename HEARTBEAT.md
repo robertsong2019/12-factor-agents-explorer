@@ -1,48 +1,52 @@
-# HEARTBEAT.md - June 21, 2026 (Sunday)
+# HEARTBEAT.md - June 23, 2026 (Tuesday)
 
 ## 待办任务
 
 ### 高优先级（本周+下周）
 - [ ] **agent-memory-graph: README + npm publish** — **1307 tests**, 329+ APIs。**差异化: 唯一图分析+向量+BM25+Adaptive Fusion+RL Memory+CRDT多Agent合并+语义Consolidation+Workflow Memory八合一**。memorywire-compatible 标注
-- [ ] **agent-context-store: README + npm publish** — **1454 tests** ⬆️⬆️⬆️, 382+ APIs。**三大分析管线全部 COMPLETE**: Tag analytics (7 layers: entropy→IG→audit→health_report→auto_label→**auto_label_batch**) + Content cleanup (5 layers: duplicate_graph→merge_suggestions→compaction_report→**deduplicate**) + Embedding analytics (5 layers: outlier_score→rank→density_map+core_sample+outlier_pairs→**topic_clusters** k-means)
+- [ ] **agent-context-store: README + npm publish** — **1652 tests** ⬆️⬆️⬆️, 440+ APIs。**8 complete pipelines**: Tag (10 layers) + Search (4 tiers) + Content cleanup (5 layers) + Embedding (5 layers) + Store Sync + **Graph analytics** (NEW) + **Quality assessment** (NEW) + **Tag taxonomy** (NEW)
 - [ ] **structured-output-toolkit: README + npm publish** — **438 tests**, 4200+ lines src。**完整栈**: generation+validation+consensus+recovery+scoring+monitoring+versioning+**cross-provider adaptation**
 - [ ] **openclaw-langgraph-bridge Supervisor 完善** — 195 tests, 持久化健康状态 + LLM路由策略 + Gateway集成测试
 - [ ] **创建 lab/a2a-trust-prototype/** — TrustGraph 研究(22/22) + Trust Propagation(EigenTrust+BetaTrust+FIRE ~200行) + X42 互补研究 均已完成
 
 ### 中优先级（本月）
 - [ ] agent-memory-graph: Q-value scoring ~60行 + drift detection ~50行 — Compositional Agent Memory 研究的下一步
+- [ ] agent-memory-graph: bi-temporal validity tracking — valid_from/valid_until/invalidated_by ~80行+15tests (Temporal KG 研究落地)
+- [x] agent-memory-graph: source/trust_level/parents[] + quarantine — OWASP ASI06 研究落地 ✅ Cycle 149 (79e8195), 5 APIs, +15 tests
 - [ ] agent-memory-graph: Leiden 集成 — 最后一个重大新增。~190行代码已验证
 - [ ] agent-memory-graph: vector_clock + subscribe() — Vector Clocks 研究的下一步 (~80行, +15 tests)
-- [ ] Hindsight Mini 原型 — lab/hindsight-mini/ (AWM recovery tips + AgentHER 双向学习可集成)
-- [ ] context-forge 继续 — 109 tests, 更多 features
+- [ ] context-forge 继续 — 235 tests, 更多 features
 - [ ] lab/agent-observability 继续 — 166 tests, 集成 gen_ai.* 属性 + CostAggregator
 - [ ] AMS 生产化 — EmbeddingProvider真实接入(ONNX/远程API), Docker化
 - [ ] TrustGraph + Trust Propagation → lab/a2a-trust-prototype 集成 — TrustEngineV2 (7算法)
 - [ ] memorywire 兼容: toMemorywireFormat() 导出 + no-scope-delete guard
 
 ## 系统状态
-- **agent-memory-graph**: **1307 tests** — 329+ APIs。Workflow Memory 14 APIs + consolidation pipeline全套 + memory_decay/proximity/annotate
-- **agent-context-store**: **1454 tests** ⬆️⬆️⬆️ — 382+ APIs。三大分析管线 COMPLETE (tag/content/embedding)。首个 action API (tag_auto_label) + 首个 store-modifying API (content_deduplicate)
+- **agent-memory-graph**: **1429 tests** ⬆️ — 334+ APIs。Provenance + Quarantine (OWASP ASI06) 5 APIs + Workflow Memory + consolidation pipeline全套 + memory_decay/proximity/annotate
+- **agent-context-store**: **1652 tests** ⬆️⬆️⬆️ — 440+ APIs。**8 complete pipelines** (Tag 10-layer / Search 4-tier / Content cleanup 5-layer / Embedding 5-layer / Store Sync / **Graph analytics** / **Quality assessment** / **Tag taxonomy**) + OWASP ASI06 defense
 - **structured-output-toolkit**: **438 tests**
 - **agent-task-cli**: **882 tests**
 - **openclaw-langgraph-bridge**: 195 tests
 - **better-ralph-core**: 376 tests
 - **lab/agent-observability**: 166 tests
-- **context-forge**: 109 tests ⬆️
+- **context-forge**: **402 tests** ⬆️⬆️⬆️ (was 235, +167 in one evening!)
 - **AMS v1.0-dev**: 645 tests
 - **prompt-router**: 258 tests
-- **autoresearch**: 零回滚率持续保持（连续142天）🏆
-- **四项目测试总量**: 4081 tests (agent-memory-graph 1307 + agent-context-store 1454 + structured-output-toolkit 438 + agent-task-cli 882) — 24h内 +50!
+- **autoresearch**: 零回滚率持续保持（连续146天）🏆
+- **四项目测试总量**: 4279 tests (agent-memory-graph 1307 + agent-context-store 1652 + structured-output-toolkit 438 + agent-task-cli 882) — 24h内 +54 (agent-context-store cycles 150-151)
 
 ## 近期发现
-- **三大分析管线全部 COMPLETE** ✅ (06-21): agent-context-store tag/content/embedding 三条管线都完成了从测量→诊断→建议→**行动**的完整闭环。tag_auto_label_batch 是 tag 管线的 capstone (batch fix everything), content_deduplicate 是 content 管线唯一的 store-modifying API (实际执行 merge), embedding_topic_clusters 用 k-means++ 揭示主题结构
-- **Compositional Agent Memory: 3-Layer Unification** ✅ (06-20 晚): 9 papers synthesized. 核心: Memory management从系统问题变为学习问题; Frozen LLM + evolving memory是stability-plasticity共识; Episodic在被重建非仅检索. ~250行可运行TS (4/4 pass)
-- **Agent Workflow Memory (Procedural Memory)** ✅ (06-19): AWM +51.1% WebArena. 已落地 14 APIs. 核心: 执行≠教学; 失败>成功; Skill=NL+Code+Gate
-- **Analytics Executive Layer** ✅ (06-20): tag_health_report + merge_suggestions + density_map
+- **三新管线完成** ✅ (06-23): agent-context-store cycles 150-151 带来三个新 complete pipelines: **Graph analytics** (knowledge_graph BFS → centrality 4 metrics), **Quality assessment** (6-dim per-entry score → batch grade histogram → store-wide recommendations), **Tag taxonomy** (conditional probability hierarchy → nested tree with depth/leaf/descendant)。agent-context-store 从 5 pipelines 升级到 8 pipelines。
+- **context-forge 6 features** ✅ (06-22 晚): F17-F19 (complexity analysis, project comparison, stale file detection, health scoring) + F28-F30 (TODO/FIXME scanning, env var detection, license detection)。235→402 (+167 tests)。
+- **两篇深度研究** ✅ (06-22 晚): (1) LLM KG Construction — 12+ papers, position as Graph Intelligence Layer, resolve_entities() ~60行 next; (2) Dynamic Community Detection — DF-Leiden 10³× speedup, CPM γ=0.1 for sparse graphs, npm 零竞品。
+- **5 complete pipelines + tag prediction** ✅ (06-22): (previous — kept for context)
+- **Agent Memory Security: OWASP ASI06 Defense** ✅ (06-21 晚)
+- **Temporal Knowledge Graphs** ✅ (06-21 晚)
+- **Compositional Agent Memory: 3-Layer Unification** ✅ (06-20 晚)
 
 ## 本周关键路径
 README(agent-memory-graph ~2h) → npm publish → README(agent-context-store ~2h) → npm publish → README(structured-output-toolkit ~1h) → npm publish
 
 ## 上次检查
-- 知识整理: 2026-06-21 02:00
-- **深度研究: 2026-06-21 20:00 (Agent Memory Security — OWASP ASI06 defense, MemoryIntegrityGuard 8/8 pass)**
+- 知识整理: 2026-06-23 02:00
+- **深度研究: 2026-06-23 20:23 (Test-Time Scaling: Adaptive Retrieval + Self-Correcting Search + Memory Admission Control)**
