@@ -3137,6 +3137,208 @@ export function formatSecretReport(findings) {
   return lines.join('\n');
 }
 
+// --- F33: Documentation Readability Analysis ---
+
+export function analyzeDocReadability(content) {
+  if (!content || content.trim().length === 0) {
+    return {
+      score: 0,
+      grade: 'F',
+      metrics: {},
+      issues: ['Empty content'],
+      suggestions: ['Add content to this document'],
+    };
+  }
+
+  const lines = content.split('\n');
+  const totalLines = lines.length;
+  const nonEmptyLines = lines.filter(l => l.trim().length > 0);
+
+  // --- Heading analysis ---
+  const headings = lines
+    .map((l, i) => ({ text: l, level: l.match(/^^(#{1,6})\s/)?.[1]?.length || 0, line: i + 1 }))
+    .filter(h => h.level > 0);
+  const headingDepths = headings.map(h => h.level);
+  const maxDepth = headingDepths.length > 0 ? Math.max(...headingDepths) : 0;
+  const headingCount = headings.length;
+  const headingDensity = totalLines > 0 ? headingCount / totalLines : 0;
+
+  // Check heading hierarchy (should not skip levels, e.g., H1 -> H3)
+  let hierarchyIssues = 0;
+  for (let i = 1; i < headings.length; i++) {
+    const prev = headings[i - 1].level;
+    const curr = headings[i].level;
+    if (curr > prev + 1) hierarchyIssues++;
+  }
+
+  // --- Paragraph analysis ---
+  const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 0 && !p.trim().startsWith('#'));
+  const paragraphCount = paragraphs.length;
+  const paragraphLengths = paragraphs.map(p => p.split(/\s+/).filter(Boolean).length);
+  const avgParagraphLength = paragraphLengths.length > 0
+    ? Math.round(paragraphLengths.reduce((a, b) => a + b, 0) / paragraphLengths.length)
+    : 0;
+  const longestParagraph = paragraphLengths.length > 0 ? Math.max(...paragraphLengths) : 0;
+
+  // --- Sentence analysis (within paragraphs) ---
+  const sentences = content
+    .replace(/```[\s\S]*?```/g, ' ') // Remove code blocks
+    .replace(/`[^`]+`/g, ' ') // Remove inline code
+    .split(/[.!?]+\s+/)
+    .filter(s => s.split(/\s+/).filter(Boolean).length >= 3);
+  const sentenceCount = sentences.length;
+  const sentenceLengths = sentences.map(s => s.split(/\s+/).filter(Boolean).length);
+  const avgSentenceLength = sentenceLengths.length > 0
+    ? Math.round(sentenceLengths.reduce((a, b) => a + b, 0) / sentenceLengths.length)
+    : 0;
+
+  // --- Code block analysis ---
+  const codeBlocks = content.match(/```[\s\S]*?```/g) || [];
+  const codeBlockCount = codeBlocks.length;
+  const codeBlockLines = codeBlocks.reduce((sum, block) => sum + block.split('\n').length - 2, 0);
+  const codeRatio = totalLines > 0 ? codeBlockLines / totalLines : 0;
+
+  // --- Link analysis ---
+  const mdLinks = content.match(/\[[^\]]+\]\([^)]+\)/g) || [];
+  const linkCount = mdLinks.length;
+  const linkDensity = nonEmptyLines.length > 0 ? linkCount / nonEmptyLines.length : 0;
+
+  // --- List analysis ---
+  const listItems = lines.filter(l => /^\s*[-*+]\s|^\d+\.\s/.test(l));
+  const listCount = listItems.length;
+
+  // --- Word count ---
+  const words = content.replace(/```[\s\S]*?```/g, ' ').split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+
+  // --- Scoring (0-100) ---
+  let score = 100;
+  const issues = [];
+  const suggestions = [];
+
+  // Penalty: paragraphs too long (>150 words avg)
+  if (avgParagraphLength > 150) {
+    score -= 10;
+    issues.push(`Average paragraph length is ${avgParagraphLength} words (recommended: <150)`);
+    suggestions.push('Break long paragraphs into shorter ones (3-5 sentences each)');
+  }
+  // Penalty: sentences too long (>25 words avg)
+  if (avgSentenceLength > 25) {
+    score -= 10;
+    issues.push(`Average sentence length is ${avgSentenceLength} words (recommended: <25)`);
+    suggestions.push('Use shorter sentences for clarity');
+  }
+  // Penalty: heading hierarchy issues
+  if (hierarchyIssues > 0) {
+    score -= hierarchyIssues * 5;
+    issues.push(`${hierarchyIssues} heading hierarchy issue(s) detected (skipped levels)`);
+    suggestions.push('Don\'t skip heading levels (e.g., H1 → H3)');
+  }
+  // Penalty: no headings for long docs
+  if (wordCount > 200 && headingCount === 0) {
+    score -= 15;
+    issues.push('Long document with no headings');
+    suggestions.push('Add headings to break up content and improve navigation');
+  }
+  // Penalty: too much code (>50% of lines)
+  if (codeRatio > 0.5) {
+    score -= 10;
+    issues.push(`Code blocks are ${Math.round(codeRatio * 100)}% of document (recommended: <50%)`);
+    suggestions.push('Add more explanatory text between code blocks');
+  }
+  // Penalty: no links in long docs
+  if (wordCount > 300 && linkCount === 0) {
+    score -= 5;
+    issues.push('Long document with no links');
+    suggestions.push('Add links to related resources for context');
+  }
+  // Penalty: heading too dense or too sparse
+  if (wordCount > 100 && headingDensity < 0.02) {
+    score -= 5;
+    issues.push('Low heading density — hard to scan');
+    suggestions.push('Add more section headings for readability');
+  }
+  // Penalty: very long single paragraph
+  if (longestParagraph > 200) {
+    score -= 5;
+    issues.push(`Longest paragraph is ${longestParagraph} words`);
+    suggestions.push('Split paragraphs longer than 200 words');
+  }
+
+  score = Math.max(0, Math.min(100, score));
+
+  // Grade
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 80) grade = 'B';
+  else if (score >= 70) grade = 'C';
+  else if (score >= 60) grade = 'D';
+  else grade = 'F';
+
+  return {
+    score,
+    grade,
+    metrics: {
+      wordCount,
+      headingCount,
+      headingDensity: Number(headingDensity.toFixed(3)),
+      maxHeadingDepth: maxDepth,
+      hierarchyIssues,
+      paragraphCount,
+      avgParagraphLength,
+      longestParagraph,
+      sentenceCount,
+      avgSentenceLength,
+      codeBlockCount,
+      codeBlockLines,
+      codeRatio: Number(codeRatio.toFixed(3)),
+      linkCount,
+      linkDensity: Number(linkDensity.toFixed(3)),
+      listCount,
+    },
+    issues,
+    suggestions,
+  };
+}
+
+export function formatReadabilityReport(analysis) {
+  const lines = [
+    '### Documentation Readability',
+    '',
+    `**Score: ${analysis.score}/100 (Grade: ${analysis.grade})**`,
+    '',
+    '| Metric | Value |',
+    '|--------|-------|',
+    `| Words | ${analysis.metrics.wordCount} |`,
+    `| Headings | ${analysis.metrics.headingCount} (depth: H1-H${analysis.metrics.maxHeadingDepth}) |`,
+    `| Paragraphs | ${analysis.metrics.paragraphCount} (avg ${analysis.metrics.avgParagraphLength} words) |`,
+    `| Sentences | ${analysis.metrics.sentenceCount} (avg ${analysis.metrics.avgSentenceLength} words) |`,
+    `| Code Blocks | ${analysis.metrics.codeBlockCount} (${Math.round(analysis.metrics.codeRatio * 100)}% of lines) |`,
+    `| Links | ${analysis.metrics.linkCount} |`,
+    `| List Items | ${analysis.metrics.listCount} |`,
+  ];
+
+  if (analysis.metrics.hierarchyIssues > 0) {
+    lines.push(``, `⚠️ ${analysis.metrics.hierarchyIssues} heading hierarchy issue(s)`);
+  }
+
+  if (analysis.issues.length > 0) {
+    lines.push('', '**Issues:**');
+    for (const issue of analysis.issues) {
+      lines.push(`- ${issue}`);
+    }
+  }
+
+  if (analysis.suggestions.length > 0) {
+    lines.push('', '**Suggestions:**');
+    for (const s of analysis.suggestions) {
+      lines.push(`- 💡 ${s}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 export function resolvePath(p) {
   return p.startsWith("/") ? p : join(process.cwd(), p);
 }
