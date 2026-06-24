@@ -175,11 +175,23 @@ def my_search(q: str) -> str:
 @tool
 def search(query: str, max_results: int = 10) -> str:
     # 参数会被自动提取为:
-    # {"query": {"type": "string"}, "max_results": {"type": "string", "default": 10}}
+    # {"query": {"type": "string"}, "max_results": {"type": "integer", "default": 10}}
     ...
 ```
 
-> ⚠️ 当前版本参数类型统一为 `string`。如需精确类型，建议在 docstring 中说明。
+**类型推断映射表：**
+
+| Python 类型 | 工具参数类型 |
+|-------------|-------------|
+| `str` | `string` |
+| `int` | `integer` |
+| `float` | `number` |
+| `bool` | `boolean` |
+| `list` | `array` |
+| `dict` | `object` |
+| 其他 | `string`（兜底） |
+
+> 💡 无类型注解的参数默认为 `string`。建议始终添加类型注解以获得精确的类型映射。
 
 ---
 
@@ -270,15 +282,19 @@ Memory(
 
 ```python
 memory.add("用户偏好中文回复", metadata={"type": "preference"})
+memory.add("API 密钥已轮换", tags=["security", "config"])
 ```
 
 #### `search(query, limit=5, tags=None)`
 
-关键词搜索记忆（不区分大小写）。
+关键词搜索记忆（不区分大小写），支持按标签过滤。
 
 ```python
 results = memory.search("用户偏好", limit=3)
 # 返回 List[MemoryEntry]
+
+# 按标签过滤
+sec_results = memory.search("密钥", tags=["security"])
 ```
 
 #### `get_recent(n=5)`
@@ -321,6 +337,73 @@ memory.update(0, "新内容", metadata={"edited": True})
 
 清空所有记忆并删除持久化文件内容。
 
+#### `export_json()`  *(F1)*
+
+将所有记忆序列化为 JSON 字符串，用于备份或迁移。
+
+```python
+json_str = memory.export_json()
+# '[{"content": "...", "timestamp": "2026-06-24T...", "metadata": {}, "tags": []}]'
+```
+
+**返回：** `str` — JSON 格式的记忆数组
+
+#### `import_json(data, merge=True)`  *(F2)*
+
+从 JSON 字符串导入记忆，返回成功导入的条目数。
+
+```python
+# 从备份恢复
+count = memory.import_json(json_str)
+print(f"恢复了 {count} 条记忆")
+
+# 覆盖导入（清除现有记忆后导入）
+count = memory.import_json(json_str, merge=False)
+```
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `data` | `str` | 必填 | `export_json()` 生成的 JSON 字符串 |
+| `merge` | `bool` | `True` | `True`=追加，`False`=先清空再导入 |
+
+**返回：** `int` — 成功导入的条目数（格式错误的条目会被跳过）
+
+#### `stats()`  *(F3)*
+
+返回记忆统计信息：总数、标签分布、时间范围。
+
+```python
+s = memory.stats()
+print(s)
+# {
+#   "total": 42,
+#   "tags": {"security": 5, "config": 3, "task": 20},
+#   "date_range": {"oldest": "2026-01-01T...", "newest": "2026-06-24T..."}
+# }
+```
+
+**返回：** `Dict[str, Any]` — 空 Memory 时返回 `{"total": 0, "tags": {}, "date_range": None}`
+
+#### `add_tag(index, tag)`  *(F4)*
+
+给指定索引的记忆添加标签（去重，已存在则不重复添加）。
+
+```python
+memory.add_tag(0, "important")  # 给第一条记忆加标签
+```
+
+**返回：** `bool` — 索引有效返回 `True`，越界返回 `False`
+
+#### `remove_tag(index, tag)`  *(F4)*
+
+从指定索引的记忆移除标签。
+
+```python
+memory.remove_tag(0, "draft")  # 移除标签
+```
+
+**返回：** `bool` — 索引有效返回 `True`，越界返回 `False`
+
 #### `to_context(max_tokens=1000)`
 
 将近期记忆格式化为可注入提示的文本。
@@ -339,6 +422,14 @@ context_str = memory.to_context(max_tokens=500)
 | `content` | `str` | 记忆内容 |
 | `timestamp` | `datetime` | 创建时间 |
 | `metadata` | `Dict[str, Any]` | 附加元数据 |
+| `tags` | `List[str]` | 标签列表（用于过滤） |
+
+**方法：**
+
+| 方法 | 说明 |
+|------|------|
+| `to_dict()` | 序列化为字典（不含空 tags） |
+| `__eq__(other)` | 按 content 比较相等性 |
 
 ### 持久化
 
@@ -347,7 +438,7 @@ context_str = memory.to_context(max_tokens=500)
 ```python
 memory = Memory(persistence_path="data/memory.json")
 # 每次 add/clear 自动读写文件
-# 文件格式: [{"content": "...", "timestamp": "...", "metadata": {...}}, ...]
+# 文件格式: [{"content": "...", "timestamp": "...", "metadata": {...}, "tags": [...]}, ...]
 ```
 
 ---

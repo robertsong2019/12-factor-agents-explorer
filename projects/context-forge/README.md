@@ -50,6 +50,7 @@ context-forge /path/to/my-project --dry-run
 - ⏳ **Bi-temporal validity** — time-window edge tracking, point-in-time queries (F31)
 - 🔐 **Secret scanner** — detect API keys, tokens, passwords, private keys with risk levels (F32)
 - 📖 **Doc readability** — A-F grade scoring, heading hierarchy, paragraph/sentence analysis (F33)
+- 🪦 **Dead code detector** — find unused exports by cross-referencing imports (F34)
 - ⚡ **Zero deps** — single file, runs with Node.js
 
 ## Usage
@@ -408,6 +409,46 @@ console.log(formatReadabilityReport(analysis))
 - No links in 300+ word docs → −5
 
 **Grade scale:** A (90+) · B (80+) · C (70+) · D (60+) · F (<60)
+
+---
+
+## Dead Code Detection (F34)
+
+Detect exported symbols that are never imported or referenced elsewhere in the codebase.
+
+```javascript
+import { detectDeadCode, formatDeadCodeReport } from './context-forge.mjs'
+
+const importData = parseImports('./src')   // from F14: analyzeImports()
+const apiSurface = extractApiSurface('./src') // from F28: scanCode()
+
+const result = detectDeadCode(importData, apiSurface)
+console.log(formatDeadCodeReport(result))
+// 🔍 Dead Code Analysis: 3/15 exports unused
+//
+// **src/utils/legacy.ts** (2 unused):
+//   - `oldHelper`
+//   - `deprecatedFn`
+//
+// **src/types/extra.ts** (1 unused):
+//   - `UnusedType`
+//
+// **Summary:** 12 used / 3 unused / 15 total
+```
+
+**How it works:**
+1. Collects all imported names across the project from `importData`
+2. Cross-references each exported symbol from `apiSurface` against imports
+3. Any export with zero inbound references is flagged as dead code
+
+**Returns:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dead` | `Array<{file, symbol, type}>` | Unused exports, grouped by file |
+| `total` | `number` | Total exported symbols |
+| `used` | `number` | Referenced exports |
+| `unused` | `number` | Dead code count |
 
 ---
 
