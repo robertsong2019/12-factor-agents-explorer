@@ -50,4 +50,5 @@ README(agent-memory-graph ~2h) → npm publish → README(agent-context-store ~2
 
 ## 上次检查
 - 知识整理: 2026-06-24 02:00
-- **深度研究: 2026-06-23 20:32 (Test-Time Scaling: Adaptive Retrieval + Self-Correcting Search + Memory Admission Control)**
+- **深度研究: 2026-06-24 20:35 (Agent Memory Benchmarks & Evaluation 2026 — 15+ benchmarks/systems, 3-layer eval consensus, MemoryArena recall≠agency, BEAM-10M frontier, production comparison matrix, ~300行 MemoryBenchmarkHarness 7/7 pass)**
+- **深度研究: 2026-06-24 20:00 (MCP Memory Server Protocol: Universal Agent Memory Interface — memorywire 5 ops × 4 types, MCP 2026-07-28 stateless spec, 竞品对比矩阵, 12-tool MCP server 原型 11/11 tests pass)**
