@@ -99,3 +99,7 @@ date	project	tests_before	tests_after	delta	status
 2026-06-21T03:00	67a8c80	edge-ai-agent_test_count	0→17	improve	baseline: collection error (torch missing). Fixed importorskip + lazy torch import + 17 LightweightMemory tests
 2026-06-21T03:00	25049bb	prompt-router_test_count	0→5	improve	baseline: 0 pytest-collectable. Added pytest wrapper + native routing tests
 2026-06-21T03:00	2730238	nano-agent_test_count	145→169	improve	baseline: 145. Added 24 edge-case tests for memory module (tags, truncation, serialization, boundaries)
+2026-06-23	context-forge	add f31-template-registry tests	402	402	426	426	+24	PASS
+2026-06-24T22:00+08:00	3bd0034	test_count	169→193/+24	keep	nano-agent: Memory export_json/import_json/stats/add_tag/remove_tag (F1-F4). All pass, zero regressions.
+2026-06-24T22:15+08:00	c8b3e21	test_count	471→486/+15	keep	context-forge: detectDeadCode/formatDeadCodeReport (F34). 15 tests, zero regressions.
+2026-06-24T22:30+08:00	1c7900e	test_count	882→893/+11	keep	agent-task-cli: Cache.renameKey (F139) + EventBus.delegate (F140). 11 tests, zero regressions.
