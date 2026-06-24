@@ -10989,6 +10989,411 @@ class MemoryGraph:
         self.conn.commit()
         return quarantined_ids
 
+    # ── Graph Reasoning APIs (HopRAG / GR-Agent / GNN-RAG inspired) ────────
+
+    def reasoning_path(self, seed_id: str, target_id: str,
+                        max_hops: int = 3, strategy: str = "shortest",
+                        top_k: int = 5) -> list[dict]:
+        """带分数的推理路径 (Retrieve-Reason-Prune 范式).
+
+        策略:
+        - shortest: BFS 最短路径 (精确)
+        - pagerank_guided: 经过高 PageRank 中间节点
+        - random_walk: 多样化随机游走路径
+
+        返回 [{path, edges, score, explanation, source}, ...]
+        """
+        if not self.has_node(seed_id) or not self.has_node(target_id):
+            return []
+        if seed_id == target_id:
+            return [{"path": [seed_id], "edges": [], "score": 1.0,
+                     "explanation": "seed and target are the same node",
+                     "source": "trivial"}]
+        results = []
+
+        def _edge_label(s, t):
+            r = self.conn.execute(
+                "SELECT relation FROM edges WHERE source=? AND target=? ORDER BY weight DESC LIMIT 1",
+                (s, t)).fetchone()
+            if r:
+                return r["relation"]
+            r = self.conn.execute(
+                "SELECT relation FROM edges WHERE source=? AND target=? ORDER BY weight DESC LIMIT 1",
+                (t, s)).fetchone()
+            return r["relation"] if r else "related"
+
+        def _verbalize(path):
+            parts = []
+            for i in range(len(path) - 1):
+                lbl = _edge_label(path[i], path[i + 1])
+                n1 = self.conn.execute("SELECT label FROM nodes WHERE id=?", (path[i],)).fetchone()
+                n2 = self.conn.execute("SELECT label FROM nodes WHERE id=?", (path[i + 1],)).fetchone()
+                l1 = n1["label"] if n1 else path[i]
+                l2 = n2["label"] if n2 else path[i + 1]
+                parts.append(f"{l1} —({lbl})→ {l2}")
+            return "; ".join(parts)
+
+        if strategy in ("shortest", "auto"):
+            sp = self.bfs_shortest_path(seed_id, target_id)
+            if sp and len(sp) <= max_hops + 1:
+                edges = [_edge_label(sp[i], sp[i + 1]) for i in range(len(sp) - 1)]
+                results.append({
+                    "path": sp,
+                    "edges": edges,
+                    "score": round(1.0 / len(sp), 4),
+                    "explanation": _verbalize(sp),
+                    "source": "shortest",
+                })
+
+        if strategy == "pagerank_guided" or (strategy == "shortest" and not results):
+            pr = self.pagerank(max_iter=20)
+            max_pr = max(pr.values()) if pr else 1.0
+            all_paths = self.find_paths(seed_id, target_id, max_hops)
+            scored = []
+            for p in all_paths[:top_k * 3]:
+                mid_pr = sum(pr.get(nid, 0) for nid in p[1:-1]) / max(1, len(p) - 2)
+                edges = [_edge_label(p[i], p[i + 1]) for i in range(len(p) - 1)]
+                path_score = (mid_pr / max_pr) * 0.5 + (1.0 / len(p)) * 0.5
+                scored.append({
+                    "path": p,
+                    "edges": edges,
+                    "score": round(path_score, 4),
+                    "explanation": _verbalize(p),
+                    "source": "pagerank_guided",
+                })
+            scored.sort(key=lambda x: x["score"], reverse=True)
+            results.extend(scored[:top_k])
+
+        if strategy == "random_walk":
+            import random as _rng
+            for _ in range(top_k * 2):
+                current = seed_id
+                path = [seed_id]
+                visited = {seed_id}
+                for _hop in range(max_hops):
+                    nbrs = self.conn.execute(
+                        "SELECT target FROM edges WHERE source=? AND target NOT IN ({})"
+                        .format(",".join("?" * len(visited))),
+                        [current] + list(visited)).fetchall()
+                    rev_nbrs = self.conn.execute(
+                        "SELECT source FROM edges WHERE target=? AND source NOT IN ({})"
+                        .format(",".join("?" * len(visited))),
+                        [current] + list(visited)).fetchall()
+                    candidates = [r[0] for r in nbrs] + [r[0] for r in rev_nbrs]
+                    if not candidates:
+                        break
+                    nxt = _rng.choice(candidates)
+                    path.append(nxt)
+                    visited.add(nxt)
+                    if nxt == target_id:
+                        break
+                    current = nxt
+                if path[-1] == target_id:
+                    edges = [_edge_label(path[i], path[i + 1]) for i in range(len(path) - 1)]
+                    results.append({
+                        "path": path,
+                        "edges": edges,
+                        "score": round(1.0 / len(path), 4),
+                        "explanation": _verbalize(path),
+                        "source": "random_walk",
+                    })
+            results.sort(key=lambda x: x["score"], reverse=True)
+            results = results[:top_k]
+
+        # Deduplicate by path tuple
+        seen = set()
+        unique = []
+        for r in results:
+            key = tuple(r["path"])
+            if key not in seen:
+                seen.add(key)
+                unique.append(r)
+        return unique[:top_k]
+
+    def explore(self, seed_id: str, max_hops: int = 2, budget: int = 50,
+                direction: str = "both", min_score: float = 0.1) -> dict:
+        """自适应图探索 (GR-Agent agent-environment 交互模式).
+
+        从 seed 出发, 受预算约束地探索邻域, 返回发现的节点+推理路径+统计.
+        """
+        if not self.has_node(seed_id):
+            return {"discovered": [], "paths": [],
+                    "stats": {"nodes_visited": 0, "edges_traversed": 0,
+                              "hops_completed": 0, "budget_used": 0.0}}
+
+        pr = self.pagerank(max_iter=15)
+        max_pr = max(pr.values()) if pr else 1.0
+
+        visited = {seed_id}
+        queue = [(seed_id, 0, 1.0)]
+        discovered = []
+        paths = []
+        edges_traversed = 0
+
+        def _edge_info(s, t):
+            r = self.conn.execute(
+                "SELECT relation, weight FROM edges WHERE source=? AND target=? ORDER BY weight DESC LIMIT 1",
+                (s, t)).fetchone()
+            if r:
+                return r["relation"], r["weight"]
+            r = self.conn.execute(
+                "SELECT relation, weight FROM edges WHERE source=? AND target=? ORDER BY weight DESC LIMIT 1",
+                (t, s)).fetchone()
+            if r:
+                return r["relation"], r["weight"]
+            return "related", 1.0
+
+        def _trace_back(src, intermediate):
+            sp = self.bfs_shortest_path(src, intermediate)
+            return sp or [src, intermediate]
+
+        while queue and len(visited) < budget:
+            current, depth, _score = queue.pop(0)
+            if depth >= max_hops:
+                continue
+
+            if direction == "out":
+                nbr_rows = self.conn.execute(
+                    "SELECT target AS nb FROM edges WHERE source=?", (current,)).fetchall()
+            elif direction == "in":
+                nbr_rows = self.conn.execute(
+                    "SELECT source AS nb FROM edges WHERE target=?", (current,)).fetchall()
+            else:
+                nbr_rows = self.conn.execute(
+                    "SELECT target AS nb FROM edges WHERE source=? "
+                    "UNION SELECT source AS nb FROM edges WHERE target=?",
+                    (current, current)).fetchall()
+
+            edges_traversed += len(nbr_rows)
+            for row in nbr_rows:
+                nb_id = row["nb"]
+                if nb_id in visited:
+                    continue
+                visited.add(nb_id)
+
+                rel, ew = _edge_info(current, nb_id)
+                pr_score = pr.get(nb_id, 0) / max_pr
+                depth_decay = 1.0 / (1 + depth)
+                score = pr_score * 0.4 + ew * 0.3 + depth_decay * 0.3
+
+                if score < min_score:
+                    continue
+
+                nb_row = self.conn.execute(
+                    "SELECT label FROM nodes WHERE id=?", (nb_id,)).fetchone()
+                nb_label = nb_row["label"] if nb_row else nb_id
+
+                discovered.append({
+                    "id": nb_id,
+                    "label": nb_label,
+                    "score": round(score, 4),
+                    "depth": depth + 1,
+                })
+
+                back = _trace_back(seed_id, current)
+                full_path = back + [nb_id]
+                paths.append({
+                    "path": full_path,
+                    "edges": [_edge_info(full_path[i], full_path[i + 1])[0]
+                              for i in range(len(full_path) - 1)],
+                    "score": round(score, 4),
+                    "explanation": f"{seed_id} →({rel})→ {nb_label}",
+                    "source": "pagerank_guided",
+                })
+
+                queue.append((nb_id, depth + 1, score))
+
+        discovered.sort(key=lambda x: x["score"], reverse=True)
+        paths.sort(key=lambda x: x["score"], reverse=True)
+
+        return {
+            "discovered": discovered[:budget],
+            "paths": paths[:10],
+            "stats": {
+                "nodes_visited": len(visited),
+                "edges_traversed": edges_traversed,
+                "hops_completed": max_hops,
+                "budget_used": round(len(visited) / budget, 4),
+            },
+        }
+
+    def infer_relation(self, node_a: str, node_b: str,
+                        max_hops: int = 3) -> dict | None:
+        """不完整知识下的关系推断.
+
+        组合 link prediction (Adamic-Adar + common neighbors) + path finding.
+        返回 {relation, confidence, evidence, link_scores}.
+        """
+        if not self.has_node(node_a) or not self.has_node(node_b):
+            return None
+
+        def _edge_label(s, t):
+            r = self.conn.execute(
+                "SELECT relation FROM edges WHERE source=? AND target=? ORDER BY weight DESC LIMIT 1",
+                (s, t)).fetchone()
+            if r:
+                return r["relation"]
+            r = self.conn.execute(
+                "SELECT relation FROM edges WHERE source=? AND target=? ORDER BY weight DESC LIMIT 1",
+                (t, s)).fetchone()
+            return r["relation"] if r else "related"
+
+        # Step 1: Direct edge check
+        direct = self.conn.execute(
+            "SELECT relation, weight FROM edges WHERE source=? AND target=? "
+            "UNION SELECT relation, weight FROM edges WHERE source=? AND target=?",
+            (node_a, node_b, node_b, node_a)).fetchone()
+        if direct:
+            return {
+                "relation": direct["relation"],
+                "confidence": 1.0,
+                "evidence": [{
+                    "path": [node_a, node_b],
+                    "edges": [direct["relation"]],
+                    "score": 1.0,
+                    "explanation": f"Direct edge: {node_a} —({direct['relation']})→ {node_b}",
+                    "source": "direct",
+                }],
+                "link_scores": {
+                    "adamic_adar": 0.0,
+                    "common_neighbors": 0,
+                    "preferential_attachment": 0,
+                },
+            }
+
+        # Step 2: Find indirect paths (reasoning evidence)
+        paths = self.reasoning_path(node_a, node_b, max_hops=max_hops, top_k=3)
+
+        # Step 3: Link prediction scores
+        common = self.common_neighbors(node_a, node_b)
+        deg_a = self.conn.execute(
+            "SELECT COUNT(*) c FROM edges WHERE source=? OR target=?",
+            (node_a, node_a)).fetchone()["c"]
+        deg_b = self.conn.execute(
+            "SELECT COUNT(*) c FROM edges WHERE source=? OR target=?",
+            (node_b, node_b)).fetchone()["c"]
+
+        aa_score = 0.0
+        for cn in common:
+            deg_cn = self.conn.execute(
+                "SELECT COUNT(*) c FROM edges WHERE source=? OR target=?",
+                (cn, cn)).fetchone()["c"]
+            aa_score += 1.0 / math.log(max(deg_cn, 2))
+
+        if not paths:
+            # No path found, return link prediction only
+            return {
+                "relation": "unknown",
+                "confidence": round(min(aa_score / 3.0, 0.3), 4),
+                "evidence": [],
+                "link_scores": {
+                    "adamic_adar": round(aa_score, 4),
+                    "common_neighbors": len(common),
+                    "preferential_attachment": deg_a * deg_b,
+                },
+            }
+
+        best = paths[0]
+        inferred_rel = " → ".join(best["edges"])
+        confidence = best["score"] * 0.7 + min(aa_score / 3.0, 0.3) * 0.3
+
+        return {
+            "relation": inferred_rel,
+            "confidence": round(confidence, 4),
+            "evidence": paths,
+            "link_scores": {
+                "adamic_adar": round(aa_score, 4),
+                "common_neighbors": len(common),
+                "preferential_attachment": deg_a * deg_b,
+            },
+        }
+
+    def reasoning_subgraph(self, query: str = None, seed_ids: list[str] = None,
+                             max_hops: int = 2, top_k: int = 20) -> dict:
+        """查询相关的推理子图.
+
+        从 BM25 搜索或指定种子节点出发, 构建完整推理子图.
+        返回 {nodes, edges, paths, summary}.
+        """
+        if seed_ids is None:
+            seed_ids = []
+
+        if query and not seed_ids:
+            results = self.search_bm25(query, limit=5)
+            seed_ids = [r.get("id") or r.get("node_id") for r in results if r.get("id") or r.get("node_id")]
+
+        # Filter to valid seeds
+        seed_ids = [s for s in seed_ids if self.has_node(s)]
+        if not seed_ids:
+            return {"nodes": [], "edges": [], "paths": [], "summary": "no seed nodes found"}
+
+        # BFS expand from seeds
+        sub_nodes = set(seed_ids)
+        sub_edges = []
+        frontier = list(seed_ids)
+
+        for hop in range(max_hops):
+            next_frontier = []
+            for nid in frontier:
+                rows = self.conn.execute(
+                    "SELECT target AS nb, relation, weight FROM edges WHERE source=? "
+                    "UNION SELECT source AS nb, relation, weight FROM edges WHERE target=?",
+                    (nid, nid)).fetchall()
+                for r in rows:
+                    nb = r["nb"]
+                    edge = {
+                        "source": nid, "target": nb,
+                        "relation": r["relation"], "weight": r["weight"],
+                    }
+                    edge_key = (edge["source"], edge["target"], edge["relation"])
+                    if not any(e.get("_key") == edge_key for e in sub_edges):
+                        edge["_key"] = edge_key
+                        sub_edges.append(edge)
+                    if nb not in sub_nodes:
+                        sub_nodes.add(nb)
+                        if len(sub_nodes) < top_k * 2:
+                            next_frontier.append(nb)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        # Build node list with labels
+        node_list = []
+        for nid in sub_nodes:
+            row = self.conn.execute(
+                "SELECT label, kind, weight FROM nodes WHERE id=?", (nid,)).fetchone()
+            if row:
+                node_list.append({
+                    "id": nid, "label": row["label"],
+                    "kind": row["kind"], "weight": row["weight"],
+                })
+
+        # Clean edges
+        clean_edges = [{k: v for k, v in e.items() if k != "_key"} for e in sub_edges]
+
+        # Build reasoning paths between seeds
+        paths = []
+        for i, s1 in enumerate(seed_ids):
+            for s2 in seed_ids[i + 1:]:
+                rp = self.reasoning_path(s1, s2, max_hops=max_hops, top_k=2)
+                paths.extend(rp)
+
+        # PageRank for node importance within subgraph
+        pr = self.pagerank(max_iter=15)
+        for n in node_list:
+            n["importance"] = round(pr.get(n["id"], 0), 6)
+        node_list.sort(key=lambda x: x["importance"], reverse=True)
+
+        summary = (f"Subgraph with {len(node_list)} nodes, {len(clean_edges)} edges, "
+                   f"{len(paths)} reasoning paths from {len(seed_ids)} seeds")
+
+        return {
+            "nodes": node_list[:top_k],
+            "edges": clean_edges,
+            "paths": paths,
+            "summary": summary,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

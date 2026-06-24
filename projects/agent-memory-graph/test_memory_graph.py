@@ -13547,3 +13547,184 @@ class TestBiTemporalValidity:
         results = mg.recall("Recovered")
         assert len(results) == 1
         assert results[0].label == "Recovered fact"
+
+    # ── Graph Reasoning API Tests ──────────────────────────────
+
+    @pytest.fixture
+    def reasoning_graph(self, mg):
+        """Build a graph for reasoning tests.
+
+        Alice —works_on→ Project —uses→ Python
+        Alice —knows→ Bob —knows→ Python
+        Bob —works_on→ Project
+        Carol —manages→ Project
+        Carol —knows→ Dave
+        """
+        alice = mg.add("Alice", "person")
+        bob = mg.add("Bob", "person")
+        carol = mg.add("Carol", "person")
+        dave = mg.add("Dave", "person")
+        project = mg.add("AlphaProject", "concept")
+        python = mg.add("Python", "skill")
+        mg.link(alice.id, project.id, "works_on")
+        mg.link(project.id, python.id, "uses")
+        mg.link(alice.id, bob.id, "knows")
+        mg.link(bob.id, python.id, "knows")
+        mg.link(bob.id, project.id, "works_on")
+        mg.link(carol.id, project.id, "manages")
+        mg.link(carol.id, dave.id, "knows")
+        return {
+            "alice": alice.id, "bob": bob.id, "carol": carol.id,
+            "dave": dave.id, "project": project.id, "python": python.id,
+        }
+
+    def test_reasoning_path_shortest(self, mg, reasoning_graph):
+        """reasoning_path finds shortest path between connected nodes."""
+        rp = mg.reasoning_path(
+            reasoning_graph["alice"], reasoning_graph["python"],
+            max_hops=3, strategy="shortest")
+        assert len(rp) >= 1
+        best = rp[0]
+        assert best["path"][0] == reasoning_graph["alice"]
+        assert best["path"][-1] == reasoning_graph["python"]
+        assert len(best["edges"]) == len(best["path"]) - 1
+        assert best["score"] > 0
+        assert "source" in best
+        assert "explanation" in best
+
+    def test_reasoning_path_no_connection(self, mg, reasoning_graph):
+        """reasoning_path returns empty when no path exists within max_hops."""
+        # Dave and Python have no path within 1 hop
+        rp = mg.reasoning_path(
+            reasoning_graph["dave"], reasoning_graph["python"],
+            max_hops=1, strategy="shortest")
+        # Dave only connects to Carol, Carol connects to project but not within 1 hop to python
+        # path is Dave->Carol->Project->Python = 3 hops, max_hops=1 means 2 nodes max
+        assert len(rp) == 0
+
+    def test_reasoning_path_same_node(self, mg, reasoning_graph):
+        """reasoning_path handles seed == target."""
+        rp = mg.reasoning_path(
+            reasoning_graph["alice"], reasoning_graph["alice"])
+        assert len(rp) == 1
+        assert rp[0]["path"] == [reasoning_graph["alice"]]
+
+    def test_reasoning_path_invalid_nodes(self, mg):
+        """reasoning_path returns empty for non-existent nodes."""
+        rp = mg.reasoning_path("ghost", "phantom")
+        assert rp == []
+
+    def test_reasoning_path_pagerank_guided(self, mg, reasoning_graph):
+        """reasoning_path with pagerank_guided finds paths through important nodes."""
+        rp = mg.reasoning_path(
+            reasoning_graph["alice"], reasoning_graph["python"],
+            max_hops=4, strategy="pagerank_guided", top_k=3)
+        assert len(rp) >= 1
+        assert all(r["source"] == "pagerank_guided" for r in rp)
+        # All paths should end at python
+        for r in rp:
+            assert r["path"][-1] == reasoning_graph["python"]
+
+    def test_explore_basic(self, mg, reasoning_graph):
+        """explore discovers neighbors from seed."""
+        result = mg.explore(reasoning_graph["alice"], max_hops=2, budget=20)
+        assert "discovered" in result
+        assert "paths" in result
+        assert "stats" in result
+        assert result["stats"]["nodes_visited"] > 1
+        assert result["stats"]["edges_traversed"] > 0
+        # Should discover Project, Bob, Python (at least)
+        discovered_ids = {d["id"] for d in result["discovered"]}
+        assert reasoning_graph["project"] in discovered_ids
+        assert reasoning_graph["bob"] in discovered_ids
+
+    def test_explore_budget_limit(self, mg, reasoning_graph):
+        """explore respects budget constraint."""
+        result = mg.explore(reasoning_graph["alice"], max_hops=3, budget=3)
+        assert result["stats"]["nodes_visited"] <= 3
+
+    def test_explore_invalid_seed(self, mg):
+        """explore returns empty result for invalid seed."""
+        result = mg.explore("nonexistent")
+        assert result["discovered"] == []
+        assert result["stats"]["nodes_visited"] == 0
+
+    def test_explore_min_score_filter(self, mg, reasoning_graph):
+        """explore filters by min_score."""
+        result_low = mg.explore(reasoning_graph["alice"], min_score=0.0)
+        result_high = mg.explore(reasoning_graph["alice"], min_score=0.99)
+        assert len(result_low["discovered"]) >= len(result_high["discovered"])
+
+    def test_infer_relation_direct_edge(self, mg, reasoning_graph):
+        """infer_relation detects direct edges with confidence 1.0."""
+        result = mg.infer_relation(
+            reasoning_graph["alice"], reasoning_graph["project"])
+        assert result is not None
+        assert result["confidence"] == 1.0
+        assert result["relation"] == "works_on"
+        assert len(result["evidence"]) >= 1
+        assert result["link_scores"]["common_neighbors"] == 0
+
+    def test_infer_relation_indirect(self, mg, reasoning_graph):
+        """infer_relation infers relation between indirectly connected nodes."""
+        result = mg.infer_relation(
+            reasoning_graph["alice"], reasoning_graph["python"],
+            max_hops=3)
+        assert result is not None
+        assert result["confidence"] > 0
+        assert result["confidence"] < 1.0  # Indirect
+        assert "relation" in result
+        assert len(result["evidence"]) >= 1
+        # Should have some link prediction scores
+        assert "adamic_adar" in result["link_scores"]
+        assert "common_neighbors" in result["link_scores"]
+
+    def test_infer_relation_no_connection(self, mg):
+        """infer_relation returns link-only when no path exists."""
+        a = mg.add("Isolated A", "concept")
+        b = mg.add("Isolated B", "concept")
+        result = mg.infer_relation(a.id, b.id, max_hops=2)
+        assert result is not None
+        assert result["relation"] == "unknown"
+        assert result["confidence"] < 0.3
+        assert result["evidence"] == []
+
+    def test_infer_relation_invalid_nodes(self, mg):
+        """infer_relation returns None for non-existent nodes."""
+        assert mg.infer_relation("ghost", "phantom") is None
+
+    def test_reasoning_subgraph_from_query(self, mg, reasoning_graph):
+        """reasoning_subgraph builds from BM25 query."""
+        result = mg.reasoning_subgraph(query="Alice", max_hops=2, top_k=15)
+        assert len(result["nodes"]) > 0
+        assert len(result["edges"]) > 0
+        assert "summary" in result
+        assert "paths" in result
+        # Should include Alice
+        node_ids = {n["id"] for n in result["nodes"]}
+        assert reasoning_graph["alice"] in node_ids
+
+    def test_reasoning_subgraph_from_seeds(self, mg, reasoning_graph):
+        """reasoning_subgraph builds from explicit seed IDs."""
+        seeds = [reasoning_graph["bob"], reasoning_graph["carol"]]
+        result = mg.reasoning_subgraph(seed_ids=seeds, max_hops=2, top_k=20)
+        assert len(result["nodes"]) >= 2
+        assert len(result["edges"]) >= 1
+        # Should find reasoning paths between seeds
+        # (Bob and Carol both connect to Project)
+        if result["paths"]:
+            for p in result["paths"]:
+                assert p["score"] > 0
+
+    def test_reasoning_subgraph_invalid_seeds(self, mg):
+        """reasoning_subgraph handles invalid seeds gracefully."""
+        result = mg.reasoning_subgraph(seed_ids=["ghost", "phantom"])
+        assert result["nodes"] == []
+        assert result["summary"] == "no seed nodes found"
+
+    def test_reasoning_subgraph_node_importance(self, mg, reasoning_graph):
+        """reasoning_subgraph includes PageRank importance for each node."""
+        result = mg.reasoning_subgraph(query="Alice", max_hops=2, top_k=10)
+        for n in result["nodes"]:
+            assert "importance" in n
+            assert n["importance"] >= 0
