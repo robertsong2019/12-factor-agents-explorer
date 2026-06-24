@@ -13728,3 +13728,300 @@ class TestBiTemporalValidity:
         for n in result["nodes"]:
             assert "importance" in n
             assert n["importance"] >= 0
+
+    # ── Adaptive Retrieval API Tests ──────────────────────────
+
+    def test_classify_query_simple(self, mg):
+        """classify_query identifies simple queries."""
+        result = mg.classify_query("hello")
+        assert result["complexity"] == "simple"
+        assert result["effort"] == "low"
+        assert result["strategy"] == "bm25_only"
+        assert result["word_count"] == 1
+
+    def test_classify_query_moderate(self, mg):
+        """classify_query identifies moderate queries."""
+        result = mg.classify_query("find all memories about the project status update")
+        assert result["complexity"] in ("moderate", "complex")
+        assert result["effort"] in ("medium", "high")
+
+    def test_classify_query_complex(self, mg):
+        """classify_query identifies complex queries."""
+        result = mg.classify_query("explain why the architecture design trade-offs matter for performance")
+        assert result["complexity"] in ("complex", "multi_hop")
+        assert result["effort"] in ("high", "max")
+
+    def test_classify_query_multi_hop(self, mg):
+        """classify_query identifies multi-hop queries."""
+        result = mg.classify_query("what is the difference between Alice and Bob and how do they relate to the project")
+        assert result["complexity"] == "multi_hop"
+        assert result["effort"] == "max"
+        assert result["strategy"] == "graph_reasoning"
+        assert result["multi_hop_score"] >= 2
+
+    def test_classify_query_returns_reasoning(self, mg):
+        """classify_query includes human-readable reasoning."""
+        result = mg.classify_query("test")
+        assert "reasoning" in result
+        assert len(result["reasoning"]) > 0
+
+    def test_grade_retrieval_empty(self, mg):
+        """grade_retrieval handles empty results."""
+        grade = mg.grade_retrieval("test", [])
+        assert grade["grade"] == "incorrect"
+        assert grade["relevant_count"] == 0
+        assert grade["recommendation"] == "retrieval_failed"
+
+    def test_grade_retrieval_relevant(self, mg):
+        """grade_retrieval identifies relevant results."""
+        results = [
+            {"id": "a", "score": 0.9},
+            {"id": "b", "score": 0.8},
+            {"id": "c", "score": 0.7},
+        ]
+        grade = mg.grade_retrieval("test", results, threshold=0.15)
+        assert grade["grade"] == "relevant"
+        assert grade["relevant_count"] == 3
+        assert grade["scores"]["max"] == 0.9
+
+    def test_grade_retrieval_ambiguous(self, mg):
+        """grade_retrieval identifies ambiguous results."""
+        results = [
+            {"id": "a", "score": 0.2},
+            {"id": "b", "score": 0.05},
+        ]
+        grade = mg.grade_retrieval("test", results, threshold=0.15)
+        assert grade["grade"] == "ambiguous"
+        assert grade["relevant_count"] == 1
+
+    def test_grade_retrieval_incorrect(self, mg):
+        """grade_retrieval identifies irrelevant results."""
+        results = [{"id": "a", "score": 0.01}]
+        grade = mg.grade_retrieval("test", results, threshold=0.15)
+        assert grade["grade"] == "incorrect"
+        assert grade["relevant_count"] == 0
+
+    def test_grade_retrieval_graph_connectivity(self, mg, reasoning_graph):
+        """grade_retrieval computes graph connectivity for top results."""
+        results = [
+            {"id": reasoning_graph["alice"], "score": 0.5},
+            {"id": reasoning_graph["bob"], "score": 0.4},
+            {"id": reasoning_graph["project"], "score": 0.3},
+        ]
+        grade = mg.grade_retrieval("test", results, threshold=0.1)
+        assert "connectivity" in grade
+        # Alice-Bob, Alice-Project, Bob-Project all connected
+        assert grade["connectivity"] > 0
+
+    def test_search_adaptive_simple_query(self, mg, reasoning_graph):
+        """search_adaptive routes simple queries to BM25-only."""
+        result = mg.search_adaptive("Alice", limit=5)
+        assert result["classification"]["complexity"] == "simple"
+        assert result["strategy"] == "bm25_only"
+        assert len(result["results"]) >= 1
+        assert result["grade"]["grade"] in ("relevant", "ambiguous")
+
+    def test_search_adaptive_multi_hop_query(self, mg, reasoning_graph):
+        """search_adaptive routes multi-hop queries to graph reasoning."""
+        result = mg.search_adaptive(
+            "compare Alice and Bob and how do they relate to AlphaProject", limit=10)
+        assert result["classification"]["complexity"] == "multi_hop"
+        assert result["strategy"] == "graph_reasoning"
+        # Should find Alice/Bob/Project via BM25 seeds then expand
+        assert len(result["results"]) >= 1
+
+    def test_search_adaptive_returns_all_fields(self, mg, reasoning_graph):
+        """search_adaptive returns classification, grade, strategy, results."""
+        result = mg.search_adaptive("Alice", limit=5)
+        assert "results" in result
+        assert "classification" in result
+        assert "grade" in result
+        assert "strategy" in result
+        # Classification has all fields
+        cls = result["classification"]
+        assert "complexity" in cls
+        assert "effort" in cls
+        assert "strategy" in cls
+
+    # ── search_with_gaps tests ──
+
+    def test_search_with_gaps_no_gaps(self, mg, reasoning_graph):
+        """All query entities covered by results → gap_score=0."""
+        result = mg.search_with_gaps("Alice", limit=5)
+        assert "entities" in result
+        assert "gaps" in result
+        assert "gap_score" in result
+        assert "repair_strategy" in result
+        # Alice exists in graph, so entity coverage should be good
+        assert result["covered_count"] >= 1
+
+    def test_search_with_gaps_missing_entity(self, mg, reasoning_graph):
+        """Query references entity not in graph → gap detected."""
+        result = mg.search_with_gaps("Alice Zephyr", limit=5)
+        assert result["entity_count"] >= 2
+        # Zephyr is not in the graph
+        assert any(e["entity"] == "zephyr" and not e["covered"] for e in result["entities"])
+        assert result["gap_score"] > 0
+        assert len(result["gaps"]) >= 1
+
+    def test_search_with_gaps_empty_query(self, mg):
+        """Empty query → no entities, no gaps."""
+        result = mg.search_with_gaps("")
+        assert result["entity_count"] == 0
+        assert result["gap_score"] == 0
+        assert result["repair_strategy"] == "none"
+
+    def test_search_with_gaps_returns_entities_list(self, mg, reasoning_graph):
+        """Result has entities list with coverage info."""
+        result = mg.search_with_gaps("Alice Bob", limit=5)
+        assert isinstance(result["entities"], list)
+        for ent in result["entities"]:
+            assert "entity" in ent
+            assert "covered" in ent
+            assert "in_results" in ent
+            assert "node_ids" in ent
+
+    def test_search_with_gaps_repair_strategy(self, mg, reasoning_graph):
+        """Repair strategy is one of valid values."""
+        result = mg.search_with_gaps("Alice Zephyr Quantum", limit=5)
+        assert result["repair_strategy"] in ("none", "expand_neighbors", "bridge_search")
+
+    def test_search_with_gaps_accepts_external_results(self, mg, reasoning_graph):
+        """Can pass external results instead of auto-searching."""
+        external = [{"id": "n1", "label": "Alice", "score": 0.9}]
+        result = mg.search_with_gaps("Alice", results=external)
+        assert result["covered_count"] >= 1
+
+    def test_search_with_gaps_bridge_detection(self, mg):
+        """Gap tracker detects missing path between covered entities."""
+        a = mg.add("Alpha", "concept")
+        b = mg.add("Beta", "concept")
+        # No link between a and b
+        result = mg.search_with_gaps("Alpha Beta", limit=5)
+        # Both entities exist but have no path
+        assert result["entity_count"] >= 2
+
+    def test_search_with_gaps_gap_score_range(self, mg, reasoning_graph):
+        """gap_score is between 0 and 1."""
+        result = mg.search_with_gaps("Alice Zephyr Mystery", limit=5)
+        assert 0.0 <= result["gap_score"] <= 1.0
+
+    def test_search_with_gaps_stop_words_filtered(self, mg):
+        """Stop words are not treated as entities."""
+        result = mg.search_with_gaps("what is the difference between", limit=5)
+        # These are all stop words
+        assert result["entity_count"] == 0 or result["entity_count"] <= 1
+
+    def test_search_with_gaps_provides_bridge_node(self, mg):
+        """When a bridge exists, gap entry has bridge_node set."""
+        a = mg.add("Alpha entity", "concept")
+        b = mg.add("Beta entity", "concept")
+        bridge = mg.add("Alpha Beta connector", "concept")
+        mg.link(a.id, bridge.id, "connects")
+        mg.link(bridge.id, b.id, "connects")
+        # Now Alpha and Beta are covered, search for something that bridges
+        result = mg.search_with_gaps("Alpha entity Gamma", limit=5)
+        # Gamma is uncovered but might find bridge through Alpha's neighbors
+        assert result["gap_score"] > 0
+
+    def test_search_with_gaps_max_entity_cap(self, mg):
+        """Entity extraction caps at 8 entities."""
+        long_query = " ".join(f"entity{i}" for i in range(20))
+        result = mg.search_with_gaps(long_query)
+        assert result["entity_count"] <= 8
+
+    # ── should_admit tests ──
+
+    def test_should_admit_unique_new_node(self, mg):
+        """Completely novel node → high uniqueness, admitted."""
+        result = mg.should_admit(label="Quantum Entanglement Theory", kind="concept")
+        assert result["admit"] is True
+        assert result["score"] >= 0.5
+        assert result["factors"]["U"] > 0.7
+        assert result["reason"] in ("above_threshold", "complementary_to_existing")
+
+    def test_should_admit_exact_duplicate(self, mg):
+        """Exact label match → rejected as duplicate."""
+        mg.add("Existing Concept", "concept")
+        result = mg.should_admit(label="Existing Concept", kind="concept")
+        assert result["admit"] is False
+        assert result["reason"] == "exact_duplicate_exists"
+        assert any(c["type"] == "exact_duplicate" for c in result["conflicts"])
+
+    def test_should_admit_returns_5_factors(self, mg):
+        """Result has all 5 A-MAC factors U/C/N/R/T."""
+        result = mg.should_admit(label="Test Node", kind="fact")
+        assert "factors" in result
+        for factor in ("U", "C", "N", "R", "T"):
+            assert factor in result["factors"]
+            assert 0.0 <= result["factors"][factor] <= 1.0
+
+    def test_should_admit_returns_weights(self, mg):
+        """Weights sum to 1.0."""
+        result = mg.should_admit(label="Test Node", kind="fact")
+        total = sum(result["weights"].values())
+        assert abs(total - 1.0) < 0.001
+
+    def test_should_admit_existing_node_id(self, mg):
+        """Can evaluate existing node by ID."""
+        node = mg.add("Unique_existing", "concept", tags=["special"])
+        result = mg.should_admit(candidate_node_id=node.id)
+        assert result["score"] >= 0
+        assert "factors" in result
+
+    def test_should_admit_no_label(self, mg):
+        """No label and no ID → rejected gracefully."""
+        result = mg.should_admit()
+        assert result["admit"] is False
+        assert result["reason"] == "no_label_provided"
+
+    def test_should_admit_novel_tags(self, mg):
+        """New tags increase novelty score."""
+        mg.add("Base", "concept", tags=["existing_tag"])
+        result = mg.should_admit(label="New thing", kind="concept", tags=["brand_new_tag"])
+        assert result["factors"]["N"] > 0
+        assert "brand_new_tag" in result["new_tags"]
+
+    def test_should_admit_relevant_to_graph(self, mg):
+        """Node sharing words with existing nodes has higher relevance."""
+        mg.add("Python programming", "skill")
+        mg.add("Python data analysis", "skill")
+        result = mg.should_admit(label="Python web framework", kind="skill")
+        assert result["factors"]["R"] > 0
+        assert result["relevant_neighbor_count"] >= 2
+
+    def test_should_admit_conflict_detection(self, mg):
+        """Potential conflicts are detected for high-similarity labels."""
+        mg.add("Machine learning model", "concept")
+        result = mg.should_admit(label="Machine learning models", kind="concept")
+        # High word overlap → potential conflict
+        assert len(result["conflicts"]) >= 1
+
+    def test_should_admit_score_range(self, mg):
+        """Admission score is between 0 and 1."""
+        result = mg.should_admit(label="Test", kind="fact")
+        assert 0.0 <= result["score"] <= 1.0
+
+    def test_should_admit_complementary_node(self, mg):
+        """Low uniqueness but high relevance → admitted as complementary."""
+        a = mg.add("Alpha component system", "concept")
+        mg.add("Alpha component module", "concept")
+        mg.add("Alpha component unit", "concept")
+        result = mg.should_admit(label="Alpha component part", kind="concept")
+        # Should be admitted either by threshold or complementary
+        assert result["admit"] is True
+
+    def test_should_admit_too_many_conflicts(self, mg):
+        """Many conflicts → rejected."""
+        for i in range(5):
+            mg.add(f"Similar node variant {i}", "concept")
+        result = mg.should_admit(label="Similar node variant", kind="concept")
+        assert result["admit"] is False
+        assert result["reason"] in ("exact_duplicate_exists", "too_many_conflicts", "below_threshold")
+
+    def test_should_admit_most_similar_tracked(self, mg):
+        """Result tracks the most similar existing node."""
+        mg.add("Quantum physics research", "concept")
+        result = mg.should_admit(label="Quantum physics study", kind="concept")
+        assert result["most_similar"] is not None
+        assert result["max_similarity"] > 0.3

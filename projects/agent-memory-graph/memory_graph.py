@@ -11394,6 +11394,524 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ── Adaptive Retrieval APIs (Test-Time Scaling inspired) ─────────────
+
+    def classify_query(self, query: str) -> dict:
+        """查询复杂度分类 (Adaptive-RAG NAACL 2024 / AHR 4-tier).
+
+        将查询分为 simple / moderate / complex / multi_hop,
+        用于路由到不同检索管道。
+
+        启发式规则, 零 LLM 调用。
+        """
+        import re
+        q_lower = query.lower().strip()
+        words = q_lower.split()
+        word_count = len(words)
+
+        multi_hop_indicators = [
+            r'how.*relate', r'compare.*and', r'difference',
+            r'between.*and', r'because', r'why.*then',
+            r'cause', r'effect', r'impact', r'result',
+            r'chain', r'sequence', r'flow',
+        ]
+        complex_indicators = [
+            r'how', r'why', r'explain', r'analyze',
+            r'design', r'architecture', r'trade.?off',
+        ]
+
+        multi_hop_score = sum(1 for p in multi_hop_indicators if re.search(p, q_lower))
+        complex_score = sum(1 for p in complex_indicators if re.search(p, q_lower))
+
+        reasoning = []
+        if multi_hop_score >= 2 or (multi_hop_score >= 1 and word_count > 12):
+            level = "multi_hop"
+            reasoning.append(f"multi_hop_score={multi_hop_score}, words={word_count}")
+        elif complex_score >= 1 and word_count >= 7:
+            level = "complex"
+            reasoning.append(f"complex_score={complex_score}, words={word_count}")
+        elif word_count > 6:
+            level = "moderate"
+            reasoning.append(f"words={word_count} (>8, no complex indicators)")
+        else:
+            level = "simple"
+            reasoning.append(f"words={word_count} (<=8, no complex indicators)")
+
+        # Effort level mapping
+        effort_map = {"simple": "low", "moderate": "medium",
+                      "complex": "high", "multi_hop": "max"}
+        # Strategy mapping
+        strategy_map = {"simple": "bm25_only", "moderate": "bm25+vector",
+                        "complex": "hybrid+graph", "multi_hop": "graph_reasoning"}
+
+        return {
+            "complexity": level,
+            "effort": effort_map[level],
+            "strategy": strategy_map[level],
+            "word_count": word_count,
+            "multi_hop_score": multi_hop_score,
+            "complex_score": complex_score,
+            "reasoning": "; ".join(reasoning),
+        }
+
+    def grade_retrieval(self, query: str, results: list[dict],
+                         threshold: float = 0.15) -> dict:
+        """检索结果质量评分 (CRAG-inspired Correct/Ambiguous/Incorrect).
+
+        不需要 LLM — 用分数分布 + 图连通性做评估。
+
+        返回 {grade, relevant_count, scores, recommendation}.
+        """
+        if not results:
+            return {
+                "grade": "incorrect",
+                "relevant_count": 0,
+                "scores": {"avg": 0, "max": 0, "gap": 0},
+                "recommendation": "retrieval_failed",
+            }
+
+        scores = [r.get("score", 0) for r in results]
+        avg_score = sum(scores) / len(scores)
+        max_score = max(scores)
+        min_score = min(scores)
+        score_gap = max_score - min_score
+
+        # Count relevant results (above threshold)
+        relevant = [r for r in results if r.get("score", 0) >= threshold]
+        relevant_count = len(relevant)
+
+        # Check graph connectivity among top results (if >1 result)
+        connectivity = 0.0
+        if len(results) > 1:
+            top_ids = [r.get("id") or r.get("node_id") for r in results[:5]]
+            top_ids = [t for t in top_ids if t]
+            if len(top_ids) > 1:
+                connected_pairs = 0
+                total_pairs = 0
+                for i, a in enumerate(top_ids):
+                    for b in top_ids[i + 1:]:
+                        total_pairs += 1
+                        cn = self.common_neighbors(a, b)
+                        if cn or self.conn.execute(
+                            "SELECT 1 FROM edges WHERE source=? AND target=? "
+                            "UNION SELECT 1 FROM edges WHERE source=? AND target=?",
+                            (a, b, b, a)).fetchone():
+                            connected_pairs += 1
+                connectivity = connected_pairs / total_pairs if total_pairs else 0
+
+        # CRAG-style grading
+        if relevant_count >= 2 and avg_score >= threshold * 2:
+            grade = "relevant"
+            recommendation = "use_results"
+        elif relevant_count == 0 and avg_score < threshold:
+            grade = "incorrect"
+            recommendation = "retry_with_graph_or_web"
+        else:
+            grade = "ambiguous"
+            if connectivity > 0.3:
+                recommendation = "use_top_k_and_expand_graph"
+            else:
+                recommendation = "use_top_k_and_rerank"
+
+        return {
+            "grade": grade,
+            "relevant_count": relevant_count,
+            "connectivity": round(connectivity, 4),
+            "scores": {
+                "avg": round(avg_score, 6),
+                "max": round(max_score, 6),
+                "min": round(min_score, 6),
+                "gap": round(score_gap, 6),
+            },
+            "recommendation": recommendation,
+        }
+
+    def search_adaptive(self, query: str, embedding: list[float] = None,
+                         limit: int = 10) -> dict:
+        """自适应检索 — 根据查询复杂度路由到不同检索管道.
+
+        Pipeline: classify_query → route → execute → grade_retrieval → (optional) expand
+
+        Returns {results, classification, grade, strategy}.
+        """
+        classification = self.classify_query(query)
+        strategy = classification["strategy"]
+
+        # Execute based on strategy
+        if strategy == "bm25_only":
+            raw = self.search_bm25(query, limit=limit)
+            results = [{"id": r.get("node_id", r.get("id")),
+                        "label": r.get("label"),
+                        "score": r.get("score", 0)} for r in raw]
+        elif strategy in ("bm25+vector", "hybrid+graph") and embedding:
+            raw = self.search_hybrid(query, embedding=embedding, limit=limit)
+            results = [{"id": r.get("node_id", r.get("id")),
+                        "label": r.get("label"),
+                        "score": r.get("score", 0)} for r in raw]
+        elif strategy == "graph_reasoning":
+            # Multi-hop: BM25 seed → graph reasoning expand
+            # FTS5 uses implicit AND, so use OR for broader seed coverage
+            import re as _re
+            terms = _re.findall(r'\b[a-zA-Z_]{3,}\b', query)
+            # Filter out common stop words
+            stop_words = {'the', 'and', 'how', 'what', 'why', 'for', 'they',
+                          'are', 'was', 'were', 'been', 'have', 'has', 'had',
+                          'that', 'this', 'with', 'from', 'into', 'their',
+                          'them', 'then', 'there', 'these', 'those', 'than',
+                          'but', 'not', 'nor', 'yet', 'both', 'each', 'all',
+                          'any', 'some', 'most', 'none', 'one', 'two', 'three',
+                          'first', 'second', 'other', 'another', 'same',
+                          'different', 'between', 'compare', 'relate', 'relates'}
+            meaningful = [t for t in terms if t.lower() not in stop_words]
+            if meaningful:
+                fts_query = " OR ".join(meaningful[:5])
+            else:
+                fts_query = query
+            raw = self.search_bm25(fts_query, limit=5)
+            seed_ids = [r.get("node_id", r.get("id")) for r in raw]
+            seed_ids = [s for s in seed_ids if s]
+            if seed_ids:
+                sub = self.reasoning_subgraph(seed_ids=seed_ids, max_hops=2, top_k=limit)
+                results = [{"id": n["id"], "label": n["label"],
+                            "score": n.get("importance", 0)} for n in sub["nodes"]]
+            else:
+                results = []
+        else:
+            # Fallback: BM25
+            raw = self.search_bm25(query, limit=limit)
+            results = [{"id": r.get("node_id", r.get("id")),
+                        "label": r.get("label"),
+                        "score": r.get("score", 0)} for r in raw]
+
+        # Grade the retrieval
+        grade = self.grade_retrieval(query, results)
+
+        # If ambiguous and graph expansion is recommended
+        if grade["grade"] == "ambiguous" and "expand" in grade["recommendation"]:
+            top_ids = [r["id"] for r in results[:3] if r.get("id")]
+            if top_ids:
+                expanded = self.explore(top_ids[0], max_hops=1, budget=10)
+                for d in expanded["discovered"][:3]:
+                    if d["id"] not in {r["id"] for r in results}:
+                        results.append({
+                            "id": d["id"],
+                            "label": d["label"],
+                            "score": d["score"],
+                            "source": "graph_expansion",
+                        })
+
+        return {
+            "results": results[:limit],
+            "classification": classification,
+            "grade": grade,
+            "strategy": strategy,
+        }
+
+    # ── Evidence-Gap Tracker (MemR³ inspired) ────────────────────
+
+    def search_with_gaps(self, query: str, results: list[dict] = None,
+                          limit: int = 10) -> dict:
+        """证据缺口追踪 — 识别检索结果中缺失的多跳推理环节.
+
+        MemR³ (arXiv:2512.20237) 核心洞察: 多跳推理失败不是因为检索不到,
+        而是因为中间实体/关系缺失. Evidence-Gap Tracker 提取查询实体,
+        检查它们在结果中的覆盖, 并发现缺失的连接路径.
+
+        零 LLM 调用 — 纯图结构 + BM25 实体匹配.
+
+        Returns:
+            {
+                "entities": [{"entity": str, "covered": bool, "node_ids": [...]}],
+                "gaps": [{"gap": str, "missing_entities": [...], "suggestion": str}],
+                "gap_score": float (0=no gaps, 1=all gaps),
+                "repair_strategy": "none" | "expand_neighbors" | "bridge_search",
+            }
+        """
+        import re
+
+        # Step 1: Extract entities from query (simple NER — noun-like tokens)
+        stop_words = {
+            'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+            'how', 'what', 'why', 'when', 'where', 'who', 'which',
+            'and', 'or', 'but', 'not', 'nor', 'yet', 'so',
+            'for', 'to', 'of', 'in', 'on', 'at', 'by', 'with',
+            'from', 'into', 'about', 'between', 'through',
+            'this', 'that', 'these', 'those',
+            'do', 'does', 'did', 'has', 'have', 'had',
+            'will', 'would', 'could', 'should', 'may', 'might',
+            'compare', 'relate', 'relation', 'relationship',
+            'difference', 'similar', 'same',
+        }
+        tokens = re.findall(r'\b[a-zA-Z_][a-zA-Z_]{2,}\b', query.lower())
+        entities = [t for t in tokens if t not in stop_words]
+        # Deduplicate while preserving order
+        seen = set()
+        entities = [e for e in entities if not (e in seen or seen.add(e))]
+        entities = entities[:8]  # cap at 8 entities
+
+        # Step 2: Check coverage of each entity in results
+        if results is None:
+            raw = self.search_bm25(query, limit=limit)
+            results = [{"id": r.get("node_id", r.get("id")),
+                        "label": r.get("label", ""),
+                        "score": r.get("score", 0),
+                        "tags": r.get("tags", [])} for r in raw]
+
+        result_labels = " ".join(r.get("label", "").lower() for r in results)
+        result_ids = set(r.get("id") for r in results if r.get("id"))
+
+        entity_coverage = []
+        for ent in entities:
+            # Check if entity appears in any result label
+            in_labels = ent in result_labels
+            # Check if any node in graph matches this entity
+            matching_nodes = self.conn.execute(
+                "SELECT id FROM nodes WHERE LOWER(label) LIKE ? AND quarantined = 0",
+                (f"%{ent}%",)
+            ).fetchall()
+            matching_ids = [row["id"] for row in matching_nodes]
+            covered = in_labels or len(matching_ids) > 0
+            entity_coverage.append({
+                "entity": ent,
+                "covered": covered,
+                "in_results": in_labels,
+                "node_ids": matching_ids[:5],
+            })
+
+        # Step 3: Find gaps — uncovered entities
+        uncovered = [e for e in entity_coverage if not e["covered"]]
+        covered_with_nodes = [e for e in entity_coverage
+                              if e["covered"] and e["node_ids"]]
+
+        gaps = []
+        for unc in uncovered:
+            # Try to find a bridge from covered entities to uncovered
+            suggestion = "no_path"
+            bridge_target = None
+            for cov in covered_with_nodes:
+                for cov_id in cov["node_ids"][:2]:
+                    nbrs = self.neighbors(cov_id, depth=2)
+                    for nbr in nbrs:
+                        if unc["entity"] in nbr.label.lower():
+                            bridge_target = nbr.id
+                            suggestion = "bridge_found"
+                            break
+                    if bridge_target:
+                        break
+                if bridge_target:
+                    break
+
+            gaps.append({
+                "gap": f"missing_entity: {unc['entity']}",
+                "missing_entities": [unc["entity"]],
+                "suggestion": suggestion,
+                "bridge_node": bridge_target,
+            })
+
+        # Step 4: Check connectivity among covered entities (missing links)
+        if len(covered_with_nodes) >= 2:
+            for i, a in enumerate(covered_with_nodes[:4]):
+                for b in covered_with_nodes[i + 1:4]:
+                    # Check if there's any path between them
+                    a_ids = a["node_ids"][:1]
+                    b_ids = b["node_ids"][:1]
+                    for aid in a_ids:
+                        for bid in b_ids:
+                            path = self.shortest_path(aid, bid)
+                            if path is None:
+                                gaps.append({
+                                    "gap": f"no_path: {a['entity']} → {b['entity']}",
+                                    "missing_entities": [a["entity"], b["entity"]],
+                                    "suggestion": "bridge_search",
+                                    "bridge_node": None,
+                                })
+
+        # Step 5: Compute gap score and repair strategy
+        total_entities = len(entities) if entities else 1
+        gap_score = len(uncovered) / total_entities
+
+        if gap_score == 0 and not gaps:
+            repair_strategy = "none"
+        elif any(g["suggestion"] == "bridge_found" for g in gaps):
+            repair_strategy = "expand_neighbors"
+        else:
+            repair_strategy = "bridge_search"
+
+        return {
+            "entities": entity_coverage,
+            "gaps": gaps,
+            "gap_score": round(gap_score, 4),
+            "repair_strategy": repair_strategy,
+            "entity_count": len(entities),
+            "covered_count": len(entities) - len(uncovered),
+        }
+
+    # ── Admission Controller (A-MAC ICLR 2026 inspired) ─────────
+
+    def should_admit(self, candidate_node_id: str = None, label: str = None,
+                     kind: str = None, data: dict = None, tags: list[str] = None,
+                     conflict_check: bool = True) -> dict:
+        """记忆准入控制 — A-MAC 5-factor admission scoring.
+
+        A-MAC (ICLR 2026 Workshop, arXiv:2603.04549) defines 5 factors for
+        deciding whether new information should be admitted to memory:
+
+        - **U**niqueness: How different from existing nodes? (trigram overlap)
+        - **C**onflict: Does it contradict existing knowledge? (label/kind clash)
+        - **N**ovelty: Does it bring new tags or connections? (tag set diff)
+        - **R**elevance: How connected to existing graph? (neighbor overlap)
+        - **T**imeliness: Is it temporally relevant? (recency factor)
+
+        Returns: {admit: bool, score: float, factors: {U,C,N,R,T},
+                  reason: str, conflicts: [...]}
+
+        Zero LLM — pure heuristics on the graph structure.
+        """
+        # If node already exists, evaluate it; otherwise evaluate hypothetical
+        if candidate_node_id and self.has_node(candidate_node_id):
+            node = self.get_node(candidate_node_id)
+            label = node.label
+            kind = node.kind
+            data = node.data
+            tags_existing = self.conn.execute(
+                "SELECT tags FROM nodes WHERE id = ?", (candidate_node_id,)
+            ).fetchone()
+            import json as _json
+            tags = _json.loads(tags_existing["tags"]) if tags_existing and tags_existing["tags"] else []
+        elif label is None:
+            return {
+                "admit": False,
+                "score": 0.0,
+                "factors": {"U": 0, "C": 0, "N": 0, "R": 0, "T": 0},
+                "reason": "no_label_provided",
+                "conflicts": [],
+            }
+
+        label_lower = label.lower()
+        label_words = set(label_lower.split())
+
+        # Factor 1: Uniqueness (U) — trigram overlap with existing nodes
+        def _trigrams(text: str) -> set:
+            chars = text.lower().replace(" ", "")
+            return {chars[i:i + 3] for i in range(len(chars) - 2)} if len(chars) > 2 else {chars}
+
+        cand_trigrams = _trigrams(label)
+        all_nodes = self.conn.execute(
+            "SELECT id, label FROM nodes WHERE quarantined = 0"
+        ).fetchall()
+
+        if all_nodes:
+            max_overlap = 0.0
+            most_similar = None
+            for row in all_nodes:
+                existing_trigrams = _trigrams(row["label"])
+                if existing_trigrams:
+                    overlap = len(cand_trigrams & existing_trigrams) / len(
+                        cand_trigrams | existing_trigrams)
+                    if overlap > max_overlap:
+                        max_overlap = overlap
+                        most_similar = row["label"]
+            uniqueness = round(1.0 - max_overlap, 4)
+        else:
+            uniqueness = 1.0
+            max_overlap = 0.0
+            most_similar = None
+
+        # Factor 2: Conflict (C) — does same-kind node with high label similarity exist?
+        conflicts = []
+        if conflict_check and kind:
+            same_kind = [row for row in all_nodes if row["label"]]
+            for row in same_kind:
+                existing_label = row["label"]
+                if label_lower == existing_label.lower():
+                    conflicts.append({
+                        "node_id": row["id"],
+                        "label": existing_label,
+                        "type": "exact_duplicate",
+                    })
+                else:
+                    existing_words = set(existing_label.lower().split())
+                    word_overlap = len(label_words & existing_words) / max(
+                        len(label_words | existing_words), 1)
+                    if word_overlap >= 0.5 and word_overlap < 1.0:
+                        conflicts.append({
+                            "node_id": row["id"],
+                            "label": existing_label,
+                            "type": "potential_conflict",
+                            "similarity": round(word_overlap, 4),
+                        })
+        # Conflict score: exact dups penalize heavily, potential conflicts lightly
+        exact_dups = sum(1 for c in conflicts if c["type"] == "exact_duplicate")
+        potential_dups = sum(1 for c in conflicts if c["type"] == "potential_conflict")
+        conflict_score = max(0.0, 1.0 - 0.5 * exact_dups - 0.1 * potential_dups)
+
+        # Factor 3: Novelty (N) — new tags not in current tag vocabulary
+        existing_tags = set()
+        tag_rows = self.conn.execute("SELECT tags FROM nodes WHERE tags != '[]'").fetchall()
+        for tr in tag_rows:
+            import json as _j
+            try:
+                existing_tags.update(_j.loads(tr["tags"]))
+            except Exception:
+                pass
+        new_tags = set(tags) - existing_tags if tags else set()
+        novelty = round(len(new_tags) / max(len(tags), 1), 4) if tags else 0.5
+
+        # Factor 4: Relevance (R) — how connected would this be?
+        # Check if any existing node shares words/tags with candidate
+        relevant_neighbors = 0
+        if label_words:
+            for row in all_nodes:
+                row_words = set(row["label"].lower().split())
+                if label_words & row_words:
+                    relevant_neighbors += 1
+        if tags:
+            for tag in tags:
+                tagged = self.search_by_tag(tag)
+                relevant_neighbors += len(tagged)
+        # Normalize: sigmoid-like (3 matching nodes → 0.6 relevance)
+        relevance = round(min(1.0, relevant_neighbors / 5.0), 4)
+
+        # Factor 5: Timeliness (T) — always 1.0 for new nodes (just created)
+        timeliness = 1.0
+
+        # Weighted admission score: U*0.25 + C*0.20 + N*0.15 + R*0.25 + T*0.15
+        weights = {"U": 0.25, "C": 0.20, "N": 0.15, "R": 0.25, "T": 0.15}
+        factors = {"U": uniqueness, "C": conflict_score,
+                   "N": novelty, "R": relevance, "T": timeliness}
+        score = round(sum(weights[k] * factors[k] for k in weights), 4)
+
+        # Decision logic (conflicts checked before score)
+        has_exact_dup = any(c["type"] == "exact_duplicate" for c in conflicts)
+        if has_exact_dup:
+            admit = False
+            reason = "exact_duplicate_exists"
+        elif len(conflicts) > 3:
+            admit = False
+            reason = "too_many_conflicts"
+        elif score >= 0.5:
+            admit = True
+            reason = "above_threshold"
+        elif uniqueness < 0.30 and relevance > 0.3:
+            admit = True
+            reason = "complementary_to_existing"
+        else:
+            admit = False
+            reason = "below_threshold"
+
+        return {
+            "admit": admit,
+            "score": score,
+            "factors": factors,
+            "weights": weights,
+            "reason": reason,
+            "conflicts": conflicts[:5],
+            "most_similar": most_similar,
+            "max_similarity": round(max_overlap, 4),
+            "new_tags": sorted(new_tags) if new_tags else [],
+            "relevant_neighbor_count": relevant_neighbors,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
