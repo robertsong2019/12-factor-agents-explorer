@@ -103,3 +103,4 @@ date	project	tests_before	tests_after	delta	status
 2026-06-24T22:00+08:00	3bd0034	test_count	169→193/+24	keep	nano-agent: Memory export_json/import_json/stats/add_tag/remove_tag (F1-F4). All pass, zero regressions.
 2026-06-24T22:15+08:00	c8b3e21	test_count	471→486/+15	keep	context-forge: detectDeadCode/formatDeadCodeReport (F34). 15 tests, zero regressions.
 2026-06-24T22:30+08:00	1c7900e	test_count	882→893/+11	keep	agent-task-cli: Cache.renameKey (F139) + EventBus.delegate (F140). 11 tests, zero regressions.
+2026-06-24T23:13+08:00	8d3b2fe	test_count	1459→1483/+24	keep	agent-memory-graph: Cycle 151 Adaptive Retrieval — search_with_gaps (Evidence-Gap Tracker) + should_admit (5-factor Admission Controller). 24 tests, zero regressions. 151st consecutive day.
