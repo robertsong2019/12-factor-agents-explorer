@@ -5,3 +5,4 @@ timestamp	commit	metric	value	status	description
 2026-04-29T21:15	83d49a2	test_pass_rate	39/39	keep	Agent conversation history tracking + turn_count — +4 tests
 2026-04-29T21:20	1081ce5	test_pass_rate	42/42	keep	search(limit=0) + MemoryEntry.__eq__ + persistence after update — +3 tests
 2026-05-10T22:00	f4015b9	test_pass_rate	53/53	keep	Memory tags (filter/search/persist) + Agent on_step callback — +11 tests
+2026-06-18T03:10	4c7b246	test_count	145/145	keep	+29 edge case tests: memory persistence, tool exec, agent verbose/context — covers 10+ untested code paths

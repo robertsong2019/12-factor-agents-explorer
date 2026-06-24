@@ -135,6 +135,89 @@ class Memory:
                 )
                 self._entries.append(entry)
 
+    def export_json(self) -> str:
+        """导出所有记忆为JSON字符串（用于备份/迁移）"""
+        return json.dumps([entry.to_dict() for entry in self._entries], ensure_ascii=False, indent=2)
+
+    def import_json(self, data: str, merge: bool = True) -> int:
+        """从JSON字符串导入记忆，返回导入条目数"""
+        try:
+            items = json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            return 0
+
+        if not isinstance(items, list):
+            return 0
+
+        if not merge:
+            self._entries.clear()
+
+        count = 0
+        for item in items:
+            try:
+                entry = MemoryEntry(
+                    content=item["content"],
+                    timestamp=datetime.fromisoformat(item["timestamp"]),
+                    metadata=item.get("metadata", {}),
+                    tags=item.get("tags", [])
+                )
+                self._entries.append(entry)
+                count += 1
+            except (KeyError, ValueError):
+                continue
+
+        # Enforce max_entries limit
+        if len(self._entries) > self.max_entries:
+            self._entries = self._entries[-self.max_entries:]
+
+        self._save()
+        return count
+
+    def stats(self) -> Dict[str, Any]:
+        """返回记忆统计信息"""
+        total = len(self._entries)
+        if total == 0:
+            return {"total": 0, "tags": {}, "date_range": None}
+
+        # Per-tag counts
+        tag_counts: Dict[str, int] = {}
+        for entry in self._entries:
+            for tag in entry.tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+        # Date range
+        timestamps = [e.timestamp for e in self._entries]
+        oldest = min(timestamps)
+        newest = max(timestamps)
+
+        return {
+            "total": total,
+            "tags": tag_counts,
+            "date_range": {
+                "oldest": oldest.isoformat(),
+                "newest": newest.isoformat()
+            }
+        }
+
+    def add_tag(self, index: int, tag: str) -> bool:
+        """给指定索引的记忆添加标签"""
+        if 0 <= index < len(self._entries):
+            if tag not in self._entries[index].tags:
+                self._entries[index].tags.append(tag)
+                self._save()
+            return True
+        return False
+
+    def remove_tag(self, index: int, tag: str) -> bool:
+        """从指定索引的记忆移除标签"""
+        if 0 <= index < len(self._entries):
+            tags = self._entries[index].tags
+            if tag in tags:
+                tags.remove(tag)
+                self._save()
+            return True
+        return False
+
     def to_context(self, max_tokens: int = 1000) -> str:
         """转换为上下文字符串"""
         entries = self.get_recent()
