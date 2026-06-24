@@ -3339,6 +3339,84 @@ export function formatReadabilityReport(analysis) {
   return lines.join('\n');
 }
 
+export function detectDeadCode(importData, apiSurface) {
+  /**
+   * Detect exported symbols that are never imported/referenced elsewhere.
+   * Returns { dead: [{file, symbol, type}], total, used, unused }.
+   */
+  const dead = [];
+  const allRefs = new Set();
+
+  // Collect all imported names from import data
+  for (const [file, imports] of Object.entries(importData || {})) {
+    if (!Array.isArray(imports)) continue;
+    for (const imp of imports) {
+      if (imp.name) allRefs.add(imp.name);
+      if (imp.imported) allRefs.add(imp.imported);
+      // Handle destructured imports: { a, b, c }
+      if (typeof imp.imported === 'string' && imp.imported.includes(',')) {
+        for (const part of imp.imported.split(',')) {
+          const clean = part.trim().replace(/[{}]/g, '').trim();
+          if (clean) allRefs.add(clean);
+        }
+      }
+    }
+  }
+
+  // Check each exported symbol against references
+  for (const [file, exports] of Object.entries(apiSurface || {})) {
+    if (!Array.isArray(exports)) continue;
+    for (const exp of exports) {
+      if (!exp) continue; // skip null/undefined entries
+      const name = typeof exp === 'string' ? exp : (exp.name || exp.export || '');
+      if (!name) continue;
+      // A symbol is "used" if it appears in any import OR is a common entry point
+      const isUsed = allRefs.has(name);
+      if (!isUsed) {
+        dead.push({
+          file,
+          symbol: name,
+          type: typeof exp === 'object' ? (exp.type || 'export') : 'export'
+        });
+      }
+    }
+  }
+
+  const total = Object.values(apiSurface || {}).reduce((sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0), 0);
+  const used = total - dead.length;
+
+  return { dead, total, used, unused: dead.length };
+}
+
+export function formatDeadCodeReport(result) {
+  if (!result || !result.dead || result.dead.length === 0) {
+    return '✅ No dead code detected — all exports are referenced.';
+  }
+
+  const lines = [
+    `🔍 Dead Code Analysis: ${result.unused}/${result.total} exports unused`,
+    ''
+  ];
+
+  // Group by file
+  const byFile = {};
+  for (const d of result.dead) {
+    if (!byFile[d.file]) byFile[d.file] = [];
+    byFile[d.file].push(d.symbol);
+  }
+
+  for (const [file, syms] of Object.entries(byFile)) {
+    lines.push(`**${file}** (${syms.length} unused):`);
+    for (const s of syms.sort()) {
+      lines.push(`  - \`${s}\``);
+    }
+    lines.push('');
+  }
+
+  lines.push(`**Summary:** ${result.used} used / ${result.unused} unused / ${result.total} total`);
+  return lines.join('\n');
+}
+
 export function resolvePath(p) {
   return p.startsWith("/") ? p : join(process.cwd(), p);
 }
