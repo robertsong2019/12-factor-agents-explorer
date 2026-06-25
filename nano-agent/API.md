@@ -404,6 +404,86 @@ memory.remove_tag(0, "draft")  # 移除标签
 
 **返回：** `bool` — 索引有效返回 `True`，越界返回 `False`
 
+#### `set_importance(index, score)`  *(F5)*
+
+设置指定记忆的重要度分数（自动 clamp 到 0.0-1.0）。
+
+```python
+memory.add("关键决策", importance=0.9)
+memory.set_importance(0, 1.0)  # 提升到最高
+memory.set_importance(0, 1.5)  # 自动 clamp 为 1.0
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `index` | `int` | 记忆索引（基于 `get_all()` 的顺序） |
+| `score` | `float` | 重要度分数，范围 0.0-1.0，超出范围自动 clamp |
+
+**返回：** `bool` — 索引有效返回 `True`，越界返回 `False`
+
+---
+
+#### `importance_decay(factor=0.95)`  *(F6)*
+
+对所有记忆应用衰减因子（importance *= factor），模拟时间流逝导致的遗忘。
+
+```python
+# 每次调用将所有记忆重要度乘以 0.95
+affected = memory.importance_decay(0.95)
+print(f"{affected} 条记忆已衰减")
+
+# 衰减后低重要度的记忆可以用 forget() 清理
+removed = memory.forget(threshold=0.1)
+```
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `factor` | `float` | `0.95` | 衰减因子，必须在 (0, 1) 范围内 |
+
+**返回：** `int` — 受影响的记忆条目数（factor 无效时返回 0）
+
+---
+
+#### `forget(threshold=0.1)`  *(F7)*
+
+删除重要度低于阈值的记忆，实现自动遗忘。
+
+```python
+# 删除重要度低于 0.1 的记忆
+removed = memory.forget(threshold=0.1)
+print(f"清理了 {removed} 条低价值记忆")
+
+# 更激进的清理
+removed = memory.forget(threshold=0.3)
+```
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `threshold` | `float` | `0.1` | 重要度低于此值的记忆将被删除 |
+
+**返回：** `int` — 被删除的记忆条目数
+
+---
+
+#### `top_important(n=5)`  *(F8)*
+
+按重要度降序返回前 n 条记忆。
+
+```python
+# 查看最重要的 5 条记忆
+top5 = memory.top_important(5)
+for entry in top5:
+    print(f"[{entry.importance:.2f}] {entry.content}")
+```
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `n` | `int` | `5` | 返回的条目数 |
+
+**返回：** `List[MemoryEntry]` — 按重要度从高到低排列
+
+---
+
 #### `to_context(max_tokens=1000)`
 
 将近期记忆格式化为可注入提示的文本。
@@ -423,6 +503,7 @@ context_str = memory.to_context(max_tokens=500)
 | `timestamp` | `datetime` | 创建时间 |
 | `metadata` | `Dict[str, Any]` | 附加元数据 |
 | `tags` | `List[str]` | 标签列表（用于过滤） |
+| `importance` | `float` | 重要度分数（0.0-1.0，默认 0.5） |
 
 **方法：**
 
@@ -438,7 +519,36 @@ context_str = memory.to_context(max_tokens=500)
 ```python
 memory = Memory(persistence_path="data/memory.json")
 # 每次 add/clear 自动读写文件
-# 文件格式: [{"content": "...", "timestamp": "...", "metadata": {...}, "tags": [...]}, ...]
+# 文件格式: [{"content": "...", "timestamp": "...", "metadata": {...}, "tags": [...], "importance": 0.5}, ...]
+```
+
+> 💡 **向后兼容**：旧版持久化文件（无 `importance` 字段）加载时自动使用默认值 0.5。
+
+### 重要度与遗忘机制 (F5-F8)
+
+Nano-Agent 的记忆系统支持基于重要度的遗忘机制，模拟人类记忆的衰减过程：
+
+```python
+from nano_agent import Memory
+
+memory = Memory(persistence_path="data/mem.json")
+
+# 1. 标记重要记忆
+memory.add("项目上线日期: 2026-07-01", importance=0.9)
+memory.add("随手记的笔记", importance=0.2)
+
+# 2. 模拟时间衰减（每次调用所有记忆 importance *= 0.95）
+memory.importance_decay(factor=0.95)
+
+# 3. 清理低价值记忆
+removed = memory.forget(threshold=0.1)
+
+# 4. 查看最重要的记忆
+top = memory.top_important(5)
+
+# 5. 统计信息包含平均重要度
+stats = memory.stats()
+print(f"平均重要度: {stats['avg_importance']}")
 ```
 
 ---

@@ -14,15 +14,20 @@
 - [x] **F2**: `Memory.import_json()` — load entries from JSON string (restore from backup) ✅ 2026-06-24
 - [x] **F3**: `Memory.stats()` — statistics: total, per-tag counts, date range ✅ 2026-06-24
 - [x] **F4**: `Memory.add_tag(index, tag)` / `Memory.remove_tag(index, tag)` — tag management by index ✅ 2026-06-24
+- [x] **F5**: `Memory.set_importance(index, score)` — manually assign importance scores ✅ 2026-06-25
+- [x] **F6**: `Memory.importance_decay(factor)` — simulate time-based forgetting ✅ 2026-06-25
+- [x] **F7**: `Memory.forget(threshold)` — remove entries below importance threshold ✅ 2026-06-25
+- [x] **F8**: `Memory.top_important(n)` — rank memories by importance ✅ 2026-06-25
 
 ### Agent Enhancements
-- [ ] **F5**: `Agent.run_batch(inputs)` — process multiple inputs in sequence
-- [ ] **F6**: `Agent.summary()` — summarize conversation history
+- [ ] **F9**: `Agent.run_batch(inputs)` — process multiple inputs in sequence
+- [ ] **F10**: `Agent.summary()` — summarize conversation history
 
 ### Tool System
-- [ ] **F7**: `Tool.validate_args()` strict mode — reject unknown parameters
-- [ ] **F8**: `list_tools_by_prefix()` — filter registered tools by name prefix
+- [ ] **F11**: `Tool.validate_args()` strict mode — reject unknown parameters
+- [ ] **F12**: `list_tools_by_prefix()` — filter registered tools by name prefix
 
 ## Priorities
-**Round 1:** F1, F2, F3 — Memory serialization and stats
-**Round 2:** F4, F5 — Tag management and batch processing
+**Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
+**Round 2:** F5-F8 — Importance scoring and forgetting ✅
+**Round 3:** F9-F12 — Agent batch processing and tool enhancements
