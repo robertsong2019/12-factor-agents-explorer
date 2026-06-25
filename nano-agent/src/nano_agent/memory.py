@@ -16,12 +16,14 @@ class MemoryEntry:
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: Dict[str, Any] = field(default_factory=dict)
     tags: List[str] = field(default_factory=list)
+    importance: float = 0.5
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
             "content": self.content,
             "timestamp": self.timestamp.isoformat(),
-            "metadata": self.metadata
+            "metadata": self.metadata,
+            "importance": self.importance,
         }
         if self.tags:
             d["tags"] = self.tags
@@ -42,9 +44,9 @@ class Memory:
         self._entries: List[MemoryEntry] = []
         self._load()
 
-    def add(self, content: str, metadata: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None) -> None:
+    def add(self, content: str, metadata: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, importance: float = 0.5) -> None:
         """添加记忆"""
-        entry = MemoryEntry(content=content, metadata=metadata or {}, tags=tags or [])
+        entry = MemoryEntry(content=content, metadata=metadata or {}, tags=tags or [], importance=importance)
         self._entries.append(entry)
 
         # 限制条目数量
@@ -131,9 +133,43 @@ class Memory:
                     content=item["content"],
                     timestamp=datetime.fromisoformat(item["timestamp"]),
                     metadata=item.get("metadata", {}),
-                    tags=item.get("tags", [])
+                    tags=item.get("tags", []),
+                    importance=item.get("importance", 0.5)
                 )
                 self._entries.append(entry)
+
+    def set_importance(self, index: int, score: float) -> bool:
+        """设置记忆重要度 (0.0-1.0)，返回是否成功"""
+        if 0 <= index < len(self._entries):
+            self._entries[index].importance = max(0.0, min(1.0, score))
+            self._save()
+            return True
+        return False
+
+    def importance_decay(self, factor: float = 0.95) -> int:
+        """对所有记忆应用衰减因子，返回受影响条目数。
+
+        每次调用将 importance *= factor，模拟时间流逝导致的遗忘。
+        """
+        if not (0 < factor < 1):
+            return 0
+        for entry in self._entries:
+            entry.importance *= factor
+        self._save()
+        return len(self._entries)
+
+    def forget(self, threshold: float = 0.1) -> int:
+        """删除重要度低于阈值的记忆，返回删除条目数。"""
+        before = len(self._entries)
+        self._entries = [e for e in self._entries if e.importance >= threshold]
+        removed = before - len(self._entries)
+        if removed > 0:
+            self._save()
+        return removed
+
+    def top_important(self, n: int = 5) -> List[MemoryEntry]:
+        """按重要度降序返回前 n 条记忆"""
+        return sorted(self._entries, key=lambda e: e.importance, reverse=True)[:n]
 
     def export_json(self) -> str:
         """导出所有记忆为JSON字符串（用于备份/迁移）"""
@@ -159,7 +195,8 @@ class Memory:
                     content=item["content"],
                     timestamp=datetime.fromisoformat(item["timestamp"]),
                     metadata=item.get("metadata", {}),
-                    tags=item.get("tags", [])
+                    tags=item.get("tags", []),
+                    importance=item.get("importance", 0.5)
                 )
                 self._entries.append(entry)
                 count += 1
@@ -190,13 +227,15 @@ class Memory:
         oldest = min(timestamps)
         newest = max(timestamps)
 
+        avg_importance = sum(e.importance for e in self._entries) / total
         return {
             "total": total,
             "tags": tag_counts,
             "date_range": {
                 "oldest": oldest.isoformat(),
                 "newest": newest.isoformat()
-            }
+            },
+            "avg_importance": round(avg_importance, 4)
         }
 
     def add_tag(self, index: int, tag: str) -> bool:
