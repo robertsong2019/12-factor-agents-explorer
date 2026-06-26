@@ -119,6 +119,56 @@ sup.loadState(s);   // restore
 sup.toPool();       // convert to AgentPool
 ```
 
+### LLM Smart Routing (Cycle 170)
+
+Beyond strategy-based routing (round-robin / least-busy / weighted), the Supervisor supports **LLM-based smart routing** for intelligent agent selection.
+
+#### `setLLMScorer(scorer: LLMScorer): this`
+
+Register an async scoring function for LLM-based agent selection. The scorer receives the task description, agent role, and agent health, returning a 0..1 score.
+
+```ts
+import type { LLMScorer } from "openclaw-langgraph-bridge";
+
+const scorer: LLMScorer = async (task, agent, health) => {
+  // Call your LLM here to score agent-task fit
+  const response = await llm.chat({
+    messages: [{ role: "user", content: `Rate 0-1 how well agent "${agent.role}" handles: ${task}` }],
+  });
+  return parseFloat(response);
+};
+
+sup.setLLMScorer(scorer);
+```
+
+#### `clearLLMScorer(): void`
+
+Remove the LLM scorer, reverting to strategy-based selection.
+
+#### `selectAgentSmart(task: string, capability?: string): Promise<AgentRole | undefined>`
+
+Select the best agent using the registered LLM scorer. Falls back to `selectAgent()` if no scorer is set.
+
+- Filters unhealthy agents first (circuit breaker open = excluded)
+- Optionally filters by capability
+- Scores each candidate via the LLM scorer (0..1 clamped)
+- **Error handling:** scorer exceptions result in score 0 (graceful degradation)
+- **Tie-breaking:** equal scores broken by fewer consecutive failures
+
+#### `executeSmart(task: string, opts?: { capability?: string }): Promise<{ agentId, result, smartRouted }>`
+
+Execute a task using LLM-based smart routing. Returns the result with a `smartRouted` flag indicating whether LLM routing was used.
+
+```ts
+const result = await sup.executeSmart("Analyze Q3 revenue data", { capability: "analysis" });
+// { agentId: "analyst", result: "...", smartRouted: true }
+```
+
+**Key design decisions:**
+- Scores clamped to [0, 1] for predictable comparison
+- Scorer errors don't crash the pipeline (score 0 fallback)
+- `saveState()` persists `llmScorer` presence flag for observability
+
 ## License
 
 MIT
