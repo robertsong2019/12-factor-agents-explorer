@@ -14176,3 +14176,143 @@ class TestMemoryLifecycleReport:
         mg.conn.commit()
         result = mg.memory_lifecycle_report()
         assert result["decaying_nodes"] >= 1
+
+
+# ── Memory Access Pattern Tests ──────────────────────────────────
+
+class TestMemoryAccessPattern:
+    """Tests for memory_access_pattern()."""
+
+    def test_empty_store(self, mg):
+        """Empty store returns minimal report."""
+        result = mg.memory_access_pattern()
+        assert result["total_nodes"] == 0
+        assert "empty_store" in result["recommendations"]
+
+    def test_basic_structure(self, mg):
+        """Report has all expected fields."""
+        mg.add("Node", "concept")
+        result = mg.memory_access_pattern()
+        expected_keys = {
+            "window_days", "total_nodes", "hot_nodes", "cold_nodes",
+            "hot_examples", "cold_examples", "access_velocity",
+            "diurnal_bias", "peak_hour", "peak_hour_ratio",
+            "kind_temperature", "recommendations",
+        }
+        assert set(result.keys()) == expected_keys
+
+    def test_all_hot_within_window(self, mg):
+        """Freshly created nodes are all hot."""
+        for i in range(10):
+            mg.add(f"Fresh {i}", "concept")
+        result = mg.memory_access_pattern(days=30)
+        assert result["hot_nodes"] == 10
+        assert result["cold_nodes"] == 0
+
+    def test_cold_nodes_detected(self, mg):
+        """Old unaccessed nodes are cold."""
+        import time as _t
+        old_time = _t.time() - (86400 * 60)  # 60 days ago
+        node = mg.add("Old node", "concept")
+        mg.conn.execute("UPDATE nodes SET accessed=?, created=? WHERE id=?", (old_time, old_time, node.id))
+        mg.conn.commit()
+        result = mg.memory_access_pattern(days=30)
+        assert result["cold_nodes"] >= 1
+
+    def test_custom_window_days(self, mg):
+        """Custom window affects classification."""
+        mg.add("Recent", "concept")
+        result = mg.memory_access_pattern(days=1)
+        assert result["window_days"] == 1
+        assert result["hot_nodes"] >= 1
+
+    def test_access_velocity(self, mg):
+        """Velocity is hot_nodes / (days * total)."""
+        for i in range(5):
+            mg.add(f"Node {i}", "concept")
+        result = mg.memory_access_pattern(days=30)
+        # 5 hot, 30 days, 5 total → 5/(30*5) = 0.0333
+        assert result["access_velocity"] > 0
+        assert result["access_velocity"] <= 1.0
+
+    def test_kind_temperature_hot(self, mg):
+        """Recently accessed kind is hot."""
+        for i in range(5):
+            mg.add(f"Skill {i}", "skill")
+        result = mg.memory_access_pattern(days=30)
+        assert "skill" in result["kind_temperature"]
+        assert result["kind_temperature"]["skill"]["temperature"] == "hot"
+
+    def test_kind_temperature_cold(self, mg):
+        """Old unaccessed kind is cold."""
+        import time as _t
+        old_time = _t.time() - (86400 * 90)
+        node = mg.add("Old skill", "skill")
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old_time, node.id))
+        mg.conn.commit()
+        result = mg.memory_access_pattern(days=30)
+        assert result["kind_temperature"]["skill"]["temperature"] == "cold"
+
+    def test_kind_temperature_warm(self, mg):
+        """Mixed hot/cold kind is warm."""
+        import time as _t
+        old_time = _t.time() - (86400 * 60)
+        # Add 3 hot and 3 cold
+        for i in range(3):
+            mg.add(f"Hot fact {i}", "fact")
+        for i in range(3):
+            n = mg.add(f"Cold fact {i}", "fact")
+            mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old_time, n.id))
+        mg.conn.commit()
+        result = mg.memory_access_pattern(days=30)
+        assert result["kind_temperature"]["fact"]["temperature"] == "warm"
+
+    def test_high_cold_ratio_recommendation(self, mg):
+        """>50% cold → high_cold_ratio recommendation."""
+        import time as _t
+        old_time = _t.time() - (86400 * 90)
+        # 1 hot, 5 cold (both created and accessed old)
+        mg.add("Hot", "concept")
+        for i in range(5):
+            n = mg.add(f"Cold {i}", "concept")
+            mg.conn.execute("UPDATE nodes SET accessed=?, created=? WHERE id=?", (old_time, old_time, n.id))
+        mg.conn.commit()
+        result = mg.memory_access_pattern(days=30)
+        assert "high_cold_ratio" in result["recommendations"]
+
+    def test_low_velocity_recommendation(self, mg):
+        """Low access velocity triggers recommendation."""
+        import time as _t
+        old_time = _t.time() - (86400 * 90)
+        for i in range(20):
+            n = mg.add(f"Node {i}", "concept")
+            mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old_time, n.id))
+        mg.conn.commit()
+        result = mg.memory_access_pattern(days=30)
+        assert "low_access_velocity" in result["recommendations"]
+
+    def test_cold_examples_sorted_by_idle(self, mg):
+        """Cold examples are sorted by days_idle descending."""
+        import time as _t
+        now = _t.time()
+        n1 = mg.add("Very old", "concept")
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (now - 86400 * 80, n1.id))
+        n2 = mg.add("Slightly old", "concept")
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (now - 86400 * 40, n2.id))
+        mg.conn.commit()
+        result = mg.memory_access_pattern(days=30)
+        if result["cold_examples"]:
+            assert result["cold_examples"][0]["days_idle"] >= result["cold_examples"][-1]["days_idle"]
+
+    def test_balanced_access_recommendation(self, mg):
+        """Balanced access with no issues."""
+        import time as _t
+        now = _t.time()
+        # Spread timestamps across different hours to avoid diurnal bias
+        for i in range(10):
+            n = mg.add(f"Node {i}", "concept")
+            spread_time = now - (i * 3600 * 3)  # 3-hour intervals
+            mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (spread_time, n.id))
+        mg.conn.commit()
+        result = mg.memory_access_pattern(days=30)
+        assert "balanced_access" in result["recommendations"]

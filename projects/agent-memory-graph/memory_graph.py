@@ -12042,6 +12042,128 @@ class MemoryGraph:
             "recommendations": recs,
         }
 
+    # ── Memory Access Pattern Analysis ──────────────────────────────
+
+    def memory_access_pattern(self, *, days: int = 30) -> dict:
+        """Analyse temporal access patterns of memory nodes.
+
+        Groups nodes by kind, identifies access hotspots (frequently
+        accessed) and cold spots (never/rarely accessed), computes
+        access velocity (accesses per day), and detects diurnal
+        bias (are memories accessed more at certain hours?).
+
+        Args:
+            days: look-back window for pattern analysis (default 30)
+
+        Returns:
+            {window_days, total_nodes, hot_nodes, cold_nodes,
+             access_velocity, diurnal_bias, kind_temperature,
+             recommendations}
+        """
+        now = time.time()
+        cutoff = now - (days * 86400)
+
+        rows = self.conn.execute(
+            "SELECT id, label, kind, accessed, created FROM nodes WHERE quarantined = 0"
+        ).fetchall()
+
+        total = len(rows)
+        if total == 0:
+            return {
+                "window_days": days,
+                "total_nodes": 0,
+                "recommendations": ["empty_store"],
+            }
+
+        hot = []
+        cold = []
+        kind_access = {}
+
+        for row in rows:
+            kind = row["kind"] or "unknown"
+            accessed = row["accessed"] or row["created"] or now
+            created = row["created"] or now
+
+            if kind not in kind_access:
+                kind_access[kind] = {"total": 0, "hot": 0, "cold": 0}
+            kind_access[kind]["total"] += 1
+
+            if accessed >= cutoff:
+                hot.append({"id": row["id"], "label": row["label"], "kind": kind})
+                kind_access[kind]["hot"] += 1
+            elif created < cutoff:
+                cold.append({"id": row["id"], "label": row["label"], "kind": kind,
+                             "days_idle": round((now - accessed) / 86400, 1)})
+                kind_access[kind]["cold"] += 1
+
+        velocity = round(len(hot) / max(days * total, 1), 4)
+
+        # Diurnal bias: hour-of-day distribution
+        hour_counts = [0] * 24
+        for row in rows:
+            accessed = row["accessed"] or row["created"] or now
+            if accessed >= cutoff:
+                dt_hour = int((accessed % 86400) // 3600)
+                hour_counts[dt_hour] += 1
+
+        total_hour_accesses = sum(hour_counts)
+        if total_hour_accesses > 0:
+            peak_hour = hour_counts.index(max(hour_counts))
+            peak_ratio = round(max(hour_counts) / total_hour_accesses, 4)
+            diurnal_bias = peak_ratio > 0.2
+        else:
+            peak_hour = None
+            peak_ratio = 0.0
+            diurnal_bias = False
+
+        # Kind temperature classification
+        kind_temp = {}
+        for kind, counts in kind_access.items():
+            if counts["total"] > 0:
+                ratio = round(counts["hot"] / counts["total"], 4)
+                if ratio >= 0.7:
+                    temp = "hot"
+                elif ratio >= 0.3:
+                    temp = "warm"
+                else:
+                    temp = "cold"
+                kind_temp[kind] = {
+                    "temperature": temp,
+                    "hot_ratio": ratio,
+                    "total": counts["total"],
+                    "hot": counts["hot"],
+                    "cold": counts["cold"],
+                }
+
+        recs = []
+        cold_ratio = len(cold) / total if total > 0 else 0
+        if cold_ratio > 0.5:
+            recs.append("high_cold_ratio")
+        if velocity < 0.01:
+            recs.append("low_access_velocity")
+        if diurnal_bias:
+            recs.append("diurnal_bias_detected")
+        fully_cold_kinds = [k for k, v in kind_temp.items() if v["temperature"] == "cold"]
+        if fully_cold_kinds:
+            recs.append("review_cold_kinds:" + ",".join(fully_cold_kinds[:3]))
+        if not recs:
+            recs.append("balanced_access")
+
+        return {
+            "window_days": days,
+            "total_nodes": total,
+            "hot_nodes": len(hot),
+            "cold_nodes": len(cold),
+            "hot_examples": hot[:5],
+            "cold_examples": sorted(cold, key=lambda x: x["days_idle"], reverse=True)[:5],
+            "access_velocity": velocity,
+            "diurnal_bias": diurnal_bias,
+            "peak_hour": peak_hour,
+            "peak_hour_ratio": peak_ratio,
+            "kind_temperature": kind_temp,
+            "recommendations": recs,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
