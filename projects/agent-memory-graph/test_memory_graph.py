@@ -14025,3 +14025,154 @@ class TestBiTemporalValidity:
         result = mg.should_admit(label="Quantum physics study", kind="concept")
         assert result["most_similar"] is not None
         assert result["max_similarity"] > 0.3
+
+
+# ── Memory Lifecycle Report Tests ────────────────────────────────
+
+class TestMemoryLifecycleReport:
+    """Tests for memory_lifecycle_report()."""
+
+    def test_empty_store(self, mg):
+        """Empty store returns empty stage."""
+        result = mg.memory_lifecycle_report()
+        assert result["total_nodes"] == 0
+        assert result["lifecycle_stage"] == "empty"
+        assert "seed_initial_memories" in result["recommendations"]
+
+    def test_basic_report_structure(self, mg):
+        """Report has all expected fields."""
+        mg.add("Node A", "concept")
+        result = mg.memory_lifecycle_report()
+        expected_keys = {
+            "total_nodes", "active_nodes", "stale_nodes", "decaying_nodes",
+            "dormant_nodes", "avg_weight", "weight_distribution",
+            "quarantine_count", "consolidated_count", "reinforcement_events",
+            "lifecycle_stage", "recommendations",
+        }
+        assert set(result.keys()) == expected_keys
+
+    def test_active_node_count(self, mg):
+        """Freshly added nodes are active."""
+        mg.add("Fresh node", "concept")
+        result = mg.memory_lifecycle_report()
+        assert result["active_nodes"] == 1
+        assert result["stale_nodes"] == 0
+
+    def test_weight_distribution_buckets(self, mg):
+        """Weight distribution categorizes nodes correctly."""
+        n1 = mg.add("Low weight", "concept")
+        n2 = mg.add("Medium weight", "concept")
+        n3 = mg.add("Peak weight", "concept")
+        mg.conn.execute("UPDATE nodes SET weight=0.05 WHERE id=?", (n1.id,))
+        mg.conn.execute("UPDATE nodes SET weight=0.5 WHERE id=?", (n2.id,))
+        mg.conn.execute("UPDATE nodes SET weight=0.95 WHERE id=?", (n3.id,))
+        mg.conn.commit()
+        result = mg.memory_lifecycle_report()
+        wd = result["weight_distribution"]
+        assert wd["critical (<0.1)"] >= 1
+        assert wd["medium (0.3-0.6)"] >= 1
+        assert wd["peak (>=0.9)"] >= 1
+
+    def test_quarantine_count(self, mg):
+        """Quarantined nodes are counted."""
+        node = mg.add("Bad node", "concept")
+        mg.node_quarantine(node.id, reason="suspicious")
+        result = mg.memory_lifecycle_report()
+        assert result["quarantine_count"] == 1
+
+    def test_reinforcement_events_tracked(self, mg):
+        """Reinforcement history is counted."""
+        node = mg.add("Reinforced", "concept")
+        mg.memory_reinforce(node.id, "positive")
+        mg.memory_reinforce(node.id, "positive")
+        result = mg.memory_lifecycle_report()
+        assert result["reinforcement_events"] >= 2
+
+    def test_seed_stage_small_store(self, mg):
+        """Small store is in seed stage."""
+        for i in range(5):
+            mg.add(f"Node {i}", "concept")
+        result = mg.memory_lifecycle_report()
+        assert result["lifecycle_stage"] == "seed"
+
+    def test_thriving_stage(self, mg):
+        """Active store with good weights is thriving."""
+        for i in range(15):
+            node = mg.add(f"Active node {i}", "concept")
+            mg.conn.execute("UPDATE nodes SET weight=? WHERE id=?", (0.5 + i * 0.02, node.id))
+        mg.conn.commit()
+        result = mg.memory_lifecycle_report()
+        assert result["lifecycle_stage"] in ("thriving", "active")
+
+    def test_declining_stage_with_dormant(self, mg):
+        """Many dormant nodes → declining stage."""
+        import time as _t
+        old_time = _t.time() - (3600 * 24 * 120)  # 120 days ago
+        for i in range(20):
+            node = mg.add(f"Old node {i}", "concept")
+            mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old_time, node.id))
+        mg.conn.commit()
+        result = mg.memory_lifecycle_report()
+        assert result["dormant_nodes"] >= 15
+        assert result["lifecycle_stage"] == "declining"
+
+    def test_recommendation_start_reinforcement(self, mg):
+        """No reinforcement history → recommendation to start."""
+        for i in range(15):
+            mg.add(f"Node {i}", "concept")
+        result = mg.memory_lifecycle_report()
+        assert "start_reinforcement_tracking" in result["recommendations"]
+
+    def test_recommendation_prune_dormant(self, mg):
+        """Many dormant nodes → prune recommendation."""
+        import time as _t
+        old_time = _t.time() - (3600 * 24 * 120)
+        for i in range(20):
+            node = mg.add(f"Old {i}", "concept")
+            mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old_time, node.id))
+        mg.conn.commit()
+        # Add some active ones
+        for i in range(5):
+            mg.add(f"Fresh {i}", "concept")
+        result = mg.memory_lifecycle_report()
+        assert "prune_dormant_memories" in result["recommendations"]
+
+    def test_avg_weight_calculation(self, mg):
+        """Average weight is correctly calculated."""
+        n1 = mg.add("W1", "concept")
+        n2 = mg.add("W2", "concept")
+        mg.conn.execute("UPDATE nodes SET weight=0.3 WHERE id=?", (n1.id,))
+        mg.conn.execute("UPDATE nodes SET weight=0.7 WHERE id=?", (n2.id,))
+        mg.conn.commit()
+        result = mg.memory_lifecycle_report()
+        assert abs(result["avg_weight"] - 0.5) < 0.01
+
+    def test_healthy_recommendation(self, mg):
+        """Well-maintained store gets healthy recommendation."""
+        for i in range(15):
+            node = mg.add(f"Node {i}", "concept")
+            mg.conn.execute("UPDATE nodes SET weight=0.5 WHERE id=?", (node.id,))
+            mg.memory_reinforce(node.id, "positive")
+        mg.conn.commit()
+        result = mg.memory_lifecycle_report()
+        assert "healthy" in result["recommendations"]
+
+    def test_stale_node_classification(self, mg):
+        """Nodes between 7-30 days are stale."""
+        import time as _t
+        stale_time = _t.time() - (3600 * 24 * 15)  # 15 days ago
+        node = mg.add("Stale node", "concept")
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (stale_time, node.id))
+        mg.conn.commit()
+        result = mg.memory_lifecycle_report()
+        assert result["stale_nodes"] >= 1
+
+    def test_decaying_node_classification(self, mg):
+        """Nodes between 30-90 days are decaying."""
+        import time as _t
+        decaying_time = _t.time() - (3600 * 24 * 60)  # 60 days ago
+        node = mg.add("Decaying node", "concept")
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (decaying_time, node.id))
+        mg.conn.commit()
+        result = mg.memory_lifecycle_report()
+        assert result["decaying_nodes"] >= 1

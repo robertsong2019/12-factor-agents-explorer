@@ -11912,6 +11912,136 @@ class MemoryGraph:
             "relevant_neighbor_count": relevant_neighbors,
         }
 
+    # ── Memory Lifecycle Report ─────────────────────────────────────
+
+    def memory_lifecycle_report(self) -> dict:
+        """Unified memory lifecycle dashboard.
+
+        Combines access recency, weight distribution, decay status,
+        consolidation state, quarantine health, and reinforcement
+        activity into a single executive report.
+
+        Returns:
+            {total_nodes, active_nodes, stale_nodes, decaying_nodes,
+             avg_weight, weight_distribution, quarantine_count,
+             consolidated_count, reinforcement_events,
+             lifecycle_stage, recommendations}
+        """
+        stats = self.stats()
+        total = stats.get("nodes", 0)
+
+        if total == 0:
+            return {
+                "total_nodes": 0,
+                "lifecycle_stage": "empty",
+                "recommendations": ["seed_initial_memories"],
+            }
+
+        now = time.time()
+
+        # Access recency tiers
+        rows = self.conn.execute(
+            "SELECT id, weight, accessed, quarantined, data FROM nodes"
+        ).fetchall()
+
+        active_threshold = 3600 * 24 * 7  # 7 days
+        stale_threshold = 3600 * 24 * 30  # 30 days
+
+        active = stale = decaying = dormant = 0
+        weights = []
+        quarantined_count = 0
+        consolidated_count = 0
+        reinforcement_count = 0
+
+        for row in rows:
+            age = now - (row["accessed"] or now)
+            weights.append(row["weight"] or 0.0)
+
+            if row["quarantined"]:
+                quarantined_count += 1
+
+            if age < active_threshold:
+                active += 1
+            elif age < stale_threshold:
+                stale += 1
+            elif age < stale_threshold * 3:  # 90 days
+                decaying += 1
+            else:
+                dormant += 1
+
+            # Check consolidation/reinforcement in data
+            try:
+                data = json.loads(row["data"]) if isinstance(row["data"], str) else row["data"]
+                if isinstance(data, dict):
+                    if data.get("_consolidated"):
+                        consolidated_count += 1
+                    rh = data.get("_reinforcement_history", [])
+                    if rh:
+                        reinforcement_count += len(rh)
+            except Exception:
+                pass
+
+        avg_weight = sum(weights) / len(weights) if weights else 0.0
+
+        # Weight distribution buckets
+        buckets = {"critical (<0.1)": 0, "low (0.1-0.3)": 0,
+                   "medium (0.3-0.6)": 0, "high (0.6-0.9)": 0,
+                   "peak (>=0.9)": 0}
+        for w in weights:
+            if w < 0.1:
+                buckets["critical (<0.1)"] += 1
+            elif w < 0.3:
+                buckets["low (0.1-0.3)"] += 1
+            elif w < 0.6:
+                buckets["medium (0.3-0.6)"] += 1
+            elif w < 0.9:
+                buckets["high (0.6-0.9)"] += 1
+            else:
+                buckets["peak (>=0.9)"] += 1
+
+        # Determine lifecycle stage
+        active_ratio = active / total
+        if total < 10:
+            stage = "seed"
+        elif active_ratio > 0.6 and avg_weight > 0.3:
+            stage = "thriving"
+        elif active_ratio > 0.3:
+            stage = "active"
+        elif dormant > active:
+            stage = "declining"
+        else:
+            stage = "maintenance"
+
+        # Build recommendations
+        recs = []
+        if quarantined_count > total * 0.1:
+            recs.append("review_quarantine_backlog")
+        if dormant > total * 0.3:
+            recs.append("prune_dormant_memories")
+        if avg_weight < 0.1:
+            recs.append("reinforce_key_memories")
+        if reinforcement_count == 0:
+            recs.append("start_reinforcement_tracking")
+        if consolidated_count == 0 and total > 50:
+            recs.append("run_consolidation_pipeline")
+        if not recs:
+            recs.append("healthy")
+
+        return {
+            "total_nodes": total,
+            "active_nodes": active,
+            "stale_nodes": stale,
+            "decaying_nodes": decaying,
+            "dormant_nodes": dormant,
+            "avg_weight": round(avg_weight, 4),
+            "weight_distribution": buckets,
+            "quarantine_count": quarantined_count,
+            "consolidated_count": consolidated_count,
+            "reinforcement_events": reinforcement_count,
+            "lifecycle_stage": stage,
+            "recommendations": recs,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
