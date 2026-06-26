@@ -712,3 +712,141 @@ describe("Supervisor", () => {
     assert.ok(m.avgLatency >= 0);
   });
 });
+
+describe("Supervisor LLM Smart Routing", () => {
+  it("falls back to strategy when no scorer set", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a")).register(makeRole("b"));
+    const agent = await s.selectAgentSmart("write code");
+    assert.ok(agent); // returns something via round-robin
+  });
+
+  it("uses LLM scorer to pick best agent", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a", ["code"]));
+    s.register(makeRole("b", ["code"]));
+    // Scorer always prefers agent "b"
+    s.setLLMScorer(async (task, agent) => agent.id === "b" ? 0.9 : 0.1);
+    const chosen = await s.selectAgentSmart("refactor module");
+    assert.equal(chosen.id, "b");
+  });
+
+  it("selectAgentSmart filters unhealthy agents", async () => {
+    const s = new Supervisor({ maxFailures: 1 });
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    // Make agent "a" unhealthy
+    s.register({
+      id: "a",
+      description: "",
+      capabilities: ["*"],
+      config: { name: "a", systemPrompt: "", executor: async () => { throw new Error("boom"); } },
+    });
+    try { await s.execute("x"); } catch {}
+    assert.ok(!s.isHealthy("a"));
+    s.setLLMScorer(async () => 1.0);
+    const chosen = await s.selectAgentSmart("task");
+    assert.equal(chosen.id, "b");
+  });
+
+  it("handles scorer errors gracefully (score 0)", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    s.setLLMScorer(async (task, agent) => {
+      if (agent.id === "a") throw new Error("scorer fail");
+      return 0.5;
+    });
+    const chosen = await s.selectAgentSmart("task");
+    assert.equal(chosen.id, "b"); // a got score 0 from error
+  });
+
+  it("clamps scores to 0..1", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    s.setLLMScorer(async (_task, agent) => agent.id === "a" ? 999 : -5);
+    const chosen = await s.selectAgentSmart("task");
+    assert.equal(chosen.id, "a"); // clamped 999→1 still wins vs clamped -5→0
+  });
+
+  it("tie-breaks by fewer failures", async () => {
+    const s = new Supervisor({ maxFailures: 5 });
+    const failRole = {
+      id: "a",
+      description: "",
+      capabilities: ["*"],
+      config: { name: "a", systemPrompt: "", executor: async () => { throw new Error("x"); } },
+    };
+    s.register(failRole);
+    s.register(makeRole("b"));
+    // Give agent "a" 2 failures (but still healthy at maxFailures=5)
+    try { await s.execute("t1"); } catch {}
+    try { await s.execute("t1"); } catch {}
+    // Same score for both → tie-break favors "b" (0 failures)
+    s.setLLMScorer(async () => 0.5);
+    const chosen = await s.selectAgentSmart("task");
+    assert.equal(chosen.id, "b");
+  });
+
+  it("executeSmart uses scorer and returns smartRouted=true", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    s.setLLMScorer(async (_t, agent) => agent.id === "b" ? 0.95 : 0.1);
+    const res = await s.executeSmart("do work");
+    assert.equal(res.agentId, "b");
+    assert.equal(res.smartRouted, true);
+    assert.equal(res.result, "b:do work");
+  });
+
+  it("executeSmart returns smartRouted=false without scorer", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    const res = await s.executeSmart("do work");
+    assert.equal(res.smartRouted, false);
+  });
+
+  it("executeSmart throws when no agents available", async () => {
+    const s = new Supervisor();
+    s.setLLMScorer(async () => 1.0);
+    await assert.rejects(() => s.executeSmart("task"), /No healthy agent/);
+  });
+
+  it("clearLLMScorer reverts to strategy routing", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    s.register(makeRole("b"));
+    s.setLLMScorer(async (_t, agent) => agent.id === "b" ? 0.9 : 0.1);
+    let chosen = await s.selectAgentSmart("task");
+    assert.equal(chosen.id, "b");
+    s.clearLLMScorer();
+    // Now falls back to round-robin, first pick could be a or b
+    chosen = await s.selectAgentSmart("task");
+    assert.ok(chosen); // just ensure it returns something
+  });
+
+  it("filters by capability in smart routing", async () => {
+    const s = new Supervisor();
+    s.register(makeRole("a", ["code"]));
+    s.register(makeRole("b", ["review"]));
+    s.setLLMScorer(async () => 0.9);
+    const chosen = await s.selectAgentSmart("review PR", "review");
+    assert.equal(chosen.id, "b");
+  });
+
+  it("saveState includes llmScorer flag", () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    s.setLLMScorer(async () => 0.5);
+    const state = s.saveState();
+    assert.equal(state.llmScorer, true);
+  });
+
+  it("saveState shows false when no scorer", () => {
+    const s = new Supervisor();
+    s.register(makeRole("a"));
+    const state = s.saveState();
+    assert.equal(state.llmScorer, false);
+  });
+});

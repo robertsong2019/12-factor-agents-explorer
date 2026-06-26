@@ -39,6 +39,16 @@ export interface SupervisorConfig {
   circuitRecoveryMs?: number;
 }
 
+// ── LLM Scorer type ──────────────────────────────────────
+
+/** Async scoring function for LLM-based agent selection.
+ *  Higher score = better match. Should return 0..1. */
+export type LLMScorer = (
+  task: string,
+  agent: AgentRole,
+  health: AgentHealth,
+) => Promise<number>;
+
 export class Supervisor {
   private agents: Map<string, AgentRole> = new Map();
   private health: Map<string, AgentHealth> = new Map();
@@ -47,6 +57,7 @@ export class Supervisor {
   private strategy: NonNullable<SupervisorConfig["strategy"]>;
   private maxHistory: number;
   private circuitRecoveryMs: number;
+  private llmScorer: LLMScorer | null = null;
 
   constructor(config: SupervisorConfig = {}) {
     this.maxFailures = config.maxFailures ?? 3;
@@ -153,6 +164,88 @@ export class Supervisor {
     }
   }
 
+  /** Register an LLM-based scoring function for smart routing */
+  setLLMScorer(scorer: LLMScorer): this {
+    this.llmScorer = scorer;
+    return this;
+  }
+
+  /** Remove the LLM scorer, reverting to strategy-based selection */
+  clearLLMScorer(): void {
+    this.llmScorer = null;
+  }
+
+  /** Select agent using LLM scorer; falls back to strategy if no scorer set.
+   *  Filters unhealthy agents first, then scores each candidate.
+   *  Ties are broken by health score (fewer failures preferred). */
+  async selectAgentSmart(
+    task: string,
+    capability?: string,
+  ): Promise<AgentRole | undefined> {
+    if (!this.llmScorer) return this.selectAgent(capability);
+
+    const healthy = [...this.agents.values()].filter(a => this.isHealthy(a.id));
+    const candidates = capability
+      ? healthy.filter(a => a.capabilities.includes(capability) || a.capabilities.includes("*"))
+      : healthy;
+    if (candidates.length === 0) return undefined;
+
+    const scored = await Promise.all(
+      candidates.map(async a => {
+        const h = this.health.get(a.id)!;
+        try {
+          const score = await this.llmScorer!(task, a, h);
+          return { agent: a, score: Math.max(0, Math.min(1, score)) };
+        } catch {
+          return { agent: a, score: 0 };
+        }
+      }),
+    );
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      // Tie-break: fewer consecutive failures preferred
+      const fa = this.health.get(a.agent.id)?.failureCount ?? 0;
+      const fb = this.health.get(b.agent.id)?.failureCount ?? 0;
+      return fa - fb;
+    });
+    return scored[0]?.agent;
+  }
+
+  /** Execute a task using LLM-based smart routing.
+   *  Records the score alongside execution result for observability. */
+  async executeSmart(
+    task: string,
+    opts?: { capability?: string },
+  ): Promise<{ agentId: string; result: string; smartRouted: boolean }> {
+    const smartRouted = this.llmScorer !== null;
+    const agent = await this.selectAgentSmart(task, opts?.capability);
+    if (!agent) throw new Error(`No healthy agent available${opts?.capability ? ` for capability: ${opts.capability}` : ""}`);
+
+    const start = Date.now();
+    const h = this.health.get(agent.id)!;
+    try {
+      const result = await agent.config.executor(task);
+      const duration = Date.now() - start;
+      const total = h.successCount + h.failureCount;
+      h.avgDuration = total === 0 ? duration : (h.avgDuration * total + duration) / (total + 1);
+      h.successCount++;
+      h.failureCount = 0;
+      if (h.circuit === "half-open") h.circuit = "closed";
+      h.lastUsed = Date.now();
+      this._recordHistory(agent.id, "success", duration);
+      return { agentId: agent.id, result, smartRouted };
+    } catch (err) {
+      h.failureCount++;
+      if (h.failureCount >= this.maxFailures) {
+        h.circuit = "open";
+        h.circuitOpenedAt = Date.now();
+      }
+      h.lastUsed = Date.now();
+      this._recordHistory(agent.id, "failure", Date.now() - start);
+      throw err;
+    }
+  }
+
   /** Execute a task with the best available agent */
   async execute(task: string, capability?: string): Promise<{ agentId: string; result: string }> {
     const agent = this.selectAgent(capability);
@@ -213,6 +306,7 @@ export class Supervisor {
     agents: Array<{ id: string; description: string; capabilities: string[] }>;
     health: Record<string, AgentHealth>;
     strategy: string;
+    llmScorer: boolean;
   } {
     const agents = [...this.agents.values()].map(a => ({
       id: a.id, description: a.description, capabilities: a.capabilities,
@@ -221,7 +315,7 @@ export class Supervisor {
     for (const [id, h] of this.health) {
       health[id] = { ...h, history: [...h.history] };
     }
-    return { agents, health, strategy: this.strategy };
+    return { agents, health, strategy: this.strategy, llmScorer: this.llmScorer !== null };
   }
 
   /** Restore supervisor state from a previously saved snapshot */

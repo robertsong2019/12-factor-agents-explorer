@@ -1,4 +1,5 @@
 timestamp	commit	metric	value	status	description
+timestamp	commit	metric	value	status	description
 2026-05-01T23:00	e598ab9	test_pass_rate	4/4	keep	Initial openclaw-langgraph-bridge package: createOpenClawNode, OpenClawClient, sequentialRouter, conditionalRouter
 2026-05-03T23:00	4c8ef4f	test_pass_rate	6/6	keep	Add retry with exponential backoff to createOpenClawNode
 2026-05-04T23:00	8ccbf6d	test_pass_rate	10/10	keep	conditionalRouter unit tests + LangGraph conditional branching integration test
@@ -31,3 +32,6 @@ timestamp	commit	metric	value	status	description
 2026-05-29T21:10	bd87d60	test_count	222/222	keep	Circuit breaker: closed→open→half-open state machine with recovery timeout (+8, 214→222)
 2026-05-29T21:15	a368338	test_count	226/226	keep	processQueue: Supervisor drains TaskQueue with priority, re-enqueues failed tasks (+4, 222→226)
 2026-05-29T21:20	ec1389f	test_count	229/229	keep	processQueueParallel: concurrent queue processing with batched concurrency (+3, 226→229)
+2026-05-30T19:10:59+08:00	e052df8	test_count	237/237	keep	Supervisor.delegate()+healthReport() — +8 tests (229→237). Zero regressions.
+2026-06-20T23:08:14+08:00	de68013	test_count	248/248	keep	getMetrics + getPoolMetrics: latency percentiles (p50/p95/p99), throughput/error rate from history. _percentiles helper. +11 tests (237→248). Zero regressions.
+2026-06-26T23:10:00+08:00	009dcd1	test_count	248→261/261 pass	keep	Cycle 170: LLM smart routing — setLLMScorer/clearLLMScorer (pluggable async scoring fn) + selectAgentSmart (LLM-scored selection with tie-break by health + error graceful degradation + 0..1 clamping) + executeSmart (LLM-routed execution with smartRouted flag) + saveState llmScorer flag. +13 tests (248→261). Zero regressions. 170th consecutive day.
