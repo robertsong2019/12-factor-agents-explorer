@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-1429-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1524-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -1570,6 +1570,102 @@ newly_quarantined = mg.quarantine_scan(trust_threshold=0.3)
 
 **Retrieval safety:** `recall()`, `search_by_tag()`, and `neighbors()` automatically exclude quarantined nodes.
 
+### 记忆生命周期分析
+
+> 三个层次的记忆健康分析：个体生命周期、访问模式、全局健康 KPI。
+
+#### `memory_lifecycle_report() -> dict`
+
+统一记忆生命周期仪表盘 — 将访问时效、权重分布、衰减状态、合并状态、隔离健康和强化活动整合到一份执行报告中。
+
+**4 层访问时效：**
+
+| 层级 | 窗口 | 说明 |
+|------|------|------|
+| `active` | 7 天内 | 活跃使用中 |
+| `stale` | 7-30 天 | 近期有访问 |
+| `decaying` | 30-90 天 | 衰减中 |
+| `dormant` | 90 天+ | 休眠 |
+
+**5 桶权重分布：** `critical (<0.1)` / `low (0.1-0.3)` / `medium (0.3-0.5)` / `high (0.5-0.8)` / `peak (≥0.8)`
+
+**5 阶段生命周期：** `seed` / `thriving` / `active` / `declining` / `maintenance`
+
+```python
+report = mg.memory_lifecycle_report()
+# {
+#   'total_nodes': 120,
+#   'active_nodes': 45, 'stale_nodes': 30,
+#   'decaying_nodes': 25, 'dormant_nodes': 20,
+#   'avg_weight': 0.52,
+#   'weight_distribution': {'critical': 5, 'low': 20, 'medium': 35, 'high': 40, 'peak': 20},
+#   'quarantine_count': 2,
+#   'consolidated_count': 15,
+#   'reinforcement_events': 42,
+#   'lifecycle_stage': 'active',
+#   'recommendations': ['20 dormant nodes detected. Consider prune() or consolidation.'],
+# }
+```
+
+#### `memory_access_pattern(*, days=30) -> dict`
+
+时间访问模式分析 — 按类型分组，识别访问热点（频繁访问）和冷点（从未/极少访问），计算访问速度，检测昼夜偏差。
+
+**Kind 温度分类：**
+
+| 温度 | 条件 | 说明 |
+|------|------|------|
+| `hot` | 访问率 > 70% | 高频访问 |
+| `warm` | 30%-70% | 正常访问 |
+| `cold` | < 30% | 冷淡记忆 |
+
+**4 种推荐：** `high_cold_ratio` / `low_access_velocity` / `diurnal_bias` / `balanced`
+
+```python
+pattern = mg.memory_access_pattern(days=30)
+# {
+#   'window_days': 30,
+#   'total_nodes': 120,
+#   'hot_nodes': 45, 'cold_nodes': 35,
+#   'access_velocity': 0.38,
+#   'diurnal_bias': {'peak_hour': 14, 'concentration': 0.65},
+#   'kind_temperature': {'fact': 'hot', 'event': 'cold', 'concept': 'warm'},
+#   'recommendations': ['High cold ratio (29%). Consider recall() boost or prune.'],
+# }
+```
+
+#### `memory_health_score() -> dict`
+
+综合健康评分（0-100） — 将五个维度整合为一个执行 KPI，附带字母等级和问题标记。
+
+**5 维度加权：**
+
+| 维度 | 权重 | 衡量内容 |
+|------|------|----------|
+| Vitality | 30 | 平均权重 + 活跃比率 |
+| Integrity | 20 | 隔离率惩罚 |
+| Connectivity | 20 | 图密度 + 边覆盖率 |
+| Diversity | 15 | Kind 分布均匀度（Shannon 熵） |
+| Maintenance | 15 | 合并 + 强化追踪 |
+
+**字母等级：** A (≥80) / B (≥65) / C (≥50) / D (≥35) / F (<35)
+
+**6 种问题标记：** `low_vitality` / `quarantine_backlog` / `poor_connectivity` / `low_diversity` / `no_maintenance` / `healthy`
+
+```python
+health = mg.memory_health_score()
+# {
+#   'score': 72.5,
+#   'grade': 'B',
+#   'dimensions': {
+#     'vitality': 22.0, 'integrity': 18.5,
+#     'connectivity': 14.2, 'diversity': 10.8, 'maintenance': 7.0,
+#   },
+#   'issues': ['low_diversity: only 2 kinds present'],
+#   'trends': {'avg_weight': 0.52, 'quarantine_ratio': 0.017},
+# }
+```
+
 ---
 
 ## 测试
@@ -1578,7 +1674,7 @@ newly_quarantined = mg.quarantine_scan(trust_threshold=0.3)
 python3 -m pytest test_memory_graph.py -q
 ```
 
-1429 个测试覆盖所有 API。
+1524 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -1605,6 +1701,9 @@ python3 -m pytest test_memory_graph.py -q
 21. **技能发现与利用率** — discover_skills (EvoSkill/SAGE 启发) 从成功 workflow 中挖掘共现行动对，memory_utilization_report 汇总 Q 值分布/漂移/覆盖率/建议的执行仪表盘
 22. **记忆强化与差距分析** — memory_reinforce 根据观察结果调整权重并记录审计轨迹，skill_gap_analysis (EvoSkill) 对比失败/成功 workflow 找出缺失的中间步骤
 23. **注意力评分与合并优先级** — memory_attention_score 结合时效性/强化速度/邻居活跃度的时间注意力分数，consolidation_priority 综合 drift×(1-Q)×(1-attention) 排序合并/驱逐候选
+24. **生命周期仪表盘** — memory_lifecycle_report 统一生命周期报告：4 层访问时效（active/stale/decaying/dormant）+ 5 桶权重分布 + 5 阶段生命周期分类 + 隔离/合并/强化追踪 + 6 种建议
+25. **访问模式分析** — memory_access_pattern 时间访问模式分析：冷热分类（hot/cold/warm per-kind）、访问速度（utilization metric）、昼夜偏差检测（hour-of-day concentration）、4 种推荐
+26. **健康评分 KPI** — memory_health_score 综合健康评分（0-100）：5 维度加权（Vitality 30 + Integrity 20 + Connectivity 20 + Diversity 15 + Maintenance 15）+ 字母等级（A-F）+ 问题标记
 
 ## 许可
 
