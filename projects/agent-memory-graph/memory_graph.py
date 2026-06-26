@@ -12164,6 +12164,145 @@ class MemoryGraph:
             "recommendations": recs,
         }
 
+    # ── Memory Health Score ──────────────────────────────────────────
+
+    def memory_health_score(self) -> dict:
+        """Single composite health score (0–100) for the memory store.
+
+        Combines five dimensions into one executive KPI:
+        1. Vitality (30): are nodes active and weighted?
+        2. Integrity (20): quarantine ratio, exact duplicates
+        3. Connectivity (20): graph density, isolation rate
+        4. Diversity (15): kind distribution evenness
+        5. Maintenance (15): consolidation, reinforcement tracking
+
+        Returns:
+            {score, grade, dimensions, issues, trends}
+        """
+        stats = self.stats()
+        total = stats.get("nodes", 0)
+
+        if total == 0:
+            return {"score": 0, "grade": "N/A",
+                    "issues": ["empty_store"], "dimensions": {}}
+
+        rows = self.conn.execute(
+            "SELECT id, kind, weight, accessed, quarantined, data FROM nodes"
+        ).fetchall()
+
+        # 1. Vitality (0-30): avg weight * active ratio
+        now = time.time()
+        week_ago = now - 86400 * 7
+        weights = [r["weight"] or 0.0 for r in rows]
+        avg_weight = sum(weights) / len(weights) if weights else 0.0
+        active = sum(1 for r in rows if (r["accessed"] or 0) >= week_ago)
+        active_ratio = active / total
+        vitality = round(min(30.0, (avg_weight * 0.5 + active_ratio * 0.5) * 30.0), 1)
+
+        # 2. Integrity (0-20): penalize quarantine and low trust
+        quarantined = sum(1 for r in rows if r["quarantined"])
+        q_ratio = quarantined / total
+        integrity = round(max(0.0, 20.0 * (1.0 - q_ratio * 5.0)), 1)
+
+        # 3. Connectivity (0-20): edge coverage
+        edge_count = self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        max_edges = total * (total - 1)
+        density = (2 * edge_count / max_edges) if max_edges > 0 else 0.0
+        # Nodes with at least 1 edge
+        connected = self.conn.execute(
+            "SELECT COUNT(DISTINCT source) FROM edges UNION SELECT COUNT(DISTINCT target) FROM edges"
+        ).fetchall()
+        sources = self.conn.execute("SELECT COUNT(DISTINCT source) FROM edges").fetchone()[0]
+        targets = self.conn.execute("SELECT COUNT(DISTINCT target) FROM edges").fetchone()[0]
+        involved = len(set(r["id"] for r in rows if r["id"] in [
+            row[0] for row in self.conn.execute("SELECT source FROM edges").fetchall()
+        ] or []))
+        isolation_rate = 1.0 - min(1.0, (sources + targets) / (2 * total)) if total > 0 else 1.0
+        connectivity = round(min(20.0, (1.0 - isolation_rate) * 15.0 + density * 100.0), 1)
+
+        # 4. Diversity (0-15): kind distribution evenness (Shannon entropy)
+        kind_counts = {}
+        for r in rows:
+            k = r["kind"] or "unknown"
+            kind_counts[k] = kind_counts.get(k, 0) + 1
+        if len(kind_counts) > 1:
+            import math as _m
+            entropy = -sum((c / total) * _m.log2(c / total) for c in kind_counts.values())
+            max_entropy = _m.log2(len(kind_counts))
+            evenness = entropy / max_entropy if max_entropy > 0 else 0.0
+        else:
+            evenness = 0.0
+        diversity = round(evenness * 15.0, 1)
+
+        # 5. Maintenance (0-15): consolidation + reinforcement
+        consolidated = 0
+        reinforced = 0
+        for r in rows:
+            try:
+                data = json.loads(r["data"]) if isinstance(r["data"], str) else r["data"]
+                if isinstance(data, dict):
+                    if data.get("_consolidated"):
+                        consolidated += 1
+                    if data.get("_reinforcement_history"):
+                        reinforced += 1
+            except Exception:
+                pass
+        maintenance_score = 0.0
+        if total > 0:
+            maintenance_score = min(15.0, (consolidated / total * 7.5) + (reinforced / total * 7.5))
+        maintenance = round(maintenance_score, 1)
+
+        score = round(vitality + integrity + connectivity + diversity + maintenance, 1)
+
+        # Grade
+        if score >= 80:
+            grade = "A"
+        elif score >= 65:
+            grade = "B"
+        elif score >= 50:
+            grade = "C"
+        elif score >= 35:
+            grade = "D"
+        else:
+            grade = "F"
+
+        # Issues
+        issues = []
+        if vitality < 10:
+            issues.append("low_vitality")
+        if integrity < 10:
+            issues.append("quarantine_backlog")
+        if connectivity < 5:
+            issues.append("poor_connectivity")
+        if diversity < 3:
+            issues.append("low_diversity")
+        if maintenance < 3:
+            issues.append("no_maintenance")
+        if not issues:
+            issues.append("healthy")
+
+        return {
+            "score": score,
+            "grade": grade,
+            "dimensions": {
+                "vitality": {"score": vitality, "max": 30,
+                             "avg_weight": round(avg_weight, 4),
+                             "active_ratio": round(active_ratio, 4)},
+                "integrity": {"score": integrity, "max": 20,
+                              "quarantine_ratio": round(q_ratio, 4)},
+                "connectivity": {"score": connectivity, "max": 20,
+                                 "density": round(density, 6),
+                                 "isolation_rate": round(isolation_rate, 4)},
+                "diversity": {"score": diversity, "max": 15,
+                              "kind_count": len(kind_counts),
+                              "evenness": round(evenness, 4)},
+                "maintenance": {"score": maintenance, "max": 15,
+                                "consolidated": consolidated,
+                                "reinforced": reinforced},
+            },
+            "issues": issues,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

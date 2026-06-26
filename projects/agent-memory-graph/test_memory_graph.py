@@ -14316,3 +14316,113 @@ class TestMemoryAccessPattern:
         mg.conn.commit()
         result = mg.memory_access_pattern(days=30)
         assert "balanced_access" in result["recommendations"]
+
+
+# ── Memory Health Score Tests ────────────────────────────────────
+
+class TestMemoryHealthScore:
+    """Tests for memory_health_score()."""
+
+    def test_empty_store(self, mg):
+        """Empty store returns 0 score."""
+        result = mg.memory_health_score()
+        assert result["score"] == 0
+        assert result["grade"] == "N/A"
+
+    def test_score_range(self, mg):
+        """Score is between 0 and 100."""
+        mg.add("Node A", "concept")
+        result = mg.memory_health_score()
+        assert 0 <= result["score"] <= 100
+
+    def test_dimensions_present(self, mg):
+        """All 5 dimensions are present."""
+        mg.add("Node", "concept")
+        result = mg.memory_health_score()
+        dims = result["dimensions"]
+        assert "vitality" in dims
+        assert "integrity" in dims
+        assert "connectivity" in dims
+        assert "diversity" in dims
+        assert "maintenance" in dims
+
+    def test_grade_assignment(self, mg):
+        """Grade is one of A/B/C/D/F."""
+        mg.add("Node", "concept")
+        result = mg.memory_health_score()
+        assert result["grade"] in ("A", "B", "C", "D", "F")
+
+    def test_vitality_active_nodes(self, mg):
+        """Active nodes contribute to vitality."""
+        for i in range(10):
+            mg.add(f"Active {i}", "concept")
+        result = mg.memory_health_score()
+        assert result["dimensions"]["vitality"]["score"] > 0
+
+    def test_integrity_penalized_by_quarantine(self, mg):
+        """Quarantined nodes reduce integrity score."""
+        # All quarantined
+        for i in range(10):
+            n = mg.add(f"Bad {i}", "concept")
+            mg.node_quarantine(n.id, reason="test")
+        result = mg.memory_health_score()
+        assert result["dimensions"]["integrity"]["score"] < 5
+
+    def test_integrity_clean_store(self, mg):
+        """No quarantine → high integrity."""
+        for i in range(10):
+            mg.add(f"Good {i}", "concept")
+        result = mg.memory_health_score()
+        assert result["dimensions"]["integrity"]["score"] >= 15
+
+    def test_diversity_multiple_kinds(self, mg):
+        """Multiple kinds increase diversity."""
+        for kind in ["concept", "person", "event", "skill", "fact"]:
+            mg.add(f"Node of {kind}", kind)
+        result = mg.memory_health_score()
+        assert result["dimensions"]["diversity"]["score"] > 10
+
+    def test_diversity_single_kind(self, mg):
+        """Single kind → zero diversity."""
+        for i in range(10):
+            mg.add(f"Same kind {i}", "concept")
+        result = mg.memory_health_score()
+        assert result["dimensions"]["diversity"]["score"] == 0
+
+    def test_connectivity_with_edges(self, mg):
+        """Edges improve connectivity."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")
+        mg.link(a.id, b.id, "related")
+        mg.link(b.id, c.id, "related")
+        result = mg.memory_health_score()
+        assert result["dimensions"]["connectivity"]["score"] > 0
+
+    def test_maintenance_with_reinforcement(self, mg):
+        """Reinforcement history improves maintenance."""
+        node = mg.add("Reinforced", "concept")
+        mg.memory_reinforce(node.id, "positive")
+        result = mg.memory_health_score()
+        assert result["dimensions"]["maintenance"]["score"] > 0
+
+    def test_issues_list_populated(self, mg):
+        """Issues list is present and non-empty."""
+        mg.add("Node", "concept")
+        result = mg.memory_health_score()
+        assert isinstance(result["issues"], list)
+        assert len(result["issues"]) >= 1
+
+    def test_high_score_with_good_practices(self, mg):
+        """Well-maintained diverse connected store gets decent score."""
+        a = mg.add("Concept A", "concept")
+        b = mg.add("Person B", "person")
+        c = mg.add("Event C", "event")
+        d = mg.add("Skill D", "skill")
+        mg.link(a.id, b.id, "related")
+        mg.link(b.id, c.id, "related")
+        mg.link(c.id, d.id, "related")
+        for n in [a, b, c, d]:
+            mg.memory_reinforce(n.id, "positive")
+        result = mg.memory_health_score()
+        assert result["score"] >= 30  # Should be above average
