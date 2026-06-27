@@ -12303,6 +12303,285 @@ class MemoryGraph:
             "issues": issues,
         }
 
+    # ── Diffusion Retrieval (ExpGraph-inspired Graph Diffusion) ────────────
+
+    def diffusion_retrieve(
+        self,
+        query: str = "",
+        *,
+        seeds: list[str] | None = None,
+        embedding: list[float] | None = None,
+        limit: int = 10,
+        alpha: float = 0.15,
+        max_iter: int = 50,
+        tol: float = 1e-4,
+        edge_weight_factor: float = 1.0,
+        merge_bm25: bool = True,
+        bm25_boost: float = 0.3,
+        explain: bool = False,
+    ) -> list[dict]:
+        """Personalized PageRank diffusion retrieval (ExpGraph-inspired).
+
+        Replaces fixed-hop BFS neighborhood expansion with diffusion that
+        naturally decays with graph distance. Seed nodes are identified via
+        BM25 / vector search, then Personalized PageRank propagates relevance
+        scores through the graph.
+
+        Args:
+            query: Text query for seed identification (used if ``seeds`` is None).
+            seeds: Explicit seed node IDs (skips BM25/vector seed discovery).
+            embedding: Optional query vector for vector-based seed discovery.
+            limit: Number of results to return.
+            alpha: Teleport probability (a.k.a. reset probability). Higher values
+                bias toward seeds; lower values let diffusion spread further.
+                Typical: 0.15 (standard PPR) to 0.3 (conservative).
+            max_iter: Maximum power iterations.
+            tol: Convergence tolerance (L1 norm).
+            edge_weight_factor: Exponent applied to edge weights. 1.0 = linear,
+                0.5 = square root (dampens strong edges), 2.0 = amplifies.
+            merge_bm25: If True, blend diffusion scores with BM25 relevance.
+            bm25_boost: Weight of BM25 scores in the final blend (0-1).
+                ``1.0 - bm25_boost`` is the diffusion weight.
+            explain: If True, include diffusion paths and step-by-step trace.
+
+        Returns:
+            List of dicts sorted by blended score (descending)::
+
+                [{node_id, label, kind, score, diffusion_score,
+                  bm25_score, hop_distance, sources}, ...]
+        """
+        # ── 1. Seed discovery ──────────────────────────────────────────
+        if seeds is None:
+            if not query:
+                raise ValueError("Either query or seeds must be provided")
+            # Use BM25 to find top seed candidates
+            bm25_results = self.search_bm25(query, limit=limit * 3)
+            if not bm25_results:
+                bm25_results = [
+                    {"node_id": r["node"].id, "label": r["node"].label,
+                     "kind": r["node"].kind, "score": r["score"]}
+                    for r in self.search_unified(query, limit=limit * 3)
+                ]
+            seed_ids = [item["node_id"] for item in bm25_results[:max(limit, 5)]]
+            seed_scores = {item["node_id"]: item.get("score", 0.0)
+                           for item in bm25_results}
+        else:
+            seed_ids = list(seeds)
+            seed_scores = {sid: 1.0 for sid in seed_ids}
+            bm25_results = []
+
+        if not seed_ids:
+            return []
+
+        # Filter to existing nodes
+        existing = set(
+            str(r["id"]) for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined = 0"
+            ).fetchall()
+        )
+        seed_ids = [sid for sid in seed_ids if sid in existing]
+        if not seed_ids:
+            return []
+
+        # ── 2. Build weighted adjacency (subgraph around seeds) ────────
+        # Collect all nodes reachable within a few hops from seeds.
+        # To keep it efficient, we load edges once and build adjacency.
+        all_edges = self.conn.execute(
+            "SELECT source, target, weight FROM edges"
+        ).fetchall()
+
+        adj: dict[str, list[tuple[str, float]]] = {}
+        out_degree: dict[str, float] = {}
+        node_set: set[str] = set()
+
+        for e in all_edges:
+            s = str(e["source"])
+            t = str(e["target"])
+            w = e["weight"] if e["weight"] else 1.0
+            w = w ** edge_weight_factor
+            if s not in adj:
+                adj[s] = []
+                out_degree[s] = 0.0
+            if t not in adj:
+                adj[t] = []
+                out_degree[t] = 0.0
+            adj[s].append((t, w))
+            out_degree[s] += w
+            node_set.add(s)
+            node_set.add(t)
+
+        # Ensure seed nodes exist in adjacency (even if isolated)
+        for sid in seed_ids:
+            if sid not in adj:
+                adj[sid] = []
+                out_degree[sid] = 0.0
+                node_set.add(sid)
+
+        if not node_set:
+            return []
+
+        # ── 3. Personalized PageRank (power iteration) ────────────────
+        # PPR: p = alpha * teleport + (1 - alpha) * W^T p
+        # where teleport is uniform over seed nodes.
+        n = len(node_set)
+        teleport_mass = 1.0 / len(seed_ids)
+
+        rank = {nid: 0.0 for nid in node_set}
+        for sid in seed_ids:
+            rank[sid] = teleport_mass
+
+        # Normalize initial rank (handle seeds not in node_set)
+        total = sum(rank.values())
+        if total > 0:
+            rank = {nid: v / total for nid, v in rank.items()}
+
+        # Dangling mass redistribution
+        for _ in range(max_iter):
+            new_rank = {nid: 0.0 for nid in node_set}
+            dangling_mass = 0.0
+
+            for nid in node_set:
+                if out_degree.get(nid, 0) > 0:
+                    out_w = out_degree[nid]
+                    for tgt, w in adj.get(nid, []):
+                        new_rank[tgt] += rank[nid] * (w / out_w) * (1 - alpha)
+                else:
+                    dangling_mass += rank[nid]
+
+            # Teleport + dangling redistribution to seeds
+            for sid in seed_ids:
+                new_rank[sid] += alpha * teleport_mass
+                new_rank[sid] += dangling_mass * teleport_mass
+
+            # Check convergence
+            diff = sum(abs(new_rank[nid] - rank[nid]) for nid in node_set)
+            rank = new_rank
+            if diff < tol:
+                break
+
+        # ── 4. Compute hop distances from seeds (BFS) ──────────────────
+        hop_distance: dict[str, int] = {}
+        bfs_frontier = list(seed_ids)
+        for sid in seed_ids:
+            hop_distance[sid] = 0
+        hop = 0
+        while bfs_frontier:
+            hop += 1
+            next_frontier = []
+            for nid in bfs_frontier:
+                for tgt, _ in adj.get(nid, []):
+                    if tgt not in hop_distance:
+                        hop_distance[tgt] = hop
+                        next_frontier.append(tgt)
+            bfs_frontier = next_frontier
+            if hop >= 5:  # limit BFS depth
+                break
+
+        # ── 5. Merge with BM25 scores (optional) ───────────────────────
+        bm25_map = {item["node_id"]: item.get("score", 0.0) for item in bm25_results} if merge_bm25 else {}
+        max_bm25 = max(bm25_map.values()) if bm25_map else 1.0
+
+        # Normalize diffusion scores
+        max_diffusion = max(rank.values()) if rank else 1.0
+        if max_diffusion == 0:
+            max_diffusion = 1.0
+
+        # Fetch node info
+        node_info = {}
+        for r in self.conn.execute(
+            "SELECT id, label, kind FROM nodes WHERE quarantined = 0"
+        ).fetchall():
+            node_info[str(r["id"])] = (r["label"], r["kind"])
+
+        results = []
+        for nid, diff_score in rank.items():
+            if diff_score <= 0 and nid not in seed_scores:
+                continue
+            if nid not in node_info:
+                continue
+
+            norm_diff = diff_score / max_diffusion
+            bm25_s = 0.0
+            if merge_bm25 and nid in bm25_map:
+                bm25_s = bm25_map[nid] / max_bm25 if max_bm25 > 0 else 0.0
+
+            blended = (1 - bm25_boost) * norm_diff + bm25_boost * bm25_s
+
+            sources = set()
+            if nid in seed_scores:
+                sources.add("seed")
+            if nid in bm25_map:
+                sources.add("bm25")
+            if nid not in seed_ids and diff_score > 0:
+                sources.add("diffusion")
+
+            results.append({
+                "node_id": nid,
+                "label": node_info[nid][0],
+                "kind": node_info[nid][1],
+                "score": round(blended, 6),
+                "diffusion_score": round(norm_diff, 6),
+                "bm25_score": round(bm25_s, 6),
+                "hop_distance": hop_distance.get(nid, -1),
+                "sources": sorted(sources),
+            })
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+
+        if explain:
+            for r_item in results:
+                r_item["diffusion_paths"] = self._diffusion_explain(
+                    r_item["node_id"], seed_ids, adj, hop_distance
+                )
+
+        return results[:limit]
+
+    def _diffusion_explain(
+        self,
+        target: str,
+        seeds: list[str],
+        adj: dict[str, list[tuple[str, float]]],
+        hop_distance: dict[str, int],
+    ) -> list[dict]:
+        """Trace shortest diffusion paths from seeds to target."""
+        paths = []
+        target_hop = hop_distance.get(target, -1)
+        if target_hop <= 0:
+            return [{"path": [target], "length": 0, "note": "seed node"}]
+
+        # BFS from each seed to find path to target
+        for seed in seeds:
+            if seed == target:
+                paths.append({"path": [seed], "length": 0, "note": "seed"})
+                continue
+
+            # BFS with path tracking (limited depth)
+            queue = [(seed, [seed])]
+            visited = {seed}
+            found = False
+            for _ in range(target_hop + 2):
+                next_queue = []
+                for node, path in queue:
+                    for tgt, w in adj.get(node, []):
+                        if tgt == target:
+                            paths.append({
+                                "path": path + [tgt],
+                                "length": len(path),
+                                "edge_weight": round(w, 4),
+                            })
+                            found = True
+                            break
+                        if tgt not in visited:
+                            visited.add(tgt)
+                            next_queue.append((tgt, path + [tgt]))
+                    if found:
+                        break
+                queue = next_queue
+                if found or not queue:
+                    break
+
+        return paths[:3]  # limit explanation paths
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

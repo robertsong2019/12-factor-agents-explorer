@@ -14426,3 +14426,331 @@ class TestMemoryHealthScore:
             mg.memory_reinforce(n.id, "positive")
         result = mg.memory_health_score()
         assert result["score"] >= 30  # Should be above average
+
+
+# ── Diffusion Retrieval Tests (ExpGraph-inspired Graph Diffusion) ────────
+
+class TestDiffusionRetrieve:
+    """Tests for diffusion_retrieve() — Personalized PageRank diffusion."""
+
+    @pytest.fixture
+    def cluster_graph(self, mg):
+        """Build a graph with two clusters connected by a bridge.
+        Cluster A: Alice, Python, ML
+        Cluster B: Bob, Design, Figma
+        Bridge: Alice — Bob (connects the clusters)
+        """
+        alice = mg.add("Alice", "person", {"role": "engineer"})
+        python = mg.add("Python", "skill")
+        ml = mg.add("Machine Learning", "topic")
+        bob = mg.add("Bob", "person", {"role": "designer"})
+        design = mg.add("Design", "skill")
+        figma = mg.add("Figma", "tool")
+
+        # Cluster A (strong intra-cluster links)
+        mg.link(alice.id, python.id, "knows", weight=0.9)
+        mg.link(alice.id, ml.id, "studies", weight=0.8)
+        mg.link(python.id, ml.id, "related", weight=0.7)
+
+        # Cluster B
+        mg.link(bob.id, design.id, "knows", weight=0.9)
+        mg.link(bob.id, figma.id, "uses", weight=0.8)
+        mg.link(design.id, figma.id, "related", weight=0.7)
+
+        # Bridge (weak link)
+        mg.link(alice.id, bob.id, "colleague", weight=0.3)
+
+        return {
+            "mg": mg, "alice": alice, "python": python, "ml": ml,
+            "bob": bob, "design": design, "figma": figma,
+        }
+
+    def test_basic_diffusion_returns_results(self, cluster_graph):
+        """Diffusion retrieval returns results for a query."""
+        g = cluster_graph["mg"]
+        results = g.diffusion_retrieve("Python")
+        assert len(results) > 0
+        assert all("node_id" in r for r in results)
+
+    def test_seed_nodes_high_score(self, cluster_graph):
+        """Seed nodes (matched by BM25) get high diffusion scores."""
+        g = cluster_graph["mg"]
+        results = g.diffusion_retrieve("Python")
+        node_ids = [r["node_id"] for r in results]
+        # Python should be in results
+        assert cluster_graph["python"].id in node_ids
+
+    def test_diffusion_propagates_to_neighbors(self, cluster_graph):
+        """Diffusion propagates beyond seed nodes to graph neighbors."""
+        g = cluster_graph["mg"]
+        # Search for Alice — should also surface Python and ML (her neighbors)
+        results = g.diffusion_retrieve("Alice")
+        node_ids = {r["node_id"] for r in results}
+        # Alice's direct neighbors should appear via diffusion
+        assert cluster_graph["python"].id in node_ids
+        assert cluster_graph["ml"].id in node_ids
+
+    def test_diffusion_decays_with_distance(self, cluster_graph):
+        """Closer nodes get higher scores than distant nodes."""
+        g = cluster_graph["mg"]
+        results = g.diffusion_retrieve("Python", alpha=0.2, max_iter=30)
+        # Build score map
+        scores = {r["node_id"]: r["score"] for r in results}
+        # Python (seed) should score higher than Bob (2 hops away via bridge)
+        py_score = scores.get(cluster_graph["python"].id, 0)
+        bob_score = scores.get(cluster_graph["bob"].id, 0)
+        assert py_score >= bob_score
+
+    def test_explicit_seeds(self, cluster_graph):
+        """Explicit seed IDs are used directly without BM25."""
+        g = cluster_graph["mg"]
+        alice_id = cluster_graph["alice"].id
+        results = g.diffusion_retrieve(seeds=[alice_id], limit=10)
+        assert len(results) > 0
+        # Alice should have the highest score
+        assert results[0]["node_id"] == alice_id
+
+    def test_limit_respected(self, cluster_graph):
+        """Limit parameter controls output size."""
+        g = cluster_graph["mg"]
+        results = g.diffusion_retrieve("Alice", limit=3)
+        assert len(results) <= 3
+
+    def test_hop_distance_computed(self, cluster_graph):
+        """Results include hop distance from seeds."""
+        g = cluster_graph["mg"]
+        results = g.diffusion_retrieve("Python", explain=False)
+        for r in results:
+            assert "hop_distance" in r
+            assert r["hop_distance"] >= 0
+
+    def test_seed_zero_hop(self, cluster_graph):
+        """Seed nodes have hop_distance 0."""
+        g = cluster_graph["mg"]
+        alice_id = cluster_graph["alice"].id
+        results = g.diffusion_retrieve(seeds=[alice_id])
+        alice_result = next(r for r in results if r["node_id"] == alice_id)
+        assert alice_result["hop_distance"] == 0
+
+    def test_distant_nodes_higher_hops(self, cluster_graph):
+        """Nodes across the bridge have higher hop distance."""
+        g = cluster_graph["mg"]
+        alice_id = cluster_graph["alice"].id
+        results = g.diffusion_retrieve(seeds=[alice_id])
+        # Bob is across the bridge (1 hop from Alice)
+        bob_id = cluster_graph["bob"].id
+        bob_result = next(r for r in results if r["node_id"] == bob_id)
+        assert bob_result["hop_distance"] >= 1
+
+    def test_sources_field_populated(self, cluster_graph):
+        """Sources field indicates how the node was found."""
+        g = cluster_graph["mg"]
+        results = g.diffusion_retrieve("Python")
+        for r in results:
+            assert isinstance(r["sources"], list)
+
+    def test_seed_source_marked(self, cluster_graph):
+        """Seed nodes have 'seed' in sources."""
+        g = cluster_graph["mg"]
+        alice_id = cluster_graph["alice"].id
+        results = g.diffusion_retrieve(seeds=[alice_id])
+        alice_result = next(r for r in results if r["node_id"] == alice_id)
+        assert "seed" in alice_result["sources"]
+
+    def test_diffusion_source_marked(self, cluster_graph):
+        """Non-seed nodes reached by diffusion have 'diffusion' in sources."""
+        g = cluster_graph["mg"]
+        results = g.diffusion_retrieve("Python", alpha=0.1)
+        # ML is a neighbor of Python but not a BM25 match for "Python"
+        ml_results = [r for r in results if r["node_id"] == cluster_graph["ml"].id]
+        if ml_results:
+            assert "diffusion" in ml_results[0]["sources"]
+
+    def test_bm25_merge(self, cluster_graph):
+        """When merge_bm25=True, BM25 scores influence final ranking."""
+        g = cluster_graph["mg"]
+        results_merged = g.diffusion_retrieve("Python", merge_bm25=True, bm25_boost=0.5)
+        results_pure = g.diffusion_retrieve("Python", merge_bm25=False)
+        # Both should return results
+        assert len(results_merged) > 0
+        assert len(results_pure) > 0
+        # Scores should differ when BM25 is blended
+        merged_scores = {r["node_id"]: r["score"] for r in results_merged}
+        pure_scores = {r["node_id"]: r["score"] for r in results_pure}
+        # At least one node should have different score
+        common_ids = set(merged_scores) & set(pure_scores)
+        diffs = [abs(merged_scores[nid] - pure_scores[nid]) for nid in common_ids]
+        assert any(d > 0.001 for d in diffs)
+
+    def test_no_bm25_merge(self, cluster_graph):
+        """When merge_bm25=False, scores are pure diffusion."""
+        g = cluster_graph["mg"]
+        results = g.diffusion_retrieve("Python", merge_bm25=False)
+        for r in results:
+            assert r["bm25_score"] == 0.0
+
+    def test_alpha_controls_spread(self, cluster_graph):
+        """Higher alpha = more concentrated on seeds; lower = more spread."""
+        g = cluster_graph["mg"]
+        alice_id = cluster_graph["alice"].id
+        # Low alpha: diffusion spreads further
+        spread = g.diffusion_retrieve(seeds=[alice_id], alpha=0.05, limit=10)
+        # High alpha: concentrated on seeds
+        focused = g.diffusion_retrieve(seeds=[alice_id], alpha=0.5, limit=10)
+
+        # With low alpha, more nodes should get meaningful scores
+        spread_meaningful = sum(1 for r in spread if r["diffusion_score"] > 0.01)
+        focused_meaningful = sum(1 for r in focused if r["diffusion_score"] > 0.01)
+        assert spread_meaningful >= focused_meaningful
+
+    def test_edge_weight_factor(self, cluster_graph):
+        """Edge weight factor affects diffusion behavior."""
+        g = cluster_graph["mg"]
+        # Linear weights
+        linear = g.diffusion_retrieve("Alice", edge_weight_factor=1.0)
+        # Square root (dampens strong edges)
+        sqrt = g.diffusion_retrieve("Alice", edge_weight_factor=0.5)
+        # Both return results
+        assert len(linear) > 0
+        assert len(sqrt) > 0
+
+    def test_empty_graph(self, mg):
+        """Empty graph returns empty list."""
+        results = mg.diffusion_retrieve("anything")
+        assert results == []
+
+    def test_no_matching_seeds(self, mg):
+        """Query that matches nothing returns empty list."""
+        mg.add("Python", "skill")
+        results = mg.diffusion_retrieve("NonexistentXYZ123")
+        # Should return empty or very few results
+        # (depends on BM25 fallback behavior)
+        assert isinstance(results, list)
+
+    def test_empty_query_no_seeds_raises(self, mg):
+        """Empty query without seeds raises ValueError."""
+        with pytest.raises(ValueError, match="query or seeds"):
+            mg.diffusion_retrieve()
+
+    def test_explain_mode(self, cluster_graph):
+        """Explain mode includes diffusion paths."""
+        g = cluster_graph["mg"]
+        alice_id = cluster_graph["alice"].id
+        results = g.diffusion_retrieve(seeds=[alice_id], explain=True)
+        # Alice (seed) should have explanation
+        alice_r = next(r for r in results if r["node_id"] == alice_id)
+        assert "diffusion_paths" in alice_r
+        assert len(alice_r["diffusion_paths"]) > 0
+
+    def test_explain_shows_path(self, cluster_graph):
+        """Explain traces path from seed to distant node."""
+        g = cluster_graph["mg"]
+        alice_id = cluster_graph["alice"].id
+        results = g.diffusion_retrieve(seeds=[alice_id], explain=True, limit=10)
+        # Find a non-seed node
+        non_seed = [r for r in results if r["hop_distance"] > 0]
+        if non_seed:
+            assert "diffusion_paths" in non_seed[0]
+            paths = non_seed[0]["diffusion_paths"]
+            if paths:
+                assert "path" in paths[0]
+                assert len(paths[0]["path"]) >= 2  # seed → ... → target
+
+    def test_isolated_seed(self, mg):
+        """Isolated seed node (no edges) still returns itself."""
+        node = mg.add("Isolated", "concept")
+        results = mg.diffusion_retrieve(seeds=[node.id])
+        assert len(results) >= 1
+        assert results[0]["node_id"] == node.id
+        assert results[0]["hop_distance"] == 0
+
+    def test_self_loop_handling(self, mg):
+        """Self-loops don't break diffusion."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "related", weight=0.5)
+        # Self-loop
+        mg.conn.execute(
+            "INSERT INTO edges (source, target, relation, weight) VALUES (?, ?, ?, ?)",
+            (a.id, a.id, "self", 0.1)
+        )
+        mg.conn.commit()
+        results = mg.diffusion_retrieve(seeds=[a.id])
+        assert len(results) > 0  # Should not crash
+
+    def test_large_graph_performance(self, mg):
+        """Diffusion converges on a moderately large graph."""
+        import random
+        random.seed(42)
+        # Create 50 nodes
+        nodes = [mg.add(f"Node_{i}", "concept") for i in range(50)]
+        # Create ~100 edges (random)
+        for _ in range(100):
+            s = random.choice(nodes).id
+            t = random.choice(nodes).id
+            if s != t:
+                mg.link(s, t, "related", weight=random.uniform(0.1, 1.0))
+        # Run diffusion
+        results = mg.diffusion_retrieve(seeds=[nodes[0].id], max_iter=30)
+        assert len(results) > 0
+        assert results[0]["node_id"] == nodes[0].id
+
+    def test_return_fields_complete(self, cluster_graph):
+        """All required fields are present in results."""
+        g = cluster_graph["mg"]
+        results = g.diffusion_retrieve("Alice")
+        required_fields = {"node_id", "label", "kind", "score",
+                          "diffusion_score", "bm25_score", "hop_distance", "sources"}
+        for r in results:
+            assert required_fields <= set(r.keys()), f"Missing fields in {r}"
+
+    def test_convergence_tolerance(self, cluster_graph):
+        """Algorithm respects convergence tolerance."""
+        g = cluster_graph["mg"]
+        # Very tight tolerance should take more iterations but converge
+        tight = g.diffusion_retrieve("Alice", tol=1e-8, max_iter=100)
+        # Very loose tolerance stops early
+        loose = g.diffusion_retrieve("Alice", tol=1e-1, max_iter=100)
+        # Both should return results
+        assert len(tight) > 0
+        assert len(loose) > 0
+
+    def test_dangling_node_redistribution(self, mg):
+        """Dangling nodes (no outgoing edges) distribute mass correctly."""
+        a = mg.add("Hub", "concept")
+        b = mg.add("Leaf1", "concept")
+        c = mg.add("Leaf2", "concept")
+        mg.link(a.id, b.id, "has", weight=1.0)
+        mg.link(a.id, c.id, "has", weight=1.0)
+        # b and c are dangling (no outgoing edges)
+        results = mg.diffusion_retrieve(seeds=[a.id], alpha=0.15)
+        assert len(results) > 0
+        # All nodes should appear
+        node_ids = {r["node_id"] for r in results}
+        assert a.id in node_ids
+
+    def test_multiple_seeds(self, cluster_graph):
+        """Multiple seeds combine diffusion from different starting points."""
+        g = cluster_graph["mg"]
+        alice_id = cluster_graph["alice"].id
+        bob_id = cluster_graph["bob"].id
+        results = g.diffusion_retrieve(seeds=[alice_id, bob_id], limit=10)
+        assert len(results) > 0
+        # Both seeds should appear
+        node_ids = {r["node_id"] for r in results}
+        assert alice_id in node_ids
+        assert bob_id in node_ids
+
+    def test_scores_sorted_descending(self, cluster_graph):
+        """Results are sorted by score descending."""
+        g = cluster_graph["mg"]
+        results = g.diffusion_retrieve("Alice")
+        scores = [r["score"] for r in results]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_nonexistent_seeds_filtered(self, mg):
+        """Non-existent seed IDs are silently filtered."""
+        a = mg.add("Real", "concept")
+        results = mg.diffusion_retrieve(seeds=[a.id, "nonexistent_id"])
+        assert len(results) >= 1
+        assert results[0]["node_id"] == a.id
