@@ -1,0 +1,209 @@
+
+    def algebraic_connectivity(self) -> float | None:
+        """计算图的代数连通度（Fiedler value）——拉普拉斯矩阵的第二小特征值。
+
+        代数连通度衡量图的整体连通强度:
+        - 0 = 图不连通
+        - 大值 = 强连通（移除少量边不会断开图）
+        - 小正数 = 脆弱连通
+
+        使用逆幂迭代（inverse iteration）在平移拉普拉斯上求最小非零特征值。
+
+        Returns:
+            代数连通度，或 None（空图/单节点）
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return None
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+
+        # 构建度数组和对邻接表
+        degree = [0] * n
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                adj_sym[i].add(j)
+                adj_sym[j].add(i)
+                degree[i] += 1
+                degree[j] += 1
+
+        # 拉普拉斯矩阵 L = D - A 的稀疏表示
+        # 对于 L + σI 的逆迭代，用 CG 求解 (L + σI)x = b
+
+        # 简化方法: 对小图直接构造矩阵求特征值; 对大图用 Lanczos
+        # 这里用直接法（图分析场景 n 通常 < 1000）
+        
+        # 构建拉普拉斯矩阵 L[i][j]
+        L = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            L[i][i] = float(degree[i])
+            for j in adj_sym[i]:
+                L[i][j] = -1.0
+
+        # 求特征值: QR 迭代（Givens rotations 简化为朴素实现）
+        # 对对称三对角化的拉普拉斯
+        # 简单方法: 幂迭代找最大，然后 deflation 找第二小
+        
+        # 直接用雅可比迭代求所有特征值（n < 500 场景足够）
+        eigenvalues = self._sym_eigenvalues(L, max_iter=200)
+        eigenvalues.sort()
+        
+        # 第二小特征值（第一个接近0的是连通分量的0特征值）
+        # 找第一个 > 1e-10 的特征值
+        for ev in eigenvalues:
+            if ev > 1e-10:
+                return max(0.0, ev)
+        return 0.0  # 不连通
+
+    def _sym_eigenvalues(self, M: list[list[float]], max_iter: int = 200) -> list[float]:
+        """雅可比旋转求实对称矩阵全部特征值。"""
+        n = len(M)
+        A = [row[:] for row in M]  # copy
+        
+        for _ in range(max_iter):
+            # 找最大非对角元
+            p, q = 0, 1
+            max_val = abs(A[0][1])
+            for i in range(n):
+                for j in range(i + 1, n):
+                    if abs(A[i][j]) > max_val:
+                        max_val = abs(A[i][j])
+                        p, q = i, j
+            
+            if max_val < 1e-12:
+                break
+            
+            # 旋转角
+            if abs(A[p][p] - A[q][q]) < 1e-15:
+                theta = math.pi / 4
+            else:
+                theta = 0.5 * math.atan2(2 * A[p][q], A[p][p] - A[q][q])
+            
+            c, s = math.cos(theta), math.sin(theta)
+            
+            # 应用 Givens 旋转
+            for i in range(n):
+                if i == p or i == q:
+                    continue
+                aip = A[i][p]
+                aiq = A[i][q]
+                A[i][p] = c * aip + s * aiq
+                A[p][i] = A[i][p]
+                A[i][q] = -s * aip + c * aiq
+                A[q][i] = A[i][q]
+            
+            app = A[p][p]
+            aqq = A[q][q]
+            apq = A[p][q]
+            A[p][p] = c*c*app + 2*s*c*apq + s*s*aqq
+            A[q][q] = s*s*app - 2*s*c*apq + c*c*aqq
+            A[p][q] = 0.0
+            A[q][p] = 0.0
+        
+        return [A[i][i] for i in range(n)]
+
+    def fiedler_vector(self) -> list[float] | None:
+        """计算 Fiedler 向量——对应代数连通度的特征向量。
+
+        Fiedler 向量可用于:
+        - 谱二分（正/负分两组）
+        - 节点排序（与连通性的关系）
+        - 图嵌入（1D 谱嵌入）
+
+        Returns:
+            与 node_ids 顺序对应的 Fiedler 向量，或 None
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return None
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+
+        degree = [0] * n
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                adj_sym[i].add(j)
+                adj_sym[j].add(i)
+                degree[i] += 1
+                degree[j] += 1
+
+        L = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            L[i][i] = float(degree[i])
+            for j in adj_sym[i]:
+                L[i][j] = -1.0
+
+        # 用逆迭代求第二小特征值对应的特征向量
+        # 平移 σ ≈ 0 附近，解 (L - σI)v = b
+        # 简化: 直接用幂迭代的变体
+        
+        import random
+        random.seed(123)
+        v = [random.random() - 0.5 for _ in range(n)]
+        # 正交化到全1向量（去除0特征值分量）
+        mean = sum(v) / n
+        v = [x - mean for x in v]
+        norm = math.sqrt(sum(x * x for x in v)) or 1e-15
+        v = [x / norm for x in v]
+
+        # 逆迭代: 解 Lv = v_old 求最小特征值对应的特征向量
+        # 但 L 奇异，所以用 L + epsilon*I
+        epsilon = 1e-6
+        
+        for iteration in range(500):
+            # 解 (L + eps*I) x = v via CG (conjugate gradient)
+            x = self._cg_solve(L, v, epsilon)
+            if x is None:
+                break
+            
+            # 正交化到全1向量
+            mean_x = sum(x) / n
+            x = [xi - mean_x for xi in x]
+            norm_x = math.sqrt(sum(xi * xi for xi in x)) or 1e-15
+            x = [xi / norm_x for xi in x]
+            
+            # 检查收敛
+            diff = sum((x[i] - v[i]) ** 2 for i in range(n))
+            v = x
+            if diff < 1e-14:
+                break
+
+        return v
+
+    def _cg_solve(self, L: list[list[float]], b: list[float], eps: float) -> list[float] | None:
+        """共轭梯度法求解 (L + eps*I)x = b。"""
+        n = len(b)
+        # M = L + eps*I
+        def Mx(v: list[float]) -> list[float]:
+            return [sum(L[i][j] * v[j] for j in range(n)) + eps * v[i] for i in range(n)]
+        
+        x = [0.0] * n
+        r = [b[i] - eps * x[i] for i in range(n)]  # r = b - Mx(0) = b
+        p = r[:]
+        rs_old = sum(r[i] * r[i] for i in range(n))
+        
+        if rs_old < 1e-30:
+            return x
+        
+        for _ in range(n * 3):
+            Mp = Mx(p)
+            pMp = sum(p[i] * Mp[i] for i in range(n))
+            if abs(pMp) < 1e-30:
+                break
+            alpha = rs_old / pMp
+            x = [x[i] + alpha * p[i] for i in range(n)]
+            r = [r[i] - alpha * Mp[i] for i in range(n)]
+            rs_new = sum(r[i] * r[i] for i in range(n))
+            if rs_new < 1e-20:
+                break
+            beta = rs_new / rs_old
+            p = [r[i] + beta * p[i] for i in range(n)]
+            rs_old = rs_new
+        
+        return x
