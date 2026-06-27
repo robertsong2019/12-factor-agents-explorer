@@ -36,12 +36,15 @@
 ### Testing & Documentation
 - [x] **F15**: Unit tests for core functions
 - [x] **F16**: Integration tests with real projects ✅ 2026-06-21
+- [x] **F35**: Test file detection — scan for test files, detect framework (jest/pytest/go/vitest/mocha) ✅ 2026-06-27
+- [x] **F36**: Git hotspot analysis — find most frequently changed files ✅ 2026-06-27
 - [ ] **F17**: Performance benchmarks on large repos
 - [ ] **F18**: Documentation examples for each generated file type
 
 ### Security & Quality
 - [x] **F32**: Secret detection — scan source for API keys, tokens, passwords ✅ 2026-06-23
 - [x] **F33**: Documentation readability analysis — A-F scoring with 15+ metrics ✅ 2026-06-23
+- [x] **F34**: Dead code detection — find exported symbols never imported ✅ 2026-06-24
 
 ## Priorities
 **Round 1 (Core):** F1, F2, F3 — Better codebase understanding

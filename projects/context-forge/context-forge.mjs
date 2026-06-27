@@ -3417,6 +3417,134 @@ export function formatDeadCodeReport(result) {
   return lines.join('\n');
 }
 
+/**
+ * F35: Detect test files and infer testing framework.
+ * Scans project for test files and reports framework, count, and coverage ratio.
+ */
+export async function detectTestFiles(root, maxDepth = 3, depth = 0, gitignore = [], maxFileSize = DEFAULT_MAX_FILE_SIZE) {
+  root = resolvePath(root);
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const testFiles = [];
+  const frameworkPatterns = {
+    jest: [/\.test\.[jt]sx?$/, /\.spec\.[jt]sx?$/, /__tests__\//],
+    pytest: [/test_.*\.py$/, /_test\.py$/, /conftest\.py$/],
+    vitest: [/\.test\.[jt]s$/, /\.spec\.[jt]s$/],
+    mocha: [/\.test\.js$/, /\.spec\.js$/, /test\//],
+    go_test: [/_test\.go$/],
+    rust_test: [/tests?\.rs$/, /#\[test\]/],
+    dotnet_test: [/Tests?\.cs$/],
+  };
+
+  for (const entry of entries) {
+    if (depth >= maxDepth) continue;
+    const fullPath = join(root, entry.name);
+    if (isIgnored(fullPath, gitignore)) continue;
+
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist' || entry.name === 'build' || entry.name === '.next') continue;
+      const sub = await detectTestFiles(fullPath, maxDepth, depth + 1, gitignore, maxFileSize);
+      testFiles.push(...sub.files);
+    } else if (entry.isFile()) {
+      let st;
+      try { st = await stat(fullPath); } catch { continue; }
+      if (!st || st.size > maxFileSize) continue;
+      const isTest = /^(test_|.*[_.]test[._]|.*[_.]spec[._]|.*_test\.|conftest\.|.*Tests?\.[cs])/.test(entry.name) ||
+                     /(^|[\/])__tests__[\/]/.test(fullPath) ||
+                     /_test\.go$/.test(entry.name);
+      if (isTest) {
+        let framework = 'unknown';
+        for (const [fw, patterns] of Object.entries(frameworkPatterns)) {
+          if (patterns.some(p => p.test(entry.name) || p.test(fullPath))) {
+            framework = fw;
+            break;
+          }
+        }
+        testFiles.push({ path: fullPath, name: entry.name, framework });
+      }
+    }
+  }
+  return { files: testFiles };
+}
+
+export function formatTestFilesReport(result) {
+  if (!result || !result.files || result.files.length === 0) {
+    return '⚠️ No test files detected in this project.';
+  }
+  const byFramework = {};
+  for (const f of result.files) {
+    byFramework[f.framework] = (byFramework[f.framework] || 0) + 1;
+  }
+  const lines = [
+    `🧪 Test Files: ${result.files.length} found`,
+    ''
+  ];
+  for (const [fw, count] of Object.entries(byFramework).sort((a, b) => b[1] - a[1])) {
+    lines.push(`- **${fw}**: ${count} file${count > 1 ? 's' : ''}`);
+  }
+  lines.push('', 'Test files:');
+  for (const f of result.files.slice(0, 20)) {
+    lines.push(`  - \`${f.name}\` (${f.framework})`);
+  }
+  if (result.files.length > 20) {
+    lines.push(`  - ... and ${result.files.length - 20} more`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * F36: Analyze git hotspots — files that change most frequently.
+ * Uses git log to find the most frequently modified files.
+ */
+export async function analyzeGitHotspots(root, maxCommits = 50) {
+  root = resolvePath(root);
+  const { execSync } = await import('child_process');
+  let log;
+  try {
+    log = execSync(
+      `git -C "${root}" log --name-only --pretty=format: --max-count=${maxCommits}`,
+      { encoding: 'utf8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+  } catch {
+    return { hotspots: [], totalCommits: 0, error: 'git not available or not a git repo' };
+  }
+
+  const counts = {};
+  let totalCommits = 0;
+  for (const line of log.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) { continue; }
+    counts[trimmed] = (counts[trimmed] || 0) + 1;
+    totalCommits++;
+  }
+
+  const hotspots = Object.entries(counts)
+    .map(([file, changes]) => ({ file, changes, ratio: +(changes / Math.max(totalCommits, 1)).toFixed(2) }))
+    .sort((a, b) => b.changes - a.changes)
+    .slice(0, 20);
+
+  return { hotspots, totalCommits, totalFiles: Object.keys(counts).length };
+}
+
+export function formatGitHotspotsReport(result) {
+  if (!result || result.error) {
+    return `⚠️ Git hotspot analysis unavailable: ${result?.error || 'unknown error'}`;
+  }
+  if (!result.hotspots || result.hotspots.length === 0) {
+    return 'ℹ️ No git history found for hotspot analysis.';
+  }
+  const lines = [
+    `🔥 Git Hotspots: Top ${result.hotspots.length} most changed files`,
+    `   (${result.totalCommits} file changes across ${result.totalFiles} unique files)`,
+    ''
+  ];
+  const maxChanges = result.hotspots[0].changes;
+  for (const h of result.hotspots) {
+    const bar = '█'.repeat(Math.max(1, Math.round((h.changes / maxChanges) * 20)));
+    lines.push(`  ${bar} ${h.changes}× ${h.file}`);
+  }
+  return lines.join('\n');
+}
+
 export function resolvePath(p) {
   return p.startsWith("/") ? p : join(process.cwd(), p);
 }
