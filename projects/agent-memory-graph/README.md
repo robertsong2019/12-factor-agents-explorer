@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-1524-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1554-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -1668,13 +1668,49 @@ health = mg.memory_health_score()
 
 ---
 
+### Diffusion 检索 (ExpGraph 启发)
+
+#### `diffusion_retrieve(query="", *, seeds=None, embedding=None, limit=10, alpha=0.15, max_iter=50, tol=1e-4, edge_weight_factor=1.0, merge_bm25=True, bm25_boost=0.3, explain=False) -> list[dict]`
+
+Personalized PageRank 扩散检索 — 用图扩散替代固定跳数 BFS 邻域展开。
+
+Seed 节点通过 BM25 / 向量搜索识别，然后 PPR 在图上传播相关性分数，
+随图距离自然衰减。研究到生产 <24h（源自 ExpGraph + Memory-R1 研究）。
+
+```python
+results = mg.diffusion_retrieve("memory consolidation", limit=5)
+# [{node_id: 'n42', label: 'Memory Replay', kind: 'concept',
+#   score: 0.87, diffusion_score: 0.72, bm25_score: 0.95,
+#   hop_distance: 2, sources: ['bm25', 'diffusion']}, ...]
+
+# 保守扩散（更大的 alpha = 更靠近 seed）
+results = mg.diffusion_retrieve("attention", alpha=0.3, limit=10)
+
+# 调试模式：查看扩散路径
+results = mg.diffusion_retrieve("forgetting", explain=True)
+# 额外返回 diffusion_paths 和 step_scores
+
+# 使用向量 embedding 发现 seed
+results = mg.diffusion_retrieve(
+    embedding=[0.1, 0.3, ...], merge_bm25=False, limit=5
+)
+```
+
+**关键参数：**
+- `alpha`: 随机游走重启概率（0.15 标准 PPR，0.3 保守）
+- `edge_weight_factor`: 边权重指数（1.0 线性，0.5 阻尼强边，2.0 放大）
+- `merge_bm25`: 是否混合 BM25 相关性分数
+- `bm25_boost`: BM25 权重（0-1），剩余部分为扩散权重
+
+---
+
 ## 测试
 
 ```bash
 python3 -m pytest test_memory_graph.py -q
 ```
 
-1524 个测试覆盖所有 API。
+1554 个测试覆盖所有 API。
 
 ## 设计思路
 
@@ -1704,6 +1740,7 @@ python3 -m pytest test_memory_graph.py -q
 24. **生命周期仪表盘** — memory_lifecycle_report 统一生命周期报告：4 层访问时效（active/stale/decaying/dormant）+ 5 桶权重分布 + 5 阶段生命周期分类 + 隔离/合并/强化追踪 + 6 种建议
 25. **访问模式分析** — memory_access_pattern 时间访问模式分析：冷热分类（hot/cold/warm per-kind）、访问速度（utilization metric）、昼夜偏差检测（hour-of-day concentration）、4 种推荐
 26. **健康评分 KPI** — memory_health_score 综合健康评分（0-100）：5 维度加权（Vitality 30 + Integrity 20 + Connectivity 20 + Diversity 15 + Maintenance 15）+ 字母等级（A-F）+ 问题标记
+27. **Diffusion 检索** — diffusion_retrieve 实现 ExpGraph 启发的 Personalized PageRank 扩散检索：BM25/向量识别 seed → PPR 传播分数 → 边权重感知衰减 → BM25 混合排序。从研究到生产 <24h 的案例（ExpGraph + Memory-R1 → diffusion_retrieve）
 
 ## 许可
 
