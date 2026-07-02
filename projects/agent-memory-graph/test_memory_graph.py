@@ -15495,3 +15495,117 @@ class TestConflictDetect:
         assert isinstance(report, str)
         assert "X equals 5" in report
         assert "X equals 10" in report
+
+
+# ─────────────────────────────────────────────────────────────
+# Cycle 175: Strategic Forget
+# ─────────────────────────────────────────────────────────────
+
+class TestStrategicForget:
+    """Confidence-weighted deliberate forgetting — the missing memory operation."""
+
+    def test_strategic_forget_empty_graph(self, mg):
+        """Empty graph forgets nothing."""
+        result = mg.strategic_forget()
+        assert result["forgotten"] == 0
+
+    def test_strategic_forget_low_weight(self, mg):
+        """Nodes below weight threshold are forgotten."""
+        a = mg.add("Important", "fact")
+        b = mg.add("Trivial", "fact")
+        mg.update_node(b.id, weight=0.05)
+        result = mg.strategic_forget(min_weight=0.1)
+        assert result["forgotten"] == 1
+        assert mg.get_node(b.id) is None
+        assert mg.get_node(a.id) is not None
+
+    def test_strategic_forget_old_unused(self, mg):
+        """Nodes not accessed in a long time are forgotten."""
+        import time
+        a = mg.add("Recent", "fact")
+        b = mg.add("Ancient", "fact")
+        # Set b's accessed time to 30 days ago
+        old_time = time.time() - 30 * 86400
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old_time, b.id))
+        mg.conn.commit()
+        result = mg.strategic_forget(max_age_days=7)
+        assert result["forgotten"] == 1
+        assert mg.get_node(b.id) is None
+
+    def test_strategic_forget_protects_high_q_value(self, mg):
+        """High Q-value nodes are protected even if old/low-weight."""
+        import time
+        a = mg.add("Valuable old", "fact")
+        old_time = time.time() - 100 * 86400
+        mg.conn.execute("UPDATE nodes SET accessed=?, weight=0.05, q_value=5.0 WHERE id=?",
+                        (old_time, a.id))
+        mg.conn.commit()
+        result = mg.strategic_forget(max_age_days=7, min_weight=0.1, protect_q_above=1.0)
+        assert result["forgotten"] == 0
+        assert mg.get_node(a.id) is not None
+
+    def test_strategic_forget_dry_run(self, mg):
+        """Dry run reports what would be forgotten without deleting."""
+        a = mg.add("Keep", "fact")
+        b = mg.add("Forget me", "fact")
+        mg.update_node(b.id, weight=0.01)
+        result = mg.strategic_forget(min_weight=0.1, dry_run=True)
+        assert result["forgotten"] == 1
+        # Node should still exist
+        assert mg.get_node(b.id) is not None
+
+    def test_strategic_forget_quarantined_excluded(self, mg):
+        """Quarantined nodes are not candidates for strategic forget."""
+        a = mg.add("Bad data", "fact")
+        mg.node_quarantine(a.id, reason="unverified")
+        result = mg.strategic_forget(min_weight=0.9)
+        # Quarantined nodes are excluded from forget candidates
+        assert result["forgotten"] == 0
+
+    def test_strategic_forget_preserves_edges_report(self, mg):
+        """Forgotten nodes report how many edges were cleaned up."""
+        a = mg.add("Keep", "fact")
+        b = mg.add("Forget", "fact")
+        mg.link(a.id, b.id, "related")
+        mg.link(b.id, a.id, "back")
+        mg.update_node(b.id, weight=0.01)
+        result = mg.strategic_forget(min_weight=0.1)
+        assert result["forgotten"] == 1
+        assert result["edges_removed"] >= 2
+
+    def test_strategic_forget_details_list(self, mg):
+        """Forgotten node details are returned for audit trail."""
+        a = mg.add("Low value", "fact")
+        mg.update_node(a.id, weight=0.01)
+        result = mg.strategic_forget(min_weight=0.1)
+        assert len(result["details"]) == 1
+        assert result["details"][0]["label"] == "Low value"
+
+    def test_strategic_forget_by_kind(self, mg):
+        """Kind filter limits forgetting to specific types."""
+        a = mg.add("Old fact", "fact")
+        b = mg.add("Old skill", "skill")
+        mg.update_node(a.id, weight=0.01)
+        mg.update_node(b.id, weight=0.01)
+        result = mg.strategic_forget(min_weight=0.1, kind="fact")
+        assert result["forgotten"] == 1
+        assert mg.get_node(b.id) is not None
+
+    def test_strategic_forget_logs_to_event_log(self, mg):
+        """Forgotten nodes are logged in the Lamport event log."""
+        a = mg.add("Forget me", "fact")
+        mg.update_node(a.id, weight=0.01)
+        mg.strategic_forget(min_weight=0.1)
+        log = mg.event_log()
+        forget_entries = [e for e in log if e["op"] == "strategic_forget"]
+        assert len(forget_entries) >= 1
+
+    def test_strategic_forget_retention_target(self, mg):
+        """Forget enough nodes to reach a target count."""
+        for i in range(20):
+            mg.add(f"Node {i}", "fact", {"index": i})
+        # Target 10 nodes — should forget 10 lowest-weight ones
+        result = mg.strategic_forget(target_count=10)
+        assert result["forgotten"] == 10
+        stats = mg.stats()
+        assert stats["nodes"] == 10

@@ -13655,6 +13655,118 @@ class MemoryGraph:
             lines.append("")
         return "\n".join(lines)
 
+    # ── Strategic Forget ──
+
+    def strategic_forget(self, min_weight: float = None,
+                         max_age_days: float = None,
+                         protect_q_above: float = None,
+                         kind: str = None,
+                         target_count: int = None,
+                         dry_run: bool = False) -> dict:
+        """Deliberate, confidence-weighted forgetting.
+
+        MemoryArena research insight: forgetting is the most under-appreciated
+        memory operation. This method provides controlled, audited removal of
+        low-value memories while protecting high-confidence ones.
+
+        Args:
+            min_weight: Forget nodes with weight below this.
+            max_age_days: Forget nodes not accessed in this many days.
+            protect_q_above: Never forget nodes with Q-value above this.
+            kind: Only forget nodes of this kind.
+            target_count: If set, forget lowest-value nodes until count remains.
+            dry_run: If True, report without deleting.
+
+        Returns:
+            {forgotten, edges_removed, kept, details: [...]}
+        """
+        import time as _time
+        now = _time.time()
+
+        # Build candidate query
+        sql = (
+            "SELECT id, label, kind, weight, accessed, q_value FROM nodes "
+            "WHERE (quarantined = 0 OR quarantined IS NULL)"
+        )
+        params = []
+        if kind:
+            sql += " AND kind=?"
+            params.append(kind)
+        # Exclude protected nodes
+        if protect_q_above is not None:
+            sql += " AND (q_value IS NULL OR q_value < ?)"
+            params.append(protect_q_above)
+
+        # Apply age/weight filters for candidate selection
+        conditions = []
+        if min_weight is not None:
+            conditions.append("weight < ?")
+            params.append(min_weight)
+        if max_age_days is not None:
+            cutoff = now - max_age_days * 86400
+            conditions.append("accessed < ?")
+            params.append(cutoff)
+
+        if target_count is not None:
+            # Need to forget down to target — select all, sort by value ascending
+            sql += " ORDER BY q_value ASC, weight ASC, accessed ASC"
+            rows = self.conn.execute(sql, params).fetchall()
+            current_count = self.conn.execute(
+                "SELECT COUNT(*) FROM nodes WHERE (quarantined=0 OR quarantined IS NULL)"
+                + (" AND kind=?" if kind else ""),
+                [kind] if kind else []
+            ).fetchone()[0]
+            to_forget = max(0, current_count - target_count)
+            rows = rows[:to_forget]
+        else:
+            if conditions:
+                sql += " AND " + " AND ".join(conditions)
+            sql += " ORDER BY weight ASC, accessed ASC"
+            rows = self.conn.execute(sql, params).fetchall()
+
+        forgotten = []
+        edges_removed = 0
+        for row in rows:
+            # Double-check protection
+            if protect_q_above is not None and (row["q_value"] or 0) >= protect_q_above:
+                continue
+            node_id = row["id"]
+            # Count edges that will be removed
+            edge_count = self.conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE source=? OR target=?",
+                (node_id, node_id)
+            ).fetchone()[0]
+            if not dry_run:
+                self.conn.execute("DELETE FROM edges WHERE source=? OR target=?",
+                                  (node_id, node_id))
+                self._fts_delete_node(node_id)
+                self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
+                self._tick("strategic_forget", node_id,
+                           {"label": row["label"], "weight": row["weight"],
+                            "kind": row["kind"]})
+            edges_removed += edge_count
+            forgotten.append({
+                "node_id": node_id,
+                "label": row["label"],
+                "kind": row["kind"],
+                "weight": row["weight"],
+                "q_value": row["q_value"] or 0.0,
+            })
+
+        if not dry_run:
+            self.conn.commit()
+
+        remaining = self.conn.execute(
+            "SELECT COUNT(*) FROM nodes WHERE (quarantined=0 OR quarantined IS NULL)"
+        ).fetchone()[0]
+
+        return {
+            "forgotten": len(forgotten),
+            "edges_removed": edges_removed,
+            "kept": remaining,
+            "details": forgotten[:50],  # cap details for large forgets
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
