@@ -15251,3 +15251,151 @@ class TestQValueScoring:
         results = mg.top_q_nodes(limit=5, kind="skill")
         assert len(results) == 1
         assert results[0]["kind"] == "skill"
+
+
+# ─────────────────────────────────────────────────────────────
+# Cycle 173: Lamport Clock + Typed Pub/Sub (on/off)
+# ─────────────────────────────────────────────────────────────
+
+class TestLamportClock:
+    """Lamport-style logical clocks for causal ordering of graph operations."""
+
+    def test_lamport_clock_init(self, mg):
+        """lamport_clock starts at 0 for a fresh graph."""
+        assert mg.lamport_clock() == 0
+
+    def test_lamport_clock_tick_on_add(self, mg):
+        """Adding a node advances the logical clock."""
+        mg.add("Alpha", "concept")
+        assert mg.lamport_clock() == 1
+        mg.add("Beta", "concept")
+        assert mg.lamport_clock() == 2
+
+    def test_lamport_clock_tick_on_link(self, mg):
+        """Linking nodes advances the clock."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "related")
+        assert mg.lamport_clock() == 3
+
+    def test_lamport_clock_tick_on_update(self, mg):
+        """Updating a node advances the clock."""
+        n = mg.add("Old", "concept")
+        mg.update_node(n.id, label="New")
+        assert mg.lamport_clock() == 2
+
+    def test_lamport_clock_tick_on_delete(self, mg):
+        """Deleting a node advances the clock."""
+        n = mg.add("Temp", "concept")
+        mg.delete_node(n.id)
+        assert mg.lamport_clock() == 2
+
+    def test_event_log_captures_operations(self, mg):
+        """The clock log records operation types."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "related")
+        log = mg.event_log()
+        assert len(log) == 3
+        assert log[0]["op"] == "add"
+        assert log[1]["op"] == "add"
+        assert log[2]["op"] == "link"
+
+    def test_event_log_has_timestamps(self, mg):
+        """Each log entry has a Lamport timestamp."""
+        mg.add("X", "concept")
+        log = mg.event_log()
+        assert "lamport" in log[0]
+        assert log[0]["lamport"] == 1
+
+    def test_event_log_has_node_details(self, mg):
+        """Log entries include node_id when relevant."""
+        n = mg.add("A", "concept")
+        log = mg.event_log()
+        assert log[0]["node_id"] == n.id
+
+    def test_lamport_clock_independent_of_real_time(self, mg):
+        """Clock only advances on operations, not time."""
+        import time
+        c1 = mg.lamport_clock()
+        time.sleep(0.05)
+        c2 = mg.lamport_clock()
+        assert c1 == c2
+
+
+class TestTypedPubSub:
+    """Reactive typed pub/sub for graph mutation events."""
+
+    def test_on_add_event(self, mg):
+        """on('add', ...) receives add events."""
+        events = []
+        mg.on("add", lambda evt: events.append(evt))
+        mg.add("Alpha", "concept")
+        assert len(events) == 1
+        assert events[0]["op"] == "add"
+        assert events[0]["label"] == "Alpha"
+
+    def test_on_link_event(self, mg):
+        """on('link', ...) receives link events."""
+        events = []
+        mg.on("link", lambda evt: events.append(evt))
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "related")
+        assert len(events) == 1
+        assert events[0]["relation"] == "related"
+
+    def test_on_delete_event(self, mg):
+        """on('delete', ...) receives delete events."""
+        events = []
+        mg.on("delete", lambda evt: events.append(evt))
+        n = mg.add("Temp", "concept")
+        mg.delete_node(n.id)
+        assert len(events) == 1
+        assert events[0]["node_id"] == n.id
+
+    def test_on_update_event(self, mg):
+        """on('update', ...) receives update events."""
+        events = []
+        mg.on("update", lambda evt: events.append(evt))
+        n = mg.add("Old", "concept")
+        mg.update_node(n.id, label="New")
+        assert len(events) == 1
+        assert events[0]["old_label"] == "Old"
+        assert events[0]["new_label"] == "New"
+
+    def test_on_multiple_callbacks(self, mg):
+        """Multiple callbacks for the same event type."""
+        e1, e2 = [], []
+        mg.on("add", lambda evt: e1.append(evt))
+        mg.on("add", lambda evt: e2.append(evt))
+        mg.add("X", "concept")
+        assert len(e1) == 1
+        assert len(e2) == 1
+
+    def test_on_all_events(self, mg):
+        """on('*', ...) receives all event types."""
+        events = []
+        mg.on("*", lambda evt: events.append(evt))
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "related")
+        assert len(events) == 3
+
+    def test_off_removes_subscription(self, mg):
+        """off() stops receiving events."""
+        events = []
+        sub_id = mg.on("add", lambda evt: events.append(evt))
+        mg.add("Before", "concept")
+        assert len(events) == 1
+        mg.off(sub_id)
+        mg.add("After", "concept")
+        assert len(events) == 1  # no new event
+
+    def test_on_lamport_in_event(self, mg):
+        """Events include the Lamport timestamp."""
+        events = []
+        mg.on("add", lambda evt: events.append(evt))
+        mg.add("X", "concept")
+        assert "lamport" in events[0]
+        assert events[0]["lamport"] == 1

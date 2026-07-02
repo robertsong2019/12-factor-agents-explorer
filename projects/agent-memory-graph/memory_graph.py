@@ -52,6 +52,8 @@ class MemoryGraph:
     def __init__(self, db_path: str = ":memory:"):
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
+        self._lamport_clock = 0
+        self._typed_subscribers: dict[str, list[tuple[str, callable]]] = {}
         self._init_schema()
 
     def _init_schema(self):
@@ -117,6 +119,16 @@ class MemoryGraph:
             self._fts_enabled = True
         except sqlite3.OperationalError:
             self._fts_enabled = False
+        # Vector clock event log
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS clock_log (
+                lamport INTEGER PRIMARY KEY,
+                op TEXT NOT NULL,
+                node_id TEXT,
+                details TEXT DEFAULT '{}',
+                wall_time REAL
+            )
+        """)
 
     def add(self, label: str, kind: str = "fact", data: dict = None, tags: list[str] = None) -> Node:
         """添加一个记忆节点。"""
@@ -133,6 +145,7 @@ class MemoryGraph:
         )
         self._fts_sync_node(node.id)
         self.conn.commit()
+        self._tick("add", node.id, {"label": label, "kind": kind})
         return node
 
     def get_node(self, node_id: str) -> Optional[Node]:
@@ -152,6 +165,7 @@ class MemoryGraph:
         self._fts_delete_node(node_id)
         self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
         self.conn.commit()
+        self._tick("delete", node_id, {"node_id": node_id})
         return True
 
     def update_node(self, node_id: str, label: str = None, kind: str = None,
@@ -160,6 +174,7 @@ class MemoryGraph:
         row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
         if not row:
             return None
+        old_label = row["label"]
         new_label = label if label is not None else row["label"]
         new_kind = kind if kind is not None else row["kind"]
         new_data = json.dumps(data) if data is not None else row["data"]
@@ -170,6 +185,9 @@ class MemoryGraph:
         )
         self._fts_sync_node(node_id)
         self.conn.commit()
+        self._tick("update", node_id,
+                   {"old_label": old_label, "new_label": new_label,
+                    "old_kind": row["kind"], "new_kind": new_kind})
         return self.get_node(node_id)
 
     def add_many(self, items: list[dict]) -> list[Node]:
@@ -265,6 +283,8 @@ class MemoryGraph:
             (source_id, target_id, relation, weight)
         )
         self.conn.commit()
+        self._tick("link", source_id,
+                   {"source": source_id, "target": target_id, "relation": relation})
 
     def link_by_label(self, source_label: str, target_label: str, relation: str,
                       weight: float = 1.0) -> bool:
@@ -13395,6 +13415,71 @@ class MemoryGraph:
              "kind": r["kind"], "q_value": r["q_value"] or 0.0}
             for r in rows
         ]
+
+    # ── Vector Clock + Subscribe/Publish ──
+
+    def _tick(self, op: str, node_id: str = None, details: dict = None):
+        """Advance Lamport clock, log the event, and emit to subscribers."""
+        self._lamport_clock += 1
+        lamport = self._lamport_clock
+        detail_str = json.dumps(details or {})
+        self.conn.execute(
+            "INSERT INTO clock_log (lamport, op, node_id, details, wall_time) VALUES (?,?,?,?,?)",
+            (lamport, op, node_id, detail_str, time.time())
+        )
+        self.conn.commit()
+        evt = {"lamport": lamport, "op": op, "node_id": node_id, **(details or {})}
+        self._emit(op, evt)
+
+    def _emit(self, op: str, evt: dict):
+        """Dispatch event to matching subscribers."""
+        for op_key in (op, "*"):
+            for _sub_id, callback in self._typed_subscribers.get(op_key, []):
+                try:
+                    callback(evt)
+                except Exception:
+                    pass
+
+    def lamport_clock(self) -> int:
+        """Return the current Lamport logical clock value for this graph."""
+        return self._lamport_clock
+
+    def event_log(self) -> list[dict]:
+        """Return the full event log ordered by Lamport time."""
+        rows = self.conn.execute(
+            "SELECT lamport, op, node_id, details FROM clock_log ORDER BY lamport"
+        ).fetchall()
+        result = []
+        for r in rows:
+            entry = {"lamport": r["lamport"], "op": r["op"],
+                     "node_id": r["node_id"]}
+            entry.update(json.loads(r["details"]))
+            result.append(entry)
+        return result
+
+    def on(self, event_type: str, callback: callable) -> str:
+        """Subscribe to graph mutation events (typed pub/sub).
+
+        Args:
+            event_type: One of 'add', 'link', 'delete', 'update', or '*' for all.
+            callback: Called with event dict on each matching operation.
+
+        Returns:
+            Subscription ID for later removal via off().
+        """
+        import uuid as _uuid
+        sub_id = _uuid.uuid4().hex[:8]
+        self._typed_subscribers.setdefault(event_type, []).append((sub_id, callback))
+        return sub_id
+
+    def off(self, sub_id: str) -> bool:
+        """Remove a typed subscription by ID. Returns True if found."""
+        for op_key, subs in self._typed_subscribers.items():
+            for i, (sid, _) in enumerate(subs):
+                if sid == sub_id:
+                    subs.pop(i)
+                    return True
+        return False
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
