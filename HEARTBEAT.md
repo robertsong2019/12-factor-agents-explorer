@@ -1,9 +1,9 @@
-# HEARTBEAT.md - July 2, 2026 (Thursday)
+# HEARTBEAT.md - July 3, 2026 (Friday)
 
 ## 待办任务
 
 ### 高优先级（本周）
-- [ ] **agent-memory-graph: README + npm publish** — **1521 tests**, 350+ APIs, 十二合一差异化 + bi-temporal + Q-value
+- [ ] **agent-memory-graph: README + npm publish** — **1560 tests**, 350+ APIs, 十二合一 + bi-temporal + Q-value + Lamport clock + conflict detect + strategic forget
 - [ ] **agent-context-store: README + npm publish** — **2253 tests**, 500+ APIs, 37层管线
 - [ ] **structured-output-toolkit: README + npm publish** — **507 tests**, 4650+ lines
 - [ ] **agent-task-cli: README + npm publish** — **986 tests**
@@ -18,7 +18,7 @@
 - [ ] memorywire 兼容: toMemorywireFormat() + no-scope-delete guard
 
 ## 系统状态
-- **agent-memory-graph**: **1521 tests** — 350+ APIs。十二合一 + bi-temporal validity + Q-value scoring (RL)
+- **agent-memory-graph**: **1560 tests** — 350+ APIs。十二合一 + bi-temporal validity + Q-value scoring (RL) + Lamport clock + typed pub/sub + conflict detect + strategic forget
 - **agent-context-store**: **2253 tests** — 500+ APIs。三大管线 37 层: Graph 12 / Quality 12 / Store 13
 - **structured-output-toolkit**: **507 tests** — 4650+ lines src
 - **agent-task-cli**: **986 tests**
@@ -29,11 +29,13 @@
 - **lab/agent-observability**: 166 tests
 - **AMS v1.0-dev**: 645 tests
 - **prompt-router**: 258 tests
-- **四项目总计**: 5267 tests
-- **零回滚率**: 连续172天 🏆
+- **四项目总计**: 5306 tests
+- **零回滚率**: 连续173天 🏆
+- **agent-memory-graph 新增**: Lamport clock + pub/sub + conflict detect + strategic forget (07-03 晚 3 cycles)
 
-## 近期活动 (07-02)
-- **晚间开发** ✅ (07-02 22:00-22:45): 3 cycles — KGE fix (cycle 170, +13 fixed) + bi-temporal validity (cycle 171, +17 tests) + Q-value scoring (cycle 172, +19 tests). Total: 1521 passed, 0 failed. Zero rollback 172 days.
+## 近期活动 (07-02 ~ 07-03)
+- **晚间开发** ✅ (07-03 00:20-00:50): 3 cycles — Lamport clock + typed pub/sub (cycle 173, +17 tests) + conflict detection (cycle 174, +11 tests) + strategic forget (cycle 175, +11 tests). Total: 1560 passed, 0 failed. Zero rollback 173 days.
+- **晚间开发** ✅ (07-02 22:00-22:45): 3 cycles — KGE fix (cycle 170) + bi-temporal validity (cycle 171) + Q-value scoring (cycle 172). Total: 1521 passed, 0 failed.
 - **知识整理** ✅ (07-02 16:31): 第三次回顾，确认系统状态稳定
 - **知识整理** ✅ (07-02 15:36): 第二次回顾，测试计数不变(5300)，零回滚率保持164天
 - **知识整理** ✅ (07-02 10:58): 第一次回顾，确认测试计数不变(5300)，零回滚率164天持续
@@ -55,4 +57,5 @@ README(agent-memory-graph) → npm publish → README(agent-context-store) → n
 - **研究落地: 2026-06-28 (agent-context-store cycle 172-180, +223 tests)**
 - **深度研究: 2026-07-01 晚 (Graph-Enhanced Memory for LLM Agents)**
 - **GitHub Trending: 2026-07-01 19:00**
+- **知识整理: 2026-07-03 00:09** (cron) — MEMORY.md 同步至1560 tests/173天/07-02研究, HEARTBEAT.md 更新
 - **知识整理: 2026-07-02 16:31**
