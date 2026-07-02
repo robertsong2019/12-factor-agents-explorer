@@ -262,6 +262,35 @@ class MemoryGraph:
         )
         self.conn.commit()
 
+    def link_by_label(self, source_label: str, target_label: str, relation: str,
+                      weight: float = 1.0) -> bool:
+        """Connect two nodes by their labels.
+
+        Resolves labels to node IDs and calls link().
+        If either label is not found, does nothing and returns False.
+
+        Args:
+            source_label: Label of the source node
+            target_label: Label of the target node
+            relation: Edge relation type
+            weight: Edge weight (default 1.0)
+
+        Returns:
+            True if linked, False if either node not found
+        """
+        src = self.conn.execute(
+            "SELECT id FROM nodes WHERE label=? ORDER BY created DESC LIMIT 1",
+            (source_label,)
+        ).fetchone()
+        tgt = self.conn.execute(
+            "SELECT id FROM nodes WHERE label=? ORDER BY created DESC LIMIT 1",
+            (target_label,)
+        ).fetchone()
+        if not src or not tgt:
+            return False
+        self.link(src["id"], tgt["id"], relation, weight)
+        return True
+
     def unlink(self, source_id: str, target_id: str, relation: str):
         """Remove an edge between two nodes."""
         self.conn.execute(
@@ -5349,7 +5378,8 @@ class MemoryGraph:
         return weights
 
     def search_hybrid(self, query: str, embedding: list[float] = None,
-                      limit: int = 10, fusion: str = "adaptive") -> list[dict]:
+                      limit: int = 10, fusion: str = "adaptive",
+                      kge_weight: float = 0.0) -> list[dict]:
         """混合搜索: 文本 + 向量(可选) + 图邻居 RRF 融合。
 
         三路融合策略:
@@ -5457,6 +5487,25 @@ class MemoryGraph:
         else:
             route_rankings.append([])
             route_scores.append({})
+
+        # 路4: KGE (Knowledge Graph Embedding) 路由
+        kge_ranking = []
+        kge_raw_scores = {}
+        if kge_weight > 0 and getattr(self, '_kge_trained', False):
+            # 用文本搜索 top 结果作为 KGE 查询种子
+            seed_id = text_results[0]["node_id"] if text_results else None
+            if seed_id and self.has_node(seed_id):
+                kge_results = self._kge_neighbors(seed_id, limit=limit * 3)
+                kge_ranking = [r["node_id"] for r in kge_results]
+                max_dist = max((r["kge_distance"] for r in kge_results), default=1.0)
+                # Convert distance to similarity-like score (closer = higher)
+                kge_raw_scores = {
+                    r["node_id"]: 1.0 - (r["kge_distance"] / max_dist if max_dist > 0 else 0)
+                    for r in kge_results
+                }
+                for rank, nid in enumerate(kge_ranking):
+                    rrf_scores[nid] += kge_weight / (K + rank + 1)
+                    sources_map[nid].add("kge")
 
         # Adaptive: entropy 权重修正
         if fusion == "adaptive" and len(route_rankings) >= 2:
@@ -10903,6 +10952,150 @@ class MemoryGraph:
         history.sort(key=lambda x: x["valid_from"], reverse=True)
         return history
 
+    # ── Node-Level Bi-Temporal Validity ───────────────────────
+    #
+    # Extends bi-temporal tracking from edges to nodes.  Enables:
+    #   - "This fact was true from 2024-01-01 to 2024-06-30"
+    #   - "Show me all concepts that were valid at time T"
+    #   - "Invalidate this node — it's no longer accurate"
+    #
+    # Storage: node.data['_node_temporal'] — zero schema migration.
+
+    def node_set_validity(self, node_id: str,
+                          valid_from: float = None,
+                          valid_until: float = None) -> dict | None:
+        """Set bi-temporal validity window on a node.
+
+        Args:
+            valid_from: Unix timestamp from which the node's content is
+                        valid.  Default: node creation time.
+            valid_until: Unix timestamp after which the node is invalid.
+                         None means open-ended (currently valid).
+
+        Returns the stored validity dict, or None if node doesn't exist.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return None
+        now = time.time()
+        data = node.data if isinstance(node.data, dict) else json.loads(node.data)
+        existing = data.get("_node_temporal", {})
+        data["_node_temporal"] = {
+            "valid_from": valid_from if valid_from is not None else existing.get("valid_from", node.created),
+            "valid_until": valid_until if valid_until is not None else existing.get("valid_until"),
+            "invalidated_by": existing.get("invalidated_by"),
+            "set_at": now,
+        }
+        self.conn.execute(
+            "UPDATE nodes SET data=? WHERE id=?",
+            (json.dumps(data), node_id))
+        self.conn.commit()
+        return data["_node_temporal"]
+
+    def node_invalidate(self, node_id: str,
+                        invalidated_by: str = None) -> dict | None:
+        """Mark a node as no longer valid.
+
+        Sets valid_until to now and records who invalidated it.
+        Idempotent — calling twice is a no-op.
+
+        Args:
+            invalidated_by: Identifier (agent id or label) of the
+                            process that caused invalidation.
+
+        Returns the updated validity dict, or None if node doesn't exist.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return None
+        now = time.time()
+        data = node.data if isinstance(node.data, dict) else json.loads(node.data)
+        existing = data.get("_node_temporal", {})
+        if existing.get("valid_until") is not None:
+            return existing  # already invalidated — idempotent
+        data["_node_temporal"] = {
+            "valid_from": existing.get("valid_from", node.created),
+            "valid_until": now,
+            "invalidated_by": invalidated_by,
+            "set_at": now,
+        }
+        self.conn.execute(
+            "UPDATE nodes SET data=? WHERE id=?",
+            (json.dumps(data), node_id))
+        self.conn.commit()
+        return data["_node_temporal"]
+
+    def node_valid_at(self, node_id: str,
+                      timestamp: float = None) -> bool:
+        """Check whether a node was valid at the given time.
+
+        A node is valid at *timestamp* if:
+        - The node exists.
+        - valid_from <= timestamp (or no temporal info → always valid).
+        - valid_until is None or valid_until > timestamp.
+
+        Default timestamp: now.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return False
+        ts = timestamp if timestamp is not None else time.time()
+        data = node.data if isinstance(node.data, dict) else json.loads(node.data)
+        temporal = data.get("_node_temporal")
+        if not temporal:
+            return True  # no temporal constraint → always valid
+        if temporal["valid_from"] > ts:
+            return False
+        vu = temporal.get("valid_until")
+        if vu is not None and vu <= ts:
+            return False
+        return True
+
+    def temporal_graph_snapshot(self, timestamp: float = None) -> dict:
+        """Return the full graph state (nodes + edges) valid at *timestamp*.
+
+        Combines node-level and edge-level bi-temporal filtering.
+        Nodes/edges without temporal info are always included.
+
+        Returns:
+            {timestamp, nodes: [...], edges: [...], stats: {nodes, edges}}
+        """
+        ts = timestamp if timestamp is not None else time.time()
+
+        # Filter nodes
+        valid_nodes = []
+        for row in self.conn.execute("SELECT id FROM nodes").fetchall():
+            if self.node_valid_at(row["id"], ts):
+                node = self.get_node(row["id"])
+                valid_nodes.append({
+                    "id": node.id,
+                    "label": node.label,
+                    "kind": node.kind,
+                    "weight": round(node.weight, 4),
+                })
+
+        # Filter edges using edge_valid_at
+        valid_edges = []
+        for row in self.conn.execute(
+            "SELECT source, target, relation FROM edges"
+        ).fetchall():
+            if self.edge_valid_at(row["source"], row["target"], row["relation"], ts):
+                valid_edges.append({
+                    "source": row["source"],
+                    "target": row["target"],
+                    "relation": row["relation"],
+                })
+
+        return {
+            "timestamp": ts,
+            "nodes": valid_nodes,
+            "edges": valid_edges,
+            "stats": {
+                "nodes": len(valid_nodes),
+                "edges": len(valid_edges),
+            },
+        }
+
     # ── OWASP ASI06: Provenance & Quarantine ──────────────────
 
     def node_set_provenance(self, node_id: str, source: str = None,
@@ -12581,6 +12774,276 @@ class MemoryGraph:
                     break
 
         return paths[:3]  # limit explanation paths
+
+    # ── Knowledge Graph Embeddings (TransE) ────────────────
+
+    def train_kge(self, dim: int = 32, epochs: int = 200, lr: float = 0.01,
+                  margin: float = 1.0, seed: int = None) -> dict:
+        """Train TransE knowledge graph embeddings.
+
+        TransE models relationships as translations in embedding space:
+            h + r ≈ t  (head + relation ≈ tail)
+
+        Uses margin-based ranking loss with negative sampling.
+        Stores entity/relation embeddings in kge_embeddings table.
+
+        Args:
+            dim: Embedding dimensionality (default 32)
+            epochs: Training epochs (default 200)
+            lr: Learning rate (default 0.01)
+            margin: Margin for hinge loss γ (default 1.0)
+            seed: Random seed for reproducibility
+
+        Returns:
+            {"entities": N, "relations": N, "dim": dim, "epochs": epochs}
+        """
+        import struct
+
+        if seed is not None:
+            import random as _rng
+            _rng.seed(seed)
+
+        # Collect entities and relations
+        node_rows = self.conn.execute(
+            "SELECT id, label FROM nodes WHERE quarantined = 0 OR quarantined IS NULL"
+        ).fetchall()
+        if len(node_rows) < 2:
+            raise ValueError("Need at least 2 nodes for KGE training")
+
+        edge_rows = self.conn.execute(
+            "SELECT source, target, relation FROM edges"
+        ).fetchall()
+        if not edge_rows:
+            raise ValueError("Need at least 1 edge for KGE training")
+
+        entities = {row["id"]: row["label"] for row in node_rows}
+        entity_ids = list(entities.keys())
+        entity_idx = {eid: i for i, eid in enumerate(entity_ids)}
+
+        relations = list(set(r["relation"] for r in edge_rows))
+        rel_idx = {r: i for i, r in enumerate(relations)}
+
+        n_ent = len(entity_ids)
+        n_rel = len(relations)
+
+        # Initialize embeddings (uniform [-1, 1] / dim, normalized)
+        import random as _r2
+        _r2.seed(seed) if seed is not None else None
+
+        ent_emb = [[_r2.uniform(-1, 1) / math.sqrt(dim) for _ in range(dim)]
+                   for _ in range(n_ent)]
+        rel_emb = [[_r2.uniform(-1, 1) / math.sqrt(dim) for _ in range(dim)]
+                   for _ in range(n_rel)]
+
+        # Normalize entity embeddings to unit length
+        for i in range(n_ent):
+            norm = math.sqrt(sum(x * x for x in ent_emb[i])) or 1.0
+            ent_emb[i] = [x / norm for x in ent_emb[i]]
+
+        # Training triples
+        triples = [(r["source"], r["target"], r["relation"]) for r in edge_rows]
+
+        # Training loop
+        for epoch in range(epochs):
+            _r2.shuffle(triples)
+            total_loss = 0.0
+
+            for h_id, t_id, rel in triples:
+                h = entity_idx.get(h_id)
+                t = entity_idx.get(t_id)
+                r = rel_idx.get(rel)
+                if h is None or t is None or r is None:
+                    continue
+
+                # Negative sampling: corrupt tail
+                neg_t = _r2.randint(0, n_ent - 1)
+                while neg_t == t:
+                    neg_t = _r2.randint(0, n_ent - 1)
+
+                # Compute scores: d(h+r, t) and d(h+r, neg_t)
+                def _dist(h_idx, t_idx, r_idx):
+                    return sum((ent_emb[h_idx][d] + rel_emb[r_idx][d] - ent_emb[t_idx][d]) ** 2
+                               for d in range(dim))
+
+                pos_dist = _dist(h, t, r)
+                neg_dist = _dist(h, neg_t, r)
+
+                # Hinge loss: max(0, margin + pos - neg)
+                loss = max(0, margin + pos_dist - neg_dist)
+                total_loss += loss
+
+                if loss > 0:
+                    # Gradient update: push h+r toward t, away from neg_t
+                    for d in range(dim):
+                        # Positive direction
+                        diff_pos = 2 * (ent_emb[h][d] + rel_emb[r][d] - ent_emb[t][d])
+                        diff_neg = 2 * (ent_emb[h][d] + rel_emb[r][d] - ent_emb[neg_t][d])
+                        grad = diff_pos - diff_neg
+
+                        ent_emb[h][d] -= lr * grad
+                        ent_emb[t][d] += lr * grad
+                        ent_emb[neg_t][d] -= lr * (-grad)
+                        rel_emb[r][d] -= lr * grad
+
+                    # Re-normalize h (TransE constraint)
+                    norm = math.sqrt(sum(x * x for x in ent_emb[h])) or 1.0
+                    ent_emb[h] = [x / norm for x in ent_emb[h]]
+
+        # Store in SQLite
+        self.conn.execute("DROP TABLE IF EXISTS kge_embeddings")
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS kge_embeddings (
+                entity TEXT PRIMARY KEY,
+                entity_type TEXT DEFAULT 'node',
+                embedding BLOB NOT NULL
+            )
+        """)
+
+        for eid, idx in entity_idx.items():
+            blob = struct.pack(f'{dim}f', *ent_emb[idx])
+            self.conn.execute(
+                "INSERT OR REPLACE INTO kge_embeddings (entity, entity_type, embedding) VALUES (?, ?, ?)",
+                (eid, 'node', blob)
+            )
+        for rel, idx in rel_idx.items():
+            blob = struct.pack(f'{dim}f', *rel_emb[idx])
+            self.conn.execute(
+                "INSERT OR REPLACE INTO kge_embeddings (entity, entity_type, embedding) VALUES (?, ?, ?)",
+                (rel, 'relation', blob)
+            )
+
+        self.conn.commit()
+        self._kge_dim = dim
+        self._kge_trained = True
+
+        return {"entities": n_ent, "relations": n_rel, "dim": dim, "epochs": epochs}
+
+    def _kge_distance(self, h_id: str, t_id: str, rel: str) -> float:
+        """Compute TransE L2 distance for a triple. Returns inf if any entity missing."""
+        import struct
+
+        h_row = self.conn.execute(
+            "SELECT embedding FROM kge_embeddings WHERE entity=? AND entity_type='node'", (h_id,)
+        ).fetchone()
+        t_row = self.conn.execute(
+            "SELECT embedding FROM kge_embeddings WHERE entity=? AND entity_type='node'", (t_id,)
+        ).fetchone()
+        r_row = self.conn.execute(
+            "SELECT embedding FROM kge_embeddings WHERE entity=? AND entity_type='relation'", (rel,)
+        ).fetchone()
+
+        if not h_row or not t_row or not r_row:
+            return float('inf')
+
+        dim = getattr(self, '_kge_dim', 32)
+        h_emb = struct.unpack(f'{dim}f', h_row["embedding"])
+        t_emb = struct.unpack(f'{dim}f', t_row["embedding"])
+        r_emb = struct.unpack(f'{dim}f', r_row["embedding"])
+
+        return sum((h_emb[d] + r_emb[d] - t_emb[d]) ** 2 for d in range(dim))
+
+    def kge_score(self, head_label: str, tail_label: str, relation: str) -> float:
+        """Score a triple using trained TransE embeddings (L2 distance, lower = better).
+
+        Args:
+            head_label: Head node label (must exist in graph)
+            tail_label: Tail node label (must exist in graph)
+            relation: Relation type
+
+        Returns:
+            L2 distance (float). Lower means more plausible. inf if entities not found.
+
+        Raises:
+            ValueError: If train_kge() has not been called
+        """
+        if not getattr(self, '_kge_trained', False):
+            raise ValueError("KGE not trained. Call train_kge() first.")
+
+        h_row = self.conn.execute("SELECT id FROM nodes WHERE label=?", (head_label,)).fetchone()
+        t_row = self.conn.execute("SELECT id FROM nodes WHERE label=?", (tail_label,)).fetchone()
+        if not h_row or not t_row:
+            return float('inf')
+
+        return self._kge_distance(h_row["id"], t_row["id"], relation)
+
+    def get_kge_embedding(self, entity: str) -> Optional[list[float]]:
+        """Get the learned KGE embedding for an entity (node ID or label).
+
+        Args:
+            entity: Node ID or label
+
+        Returns:
+            List of floats, or None if not found
+        """
+        import struct
+
+        if not getattr(self, '_kge_trained', False):
+            return None
+
+        # Try as node ID first, then label
+        row = self.conn.execute(
+            "SELECT embedding FROM kge_embeddings WHERE entity=? AND entity_type='node'", (entity,)
+        ).fetchone()
+        if not row:
+            n_row = self.conn.execute("SELECT id FROM nodes WHERE label=?", (entity,)).fetchone()
+            if n_row:
+                row = self.conn.execute(
+                    "SELECT embedding FROM kge_embeddings WHERE entity=? AND entity_type='node'",
+                    (n_row["id"],)
+                ).fetchone()
+
+        if not row:
+            return None
+
+        dim = getattr(self, '_kge_dim', 32)
+        return list(struct.unpack(f'{dim}f', row["embedding"]))
+
+    def _kge_neighbors(self, node_id: str, limit: int = 10) -> list[dict]:
+        """Find related nodes via KGE proximity (internal helper for search_hybrid)."""
+        import struct
+
+        if not getattr(self, '_kge_trained', False):
+            return []
+
+        h_row = self.conn.execute(
+            "SELECT embedding FROM kge_embeddings WHERE entity=? AND entity_type='node'", (node_id,)
+        ).fetchone()
+        if not h_row:
+            return []
+
+        dim = self._kge_dim
+        h_emb = struct.unpack(f'{dim}f', h_row["embedding"])
+
+        # Get all relation embeddings
+        rel_rows = self.conn.execute(
+            "SELECT entity, embedding FROM kge_embeddings WHERE entity_type='relation'",
+        ).fetchall()
+        if not rel_rows:
+            return []
+
+        # For each relation, compute h+r and find nearest entities
+        all_entities = self.conn.execute(
+            "SELECT entity, embedding FROM kge_embeddings WHERE entity_type='node' AND entity != ?",
+            (node_id,)
+        ).fetchall()
+
+        if not all_entities:
+            return []
+
+        # Score = min over all relations of distance(h+r, t)
+        scores = []
+        for ent_row in all_entities:
+            t_emb = struct.unpack(f'{dim}f', ent_row["embedding"])
+            best_score = float('inf')
+            for rel_row in rel_rows:
+                r_emb = struct.unpack(f'{dim}f', rel_row["embedding"])
+                dist = sum((h_emb[d] + r_emb[d] - t_emb[d]) ** 2 for d in range(dim))
+                if dist < best_score:
+                    best_score = dist
+            scores.append((ent_row["entity"], best_score))
+
+        scores.sort(key=lambda x: x[1])
+        return [{"node_id": eid, "kge_distance": dist} for eid, dist in scores[:limit]]
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

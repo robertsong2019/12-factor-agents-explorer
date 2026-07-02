@@ -14754,3 +14754,191 @@ class TestDiffusionRetrieve:
         results = mg.diffusion_retrieve(seeds=[a.id, "nonexistent_id"])
         assert len(results) >= 1
         assert results[0]["node_id"] == a.id
+
+
+class TestKGETransE:
+    """Test TransE Knowledge Graph Embedding training and scoring."""
+
+    def test_train_kge_creates_table(self, mg):
+        """train_kge() creates kge_embeddings table."""
+        mg.add("Alice", "person")
+        mg.add("Bob", "person")
+        mg.add("Company", "org")
+        mg.link_by_label("Alice", "Company", "works_at")
+        mg.train_kge(dim=16, epochs=50)
+        tables = [r[0] for r in mg.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()]
+        assert "kge_embeddings" in tables
+
+    def test_train_kge_dimensions(self, mg):
+        """Trained embeddings have the specified dimensionality."""
+        mg.add("Alice", "person")
+        mg.add("Bob", "person")
+        mg.link_by_label("Alice", "Bob", "knows")
+        mg.train_kge(dim=8, epochs=30)
+        import struct
+        row = mg.conn.execute(
+            "SELECT entity, embedding FROM kge_embeddings LIMIT 1"
+        ).fetchone()
+        floats = struct.unpack(f'{8}f', row["embedding"])
+        assert len(floats) == 8
+
+    def test_train_kge_all_entities_covered(self, mg):
+        """All nodes get embeddings after training."""
+        nodes = [mg.add(f"Node_{i}", "concept") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "next")
+        mg.train_kge(dim=10, epochs=20)
+        # kge_embeddings stores both entities and relations
+        entity_count = mg.conn.execute(
+            "SELECT COUNT(*) FROM kge_embeddings WHERE entity_type='node'"
+        ).fetchone()[0]
+        assert entity_count == 5
+
+    def test_train_kge_relation_embeddings(self, mg):
+        """Relations also get embeddings."""
+        mg.add("Alice", "person")
+        mg.add("Bob", "person")
+        mg.add("Cat", "animal")
+        mg.link_by_label("Alice", "Bob", "knows")
+        mg.link_by_label("Alice", "Cat", "owns")
+        mg.train_kge(dim=10, epochs=20)
+        relations = [r[0] for r in mg.conn.execute(
+            "SELECT entity FROM kge_embeddings WHERE entity_type='relation'"
+        ).fetchall()]
+        assert "knows" in relations
+        assert "owns" in relations
+
+    def test_kge_score_basic(self, mg):
+        """kge_score() returns a float for a valid triple."""
+        mg.add("Alice", "person")
+        mg.add("Company", "org")
+        mg.link_by_label("Alice", "Company", "works_at")
+        mg.train_kge(dim=16, epochs=50)
+        score = mg.kge_score("Alice", "Company", "works_at")
+        assert isinstance(score, float)
+
+    def test_kge_score_lower_for_unseen(self, mg):
+        """Score for valid triple should be better (lower distance) than random."""
+        mg.add("Alice", "person")
+        mg.add("Bob", "person")
+        mg.add("Charlie", "person")
+        mg.link_by_label("Alice", "Bob", "knows")
+        mg.train_kge(dim=16, epochs=100)
+        valid_score = mg.kge_score("Alice", "Bob", "knows")
+        unseen_score = mg.kge_score("Alice", "Charlie", "knows")
+        # Valid triple should have lower distance (better score)
+        assert valid_score < unseen_score
+
+    def test_kge_score_missing_entity(self, mg):
+        """kge_score() returns inf for unknown entities."""
+        mg.add("Alice", "person")
+        mg.add("Bob", "person")
+        mg.link_by_label("Alice", "Bob", "knows")
+        mg.train_kge(dim=16, epochs=20)
+        score = mg.kge_score("Alice", "Nonexistent", "knows")
+        assert math.isinf(score)
+
+    def test_kge_score_without_training(self, mg):
+        """kge_score() raises if train_kge() not called."""
+        mg.add("Alice", "person")
+        with pytest.raises(ValueError, match="KGE not trained"):
+            mg.kge_score("Alice", "Alice", "self")
+
+    def test_get_kge_embedding(self, mg):
+        """get_kge_embedding() returns the learned vector."""
+        mg.add("Alice", "person")
+        mg.add("Bob", "person")
+        mg.link_by_label("Alice", "Bob", "knows")
+        mg.train_kge(dim=12, epochs=20)
+        emb = mg.get_kge_embedding("Alice")
+        assert emb is not None
+        assert len(emb) == 12
+
+    def test_get_kge_embedding_not_found(self, mg):
+        """get_kge_embedding() returns None for unknown entity."""
+        mg.add("Alice", "person")
+        mg.add("Bob", "person")
+        mg.link_by_label("Alice", "Bob", "knows")
+        mg.train_kge(dim=8, epochs=10)
+        assert mg.get_kge_embedding("Nonexistent") is None
+
+    def test_search_hybrid_with_kge(self, mg):
+        """search_hybrid uses KGE route when available."""
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        c = mg.add("Carol", "person")
+        mg.link(a.id, b.id, "knows", weight=1.0)
+        mg.link(b.id, c.id, "knows", weight=1.0)
+        mg.link(a.id, c.id, "knows", weight=0.5)
+        mg.train_kge(dim=16, epochs=50)
+        results = mg.search_hybrid("Alice", limit=5, kge_weight=0.15)
+        assert len(results) > 0
+        # Bob and Carol should appear (connected to Alice)
+        ids = {r["node_id"] for r in results}
+        assert b.id in ids or c.id in ids
+
+    def test_search_hybrid_kge_sources_tagged(self, mg):
+        """Results from KGE route are tagged in sources."""
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "knows", weight=1.0)
+        mg.train_kge(dim=16, epochs=50)
+        results = mg.search_hybrid("Alice", limit=10, kge_weight=0.2)
+        kge_sourced = [r for r in results if "kge" in r.get("sources", set())]
+        assert len(kge_sourced) > 0
+
+    def test_kge_retrain_replaces(self, mg):
+        """Retraining KGE replaces old embeddings."""
+        mg.add("Alice", "person")
+        mg.add("Bob", "person")
+        mg.link_by_label("Alice", "Bob", "knows")
+        mg.train_kge(dim=8, epochs=10)
+        emb1 = mg.get_kge_embedding("Alice")
+        mg.train_kge(dim=8, epochs=10)
+        emb2 = mg.get_kge_embedding("Alice")
+        # Different training run → different values (with high probability)
+        assert emb1 != emb2
+
+    def test_kge_margin_loss_decreases(self, mg):
+        """Training yields lower scores for observed triples than unobserved ones."""
+        # Build a graph with clear structure: chain + extra edges
+        nodes = [mg.add(f"N{i}", "concept") for i in range(10)]
+        for i in range(9):
+            mg.link(nodes[i].id, nodes[i+1].id, "next")
+        # Add some cross-edges for richer structure
+        mg.link(nodes[0].id, nodes[5].id, "jump")
+        mg.link(nodes[2].id, nodes[7].id, "jump")
+        mg.link(nodes[3].id, nodes[9].id, "jump")
+
+        mg.train_kge(dim=32, epochs=500, seed=99)
+
+        # Average distance for observed triples
+        observed = [(nodes[i].id, nodes[i+1].id, "next") for i in range(9)]
+        avg_observed = sum(mg._kge_distance(h, t, r) for h, t, r in observed) / len(observed)
+
+        # Average distance for unobserved (corrupted) triples
+        import random
+        random.seed(99)
+        corrupted = []
+        for h, t, r in observed:
+            neg_t = random.choice(nodes).id
+            while neg_t == t:
+                neg_t = random.choice(nodes).id
+            corrupted.append((h, neg_t, r))
+        avg_corrupted = sum(mg._kge_distance(h, t, r) for h, t, r in corrupted) / len(corrupted)
+
+        # Observed triples should have lower distance (better fit) than corrupted
+        assert avg_observed < avg_corrupted
+
+    def test_kge_with_isolated_nodes(self, mg):
+        """Isolated nodes still get embeddings."""
+        a = mg.add("Connected", "concept")
+        b = mg.add("Also", "concept")
+        iso = mg.add("Isolated", "concept")
+        mg.link(a.id, b.id, "rel")
+        mg.train_kge(dim=8, epochs=20)
+        emb = mg.get_kge_embedding(iso.id)
+        assert emb is not None
+        assert len(emb) == 8
