@@ -15399,3 +15399,99 @@ class TestTypedPubSub:
         mg.add("X", "concept")
         assert "lamport" in events[0]
         assert events[0]["lamport"] == 1
+
+
+# ─────────────────────────────────────────────────────────────
+# Cycle 174: Memory Conflict Detection
+# ─────────────────────────────────────────────────────────────
+
+class TestConflictDetect:
+    """Detect contradictions between facts in the memory graph."""
+
+    def test_no_conflict_empty_graph(self, mg):
+        """Empty graph has no conflicts."""
+        assert mg.conflict_detect() == []
+
+    def test_no_conflict_compatible_facts(self, mg):
+        """Non-overlapping facts don't conflict."""
+        mg.add("Python is a language", "fact")
+        mg.add("Rust is a language", "fact")
+        assert mg.conflict_detect() == []
+
+    def test_detect_same_subject_different_values(self, mg):
+        """Same subject with contradictory values triggers conflict."""
+        mg.add("Earth radius is 6371 km", "fact")
+        mg.add("Earth radius is 7000 km", "fact")
+        conflicts = mg.conflict_detect()
+        assert len(conflicts) >= 1
+        assert "node_a" in conflicts[0]
+        assert "node_b" in conflicts[0]
+        assert conflicts[0]["type"] == "value_mismatch"
+
+    def test_conflict_score_between_0_and_1(self, mg):
+        """Conflict scores are normalized to [0, 1]."""
+        mg.add("The sky is blue", "fact")
+        mg.add("The sky is green", "fact")
+        conflicts = mg.conflict_detect()
+        for c in conflicts:
+            assert 0.0 <= c["score"] <= 1.0
+
+    def test_detect_by_entity_overlap(self, mg):
+        """Facts sharing key entities are checked for conflicts."""
+        mg.add("Paris is the capital of France", "fact")
+        mg.add("Paris is the capital of Germany", "fact")
+        conflicts = mg.conflict_detect()
+        assert len(conflicts) >= 1
+
+    def test_high_similarity_no_conflict(self, mg):
+        """Very similar labels that are restatements don't conflict."""
+        mg.add("Water boils at 100C", "fact")
+        mg.add("Water boils at 100 degrees Celsius", "fact")
+        conflicts = mg.conflict_detect()
+        # These are semantically equivalent, should not conflict
+        assert len(conflicts) == 0
+
+    def test_conflict_with_numbers(self, mg):
+        """Facts with different numeric values for the same entity conflict."""
+        mg.add("GDP of X is 5 trillion", "fact")
+        mg.add("GDP of X is 8 trillion", "fact")
+        conflicts = mg.conflict_detect()
+        assert len(conflicts) >= 1
+
+    def test_conflict_resolve(self, mg):
+        """conflict_resolve marks one as superseded."""
+        a = mg.add("The answer is 42", "fact")
+        b = mg.add("The answer is 7", "fact")
+        mg.conflict_resolve(a.id, b.id, reason="verified correct value")
+        # b should be marked as quarantined or invalid
+        row = mg.conn.execute("SELECT * FROM nodes WHERE id=?", (b.id,)).fetchone()
+        assert row["quarantined"] == 1
+
+    def test_conflict_detect_with_kind_filter(self, mg):
+        """conflict_detect can filter by kind."""
+        mg.add("Temperature is 25C", "fact")
+        mg.add("Temperature is 90C", "fact")
+        mg.add("Random thought", "concept")
+        conflicts = mg.conflict_detect(kind="fact")
+        assert len(conflicts) >= 1
+        # concepts should not appear
+        for c in conflicts:
+            assert c["kind_b"] == "fact"
+
+    def test_conflict_score_threshold(self, mg):
+        """Higher threshold reduces reported conflicts."""
+        mg.add("A is probably 10", "fact")
+        mg.add("A might be 12", "fact")
+        strict = mg.conflict_detect(threshold=0.9)
+        loose = mg.conflict_detect(threshold=0.3)
+        assert len(loose) >= len(strict)
+
+    def test_conflict_report_human_readable(self, mg):
+        """conflict_report returns a human-readable summary."""
+        a = mg.add("X equals 5", "fact")
+        b = mg.add("X equals 10", "fact")
+        conflicts = mg.conflict_detect()
+        report = mg.conflict_report(conflicts)
+        assert isinstance(report, str)
+        assert "X equals 5" in report
+        assert "X equals 10" in report

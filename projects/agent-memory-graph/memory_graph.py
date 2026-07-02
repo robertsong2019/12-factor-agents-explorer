@@ -13481,6 +13481,180 @@ class MemoryGraph:
                     return True
         return False
 
+    # ── Memory Conflict Detection ──
+
+    @staticmethod
+    def _extract_entities(text: str) -> set[str]:
+        """Extract simple entity tokens from text (non-stopword, length>2)."""
+        import re
+        stopwords = {
+            'the', 'is', 'are', 'was', 'were', 'a', 'an', 'of', 'in', 'to',
+            'and', 'or', 'not', 'for', 'with', 'by', 'on', 'at', 'from',
+            'it', 'this', 'that', 'these', 'those', 'be', 'been', 'being',
+        }
+        tokens = re.findall(r'[A-Za-z]{3,}', text.lower())
+        return {t for t in tokens if t not in stopwords}
+
+    @staticmethod
+    def _extract_numbers(text: str) -> list[str]:
+        """Extract numeric values from text."""
+        import re
+        return re.findall(r'\d+(?:\.\d+)?', text)
+
+    def conflict_detect(self, threshold: float = 0.5,
+                        kind: str = None) -> list[dict]:
+        """Detect contradictions between facts in the memory graph.
+
+        Uses entity overlap + numeric mismatch heuristics:
+        - Facts sharing key entities are candidates
+        - If numbers differ → value_mismatch conflict
+        - If high text similarity but different phrasing → potential restatement (not conflict)
+
+        Args:
+            threshold: Conflict score threshold (0-1). Higher = stricter.
+            kind: Optional kind filter (e.g. 'fact').
+
+        Returns:
+            List of conflict dicts: {node_a, node_b, label_a, label_b,
+                                     kind_a, kind_b, type, score}
+        """
+        sql = "SELECT id, label, kind FROM nodes WHERE (quarantined = 0 OR quarantined IS NULL)"
+        params = []
+        if kind:
+            sql += " AND kind=?"
+            params.append(kind)
+        sql += " ORDER BY kind, label"
+        rows = self.conn.execute(sql, params).fetchall()
+
+        conflicts = []
+        # Group by entity overlap
+        entities_map = {}
+        for row in rows:
+            ents = self._extract_entities(row["label"])
+            for ent in ents:
+                entities_map.setdefault(ent, []).append(row)
+
+        checked = set()
+        for ent, group in entities_map.items():
+            if len(group) < 2:
+                continue
+            for i in range(len(group)):
+                for j in range(i + 1, len(group)):
+                    a, b = group[i], group[j]
+                    if a["id"] == b["id"]:
+                        continue
+                    pair_key = tuple(sorted([a["id"], b["id"]]))
+                    if pair_key in checked:
+                        continue
+                    checked.add(pair_key)
+
+                    # Check if this is actually a conflict
+                    nums_a = self._extract_numbers(a["label"])
+                    nums_b = self._extract_numbers(b["label"])
+
+                    # Shared entities beyond this one word
+                    ents_a = self._extract_entities(a["label"])
+                    ents_b = self._extract_entities(b["label"])
+                    shared = ents_a & ents_b
+
+                    if nums_a and nums_b:
+                        # Both have numbers — if different, likely conflict
+                        if set(nums_a) != set(nums_b):
+                            overlap_score = len(shared) / max(len(ents_a | ents_b), 1)
+                            if overlap_score >= threshold * 0.5:
+                                conflicts.append({
+                                    "node_a": a["id"], "node_b": b["id"],
+                                    "label_a": a["label"], "label_b": b["label"],
+                                    "kind_a": a["kind"], "kind_b": b["kind"],
+                                    "type": "value_mismatch",
+                                    "score": round(min(overlap_score + 0.3, 1.0), 3),
+                                    "shared_entities": list(shared),
+                                    "numbers_a": nums_a,
+                                    "numbers_b": nums_b,
+                                })
+                        # Same numbers + high similarity = restatement, not conflict
+                    elif len(shared) >= 2:
+                        # High entity overlap but no numbers — check for semantic contradiction
+                        sim = self._content_similarity(a["label"], b["label"])
+                        only_a = ents_a - ents_b
+                        only_b = ents_b - ents_a
+                        # If they share most words but have different specific entities
+                        # (e.g. "capital of France" vs "capital of Germany")
+                        if only_a and only_b and sim >= 0.3:
+                            # Different proper nouns with high overlap = likely contradiction
+                            score = round(sim * len(shared) / max(len(ents_a | ents_b), 1) + 0.3, 3)
+                            score = min(score, 1.0)
+                            if score >= threshold:
+                                conflicts.append({
+                                    "node_a": a["id"], "node_b": b["id"],
+                                    "label_a": a["label"], "label_b": b["label"],
+                                    "kind_a": a["kind"], "kind_b": b["kind"],
+                                    "type": "semantic_contradiction",
+                                    "score": score,
+                                    "shared_entities": list(shared),
+                                })
+                        elif sim < 0.6 and sim > 0.1:
+                            score = round(len(shared) / max(len(ents_a | ents_b), 1) * (1 - sim), 3)
+                            if score >= threshold:
+                                conflicts.append({
+                                    "node_a": a["id"], "node_b": b["id"],
+                                    "label_a": a["label"], "label_b": b["label"],
+                                    "kind_a": a["kind"], "kind_b": b["kind"],
+                                    "type": "semantic_contradiction",
+                                    "score": score,
+                                    "shared_entities": list(shared),
+                                })
+
+        # Sort by score descending
+        conflicts.sort(key=lambda c: c["score"], reverse=True)
+        return conflicts
+
+    def conflict_resolve(self, keep_id: str, supersede_id: str,
+                         reason: str = "") -> bool:
+        """Resolve a conflict by keeping keep_id and quarantining supersede_id.
+
+        Args:
+            keep_id: Node ID to keep as authoritative.
+            supersede_id: Node ID to quarantine.
+            reason: Optional reason for the resolution.
+
+        Returns:
+            True if both nodes existed and resolution was applied.
+        """
+        keep = self.conn.execute("SELECT id FROM nodes WHERE id=?", (keep_id,)).fetchone()
+        sup = self.conn.execute("SELECT id FROM nodes WHERE id=?", (supersede_id,)).fetchone()
+        if not keep or not sup:
+            return False
+        self.conn.execute(
+            "UPDATE nodes SET quarantined=1, quarantine_reason=? WHERE id=?",
+            (f"superseded by {keep_id}: {reason}", supersede_id)
+        )
+        self.conn.commit()
+        self._tick("conflict_resolve", keep_id,
+                   {"kept": keep_id, "superseded": supersede_id, "reason": reason})
+        return True
+
+    def conflict_report(self, conflicts: list[dict]) -> str:
+        """Generate a human-readable conflict report.
+
+        Args:
+            conflicts: Output from conflict_detect()
+
+        Returns:
+            Formatted string suitable for logging or display.
+        """
+        if not conflicts:
+            return "No memory conflicts detected. ✓"
+        lines = [f"⚠️ {len(conflicts)} memory conflict(s) detected:\n"]
+        for i, c in enumerate(conflicts, 1):
+            lines.append(f"  {i}. [{c['type']}] score={c['score']}")
+            lines.append(f"     A: \"{c['label_a']}\"")
+            lines.append(f"     B: \"{c['label_b']}\"")
+            if c.get('shared_entities'):
+                lines.append(f"     Shared: {', '.join(c['shared_entities'])}")
+            lines.append("")
+        return "\n".join(lines)
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
