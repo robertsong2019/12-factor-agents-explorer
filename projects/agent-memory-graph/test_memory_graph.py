@@ -15099,3 +15099,155 @@ class TestBiTemporalValidity:
         history = mg.get_history(n.id)
         assert len(history) == 1
         assert history[0]["node_id"] == n.id
+
+
+class TestQValueScoring:
+    """Test RL-inspired Q-value scoring for memory nodes."""
+
+    def test_q_value_default_zero(self, mg):
+        """New nodes start with Q-value 0."""
+        n = mg.add("Test node", "fact")
+        assert mg.get_q_value(n.id) == 0.0
+
+    def test_get_q_value_not_found(self, mg):
+        """get_q_value() returns None for non-existent node."""
+        assert mg.get_q_value("nonexistent") is None
+
+    def test_update_q_value_positive_reward(self, mg):
+        """Positive reward increases Q-value."""
+        n = mg.add("Useful fact", "fact")
+        mg.update_q_value(n.id, reward=1.0, alpha=0.5)
+        q = mg.get_q_value(n.id)
+        assert q > 0.0
+        # Q ← 0 + 0.5 * (1.0 + 0.9*0 - 0) = 0.5
+        assert abs(q - 0.5) < 0.001
+
+    def test_update_q_value_negative_reward(self, mg):
+        """Negative reward decreases Q-value."""
+        n = mg.add("Bad memory", "fact")
+        mg.update_q_value(n.id, reward=-1.0, alpha=0.5)
+        q = mg.get_q_value(n.id)
+        assert q < 0.0
+        # Q ← 0 + 0.5 * (-1.0 + 0.9*0 - 0) = -0.5
+        assert abs(q - (-0.5)) < 0.001
+
+    def test_update_q_value_cumulative(self, mg):
+        """Multiple updates accumulate (temporal difference)."""
+        n = mg.add("Learning fact", "fact")
+        mg.update_q_value(n.id, reward=1.0, alpha=0.1)
+        q1 = mg.get_q_value(n.id)
+        mg.update_q_value(n.id, reward=1.0, alpha=0.1)
+        q2 = mg.get_q_value(n.id)
+        assert q2 > q1  # monotonically increasing with consistent positive reward
+
+    def test_update_q_value_converges(self, mg):
+        """Repeated positive rewards converge toward reward value."""
+        n = mg.add("Converging fact", "fact")
+        # Without neighbors, Q ← Q + α·(reward - Q) converges to reward=1.0
+        for _ in range(100):
+            mg.update_q_value(n.id, reward=1.0, alpha=0.1)
+        q = mg.get_q_value(n.id)
+        assert 0.9 < q < 1.1  # converged to reward value
+
+    def test_update_q_value_with_neighbor(self, mg):
+        """Q-value propagates from higher-valued neighbors."""
+        a = mg.add("Node A", "concept")
+        b = mg.add("Node B", "concept")
+        mg.link(a.id, b.id, "related")
+        # Set B's Q high
+        mg.update_q_value(b.id, reward=10.0, alpha=1.0)  # Q_B = 10
+        # Update A with small reward; A should benefit from B's high Q
+        mg.update_q_value(a.id, reward=0.0, alpha=0.5, gamma=0.9)
+        q_a = mg.get_q_value(a.id)
+        # Q_A ← 0 + 0.5 * (0 + 0.9*10 - 0) = 4.5
+        assert q_a > 3.0  # significant boost from neighbor
+
+    def test_update_q_value_not_found(self, mg):
+        """update_q_value() returns False for non-existent node."""
+        assert mg.update_q_value("nonexistent", reward=1.0) is False
+
+    def test_reward_shortcut(self, mg):
+        """reward() is a shortcut for positive update_q_value."""
+        n = mg.add("Rewarded", "fact")
+        mg.reward(n.id, amount=2.0)
+        q = mg.get_q_value(n.id)
+        assert q > 0.0
+
+    def test_penalize_shortcut(self, mg):
+        """penalize() is a shortcut for negative update_q_value."""
+        n = mg.add("Penalized", "fact")
+        mg.penalize(n.id, amount=2.0)
+        q = mg.get_q_value(n.id)
+        assert q < 0.0
+
+    def test_reward_not_found(self, mg):
+        """reward() returns False for non-existent node."""
+        assert mg.reward("nonexistent") is False
+
+    def test_penalize_not_found(self, mg):
+        """penalize() returns False for non-existent node."""
+        assert mg.penalize("nonexistent") is False
+
+    def test_recall_with_q_no_q_values(self, mg):
+        """recall_with_q works when no Q-values have been set (all zero)."""
+        mg.add("Python", "skill")
+        mg.add("Python advanced", "skill")
+        results = mg.recall_with_q("Python", limit=5)
+        assert len(results) > 0
+        assert all("q_value" in r for r in results)
+        # All Q-values should be 0 (no rewards given)
+        assert all(r["q_value"] == 0.0 for r in results)
+
+    def test_recall_with_q_boosts_rewarded(self, mg):
+        """recall_with_q ranks rewarded nodes higher."""
+        n1 = mg.add("Important Python", "skill")
+        n2 = mg.add("Trivial Python", "skill")
+        # Give n1 high Q-value
+        for _ in range(20):
+            mg.reward(n1.id, amount=1.0)
+        results = mg.recall_with_q("Python", limit=2, q_bias=0.5)
+        assert len(results) >= 2
+        # Important Python should rank higher due to Q-value
+        assert results[0]["label"] == "Important Python"
+        assert results[0]["q_value"] > results[1]["q_value"]
+
+    def test_recall_with_q_q_bias_zero(self, mg):
+        """With q_bias=0, results are purely text-based."""
+        n1 = mg.add("Alpha", "concept")
+        n2 = mg.add("Alpha beta", "concept")
+        mg.reward(n2.id, amount=5.0)
+        results = mg.recall_with_q("Alpha", limit=5, q_bias=0.0)
+        # Both should have similar text scores; Q shouldn't matter
+        assert all("q_value" in r for r in results)
+
+    def test_recall_with_q_empty(self, mg):
+        """recall_with_q on empty graph returns empty list."""
+        assert mg.recall_with_q("nothing") == []
+
+    def test_top_q_nodes_empty(self, mg):
+        """top_q_nodes on empty graph returns empty list."""
+        assert mg.top_q_nodes() == []
+
+    def test_top_q_nodes_sorted(self, mg):
+        """top_q_nodes returns nodes sorted by Q-value descending."""
+        a = mg.add("Low Q", "fact")
+        b = mg.add("High Q", "fact")
+        c = mg.add("Mid Q", "fact")
+        mg.update_q_value(b.id, reward=5.0, alpha=1.0)
+        mg.update_q_value(c.id, reward=2.0, alpha=1.0)
+        results = mg.top_q_nodes(limit=3)
+        assert len(results) == 3
+        assert results[0]["label"] == "High Q"
+        assert results[1]["label"] == "Mid Q"
+        assert results[2]["label"] == "Low Q"
+
+    def test_top_q_nodes_kind_filter(self, mg):
+        """top_q_nodes filters by kind."""
+        mg.add("Fact 1", "fact")
+        mg.add("Skill 1", "skill")
+        mg.update_q_value(mg.conn.execute(
+            "SELECT id FROM nodes WHERE kind='skill'").fetchone()["id"],
+            reward=10.0, alpha=1.0)
+        results = mg.top_q_nodes(limit=5, kind="skill")
+        assert len(results) == 1
+        assert results[0]["kind"] == "skill"

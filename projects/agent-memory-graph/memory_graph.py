@@ -102,6 +102,7 @@ class MemoryGraph:
             ("valid_from", "REAL DEFAULT NULL"),
             ("valid_to", "REAL DEFAULT NULL"),
             ("txn_time", "REAL DEFAULT NULL"),
+            ("q_value", "REAL DEFAULT 0.0"),
         ]
         for col, typedef in migrations:
             if col not in existing_cols:
@@ -13240,6 +13241,160 @@ class MemoryGraph:
             current = pred["source"]
         chain = list(reversed(backward)) + chain
         return chain
+
+    # ------------------------------------------------------------------
+    # Q-value scoring (RL-inspired retrieval feedback)
+    # ------------------------------------------------------------------
+
+    def update_q_value(self, node_id: str, reward: float,
+                       alpha: float = 0.1, gamma: float = 0.9) -> bool:
+        """Update a node's Q-value using temporal-difference learning.
+
+        Q(s) ← Q(s) + α · (reward + γ · max_neighbor_Q − Q(s))
+
+        This lets frequently-useful memories accumulate higher Q-values,
+        while rarely-useful ones decay toward zero.
+
+        Args:
+            node_id: Node to update
+            reward: Immediate reward (positive=useful, negative=not useful)
+            alpha: Learning rate (default 0.1)
+            gamma: Discount factor for neighbor contribution (default 0.9)
+
+        Returns:
+            True if updated, False if node not found
+        """
+        row = self.conn.execute(
+            "SELECT q_value FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return False
+        old_q = row["q_value"] if row["q_value"] is not None else 0.0
+        # Max Q among neighbors (propagate value through graph)
+        neighbor_q = self.conn.execute(
+            "SELECT MAX(n.q_value) as max_q FROM nodes n"
+            " JOIN edges e ON n.id = e.target WHERE e.source = ?",
+            (node_id,)
+        ).fetchone()
+        max_n_q = neighbor_q["max_q"] if neighbor_q and neighbor_q["max_q"] is not None else 0.0
+        new_q = old_q + alpha * (reward + gamma * max_n_q - old_q)
+        self.conn.execute(
+            "UPDATE nodes SET q_value=? WHERE id=?", (new_q, node_id)
+        )
+        self.conn.commit()
+        return True
+
+    def get_q_value(self, node_id: str) -> Optional[float]:
+        """Get the current Q-value for a node.
+
+        Returns:
+            Q-value float, or None if node not found
+        """
+        row = self.conn.execute(
+            "SELECT q_value FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return row["q_value"] if row["q_value"] is not None else 0.0
+
+    def reward(self, node_id: str, amount: float = 1.0) -> bool:
+        """Convenience: give positive reward to a node (shortcut for update_q_value).
+
+        Args:
+            node_id: Node to reward
+            amount: Reward magnitude (default 1.0)
+
+        Returns:
+            True if updated, False if not found
+        """
+        return self.update_q_value(node_id, reward=amount)
+
+    def penalize(self, node_id: str, amount: float = 1.0) -> bool:
+        """Convenience: give negative reward to a node.
+
+        Args:
+            node_id: Node to penalize
+            amount: Penalty magnitude (default 1.0)
+
+        Returns:
+            True if updated, False if not found
+        """
+        return self.update_q_value(node_id, reward=-amount)
+
+    def recall_with_q(self, query: str, limit: int = 5,
+                      q_bias: float = 0.3) -> list[dict]:
+        """Recall memories, blending text relevance with Q-value scoring.
+
+        Final score = (1 − q_bias) · text_score + q_bias · normalized_q
+
+        Args:
+            query: Search query
+            limit: Number of results
+            q_bias: Weight of Q-value in final score (0.0=text only, 1.0=Q only)
+
+        Returns:
+            List of {node_id, label, kind, score, q_value} sorted by blended score
+        """
+        results = self.recall(query, limit=limit * 3)
+        if not results:
+            return []
+        # Normalize text scores to [0, 1]
+        max_text = max((n.weight for n in results), default=1.0)
+        if max_text <= 0:
+            max_text = 1.0
+        # Normalize Q-values to [0, 1]
+        q_values = {}
+        for n in results:
+            q = self.get_q_value(n.id)
+            q_values[n.id] = q if q is not None else 0.0
+        all_q = list(q_values.values())
+        min_q = min(all_q) if all_q else 0.0
+        max_q = max(all_q) if all_q else 1.0
+        q_range = max_q - min_q
+        if q_range <= 0:
+            q_range = 1.0
+        # Blend scores
+        scored = []
+        for n in results:
+            text_norm = n.weight / max_text
+            q_norm = (q_values[n.id] - min_q) / q_range
+            blended = (1.0 - q_bias) * text_norm + q_bias * q_norm
+            scored.append({
+                "node_id": n.id,
+                "label": n.label,
+                "kind": n.kind,
+                "score": round(blended, 6),
+                "q_value": round(q_values[n.id], 6),
+            })
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        return scored[:limit]
+
+    def top_q_nodes(self, limit: int = 10, kind: str = None) -> list[dict]:
+        """Return nodes with the highest Q-values.
+
+        Args:
+            limit: Number of nodes to return
+            kind: Optional kind filter
+
+        Returns:
+            List of {node_id, label, kind, q_value} sorted by Q-value descending
+        """
+        sql = (
+            "SELECT id, label, kind, q_value FROM nodes "
+            "WHERE (quarantined = 0 OR quarantined IS NULL)"
+        )
+        params = []
+        if kind is not None:
+            sql += " AND kind=?"
+            params.append(kind)
+        sql += " ORDER BY q_value DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [
+            {"node_id": r["id"], "label": r["label"],
+             "kind": r["kind"], "q_value": r["q_value"] or 0.0}
+            for r in rows
+        ]
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
