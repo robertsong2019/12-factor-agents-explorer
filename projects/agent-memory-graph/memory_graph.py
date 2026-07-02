@@ -99,6 +99,9 @@ class MemoryGraph:
             ("parents", "TEXT DEFAULT '[]'"),
             ("quarantined", "INTEGER DEFAULT 0"),
             ("quarantine_reason", "TEXT DEFAULT NULL"),
+            ("valid_from", "REAL DEFAULT NULL"),
+            ("valid_to", "REAL DEFAULT NULL"),
+            ("txn_time", "REAL DEFAULT NULL"),
         ]
         for col, typedef in migrations:
             if col not in existing_cols:
@@ -13044,6 +13047,199 @@ class MemoryGraph:
 
         scores.sort(key=lambda x: x[1])
         return [{"node_id": eid, "kge_distance": dist} for eid, dist in scores[:limit]]
+
+    # ------------------------------------------------------------------
+    # Bi-temporal validity tracking
+    # ------------------------------------------------------------------
+
+    def set_validity(self, node_id: str, valid_from: float = None,
+                     valid_to: float = None) -> bool:
+        """Set the valid-time interval for a node.
+
+        Valid time represents when the fact is true in the real world.
+        None for valid_from means "beginning of time".
+        None for valid_to means "valid until superseded" (open-ended).
+
+        Args:
+            node_id: Node ID
+            valid_from: Unix timestamp when the fact became true
+            valid_to: Unix timestamp when the fact ceased to be true (None = still valid)
+
+        Returns:
+            True if updated, False if node not found
+        """
+        row = self.conn.execute("SELECT id FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if not row:
+            return False
+        if valid_from is not None:
+            self.conn.execute("UPDATE nodes SET valid_from=? WHERE id=?", (valid_from, node_id))
+        if valid_to is not None:
+            self.conn.execute("UPDATE nodes SET valid_to=? WHERE id=?", (valid_to, node_id))
+        self.conn.execute(
+            "UPDATE nodes SET txn_time=? WHERE id=?",
+            (time.time(), node_id)
+        )
+        self.conn.commit()
+        return True
+
+    def is_valid_at(self, node_id: str, timestamp: float) -> bool:
+        """Check if a node's fact was valid at the given timestamp.
+
+        A node is valid at time T if:
+        - valid_from is NULL or valid_from <= T, AND
+        - valid_to is NULL or valid_to > T
+
+        Nodes without any validity metadata are always considered valid.
+
+        Args:
+            node_id: Node ID
+            timestamp: Unix timestamp to check
+
+        Returns:
+            True if the node was valid at the given time
+        """
+        row = self.conn.execute(
+            "SELECT valid_from, valid_to FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return False
+        vf, vt = row["valid_from"], row["valid_to"]
+        if vf is not None and vf > timestamp:
+            return False
+        if vt is not None and vt <= timestamp:
+            return False
+        return True
+
+    def supersede(self, node_id: str, new_label: str = None,
+                  new_kind: str = None, new_data: dict = None) -> Optional[str]:
+        """Mark an old node as superseded and create a replacement.
+
+        Sets valid_to on the old node to 'now', creates a new node with
+        valid_from='now', and links old → new with a 'superseded_by' edge.
+
+        Args:
+            node_id: ID of the node to supersede
+            new_label: Label for the new node (defaults to old label)
+            new_kind: Kind for the new node (defaults to old kind)
+            new_data: Data for the new node (defaults to old data)
+
+        Returns:
+            New node ID, or None if old node not found
+        """
+        old = self.get_node(node_id)
+        if not old:
+            return None
+        now = time.time()
+        # Close the old node's valid time
+        self.conn.execute(
+            "UPDATE nodes SET valid_to=?, txn_time=? WHERE id=?",
+            (now, now, node_id)
+        )
+        # Create replacement
+        new_node = self.add(
+            new_label or old.label,
+            new_kind or old.kind,
+            new_data or old.data
+        )
+        self.conn.execute(
+            "UPDATE nodes SET valid_from=?, txn_time=? WHERE id=?",
+            (now, now, new_node.id)
+        )
+        # Link old → new
+        self.link(node_id, new_node.id, "superseded_by")
+        self.conn.commit()
+        return new_node.id
+
+    def query_valid_at(self, timestamp: float, kind: str = None) -> list[Node]:
+        """Query all nodes whose valid-time interval contains the given timestamp.
+
+        Args:
+            timestamp: Unix timestamp to query
+            kind: Optional kind filter
+
+        Returns:
+            List of Node objects valid at that time
+        """
+        sql = (
+            "SELECT * FROM nodes WHERE "
+            "(valid_from IS NULL OR valid_from <= ?) AND "
+            "(valid_to IS NULL OR valid_to > ?) AND "
+            "(quarantined = 0 OR quarantined IS NULL)"
+        )
+        params = [timestamp, timestamp]
+        if kind is not None:
+            sql += " AND kind=?"
+            params.append(kind)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [
+            Node(r["id"], r["label"], r["kind"],
+                 json.loads(r["data"]), r["created"], r["accessed"], r["weight"])
+            for r in rows
+        ]
+
+    def get_history(self, node_id: str) -> list[dict]:
+        """Get the full validity history chain for a node.
+
+        Follows 'superseded_by' edges forward and backward to reconstruct
+        the complete timeline of a fact.
+
+        Args:
+            node_id: Starting node ID
+
+        Returns:
+            List of {node_id, label, valid_from, valid_to, txn_time} sorted chronologically
+        """
+        chain = []
+        seen = set()
+        # Walk forward (this node → successors)
+        current = node_id
+        while current and current not in seen:
+            seen.add(current)
+            row = self.conn.execute(
+                "SELECT id, label, valid_from, valid_to, txn_time FROM nodes WHERE id=?",
+                (current,)
+            ).fetchone()
+            if not row:
+                break
+            chain.append({
+                "node_id": row["id"],
+                "label": row["label"],
+                "valid_from": row["valid_from"],
+                "valid_to": row["valid_to"],
+                "txn_time": row["txn_time"],
+            })
+            # Find successor
+            succ = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? AND relation='superseded_by'",
+                (current,)
+            ).fetchone()
+            current = succ["target"] if succ else None
+        # Walk backward (predecessors → this node)
+        current = node_id
+        backward = []
+        while True:
+            pred = self.conn.execute(
+                "SELECT source FROM edges WHERE target=? AND relation='superseded_by'",
+                (current,)
+            ).fetchone()
+            if not pred or pred["source"] in seen:
+                break
+            seen.add(pred["source"])
+            row = self.conn.execute(
+                "SELECT id, label, valid_from, valid_to, txn_time FROM nodes WHERE id=?",
+                (pred["source"],)
+            ).fetchone()
+            if row:
+                backward.append({
+                    "node_id": row["id"],
+                    "label": row["label"],
+                    "valid_from": row["valid_from"],
+                    "valid_to": row["valid_to"],
+                    "txn_time": row["txn_time"],
+                })
+            current = pred["source"]
+        chain = list(reversed(backward)) + chain
+        return chain
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

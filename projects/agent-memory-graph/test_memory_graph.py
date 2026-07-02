@@ -14942,3 +14942,160 @@ class TestKGETransE:
         emb = mg.get_kge_embedding(iso.id)
         assert emb is not None
         assert len(emb) == 8
+
+
+class TestBiTemporalValidity:
+    """Test bi-temporal validity tracking (valid_time + transaction_time)."""
+
+    def test_set_validity_basic(self, mg):
+        """set_validity() sets valid_from and valid_to on a node."""
+        n = mg.add("Alice works at Acme", "fact")
+        t1 = time.time()
+        t2 = t1 + 86400 * 365  # 1 year later
+        assert mg.set_validity(n.id, valid_from=t1, valid_to=t2) is True
+        row = mg.conn.execute(
+            "SELECT valid_from, valid_to FROM nodes WHERE id=?", (n.id,)
+        ).fetchone()
+        assert row["valid_from"] == t1
+        assert row["valid_to"] == t2
+
+    def test_set_validity_node_not_found(self, mg):
+        """set_validity() returns False for non-existent node."""
+        assert mg.set_validity("nonexistent", valid_from=1.0) is False
+
+    def test_set_validity_partial(self, mg):
+        """Can set only valid_from without valid_to (open-ended)."""
+        n = mg.add("The sky is blue", "fact")
+        mg.set_validity(n.id, valid_from=1000.0)
+        row = mg.conn.execute(
+            "SELECT valid_from, valid_to FROM nodes WHERE id=?", (n.id,)
+        ).fetchone()
+        assert row["valid_from"] == 1000.0
+        assert row["valid_to"] is None
+
+    def test_set_validity_txn_time_updated(self, mg):
+        """set_validity() updates txn_time."""
+        n = mg.add("Test fact", "fact")
+        mg.set_validity(n.id, valid_from=1.0)
+        row = mg.conn.execute(
+            "SELECT txn_time FROM nodes WHERE id=?", (n.id,)
+        ).fetchone()
+        assert row["txn_time"] is not None
+        assert row["txn_time"] > 0
+
+    def test_is_valid_at_within_range(self, mg):
+        """Node is valid at a timestamp within its valid range."""
+        n = mg.add("Event X", "event")
+        mg.set_validity(n.id, valid_from=1000.0, valid_to=2000.0)
+        assert mg.is_valid_at(n.id, 1500.0) is True
+        assert mg.is_valid_at(n.id, 1000.0) is True  # inclusive start
+        assert mg.is_valid_at(n.id, 1999.0) is True
+
+    def test_is_valid_at_outside_range(self, mg):
+        """Node is not valid outside its valid range."""
+        n = mg.add("Old event", "event")
+        mg.set_validity(n.id, valid_from=1000.0, valid_to=2000.0)
+        assert mg.is_valid_at(n.id, 999.0) is False   # before start
+        assert mg.is_valid_at(n.id, 2000.0) is False   # at end (exclusive)
+        assert mg.is_valid_at(n.id, 3000.0) is False   # after end
+
+    def test_is_valid_at_no_validity_set(self, mg):
+        """Node without validity info is always valid."""
+        n = mg.add("Eternal fact", "fact")
+        assert mg.is_valid_at(n.id, 0.0) is True
+        assert mg.is_valid_at(n.id, time.time()) is True
+        assert mg.is_valid_at(n.id, 9999999999.0) is True
+
+    def test_is_valid_at_open_ended(self, mg):
+        """Node with only valid_from is valid from that point onward."""
+        n = mg.add("Ongoing fact", "fact")
+        mg.set_validity(n.id, valid_from=1000.0)
+        assert mg.is_valid_at(n.id, 999.0) is False
+        assert mg.is_valid_at(n.id, 1000.0) is True
+        assert mg.is_valid_at(n.id, 9999999999.0) is True
+
+    def test_is_valid_at_node_not_found(self, mg):
+        """is_valid_at() returns False for non-existent node."""
+        assert mg.is_valid_at("nonexistent", time.time()) is False
+
+    def test_supersede_creates_new_node(self, mg):
+        """supersede() creates a replacement node."""
+        old = mg.add("Alice lives in NYC", "fact")
+        new_id = mg.supersede(old.id, new_label="Alice lives in SF")
+        assert new_id is not None
+        new_node = mg.get_node(new_id)
+        assert new_node.label == "Alice lives in SF"
+        assert new_node.kind == "fact"
+
+    def test_supersede_closes_valid_time(self, mg):
+        """supersede() sets valid_to on the old node."""
+        old = mg.add("Old fact", "fact")
+        mg.set_validity(old.id, valid_from=1000.0)
+        now = time.time()
+        mg.supersede(old.id, new_label="New fact")
+        row = mg.conn.execute(
+            "SELECT valid_to FROM nodes WHERE id=?", (old.id,)
+        ).fetchone()
+        assert row["valid_to"] is not None
+        assert row["valid_to"] >= now - 1  # allow tiny clock skew
+
+    def test_supersede_links_old_to_new(self, mg):
+        """supersede() creates a 'superseded_by' edge."""
+        old = mg.add("V1", "fact")
+        new_id = mg.supersede(old.id, new_label="V2")
+        edges = mg.conn.execute(
+            "SELECT * FROM edges WHERE source=? AND relation='superseded_by'",
+            (old.id,)
+        ).fetchall()
+        assert len(edges) == 1
+        assert edges[0]["target"] == new_id
+
+    def test_supersede_not_found(self, mg):
+        """supersede() returns None if old node not found."""
+        assert mg.supersede("nonexistent") is None
+
+    def test_query_valid_at_returns_matching_nodes(self, mg):
+        """query_valid_at() returns nodes valid at the given timestamp."""
+        n1 = mg.add("Fact A", "fact")
+        n2 = mg.add("Fact B", "fact")
+        n3 = mg.add("Fact C", "fact")
+        mg.set_validity(n1.id, valid_from=1000.0, valid_to=2000.0)
+        mg.set_validity(n2.id, valid_from=1500.0, valid_to=3000.0)
+        # n3 has no validity set (always valid)
+        results = mg.query_valid_at(1700.0, kind="fact")
+        labels = {n.label for n in results}
+        assert "Fact A" in labels
+        assert "Fact B" in labels
+        assert "Fact C" in labels
+
+    def test_query_valid_at_excludes_expired(self, mg):
+        """query_valid_at() excludes nodes whose valid_to has passed."""
+        n1 = mg.add("Expired", "fact")
+        n2 = mg.add("Active", "fact")
+        mg.set_validity(n1.id, valid_from=1000.0, valid_to=1500.0)
+        mg.set_validity(n2.id, valid_from=1000.0, valid_to=3000.0)
+        results = mg.query_valid_at(2000.0, kind="fact")
+        labels = {n.label for n in results}
+        assert "Active" in labels
+        assert "Expired" not in labels
+
+    def test_get_history_chain(self, mg):
+        """get_history() reconstructs supersede chain."""
+        v1 = mg.add("Address v1", "fact")
+        v2_id = mg.supersede(v1.id, new_label="Address v2")
+        v3_id = mg.supersede(v2_id, new_label="Address v3")
+        history = mg.get_history(v1.id)
+        assert len(history) == 3
+        assert history[0]["label"] == "Address v1"
+        assert history[1]["label"] == "Address v2"
+        assert history[2]["label"] == "Address v3"
+        # Each successor should have valid_from around when predecessor got valid_to
+        assert history[0]["valid_to"] is not None
+        assert history[1]["valid_from"] is not None
+
+    def test_get_history_single_node(self, mg):
+        """get_history() returns just the node if no successors."""
+        n = mg.add("Lonely fact", "fact")
+        history = mg.get_history(n.id)
+        assert len(history) == 1
+        assert history[0]["node_id"] == n.id
