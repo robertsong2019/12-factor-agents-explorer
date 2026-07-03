@@ -13767,6 +13767,350 @@ class MemoryGraph:
             "details": forgotten[:50],  # cap details for large forgets
         }
 
+    # ── Community Detection (Label Propagation Algorithm) ──
+
+    def _build_adjacency(self) -> dict[str, set[str]]:
+        """Build undirected adjacency map from directed edges.
+
+        Excludes quarantined nodes.
+        """
+        active_ids = {
+            row["id"] for row in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0 OR quarantined IS NULL"
+            ).fetchall()
+        }
+        adj: dict[str, set[str]] = defaultdict(set)
+        for row in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = row["source"], row["target"]
+            if s in active_ids and t in active_ids:
+                adj[s].add(t)
+                adj[t].add(s)
+        for nid in active_ids:
+            adj.setdefault(nid, set())
+        return dict(adj)
+
+    def detect_communities(self, max_iterations: int = 20, resolution: float = 1.0) -> dict:
+        """Label Propagation Algorithm (LPA) for community detection.
+
+        Assigns each node to a community by iteratively adopting the most
+        frequent community label among its neighbors.  Converges when no
+        node changes label in a full pass, or after *max_iterations*.
+
+        Args:
+            max_iterations: Maximum LPA iterations.
+            resolution: Weight multiplier for same-kind nodes (higher
+                values bias toward forming communities among nodes of the
+                same kind).
+
+        Returns dict with:
+            - communities: {community_id: [node_id, ...]}
+            - node_community: {node_id: community_id}
+            - num_communities: int
+            - iterations: int
+            - modularity: float (Q-score, [−0.5, 1])
+        """
+        adj = self._build_adjacency()
+        if not adj:
+            return {"communities": {}, "node_community": {},
+                    "num_communities": 0, "iterations": 0, "modularity": 0.0}
+
+        node_ids = sorted(adj.keys())
+        # Initialise: each node is its own community
+        labels: dict[str, int] = {nid: i for i, nid in enumerate(node_ids)}
+        # Pre-fetch kind for resolution bias
+        kind_map: dict[str, str] = {}
+        for row in self.conn.execute("SELECT id, kind FROM nodes").fetchall():
+            kind_map[row["id"]] = row["kind"] or "unknown"
+
+        iterations = 0
+        changed = True
+        while changed and iterations < max_iterations:
+            changed = False
+            iterations += 1
+            for nid in node_ids:
+                neighbors = adj[nid]
+                if not neighbors:
+                    continue
+                # Vote: weighted label count
+                votes: dict[int, float] = defaultdict(float)
+                for nb in neighbors:
+                    nb_label = labels[nb]
+                    weight = resolution
+                    if resolution != 1.0 and kind_map.get(nid) == kind_map.get(nb):
+                        weight *= resolution  # same-kind boost
+                    votes[nb_label] += weight
+                if not votes:
+                    continue
+                # Pick the label with the highest vote (deterministic tie-break)
+                best_label = max(votes, key=lambda lb: (votes[lb], -lb))
+                if best_label != labels[nid]:
+                    labels[nid] = best_label
+                    changed = True
+
+        # Relabel to consecutive integers starting from 0
+        unique = sorted(set(labels.values()))
+        remap = {old: new for new, old in enumerate(unique)}
+        node_community = {nid: remap[labels[nid]] for nid in node_ids}
+
+        # Group by community
+        communities: dict[int, list[str]] = defaultdict(list)
+        for nid, cid in node_community.items():
+            communities[cid].append(nid)
+
+        # Compute modularity Q
+        modularity = self._modularity(adj, node_community, len(node_ids))
+
+        # Cache results in instance for later lookups
+        self._community_cache = {
+            "node_community": node_community,
+            "communities": dict(communities),
+        }
+
+        return {
+            "communities": dict(communities),
+            "node_community": node_community,
+            "num_communities": len(communities),
+            "iterations": iterations,
+            "modularity": round(modularity, 4),
+        }
+
+    @staticmethod
+    def _modularity(adj: dict[str, set[str]], labels: dict[str, int],
+                    n: int) -> float:
+        """Compute modularity Q for the current partition.
+
+        Q = (1/2m) * Σ_ij [A_ij - k_i*k_j/(2m)] * δ(c_i, c_j)
+        """
+        if n == 0:
+            return 0.0
+        # Build degree map
+        degree: dict[str, int] = {nid: len(nbrs) for nid, nbrs in adj.items()}
+        two_m = sum(degree.values())  # 2m
+        if two_m == 0:
+            return 0.0
+        # Sum over same-community pairs
+        intra = 0.0
+        for nid, nbrs in adj.items():
+            for nb in nbrs:
+                if labels.get(nid) == labels.get(nb):
+                    intra += 1.0
+        # intra now counts each edge twice (undirected)
+        q = (intra / two_m) - sum(
+            (degree[nid] / two_m) ** 2 for nid in degree
+        )
+        return q
+
+    def community_of(self, node_id: str) -> Optional[int]:
+        """Return the community ID for a node, or None if not assigned.
+
+        Runs detect_communities() on first call and caches the result.
+        """
+        cache = getattr(self, "_community_cache", None)
+        if cache is None:
+            self.detect_communities()
+            cache = getattr(self, "_community_cache", None)
+        if cache is None:
+            return None
+        return cache["node_community"].get(node_id)
+
+    def community_members(self, community_id: int) -> list[Node]:
+        """Return all nodes in a given community."""
+        cache = getattr(self, "_community_cache", None)
+        if cache is None:
+            self.detect_communities()
+            cache = getattr(self, "_community_cache", {})
+        ids = cache.get("communities", {}).get(community_id, [])
+        nodes = []
+        for nid in ids:
+            node = self.get_node(nid)
+            if node:
+                nodes.append(node)
+        return nodes
+
+    def community_stats(self) -> list[dict]:
+        """Return per-community statistics.
+
+        Each dict contains:
+            - community_id: int
+            - size: int
+            - kinds: {kind: count}
+            - avg_weight: float
+            - avg_q_value: float
+            - internal_edges: int
+            - total_edges: int
+            - density: float (internal_edges / (size*(size-1)/2))
+        """
+        cache = getattr(self, "_community_cache", None)
+        if cache is None:
+            self.detect_communities()
+            cache = getattr(self, "_community_cache", {})
+        node_community = cache.get("node_community", {})
+        communities = cache.get("communities", {})
+        if not communities:
+            return []
+
+        # Pre-load nodes
+        all_nodes: dict[str, sqlite3.Row] = {
+            r["id"]: r for r in self.conn.execute("SELECT * FROM nodes").fetchall()
+        }
+        # Pre-load edges
+        all_edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+
+        result = []
+        for cid, members in sorted(communities.items()):
+            member_set = set(members)
+            kinds: dict[str, int] = defaultdict(int)
+            weights = []
+            q_values = []
+            for nid in members:
+                row = all_nodes.get(nid)
+                if not row:
+                    continue
+                kinds[row["kind"] or "unknown"] += 1
+                weights.append(row["weight"] or 0.0)
+                q_values.append(row["q_value"] or 0.0)
+            internal_edges = sum(
+                1 for e in all_edges
+                if e["source"] in member_set and e["target"] in member_set
+            )
+            total_edges = sum(
+                1 for e in all_edges
+                if e["source"] in member_set or e["target"] in member_set
+            )
+            size = len(members)
+            max_internal = size * (size - 1) / 2 if size > 1 else 1
+            result.append({
+                "community_id": cid,
+                "size": size,
+                "kinds": dict(kinds),
+                "avg_weight": round(sum(weights) / len(weights), 4) if weights else 0.0,
+                "avg_q_value": round(sum(q_values) / len(q_values), 4) if q_values else 0.0,
+                "internal_edges": internal_edges,
+                "total_edges": total_edges,
+                "density": round(internal_edges / max_internal, 4) if max_internal > 0 else 0.0,
+            })
+        return result
+
+    def search_community(self, query: str, limit: int = 10) -> list[Node]:
+        """Community-aware retrieval: find the best community first, then search within it.
+
+        1. BM25 search across all nodes to find the top match.
+        2. Identify its community.
+        3. Search within that community (and optionally neighbors) for related nodes.
+
+        Falls back to global search if no communities are detected.
+        """
+        cache = getattr(self, "_community_cache", None)
+        if cache is None:
+            self.detect_communities()
+            cache = getattr(self, "_community_cache", None)
+        if cache is None or not cache.get("communities"):
+            return self.recall(query, limit=limit)
+
+        # Step 1: global BM25 to find seed
+        seed_results = self.search_bm25(query, limit=1)
+        if not seed_results:
+            return self.recall(query, limit=limit)
+        seed_id = seed_results[0]["node_id"]
+        cid = cache["node_community"].get(seed_id)
+        if cid is None:
+            return self.recall(query, limit=limit)
+
+        # Step 2: gather community members + adjacent communities
+        member_ids = set(cache["communities"].get(cid, []))
+        # Also include nodes from adjacent communities (1-hop neighbors)
+        adj = self._build_adjacency()
+        for mid in list(member_ids):
+            for nb in adj.get(mid, []):
+                member_ids.add(nb)
+
+        # Step 3: BM25 within the community subset
+        member_list = tuple(member_ids) if member_ids else ("__none__",)
+        placeholders = ",".join("?" * len(member_list))
+        if self._fts_enabled:
+            sql = (
+                f"SELECT n.id, n.label, n.kind, n.weight, "
+                f"bm25(nodes_fts) AS score "
+                f"FROM nodes_fts JOIN nodes n ON nodes_fts.node_id = n.id "
+                f"WHERE nodes_fts MATCH ? AND n.id IN ({placeholders}) "
+                f"ORDER BY score LIMIT ?"
+            )
+            try:
+                rows = self.conn.execute(
+                    sql, (query, *member_list, limit)
+                ).fetchall()
+            except sqlite3.OperationalError:
+                # Fallback if FTS query syntax fails
+                rows = []
+        else:
+            rows = []
+
+        if not rows:
+            # Fallback: filter by label LIKE
+            like = f"%{query}%"
+            sql = (
+                f"SELECT id, label, kind, weight, 0 AS score FROM nodes "
+                f"WHERE label LIKE ? AND id IN ({placeholders}) "
+                f"ORDER BY weight DESC LIMIT ?"
+            )
+            rows = self.conn.execute(sql, (like, *member_list, limit)).fetchall()
+
+        now = time.time()
+        nodes = []
+        for r in rows:
+            self.conn.execute(
+                "UPDATE nodes SET accessed=? WHERE id=?", (now, r["id"])
+            )
+            nodes.append(Node(r["id"], r["label"], r["kind"], {},
+                              0, now, r["weight"] or 1.0))
+        self.conn.commit()
+        return nodes
+
+    def community_graph(self) -> dict:
+        """Build a reduced graph where each community is a supernode.
+
+        Returns:
+            - supernodes: [{community_id, size, dominant_kind, avg_weight}]
+            - superedges: [{source, target, edges}]
+        """
+        cache = getattr(self, "_community_cache", None)
+        if cache is None:
+            self.detect_communities()
+            cache = getattr(self, "_community_cache", {})
+        node_community = cache.get("node_community", {})
+        communities = cache.get("communities", {})
+        if not communities:
+            return {"supernodes": [], "superedges": []}
+
+        # Compute per-community aggregates
+        stats = self.community_stats()
+        supernodes = []
+        for s in stats:
+            dominant_kind = max(s["kinds"].items(), key=lambda x: x[1])[0] if s["kinds"] else "unknown"
+            supernodes.append({
+                "community_id": s["community_id"],
+                "size": s["size"],
+                "dominant_kind": dominant_kind,
+                "avg_weight": s["avg_weight"],
+                "density": s["density"],
+            })
+
+        # Build inter-community edge counts
+        inter: dict[tuple[int, int], int] = defaultdict(int)
+        for row in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            src_c = node_community.get(row["source"])
+            tgt_c = node_community.get(row["target"])
+            if src_c is not None and tgt_c is not None and src_c != tgt_c:
+                key = (min(src_c, tgt_c), max(src_c, tgt_c))
+                inter[key] += 1
+
+        superedges = [
+            {"source": s, "target": t, "edges": cnt}
+            for (s, t), cnt in sorted(inter.items())
+        ]
+        return {"supernodes": supernodes, "superedges": superedges}
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

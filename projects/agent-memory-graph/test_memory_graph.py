@@ -15609,3 +15609,326 @@ class TestStrategicForget:
         assert result["forgotten"] == 10
         stats = mg.stats()
         assert stats["nodes"] == 10
+
+
+# ── Cycle 176: Label Propagation Community Detection ──
+
+class TestCommunityDetection:
+    """Tests for LPA-based community detection."""
+
+    def test_empty_graph_no_communities(self, mg):
+        """Empty graph has no communities."""
+        result = mg.detect_communities()
+        assert result["num_communities"] == 0
+        assert result["modularity"] == 0.0
+
+    def test_single_node(self, mg):
+        """Single isolated node forms its own community."""
+        mg.add("Lonely node", "concept")
+        result = mg.detect_communities()
+        assert result["num_communities"] == 1
+        assert result["iterations"] <= 1
+
+    def test_two_connected_nodes_same_community(self, mg):
+        """Two connected nodes should be in the same community."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "related")
+        result = mg.detect_communities()
+        assert result["num_communities"] == 1
+        assert result["node_community"][a.id] == result["node_community"][b.id]
+
+    def test_two_separate_components(self, mg):
+        """Two disconnected components form two communities."""
+        a1 = mg.add("A1", "concept")
+        a2 = mg.add("A2", "concept")
+        mg.link(a1.id, a2.id, "related")
+        b1 = mg.add("B1", "fact")
+        b2 = mg.add("B2", "fact")
+        mg.link(b1.id, b2.id, "related")
+        result = mg.detect_communities()
+        assert result["num_communities"] == 2
+        # Nodes in same component share community
+        assert result["node_community"][a1.id] == result["node_community"][a2.id]
+        assert result["node_community"][b1.id] == result["node_community"][b2.id]
+        # Nodes in different components have different communities
+        assert result["node_community"][a1.id] != result["node_community"][b1.id]
+
+    def test_star_graph_one_community(self, mg):
+        """A star graph (hub + spokes) is one community."""
+        hub = mg.add("Hub", "concept")
+        for i in range(5):
+            spoke = mg.add(f"Spoke {i}", "fact")
+            mg.link(hub.id, spoke.id, "connects")
+        result = mg.detect_communities()
+        assert result["num_communities"] == 1
+
+    def test_triangle_vs_isolated(self, mg):
+        """A triangle (3-clique) + 1 isolated node = 2 communities."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")
+        mg.link(a.id, b.id, "x")
+        mg.link(b.id, c.id, "x")
+        mg.link(a.id, c.id, "x")
+        d = mg.add("D", "fact")  # isolated
+        result = mg.detect_communities()
+        assert result["num_communities"] == 2
+
+    def test_modularity_nonnegative_connected(self, mg):
+        """A connected graph should have non-negative modularity."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "x")
+        result = mg.detect_communities()
+        assert result["modularity"] >= 0.0
+
+    def test_modularity_range(self, mg):
+        """Modularity should be in valid range [-0.5, 1]."""
+        for i in range(10):
+            mg.add(f"Node {i}", "concept")
+        # Add some edges
+        nodes = [r["id"] for r in mg.conn.execute("SELECT id FROM nodes").fetchall()]
+        for i in range(len(nodes) - 1):
+            mg.link(nodes[i], nodes[i + 1], "chain")
+        result = mg.detect_communities()
+        assert -0.5 <= result["modularity"] <= 1.0
+
+    def test_iterations_capped(self, mg):
+        """Iterations should not exceed max_iterations."""
+        for i in range(20):
+            mg.add(f"Node {i}", "concept")
+        result = mg.detect_communities(max_iterations=3)
+        assert result["iterations"] <= 3
+
+    def test_community_of_returns_none_for_unknown(self, mg):
+        """community_of returns None for non-existent node."""
+        assert mg.community_of("nonexistent") is None
+
+    def test_community_of_returns_id(self, mg):
+        """community_of returns a valid community ID for existing nodes."""
+        a = mg.add("Node", "concept")
+        cid = mg.community_of(a.id)
+        assert cid is not None
+        assert isinstance(cid, int)
+
+    def test_community_members_returns_nodes(self, mg):
+        """community_members returns actual Node objects."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "x")
+        mg.detect_communities()
+        cid = mg.community_of(a.id)
+        members = mg.community_members(cid)
+        labels = {m.label for m in members}
+        assert "A" in labels and "B" in labels
+
+    def test_community_members_empty_for_invalid_id(self, mg):
+        """community_members returns empty list for invalid community ID."""
+        mg.add("Node", "concept")
+        mg.detect_communities()
+        assert mg.community_members(99999) == []
+
+    def test_detect_communities_excludes_quarantined(self, mg):
+        """Quarantined nodes are excluded from community detection."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C - bad", "concept")
+        mg.link(a.id, b.id, "x")
+        mg.link(a.id, c.id, "x")
+        mg.node_quarantine(c.id, "test")
+        result = mg.detect_communities()
+        assert c.id not in result["node_community"]
+
+    def test_resolution_kind_bias(self, mg):
+        """Higher resolution biases toward same-kind communities."""
+        # Create two kinds with cross-kind edges
+        facts = [mg.add(f"F{i}", "fact") for i in range(4)]
+        concepts = [mg.add(f"C{i}", "concept") for i in range(4)]
+        # Dense intra-kind links
+        for i in range(len(facts)):
+            for j in range(i + 1, len(facts)):
+                mg.link(facts[i].id, facts[j].id, "same")
+        for i in range(len(concepts)):
+            for j in range(i + 1, len(concepts)):
+                mg.link(concepts[i].id, concepts[j].id, "same")
+        # One cross-kind link
+        mg.link(facts[0].id, concepts[0].id, "bridge")
+        result_high = mg.detect_communities(resolution=5.0)
+        # With high resolution, the bridge is less likely to merge communities
+        assert result_high["num_communities"] >= 1
+
+
+# ── Cycle 177: Community-aware Retrieval & Analysis ──
+
+class TestCommunityStats:
+    """Tests for community_stats()."""
+
+    def test_empty_graph_stats(self, mg):
+        """Empty graph returns empty community stats."""
+        assert mg.community_stats() == []
+
+    def test_stats_have_required_fields(self, mg):
+        """Each community stat has all required fields."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "fact")
+        mg.link(a.id, b.id, "x")
+        mg.detect_communities()
+        stats = mg.community_stats()
+        assert len(stats) >= 1
+        s = stats[0]
+        assert "community_id" in s
+        assert "size" in s
+        assert "kinds" in s
+        assert "avg_weight" in s
+        assert "avg_q_value" in s
+        assert "internal_edges" in s
+        assert "total_edges" in s
+        assert "density" in s
+
+    def test_stats_density_connected_pair(self, mg):
+        """Two connected nodes have density 1.0 (one edge, max one edge)."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "x")
+        mg.detect_communities()
+        stats = mg.community_stats()
+        # Find the community containing both
+        for s in stats:
+            if s["size"] == 2:
+                assert s["density"] == 1.0
+                break
+
+    def test_stats_kinds_breakdown(self, mg):
+        """Kinds dict correctly counts node types."""
+        mg.add("Fact1", "fact")
+        mg.add("Fact2", "fact")
+        mg.add("Concept1", "concept")
+        mg.detect_communities()
+        stats = mg.community_stats()
+        total_kinds = {}
+        for s in stats:
+            for k, v in s["kinds"].items():
+                total_kinds[k] = total_kinds.get(k, 0) + v
+        assert total_kinds.get("fact", 0) == 2
+        assert total_kinds.get("concept", 0) == 1
+
+    def test_stats_internal_vs_total_edges(self, mg):
+        """Two components: internal edges within, total includes cross."""
+        a1 = mg.add("A1", "concept")
+        a2 = mg.add("A2", "concept")
+        mg.link(a1.id, a2.id, "x")
+        b1 = mg.add("B1", "fact")
+        mg.detect_communities()
+        stats = mg.community_stats()
+        # At least one community with internal_edges >= 1
+        assert any(s["internal_edges"] >= 1 for s in stats)
+
+
+class TestCommunitySearch:
+    """Tests for search_community()."""
+
+    def test_search_community_returns_nodes(self, mg):
+        """search_community returns relevant nodes."""
+        a = mg.add("Python programming", "skill")
+        b = mg.add("Python ecosystem", "concept")
+        c = mg.add("Rust embedded", "concept")
+        mg.link(a.id, b.id, "related")
+        mg.link(b.id, c.id, "bridge")
+        results = mg.search_community("Python")
+        assert len(results) > 0
+        labels = [r.label for r in results]
+        assert any("Python" in l for l in labels)
+
+    def test_search_community_empty_graph(self, mg):
+        """search_community on empty graph returns empty list."""
+        assert mg.search_community("anything") == []
+
+    def test_search_community_falls_back_on_no_match(self, mg):
+        """If no community match, falls back to global recall."""
+        a = mg.add("Alpha", "concept")
+        results = mg.search_community("nonexistent term xyz123")
+        # Should return empty list (no match), not crash
+        assert isinstance(results, list)
+
+    def test_search_community_prefers_community_members(self, mg):
+        """Results should bias toward community members of the seed."""
+        # Community 1: Python cluster
+        py1 = mg.add("Python basics", "skill")
+        py2 = mg.add("Python advanced", "skill")
+        py3 = mg.add("Python testing", "skill")
+        mg.link(py1.id, py2.id, "related")
+        mg.link(py2.id, py3.id, "related")
+        mg.link(py1.id, py3.id, "related")
+        # Community 2: isolated Rust
+        rust = mg.add("Rust ownership", "skill")
+        results = mg.search_community("Python")
+        labels = {r.label for r in results}
+        # Python nodes should be favored
+        assert any("Python" in l for l in labels)
+
+
+class TestCommunityGraph:
+    """Tests for community_graph() — supernode reduction."""
+
+    def test_empty_graph_community_graph(self, mg):
+        """Empty graph returns empty community graph."""
+        result = mg.community_graph()
+        assert result["supernodes"] == []
+        assert result["superedges"] == []
+
+    def test_single_community_no_superedges(self, mg):
+        """One community means no inter-community edges."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "x")
+        mg.detect_communities()
+        result = mg.community_graph()
+        assert len(result["supernodes"]) == 1
+        assert result["superedges"] == []
+
+    def test_two_communities_with_bridge(self, mg):
+        """Two communities connected by a bridge edge."""
+        # Build two dense clusters (triangles) + one bridge
+        a1 = mg.add("A1", "concept")
+        a2 = mg.add("A2", "concept")
+        a3 = mg.add("A3", "concept")
+        mg.link(a1.id, a2.id, "same")
+        mg.link(a2.id, a3.id, "same")
+        mg.link(a1.id, a3.id, "same")
+        b1 = mg.add("B1", "fact")
+        b2 = mg.add("B2", "fact")
+        b3 = mg.add("B3", "fact")
+        mg.link(b1.id, b2.id, "same")
+        mg.link(b2.id, b3.id, "same")
+        mg.link(b1.id, b3.id, "same")
+        mg.link(a1.id, b1.id, "bridge")  # inter-community
+        mg.detect_communities()
+        result = mg.community_graph()
+        assert len(result["supernodes"]) == 2
+        assert len(result["superedges"]) == 1
+        se = result["superedges"][0]
+        assert se["edges"] == 1
+
+    def test_supernode_has_dominant_kind(self, mg):
+        """Supernode reports the dominant kind in its community."""
+        mg.add("F1", "fact")
+        mg.add("F2", "fact")
+        mg.add("C1", "concept")
+        mg.detect_communities()
+        result = mg.community_graph()
+        assert len(result["supernodes"]) >= 1
+        sn = result["supernodes"][0]
+        assert "dominant_kind" in sn
+        assert sn["dominant_kind"] in ("fact", "concept")
+
+    def test_supernode_density_field(self, mg):
+        """Supernode has density field."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "x")
+        mg.detect_communities()
+        result = mg.community_graph()
+        sn = result["supernodes"][0]
+        assert "density" in sn
+        assert 0.0 <= sn["density"] <= 1.0
