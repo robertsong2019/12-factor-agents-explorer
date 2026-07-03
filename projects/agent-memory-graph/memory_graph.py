@@ -14110,6 +14110,156 @@ class MemoryGraph:
         ]
         return {"supernodes": supernodes, "superedges": superedges}
 
+    def community_profile(self, community_id: int) -> dict:
+        """Generate a structured deep-dive profile of a single community.
+
+        Complements community_summary() (which returns an overview list).
+        This method focuses on one community: its internal structure,
+        bridge nodes, and cohesion score.
+
+        Returns:
+            - community_id: int
+            - size: int
+            - dominant_kind: str
+            - representative_labels: list[str] (top-5 by weight)
+            - kind_distribution: {kind: count}
+            - avg_weight / avg_q_value: float
+            - internal_relations: {relation: count} (edge types within)
+            - bridge_nodes: list[{node_id, label, external_edges}]
+            - cohesion: float (internal_edges / total_edges, [0, 1])
+        """
+        cache = getattr(self, "_community_cache", None)
+        if cache is None:
+            self.detect_communities()
+            cache = getattr(self, "_community_cache", {})
+        communities = cache.get("communities", {})
+        members = communities.get(community_id, [])
+        if not members:
+            return {}
+
+        member_set = set(members)
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE id IN (%s) ORDER BY weight DESC" %
+            ",".join("?" * len(members)), members
+        ).fetchall()
+
+        kinds: dict[str, int] = defaultdict(int)
+        weights = []
+        for r in rows:
+            kinds[r["kind"] or "unknown"] += 1
+            weights.append(r["weight"] or 0.0)
+
+        dominant_kind = max(kinds.items(), key=lambda x: x[1])[0] if kinds else "unknown"
+        representative = [r["label"] for r in rows[:5]]
+
+        # Internal edge relations
+        rel_counts: dict[str, int] = defaultdict(int)
+        internal_edges = 0
+        total_edges_for_community = 0
+        edge_rows = self.conn.execute(
+            "SELECT source, target, relation FROM edges WHERE source IN (%s) OR target IN (%s)" %
+            (",".join("?" * len(members)), ",".join("?" * len(members))),
+            members + members
+        ).fetchall()
+        for e in edge_rows:
+            is_internal = e["source"] in member_set and e["target"] in member_set
+            if is_internal:
+                internal_edges += 1
+                rel_counts[e["relation"]] += 1
+            total_edges_for_community += 1
+
+        # Bridge nodes: nodes with edges to other communities
+        bridge_nodes = []
+        for r in rows:
+            outgoing = self.conn.execute(
+                "SELECT target FROM edges WHERE source=?", (r["id"],)
+            ).fetchall()
+            incoming = self.conn.execute(
+                "SELECT source FROM edges WHERE target=?", (r["id"],)
+            ).fetchall()
+            external = 0
+            for o in outgoing:
+                if o["target"] not in member_set:
+                    external += 1
+            for ic in incoming:
+                if ic["source"] not in member_set:
+                    external += 1
+            if external > 0:
+                bridge_nodes.append({
+                    "node_id": r["id"],
+                    "label": r["label"],
+                    "external_edges": external,
+                })
+        bridge_nodes.sort(key=lambda b: b["external_edges"], reverse=True)
+
+        cohesion = internal_edges / total_edges_for_community if total_edges_for_community > 0 else 0.0
+
+        return {
+            "community_id": community_id,
+            "size": len(members),
+            "dominant_kind": dominant_kind,
+            "representative_labels": representative,
+            "kind_distribution": dict(kinds),
+            "avg_weight": round(sum(weights) / len(weights), 4) if weights else 0.0,
+            "avg_q_value": round(
+                sum(r["q_value"] or 0.0 for r in rows) / len(rows), 4
+            ) if rows else 0.0,
+            "internal_relations": dict(sorted(rel_counts.items(), key=lambda x: -x[1])),
+            "bridge_nodes": bridge_nodes[:10],
+            "cohesion": round(cohesion, 4),
+        }
+
+    def community_bridge_nodes(self) -> list[dict]:
+        """Find all bridge nodes across all communities.
+
+        A bridge node has edges to nodes in other communities.
+        Returns list of {node_id, label, community_id, external_edges, external_communities}.
+        """
+        cache = getattr(self, "_community_cache", None)
+        if cache is None:
+            self.detect_communities()
+            cache = getattr(self, "_community_cache", {})
+        node_community = cache.get("node_community", {})
+        if not node_community:
+            return []
+
+        bridges = []
+        seen = set()
+        for row in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = row["source"], row["target"]
+            sc = node_community.get(s)
+            tc = node_community.get(t)
+            if sc is None or tc is None or sc == tc:
+                continue
+            for nid, cid, other in [(s, sc, tc), (t, tc, sc)]:
+                if nid not in seen:
+                    seen.add(nid)
+                    # Count external edges and communities
+                    ext_edges = 0
+                    ext_comms = set()
+                    for nb_row in self.conn.execute(
+                        "SELECT target FROM edges WHERE source=? UNION "
+                        "SELECT source FROM edges WHERE target=?",
+                        (nid, nid)
+                    ).fetchall():
+                        nb_id = nb_row[0]
+                        nb_c = node_community.get(nb_id)
+                        if nb_c is not None and nb_c != cid:
+                            ext_edges += 1
+                            ext_comms.add(nb_c)
+                    node_row = self.conn.execute(
+                        "SELECT label FROM nodes WHERE id=?", (nid,)
+                    ).fetchone()
+                    bridges.append({
+                        "node_id": nid,
+                        "label": node_row["label"] if node_row else "",
+                        "community_id": cid,
+                        "external_edges": ext_edges,
+                        "external_communities": sorted(ext_comms),
+                    })
+        bridges.sort(key=lambda b: b["external_edges"], reverse=True)
+        return bridges
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
