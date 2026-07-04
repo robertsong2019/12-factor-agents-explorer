@@ -16072,3 +16072,176 @@ class TestCommunityBridgeNodes:
         """Empty graph has no bridges."""
         mg.detect_communities()
         assert mg.community_bridge_nodes() == []
+
+
+class TestCacheTemperature:
+    """Tests for cache_temperature() — CPU-cache-inspired memory temperature."""
+
+    def test_nonexistent_node_returns_zero(self, mg):
+        """Nonexistent node returns temperature 0."""
+        assert mg.cache_temperature("nonexistent") == 0.0
+
+    def test_fresh_node_high_temperature(self, mg):
+        """Freshly added node has high temperature (>0.5)."""
+        node = mg.add("Fresh", "concept")
+        temp = mg.cache_temperature(node.id)
+        assert temp > 0.5
+
+    def test_stale_node_low_temperature(self, mg):
+        """Node accessed long ago has low temperature."""
+        node = mg.add("Stale", "concept")
+        # Simulate 30-day-old access
+        mg.conn.execute(
+            "UPDATE nodes SET accessed = ? WHERE id = ?",
+            (time.time() - 30 * 86400, node.id)
+        )
+        mg.conn.commit()
+        temp = mg.cache_temperature(node.id)
+        assert temp < 0.3
+
+    def test_temperature_in_range(self, mg):
+        """Temperature is always in [0, 1]."""
+        node = mg.add("Test", "fact")
+        temp = mg.cache_temperature(node.id)
+        assert 0.0 <= temp <= 1.0
+
+    def test_high_q_value_boosts_temperature(self, mg):
+        """High Q-value keeps temperature up even when stale."""
+        n1 = mg.add("HighQ", "concept")
+        mg.update_q_value(n1.id, reward=5.0)
+        # Make it stale
+        mg.conn.execute(
+            "UPDATE nodes SET accessed = ? WHERE id = ?",
+            (time.time() - 14 * 86400, n1.id)
+        )
+        mg.conn.commit()
+        n2 = mg.add("LowQ", "concept")
+        mg.conn.execute(
+            "UPDATE nodes SET accessed = ? WHERE id = ?",
+            (time.time() - 14 * 86400, n2.id)
+        )
+        mg.conn.commit()
+        t1 = mg.cache_temperature(n1.id)
+        t2 = mg.cache_temperature(n2.id)
+        assert t1 > t2, f"High-Q node ({t1}) should be hotter than low-Q ({t2})"
+
+
+class TestCacheSnapshot:
+    """Tests for cache_snapshot() — hot/warm/cold partitioning."""
+
+    def test_empty_graph_snapshot(self, mg):
+        """Empty graph returns zeroed snapshot."""
+        snap = mg.cache_snapshot()
+        assert snap["total"] == 0
+        assert snap["hot_count"] == 0
+        assert snap["warm_count"] == 0
+        assert snap["cold_count"] == 0
+
+    def test_snapshot_classifies_nodes(self, mg):
+        """Snapshot partitions nodes into hot/warm/cold zones."""
+        # Hot: fresh + high weight node
+        hot = mg.add("Hot", "concept")
+        mg.conn.execute(
+            "UPDATE nodes SET weight = 2.0 WHERE id = ?", (hot.id,)
+        )
+        # Cold: stale + low weight
+        cold = mg.add("Cold", "concept")
+        mg.conn.execute(
+            "UPDATE nodes SET accessed = ?, weight = 0.05 WHERE id = ?",
+            (time.time() - 60 * 86400, cold.id)
+        )
+        mg.conn.commit()
+        snap = mg.cache_snapshot()
+        assert snap["total"] == 2
+        cold_ids = [e["node_id"] for e in snap["cold"]]
+        assert cold.id in cold_ids
+        # Hot node should be in hot or warm
+        all_ids = [e["node_id"] for e in snap["hot"] + snap["warm"]]
+        assert hot.id in all_ids
+
+    def test_snapshot_excludes_quarantined(self, mg):
+        """Quarantined nodes are excluded from snapshot."""
+        node = mg.add("Quarantined", "concept")
+        mg.conn.execute("UPDATE nodes SET quarantined = 1 WHERE id = ?", (node.id,))
+        mg.conn.commit()
+        snap = mg.cache_snapshot()
+        assert snap["total"] == 0
+
+
+class TestWarmCache:
+    """Tests for warm_cache() — pre-warming memories."""
+
+    def test_warm_cache_returns_count(self, mg):
+        """warm_cache returns number of warmed nodes."""
+        mg.add("Python", "skill")
+        mg.add("JavaScript", "skill")
+        count = mg.warm_cache("Python")
+        assert count >= 1
+
+    def test_warm_cache_boosts_temperature(self, mg):
+        """Warmed node gets a temperature boost."""
+        node = mg.add("OldPython", "skill")
+        # Make it stale
+        mg.conn.execute(
+            "UPDATE nodes SET accessed = ? WHERE id = ?",
+            (time.time() - 30 * 86400, node.id)
+        )
+        mg.conn.commit()
+        old_temp = mg.cache_temperature(node.id)
+        mg.warm_cache("OldPython")
+        new_temp = mg.cache_temperature(node.id)
+        assert new_temp > old_temp
+
+    def test_warm_cache_no_match(self, mg):
+        """warm_cache with no matches returns 0."""
+        count = mg.warm_cache("nonexistent_query_xyz")
+        assert count == 0
+
+
+class TestEvictCold:
+    """Tests for evict_cold() — evicting cold cache lines."""
+
+    def test_dry_run_does_not_evict(self, mg):
+        """dry_run=True does not quarantine anything."""
+        node = mg.add("Cold1", "concept")
+        mg.conn.execute(
+            "UPDATE nodes SET accessed = ?, weight = 0.05 WHERE id = ?",
+            (time.time() - 72 * 3600, node.id)
+        )
+        mg.conn.commit()
+        candidates = mg.evict_cold(dry_run=True)
+        # Node should NOT be quarantined
+        row = mg.conn.execute("SELECT quarantined FROM nodes WHERE id = ?", (node.id,)).fetchone()
+        assert row["quarantined"] == 0
+
+    def test_evict_cold_quarantines(self, mg):
+        """evict_cold quarantines cold old nodes."""
+        node = mg.add("Cold2", "concept")
+        # Make it very stale (30 days) + low weight + no Q-value
+        mg.conn.execute(
+            "UPDATE nodes SET accessed = ?, weight = 0.01, q_value = 0.0 WHERE id = ?",
+            (time.time() - 30 * 86400, node.id)
+        )
+        mg.conn.commit()
+        evicted = mg.evict_cold(max_temperature=0.05, min_age_hours=48.0)
+        assert node.id in evicted
+        row = mg.conn.execute("SELECT quarantined FROM nodes WHERE id = ?", (node.id,)).fetchone()
+        assert row["quarantined"] == 1
+
+    def test_high_q_value_protected_from_eviction(self, mg):
+        """High Q-value nodes are not evicted."""
+        node = mg.add("Protected", "concept")
+        mg.update_q_value(node.id, reward=3.0)
+        mg.conn.execute(
+            "UPDATE nodes SET accessed = ?, weight = 0.05 WHERE id = ?",
+            (time.time() - 72 * 3600, node.id)
+        )
+        mg.conn.commit()
+        evicted = mg.evict_cold(max_temperature=0.2, min_age_hours=48.0)
+        assert node.id not in evicted
+
+    def test_recent_node_not_evicted(self, mg):
+        """Recently accessed nodes are not evicted regardless of temperature."""
+        node = mg.add("Recent", "concept")
+        evicted = mg.evict_cold(max_temperature=0.9, min_age_hours=48.0)
+        assert node.id not in evicted

@@ -14260,6 +14260,123 @@ class MemoryGraph:
         bridges.sort(key=lambda b: b["external_edges"], reverse=True)
         return bridges
 
+    # ─── Cache Temperature ─────────────────────────────────────────────
+    # CPU-cache-inspired memory temperature: hot/warm/cold zones.
+    # Temperature = f(recency, access_count, weight, q_value)
+
+    def cache_temperature(self, node_id: str) -> float:
+        """Return cache temperature score [0, 1] for a node.
+
+        Combines recency, weight, and Q-value into a single 0-1
+        temperature where 1 = hot (likely needed soon), 0 = cold.
+        """
+        row = self.conn.execute(
+            "SELECT weight, accessed, q_value FROM nodes WHERE id=?",
+            (node_id,)
+        ).fetchone()
+        if row is None:
+            return 0.0
+        now = time.time()
+        age = max(now - (row["accessed"] or now), 0)
+        recency = math.exp(-age / 604800.0)  # half-life ~7 days
+        weight = min(max(row["weight"] or 0.0, 0.0), 2.0) / 2.0
+        q_norm = max(0.0, min(1.0, (row["q_value"] or 0.0)))
+        return round(recency * 0.5 + weight * 0.3 + q_norm * 0.2, 4)
+
+    def cache_snapshot(self) -> dict:
+        """Return a cache-temperature snapshot of the entire graph.
+
+        Partitions nodes into hot (>0.66), warm (0.33-0.66), cold (<0.33).
+        """
+        rows = self.conn.execute(
+            "SELECT id, label, kind, weight, accessed, q_value FROM nodes WHERE quarantined = 0"
+        ).fetchall()
+        now = time.time()
+        hot, warm, cold = [], [], []
+        for r in rows:
+            age = max(now - (r["accessed"] or now), 0)
+            recency = math.exp(-age / 604800.0)
+            weight_n = min(max(r["weight"] or 0.0, 0.0), 2.0) / 2.0
+            q_norm = max(0.0, min(1.0, (r["q_value"] or 0.0)))
+            temp = round(recency * 0.5 + weight_n * 0.3 + q_norm * 0.2, 4)
+            entry = {
+                "node_id": r["id"], "label": r["label"],
+                "kind": r["kind"], "temperature": temp,
+            }
+            if temp > 0.66:
+                hot.append(entry)
+            elif temp > 0.33:
+                warm.append(entry)
+            else:
+                cold.append(entry)
+        hot.sort(key=lambda e: e["temperature"], reverse=True)
+        warm.sort(key=lambda e: e["temperature"], reverse=True)
+        cold.sort(key=lambda e: e["temperature"])
+        return {
+            "hot_count": len(hot),
+            "warm_count": len(warm),
+            "cold_count": len(cold),
+            "total": len(rows),
+            "hot": hot,
+            "warm": warm,
+            "cold": cold,
+        }
+
+    def warm_cache(self, query: str, limit: int = 10) -> int:
+        """Pre-warm memories matching a search query.
+
+        Boosts accessed timestamp and slightly bumps weight for
+        matched nodes. Returns count of warmed nodes.
+        """
+        results = self.recall(query, limit=limit)
+        now = time.time()
+        count = 0
+        for node in results:
+            self.conn.execute(
+                "UPDATE nodes SET accessed = ?, weight = MIN(weight + 0.05, 2.0) WHERE id = ?",
+                (now, node.id)
+            )
+            self._tick("update", node.id, {"action": "warm_cache"})
+            count += 1
+        self.conn.commit()
+        return count
+
+    def evict_cold(self, max_temperature: float = 0.15, min_age_hours: float = 48.0,
+                   dry_run: bool = False) -> list[str]:
+        """Evict (quarantine) nodes below a temperature threshold.
+
+        Only evicts nodes that are both cold AND old. Q-value > 0.5
+        nodes are protected. Returns list of evicted node IDs.
+        """
+        snapshot = self.cache_snapshot()
+        now = time.time()
+        cutoff = now - min_age_hours * 3600
+        candidates = []
+        for entry in snapshot["cold"]:
+            if entry["temperature"] > max_temperature:
+                continue
+            row = self.conn.execute(
+                "SELECT accessed, q_value FROM nodes WHERE id = ?",
+                (entry["node_id"],)
+            ).fetchone()
+            if row is None:
+                continue
+            if (row["accessed"] or now) > cutoff:
+                continue
+            if (row["q_value"] or 0.0) > 0.5:
+                continue
+            candidates.append(entry["node_id"])
+        if not dry_run:
+            for nid in candidates:
+                self.conn.execute(
+                    "UPDATE nodes SET quarantined = 1, quarantine_reason = ? WHERE id = ?",
+                    (f"cache_eviction: temp <= {max_temperature}", nid)
+                )
+            self.conn.commit()
+            for nid in candidates:
+                self._tick("update", nid, {"action": "evict_cold"})
+        return candidates
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
