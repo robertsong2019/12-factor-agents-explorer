@@ -1,24 +1,23 @@
-# HEARTBEAT.md - July 3, 2026 (Friday)
+# HEARTBEAT.md - July 4, 2026 (Saturday)
 
 ## 待办任务
 
 ### 高优先级（本周）
-- [ ] **agent-memory-graph: README + npm publish** — **1560 tests**, 350+ APIs, 十二合一 + bi-temporal + Q-value + Lamport clock + conflict detect + strategic forget
+- [ ] **agent-memory-graph: README + npm publish** — **1599 tests**, 360+ APIs, 二十一合一 + bi-temporal + Q-value + Lamport clock + conflict detect + strategic forget + LPA community detection + community-aware retrieval + bridge nodes
 - [ ] **agent-context-store: README + npm publish** — **2253 tests**, 500+ APIs, 37层管线
 - [ ] **structured-output-toolkit: README + npm publish** — **507 tests**, 4650+ lines
 - [ ] **agent-task-cli: README + npm publish** — **986 tests**
 
 ### 中优先级（本月）
 - [ ] agent-memory-graph: DF-Leiden 集成 (~190行+~120行增量)
-- [ ] agent-memory-graph: vector_clock + subscribe() (~80行+15tests)
-- [ ] agent-memory-graph: KGE scoring (TransE → Trainer → search_hybrid) ✅ done cycle 170
+- [ ] agent-memory-graph: cache_temperature() API (~40行+10tests)
+- [ ] agent-memory-graph: memorywire 兼容: toMemorywireFormat() + no-scope-delete guard
 - [ ] openclaw-langgraph-bridge: Gateway 集成测试 (261 tests)
 - [ ] lab/agent-observability: gen_ai.* 属性 + CostAggregator (166 tests)
 - [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
-- [ ] memorywire 兼容: toMemorywireFormat() + no-scope-delete guard
 
 ## 系统状态
-- **agent-memory-graph**: **1560 tests** — 350+ APIs。十二合一 + bi-temporal validity + Q-value scoring (RL) + Lamport clock + typed pub/sub + conflict detect + strategic forget
+- **agent-memory-graph**: **1627 tests** — 370+ APIs。二十四合一 + bi-temporal validity + Q-value scoring (RL) + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community detection + community-aware retrieval + community profile + bridge nodes + cache temperature + memorywire format export/import + scope-delete guard
 - **agent-context-store**: **2253 tests** — 500+ APIs。三大管线 37 层: Graph 12 / Quality 12 / Store 13
 - **structured-output-toolkit**: **507 tests** — 4650+ lines src
 - **agent-task-cli**: **986 tests**
@@ -29,33 +28,29 @@
 - **lab/agent-observability**: 166 tests
 - **AMS v1.0-dev**: 645 tests
 - **prompt-router**: 258 tests
-- **四项目总计**: 5306 tests
-- **零回滚率**: 连续173天 🏆
-- **agent-memory-graph 新增**: Lamport clock + pub/sub + conflict detect + strategic forget (07-03 晚 3 cycles)
+- **四项目总计**: 5345 tests ✅ (07-03 22:30 同步)
+- **零回滚率**: 连续175天 🏆
 
-## 近期活动 (07-02 ~ 07-03)
-- **晚间开发** ✅ (07-03 00:20-00:50): 3 cycles — Lamport clock + typed pub/sub (cycle 173, +17 tests) + conflict detection (cycle 174, +11 tests) + strategic forget (cycle 175, +11 tests). Total: 1560 passed, 0 failed. Zero rollback 173 days.
-- **晚间开发** ✅ (07-02 22:00-22:45): 3 cycles — KGE fix (cycle 170) + bi-temporal validity (cycle 171) + Q-value scoring (cycle 172). Total: 1521 passed, 0 failed.
-- **知识整理** ✅ (07-02 16:31): 第三次回顾，确认系统状态稳定
-- **知识整理** ✅ (07-02 15:36): 第二次回顾，测试计数不变(5300)，零回滚率保持164天
-- **知识整理** ✅ (07-02 10:58): 第一次回顾，确认测试计数不变(5300)，零回滚率164天持续
-- **无新开发活动** (07-01 02:00 → 07-02 16:31): 重点在研究与文档整理
+## 近期活动 (07-03 ~ 07-04)
+- **晚间开发** ✅ (07-04 13:23-13:45): 3 cycles — cache_temperature/snapshot/warm_cache/evict_cold (cycle 179, +15 tests) + memorywire format export/import (cycle 180, +8 tests) + delete_node_safe scope-delete guard (cycle 181, +5 tests). Total: 1627 passed, 0 failed. Zero rollback 175 days.
+- **晚间开发** ✅ (07-03 22:00-22:30): 3 cycles — LPA community detection + community-aware retrieval (cycles 176-177, +29 tests) + community profile + bridge nodes (cycle 178, +10 tests). Total: 1599 passed, 0 failed. Zero rollback 174 days.
+- **晚间开发** ✅ (07-03 00:20-00:50): 3 cycles — Lamport clock + typed pub/sub (cycle 173, +17 tests) + conflict detection (cycle 174, +11 tests) + strategic forget (cycle 175, +11 tests). Total: 1560 passed, 0 failed.
+- **知识整理** ✅ (07-04 02:00 cron): MEMORY.md 同步至1599 tests/174天/21合一, 新增 cycles 176-178, HEARTBEAT.md 日期更新
+- **知识整理** ✅ (07-03 02:00 cron): MEMORY.md 同步至1560 tests/173天/18合一
+- **晚间开发** ✅ (07-02 22:00-22:45): 3 cycles — KGE fix (cycle 170) + bi-temporal validity (cycle 171) + Q-value scoring (cycle 172)
+- **深度研究** ✅ (07-02 20:00): Graph-Structured Memory for AI Agents, 20篇论文, ~18KB笔记
 - **Graph-Enhanced Memory 研究** ✅ (07-01 晚): HippoRAG/2 PPR/A-MEM Zettelkasten/LazyGraphRAG/Zep Graphiti/AriGraph
-- **GitHub Trending 分析** ✅ (07-01 19:00): codebase-memory-mcp(23K⭐, 99% token节省) / Agent-Reach(48K⭐, 13平台) / design.md(Google) / CubeSandbox(腾讯KVM) / Orca(并行agent IDE) / OmniRoute(236 provider+压缩)
+- **GitHub Trending 分析** ✅ (07-01 19:00)
 - **博客发布** ✅ (07-01 05:00): 「Agent 记忆的 2026 前沿」~2800字 → GitHub Pages
-- **飞书会话** (06-30 下午): 罗嵩交互 — 模型切换 / Gateway故障排查 / 博客发布
 
 ## ⚠️ MEMORY.md 瘦身完成 (07-01)
-- **193KB → 8KB** (96% reduction)。此前 89% 内容被 bootstrap 截断丢失。
-- 详细研究笔记已在 catalyst-research/exploration-notes/ 中，MEMORY.md 仅保留 1-2 行摘要。
-- 06-30 之前的研究详情已从 MEMORY.md 移除，可按日期在 exploration-notes/ 查找。
+- **193KB → 8KB** (96% reduction)。详细研究笔记在 catalyst-research/exploration-notes/
 
 ## 本周关键路径
 README(agent-memory-graph) → npm publish → README(agent-context-store) → npm publish → README(structured-output-toolkit) → npm publish → README(agent-task-cli) → npm publish
 
 ## 上次检查
-- **研究落地: 2026-06-28 (agent-context-store cycle 172-180, +223 tests)**
-- **深度研究: 2026-07-01 晚 (Graph-Enhanced Memory for LLM Agents)**
-- **GitHub Trending: 2026-07-01 19:00**
-- **知识整理: 2026-07-03 00:09** (cron) — MEMORY.md 同步至1560 tests/173天/07-02研究, HEARTBEAT.md 更新
-- **知识整理: 2026-07-02 16:31**
+- **开发: 2026-07-04 13:45** — Cache temperature + memorywire format + scope-delete guard cycles 179-181, +28 tests
+- **知识整理: 2026-07-04 02:00** (cron) — MEMORY.md 同步至1599 tests/174天/21合一
+- **深度研究: 2026-07-02 20:00** (Graph-Structured Memory)
+- **GitHub Trending: 2026-07-03 19:00**
