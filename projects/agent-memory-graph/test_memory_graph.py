@@ -16245,3 +16245,142 @@ class TestEvictCold:
         node = mg.add("Recent", "concept")
         evicted = mg.evict_cold(max_temperature=0.9, min_age_hours=48.0)
         assert node.id not in evicted
+
+
+class TestMemorywireFormatExport:
+    """Tests for to_memorywire_format() — Memorywire compatibility export."""
+
+    def test_empty_graph_export(self, mg):
+        """Empty graph exports valid structure."""
+        data = mg.to_memorywire_format()
+        assert data["format"] == "memorywire/v1"
+        assert data["stats"]["nodes"] == 0
+        assert data["stats"]["edges"] == 0
+        assert data["memories"] == []
+        assert data["associations"] == []
+
+    def test_export_contains_nodes_and_edges(self, mg):
+        """Exported data has all nodes and edges."""
+        a = mg.add("Alpha", "concept")
+        b = mg.add("Beta", "fact")
+        mg.link(a.id, b.id, "relates_to")
+        data = mg.to_memorywire_format()
+        assert data["stats"]["nodes"] == 2
+        assert data["stats"]["edges"] == 1
+        labels = [m["label"] for m in data["memories"]]
+        assert "Alpha" in labels
+        assert "Beta" in labels
+        assert len(data["associations"]) == 1
+        assert data["associations"][0]["relation"] == "relates_to"
+
+    def test_export_excludes_quarantined_by_default(self, mg):
+        """Quarantined nodes excluded unless include_quarantined=True."""
+        a = mg.add("Normal", "concept")
+        b = mg.add("Bad", "concept")
+        mg.conn.execute("UPDATE nodes SET quarantined = 1 WHERE id = ?", (b.id,))
+        mg.conn.commit()
+        data = mg.to_memorywire_format()
+        assert data["stats"]["nodes"] == 1
+        labels = [m["label"] for m in data["memories"]]
+        assert "Normal" in labels
+        assert "Bad" not in labels
+        data2 = mg.to_memorywire_format(include_quarantined=True)
+        assert data2["stats"]["nodes"] == 2
+
+    def test_export_has_kind_stats(self, mg):
+        """Export stats include kind breakdown."""
+        mg.add("C1", "concept")
+        mg.add("C2", "concept")
+        mg.add("F1", "fact")
+        data = mg.to_memorywire_format()
+        assert data["stats"]["kinds"]["concept"] == 2
+        assert data["stats"]["kinds"]["fact"] == 1
+
+    def test_export_timestamp_exists(self, mg):
+        """Export has a valid timestamp."""
+        data = mg.to_memorywire_format()
+        assert data["exported_at"] > 0
+
+
+class TestMemorywireFormatImport:
+    """Tests for from_memorywire_format() — Memorywire import."""
+
+    def test_roundtrip_export_import(self, mg):
+        """Export then import into a fresh graph preserves data."""
+        a = mg.add("X", "concept")
+        b = mg.add("Y", "fact")
+        mg.link(a.id, b.id, "relates_to")
+        exported = mg.to_memorywire_format()
+        mg2 = MemoryGraph()
+        count = mg2.from_memorywire_format(exported)
+        assert count == 2
+        results = mg2.recall("X")
+        assert len(results) >= 1
+        assert results[0].label == "X"
+
+    def test_import_preserves_edges(self, mg):
+        """Imported edges maintain relationships."""
+        a = mg.add("Parent", "concept")
+        b = mg.add("Child", "concept")
+        mg.link(a.id, b.id, "parent_of")
+        exported = mg.to_memorywire_format()
+        mg2 = MemoryGraph()
+        mg2.from_memorywire_format(exported)
+        snap = mg2.cache_snapshot()
+        assert snap["total"] == 2
+        parent_node = mg2.recall("Parent")[0]
+        nbrs = mg2.neighbors(parent_node.id)
+        assert any(n.label == "Child" for n in nbrs)
+
+    def test_import_rejects_wrong_format(self, mg):
+        """Import raises ValueError for unsupported format."""
+        try:
+            mg.from_memorywire_format({"format": "unknown", "memories": []})
+            assert False, "Should have raised"
+        except ValueError:
+            pass
+
+
+class TestDeleteNodeSafe:
+    """Tests for delete_node_safe() — scope-delete guard."""
+
+    def test_delete_isolated_node_succeeds(self, mg):
+        """Isolated node can be deleted safely."""
+        node = mg.add("Lonely", "concept")
+        result = mg.delete_node_safe(node.id)
+        assert result["deleted"] is True
+        assert result["reason"] == "ok"
+
+    def test_delete_blocked_by_dependents(self, mg):
+        """Node with dependents cannot be deleted without force."""
+        parent = mg.add("Parent", "concept")
+        child = mg.add("Child", "concept")
+        mg.link(child.id, parent.id, "depends_on")
+        result = mg.delete_node_safe(parent.id)
+        assert result["deleted"] is False
+        assert "Child" in result["blocked_by"]
+        assert "dependent" in result["reason"]
+
+    def test_force_delete_overrides_guard(self, mg):
+        """force=True overrides the scope-delete guard."""
+        parent = mg.add("Parent2", "concept")
+        child = mg.add("Child2", "concept")
+        mg.link(child.id, parent.id, "depends_on")
+        result = mg.delete_node_safe(parent.id, force=True)
+        assert result["deleted"] is True
+
+    def test_delete_nonexistent_returns_not_found(self, mg):
+        """Deleting nonexistent node returns reason='not_found'."""
+        result = mg.delete_node_safe("fake_id_123")
+        assert result["deleted"] is False
+        assert result["reason"] == "not_found"
+
+    def test_quarantined_dependents_dont_block(self, mg):
+        """Quarantined dependents don't block deletion."""
+        target = mg.add("Target", "concept")
+        dependent = mg.add("Dep", "concept")
+        mg.link(dependent.id, target.id, "depends_on")
+        mg.conn.execute("UPDATE nodes SET quarantined = 1 WHERE id = ?", (dependent.id,))
+        mg.conn.commit()
+        result = mg.delete_node_safe(target.id)
+        assert result["deleted"] is True

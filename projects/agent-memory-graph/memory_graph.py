@@ -14377,6 +14377,135 @@ class MemoryGraph:
                 self._tick("update", nid, {"action": "evict_cold"})
         return candidates
 
+    # ─── Memorywire Compatibility ─────────────────────────────────────
+
+    def to_memorywire_format(self, include_quarantined: bool = False) -> dict:
+        """Export graph in Memorywire-compatible JSON format.
+
+        Memorywire is a memory exchange format with nodes (memories),
+        edges (associations), and metadata. This enables interoperability
+        with other memory systems.
+
+        Schema:
+            {
+              "format": "memorywire/v1",
+              "exported_at": <epoch>,
+              "stats": {nodes, edges, kinds},
+              "memories": [{id, label, kind, data, weight, q_value, ...}],
+              "associations": [{source, target, relation, weight}]
+            }
+        """
+        node_filter = "WHERE quarantined = 0" if not include_quarantined else ""
+        nodes = self.conn.execute(
+            f"SELECT id, label, kind, data, created, accessed, weight, "
+            f"q_value, valid_from, valid_to, quarantined "
+            f"FROM nodes {node_filter}"
+        ).fetchall()
+        edges = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges"
+        ).fetchall()
+        kind_counts: dict[str, int] = {}
+        for n in nodes:
+            kind_counts[n["kind"]] = kind_counts.get(n["kind"], 0) + 1
+        return {
+            "format": "memorywire/v1",
+            "exported_at": time.time(),
+            "stats": {
+                "nodes": len(nodes),
+                "edges": len(edges),
+                "kinds": kind_counts,
+            },
+            "memories": [{
+                "id": n["id"],
+                "label": n["label"],
+                "kind": n["kind"],
+                "data": json.loads(n["data"]),
+                "created": n["created"],
+                "accessed": n["accessed"],
+                "weight": n["weight"],
+                "q_value": n["q_value"],
+                "valid_from": n["valid_from"],
+                "valid_to": n["valid_to"],
+                "quarantined": bool(n["quarantined"]),
+            } for n in nodes],
+            "associations": [{
+                "source": e["source"],
+                "target": e["target"],
+                "relation": e["relation"],
+                "weight": e["weight"],
+            } for e in edges],
+        }
+
+    def from_memorywire_format(self, data: dict) -> int:
+        """Import a Memorywire-format dict into this graph.
+
+        Adds all memories and associations from the import. Returns
+        the number of memories imported.
+        """
+        if data.get("format") != "memorywire/v1":
+            raise ValueError(f"Unsupported format: {data.get('format')}")
+        count = 0
+        id_map: dict[str, str] = {}  # original_id → new_id
+        for mem in data.get("memories", []):
+            node = self.add(
+                label=mem["label"],
+                kind=mem.get("kind", "fact"),
+                data=mem.get("data", {}),
+            )
+            id_map[mem["id"]] = node.id
+            # Preserve metadata
+            updates = {}
+            if "weight" in mem:
+                updates["weight"] = mem["weight"]
+            if updates:
+                self.conn.execute(
+                    "UPDATE nodes SET weight = ? WHERE id = ?",
+                    (updates["weight"], node.id)
+                )
+            count += 1
+        # Import edges
+        for assoc in data.get("associations", []):
+            src = id_map.get(assoc["source"])
+            tgt = id_map.get(assoc["target"])
+            if src and tgt:
+                self.link(src, tgt, assoc.get("relation", "related_to"))
+        self.conn.commit()
+        return count
+
+    # ─── Scope-Delete Guard ────────────────────────────────────────────
+
+    def delete_node_safe(self, node_id: str, force: bool = False) -> dict:
+        """Delete a node with scope-delete guard.
+
+        Prevents accidental deletion of nodes that have dependents
+        (edges pointing TO this node from non-quarantined nodes).
+        Use force=True to override.
+
+        Returns dict with keys: deleted (bool), blocked_by (list of
+        dependent node labels), reason (str).
+        """
+        row = self.conn.execute(
+            "SELECT id, label FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return {"deleted": False, "blocked_by": [], "reason": "not_found"}
+        # Find dependents: nodes with edges pointing TO this node
+        dependents = self.conn.execute(
+            "SELECT DISTINCT e.source, n.label FROM edges e "
+            "JOIN nodes n ON e.source = n.id "
+            "WHERE e.target = ? AND n.quarantined = 0 AND e.source != ?",
+            (node_id, node_id)
+        ).fetchall()
+        if dependents and not force:
+            return {
+                "deleted": False,
+                "blocked_by": [d["label"] for d in dependents],
+                "reason": f"{len(dependents)} dependent node(s) reference this memory",
+            }
+        self.delete_node(node_id)
+        return {"deleted": True, "blocked_by": [], "reason": "ok"}
+
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
