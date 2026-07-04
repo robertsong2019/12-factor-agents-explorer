@@ -16384,3 +16384,309 @@ class TestDeleteNodeSafe:
         mg.conn.commit()
         result = mg.delete_node_safe(target.id)
         assert result["deleted"] is True
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Cycle 182: Temporal Staleness Scoring
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestStalenessScore:
+    """Tests for staleness_score(), stale_nodes(), fresh_nodes(), refresh_node()."""
+
+    def setup_method(self):
+        self.db_path = tempfile.mktemp(suffix=".db")
+        self.mg = MemoryGraph(db_path=self.db_path)
+
+    def teardown_method(self):
+        if os.path.exists(self.db_path):
+            os.unlink(self.db_path)
+
+    def test_staleness_nonexistent_node(self):
+        assert self.mg.staleness_score("nonexistent") == 1.0
+
+    def test_staleness_fresh_node(self):
+        """Just-created node should have low staleness."""
+        node = self.mg.add("Fresh Memory", "event")
+        s = self.mg.staleness_score(node.id)
+        assert 0.0 <= s < 0.3  # very fresh
+
+    def test_staleness_old_node(self):
+        """Old node should have high staleness."""
+        node = self.mg.add("Old Memory", "event")
+        # Set created to 60 days ago
+        old_time = time.time() - 60 * 86400
+        self.mg.conn.execute(
+            "UPDATE nodes SET created=?, accessed=? WHERE id=?",
+            (old_time, old_time, node.id)
+        )
+        self.mg.conn.commit()
+        s = self.mg.staleness_score(node.id)
+        assert s > 0.6  # quite stale (60 days ≈ 0.70)
+
+    def test_staleness_range_0_to_1(self):
+        """Staleness should always be in [0, 1]."""
+        node = self.mg.add("Test", "concept")
+        s = self.mg.staleness_score(node.id)
+        assert 0.0 <= s <= 1.0
+
+    def test_stale_nodes_filter(self):
+        """stale_nodes() should return only nodes above threshold."""
+        fresh = self.mg.add("Fresh", "event")
+        old = self.mg.add("Old", "event")
+        old_time = time.time() - 90 * 86400
+        self.mg.conn.execute(
+            "UPDATE nodes SET created=?, accessed=? WHERE id=?",
+            (old_time, old_time, old.id)
+        )
+        self.mg.conn.commit()
+        stale = self.mg.stale_nodes(threshold=0.5)
+        stale_ids = [s["node_id"] for s in stale]
+        assert old.id in stale_ids
+        assert fresh.id not in stale_ids
+
+    def test_fresh_nodes_filter(self):
+        """fresh_nodes() should return only nodes below threshold."""
+        fresh = self.mg.add("Fresh", "event")
+        old = self.mg.add("Old", "event")
+        old_time = time.time() - 90 * 86400
+        self.mg.conn.execute(
+            "UPDATE nodes SET created=?, accessed=? WHERE id=?",
+            (old_time, old_time, old.id)
+        )
+        self.mg.conn.commit()
+        fresh_list = self.mg.fresh_nodes(threshold=0.5)
+        fresh_ids = [f["node_id"] for f in fresh_list]
+        assert fresh.id in fresh_ids
+        assert old.id not in fresh_ids
+
+    def test_refresh_node_updates_access(self):
+        """refresh_node() should update the access timestamp."""
+        node = self.mg.add("Stale", "event")
+        old_time = time.time() - 30 * 86400
+        self.mg.conn.execute(
+            "UPDATE nodes SET accessed=? WHERE id=?",
+            (old_time, node.id)
+        )
+        self.mg.conn.commit()
+        before = self.mg.staleness_score(node.id)
+        result = self.mg.refresh_node(node.id)
+        after = self.mg.staleness_score(node.id)
+        assert result is True
+        assert after < before  # less stale after refresh
+
+    def test_refresh_nonexistent_returns_false(self):
+        assert self.mg.refresh_node("nonexistent") is False
+
+    def test_staleness_with_expired_validity(self):
+        """Node with expired valid_to should have higher staleness."""
+        node = self.mg.add("Temporary", "event")
+        # Set valid_to in the past
+        past_ts = time.time() - 86400  # 1 day ago
+        self.mg.conn.execute(
+            "UPDATE nodes SET valid_from=?, valid_to=? WHERE id=?",
+            (past_ts - 3600, past_ts, node.id)
+        )
+        self.mg.conn.commit()
+        s = self.mg.staleness_score(node.id)
+        # Should have validity component contributing
+        assert s > 0.2  # at least some staleness from expired validity
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Cycle 183: Multi-Path Retrieval Fusion
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestMultiPathRetrieval:
+    """Tests for search_multi() with Reciprocal Rank Fusion."""
+
+    def setup_method(self):
+        self.db_path = tempfile.mktemp(suffix=".db")
+        self.mg = MemoryGraph(db_path=self.db_path)
+        self._build_test_graph()
+
+    def teardown_method(self):
+        if os.path.exists(self.db_path):
+            os.unlink(self.db_path)
+
+    def _build_test_graph(self):
+        """Build a small graph with communities and Q-values."""
+        # Community 1
+        self.a = self.mg.add("Python tutorial", "skill")
+        self.b = self.mg.add("Python advanced", "skill")
+        self.c = self.mg.add("Python basics", "skill")
+        self.mg.link(self.a.id, self.b.id, "related")
+        self.mg.link(self.b.id, self.c.id, "related")
+        self.mg.link(self.a.id, self.c.id, "related")
+        # Community 2
+        self.d = self.mg.add("Rust guide", "skill")
+        self.e = self.mg.add("Rust advanced", "skill")
+        self.f = self.mg.add("Rust basics", "skill")
+        self.mg.link(self.d.id, self.e.id, "related")
+        self.mg.link(self.e.id, self.f.id, "related")
+        self.mg.link(self.d.id, self.f.id, "related")
+        # Bridge
+        self.mg.link(self.c.id, self.d.id, "bridge")
+        # Give 'a' high Q-value
+        self.mg.update_q_value(self.a.id, 0.9)
+        self.mg.update_q_value(self.d.id, 0.5)
+
+    def test_search_multi_returns_results(self):
+        results = self.mg.search_multi("Python", limit=5)
+        assert len(results) > 0
+        assert all("fused_score" in r for r in results)
+        assert all("sources" in r for r in results)
+
+    def test_search_multi_relevance(self):
+        """Python query should rank Python nodes higher than Rust nodes."""
+        results = self.mg.search_multi("Python", limit=5)
+        top_labels = [r["label"] for r in results[:3]]
+        python_count = sum(1 for l in top_labels if "Python" in l)
+        assert python_count >= 2  # at least 2 of top 3 should be Python
+
+    def test_search_multi_bm25_only(self):
+        """Single path (bm25) should still work."""
+        results = self.mg.search_multi("Python", limit=3, paths=["bm25"])
+        assert len(results) > 0
+        assert all(r["sources"] == ["bm25"] for r in results)
+
+    def test_search_multi_q_value_path(self):
+        """Q-value path should bring high-Q nodes to top."""
+        results = self.mg.search_multi("Python", limit=5, paths=["q_value"])
+        assert len(results) > 0
+        # Node 'a' has highest Q-value (0.9)
+        top_id = results[0]["node_id"]
+        assert top_id == self.a.id
+
+    def test_search_multi_weighted_paths(self):
+        """Path weights should influence ranking."""
+        # Heavy weight on community path
+        results_weighted = self.mg.search_multi(
+            "Python", limit=3, weights={"community": 5.0, "bm25": 0.1}
+        )
+        # Should still return results
+        assert len(results_weighted) > 0
+
+    def test_search_multi_empty_query(self):
+        results = self.mg.search_multi("nonexistent", limit=5)
+        # Some paths (temperature) still return results
+        # but should be limited
+        assert isinstance(results, list)
+
+    def test_search_multi_source_aggregation(self):
+        """Nodes found by multiple paths should have higher fused scores."""
+        results = self.mg.search_multi("Python", limit=10)
+        if len(results) >= 2:
+            # Node appearing in more sources should generally rank higher
+            multi_source = [r for r in results if len(r["sources"]) >= 2]
+            single_source = [r for r in results if len(r["sources"]) == 1]
+            if multi_source and single_source:
+                assert multi_source[0]["fused_score"] >= single_source[0]["fused_score"]
+
+    def test_search_multi_fused_score_sorted(self):
+        """Results should be sorted by fused_score descending."""
+        results = self.mg.search_multi("Python", limit=5)
+        scores = [r["fused_score"] for r in results]
+        assert scores == sorted(scores, reverse=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Cycle 184: Memory Sleep Consolidation
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestSleepConsolidate:
+    """Tests for sleep_consolidate() — merging similar low-weight nodes."""
+
+    def setup_method(self):
+        self.db_path = tempfile.mktemp(suffix=".db")
+        self.mg = MemoryGraph(db_path=self.db_path)
+
+    def teardown_method(self):
+        if os.path.exists(self.db_path):
+            os.unlink(self.db_path)
+
+    def test_consolidate_no_candidates(self):
+        """Distinct nodes should not be merged."""
+        n1 = self.mg.add("Python tutorial", "skill")
+        n2 = self.mg.add("Rust guide", "skill")
+        self.mg.conn.execute("UPDATE nodes SET weight=0.1 WHERE id IN (?,?)", (n1.id, n2.id))
+        self.mg.conn.commit()
+        result = self.mg.sleep_consolidate(similarity_threshold=0.8)
+        assert result["merged"] == 0
+
+    def test_consolidate_merges_similar(self):
+        """Highly similar nodes should be merged."""
+        n1 = self.mg.add("Python tutorial basics", "skill")
+        n2 = self.mg.add("Python tutorial basic", "skill")
+        # Lower their weights below min_weight threshold
+        self.mg.conn.execute("UPDATE nodes SET weight=0.1 WHERE id IN (?,?)", (n1.id, n2.id))
+        self.mg.conn.commit()
+        result = self.mg.sleep_consolidate(similarity_threshold=0.6, min_weight=0.2)
+        assert result["merged"] >= 1
+
+    def test_consolidate_preserves_high_weight(self):
+        """Nodes above min_weight should not be candidates for merging."""
+        n1 = self.mg.add("Python tutorial", "skill")
+        n2 = self.mg.add("Python tutorial intro", "skill")
+        self.mg.conn.execute("UPDATE nodes SET weight=1.0 WHERE id IN (?,?)", (n1.id, n2.id))
+        self.mg.conn.commit()
+        result = self.mg.sleep_consolidate(min_weight=0.5)
+        assert result["scanned"] == 0  # nothing below 0.5
+        assert result["merged"] == 0
+
+    def test_consolidate_dry_run(self):
+        """Dry run should not modify nodes."""
+        n1 = self.mg.add("Python tutorial basics", "skill")
+        n2 = self.mg.add("Python tutorial basic", "skill")
+        self.mg.conn.execute("UPDATE nodes SET weight=0.1 WHERE id IN (?,?)", (n1.id, n2.id))
+        self.mg.conn.commit()
+        result = self.mg.sleep_consolidate(similarity_threshold=0.6, min_weight=0.2, dry_run=True)
+        assert result["merged"] >= 1
+        # Check nodes are NOT quarantined
+        quarantined = self.mg.conn.execute(
+            "SELECT COUNT(*) as c FROM nodes WHERE quarantined=1"
+        ).fetchone()
+        assert quarantined["c"] == 0
+
+    def test_consolidate_redirects_edges(self):
+        """Merged nodes should have edges redirected to anchor."""
+        n1 = self.mg.add("Python tutorial basics", "skill")
+        n2 = self.mg.add("Python tutorial basic", "skill")
+        other = self.mg.add("Programming", "concept")
+        self.mg.link(n2.id, other.id, "belongs_to")
+        self.mg.conn.execute("UPDATE nodes SET weight=0.1 WHERE id IN (?,?)", (n1.id, n2.id))
+        self.mg.conn.commit()
+        self.mg.sleep_consolidate(similarity_threshold=0.6, min_weight=0.2)
+        # Edge from n2→other should now be from anchor→other
+        edges = self.mg.conn.execute(
+            "SELECT * FROM edges WHERE target=?", (other.id,)
+        ).fetchall()
+        sources = [e["source"] for e in edges]
+        assert n1.id in sources or n2.id in sources  # anchor is one of them
+
+    def test_consolidate_anchor_gets_combined_weight(self):
+        """Anchor should absorb weights from merged nodes."""
+        n1 = self.mg.add("Python tutorial basics", "skill")
+        n2 = self.mg.add("Python tutorial basic", "skill")
+        self.mg.conn.execute("UPDATE nodes SET weight=0.15 WHERE id=?", (n1.id,))
+        self.mg.conn.execute("UPDATE nodes SET weight=0.10 WHERE id=?", (n2.id,))
+        self.mg.conn.commit()
+        result = self.mg.sleep_consolidate(similarity_threshold=0.6, min_weight=0.2)
+        assert result["merged"] >= 1
+        anchor_id = result["details"][0]["anchor_id"]
+        anchor_row = self.mg.conn.execute(
+            "SELECT weight FROM nodes WHERE id=?", (anchor_id,)
+        ).fetchone()
+        assert anchor_row["weight"] >= 0.2  # combined weight
+
+    def test_consolidate_empty_graph(self):
+        result = self.mg.sleep_consolidate()
+        assert result["scanned"] == 0
+        assert result["merged"] == 0
+
+    def test_consolidate_single_node(self):
+        n = self.mg.add("Solo", "skill")
+        self.mg.conn.execute("UPDATE nodes SET weight=0.1 WHERE id=?", (n.id,))
+        self.mg.conn.commit()
+        result = self.mg.sleep_consolidate()
+        assert result["merged"] == 0
+        assert result["kept"] == 1

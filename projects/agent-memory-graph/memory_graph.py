@@ -16,6 +16,7 @@ import json
 import math
 import time
 import uuid
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 from collections import defaultdict
@@ -14505,6 +14506,311 @@ class MemoryGraph:
         self.delete_node(node_id)
         return {"deleted": True, "blocked_by": [], "reason": "ok"}
 
+
+
+    # ─── Temporal Staleness Scoring ──────────────────────────────────
+
+    def staleness_score(self, node_id: str) -> float:
+        """Return staleness score [0, 1] where 0 = fresh, 1 = fully stale.
+
+        Inspired by Mem0's temporal degradation finding:
+        benchmark 91.6 → 49.0% after 30 days in production.
+
+        Combines:
+        - Age decay (40%): exponential with 30-day half-life
+        - Access recency (35%): how recently the node was accessed
+        - Validity gap (25%): if bi-temporal valid_to is in the past
+        """
+        row = self.conn.execute(
+            "SELECT created, accessed, valid_from, valid_to FROM nodes WHERE id=?",
+            (node_id,)
+        ).fetchone()
+        if row is None:
+            return 1.0
+        now = time.time()
+        # Age component: 30-day half-life
+        age_seconds = max(now - (row["created"] or now), 0)
+        age_staleness = 1.0 - math.exp(-age_seconds / 2592000.0)  # 30-day half-life
+        # Access recency: 7-day half-life
+        access_age = max(now - (row["accessed"] or row["created"] or now), 0)
+        access_staleness = 1.0 - math.exp(-access_age / 604800.0)  # 7-day half-life
+        # Validity gap: if valid_to is set and in the past
+        validity_staleness = 0.0
+        if row["valid_to"] is not None:
+            vt = row["valid_to"]
+            if isinstance(vt, str):
+                vt = datetime.fromisoformat(vt.replace("Z", "+00:00")).timestamp()
+            if vt < now:
+                validity_staleness = 1.0
+            else:
+                # Approaching expiry
+                time_left = vt - now
+                if time_left < 604800:  # within 7 days
+                    validity_staleness = 1.0 - (time_left / 604800.0)
+        return round(
+            age_staleness * 0.40 + access_staleness * 0.35 + validity_staleness * 0.25, 4
+        )
+
+    def stale_nodes(self, threshold: float = 0.7, limit: int = 100) -> list[dict]:
+        """Return nodes with staleness >= threshold, most stale first.
+
+        Args:
+            threshold: Minimum staleness to include [0, 1]
+            limit: Maximum nodes to return
+
+        Returns:
+            List of {node_id, label, kind, staleness, created, accessed}
+        """
+        rows = self.conn.execute(
+            "SELECT id, label, kind, created, accessed FROM nodes WHERE quarantined = 0"
+        ).fetchall()
+        result = []
+        for r in rows:
+            s = self.staleness_score(r["id"])
+            if s >= threshold:
+                result.append({
+                    "node_id": r["id"], "label": r["label"],
+                    "kind": r["kind"], "staleness": s,
+                    "created": r["created"], "accessed": r["accessed"],
+                })
+        result.sort(key=lambda x: x["staleness"], reverse=True)
+        return result[:limit]
+
+    def fresh_nodes(self, threshold: float = 0.3, limit: int = 100) -> list[dict]:
+        """Return nodes with staleness <= threshold, most fresh first.
+
+        Args:
+            threshold: Maximum staleness to include [0, 1]
+            limit: Maximum nodes to return
+
+        Returns:
+            List of {node_id, label, kind, staleness, created, accessed}
+        """
+        rows = self.conn.execute(
+            "SELECT id, label, kind, created, accessed FROM nodes WHERE quarantined = 0"
+        ).fetchall()
+        result = []
+        for r in rows:
+            s = self.staleness_score(r["id"])
+            if s <= threshold:
+                result.append({
+                    "node_id": r["id"], "label": r["label"],
+                    "kind": r["kind"], "staleness": s,
+                    "created": r["created"], "accessed": r["accessed"],
+                })
+        result.sort(key=lambda x: x["staleness"])
+        return result[:limit]
+
+    def refresh_node(self, node_id: str) -> bool:
+        """Refresh a stale node by updating its access timestamp.
+
+        Returns True if node was found and refreshed, False otherwise.
+        """
+        row = self.conn.execute(
+            "SELECT id FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        now = time.time()
+        self.conn.execute(
+            "UPDATE nodes SET accessed=? WHERE id=?", (now, node_id)
+        )
+        self.conn.commit()
+        self._tick("update", node_id, {"action": "refresh"})
+        return True
+
+    # ─── Multi-Path Retrieval Fusion ───────────────────────────────────
+
+    def search_multi(self, query: str, limit: int = 10,
+                     paths: list[str] = None,
+                     weights: dict[str, float] = None) -> list[dict]:
+        """Multi-path retrieval with Reciprocal Rank Fusion (RRF).
+
+        Combines multiple retrieval strategies and fuses their rankings.
+        Research insight (MemRL, ICLR 2026): usefulness ≠ similarity —
+        different retrieval paths capture different aspects of relevance.
+
+        Available paths:
+        - "bm25": label text matching (recall)
+        - "q_value": Q-value ranking (top_q_nodes)
+        - "community": community-aware retrieval (search_community)
+        - "temperature": cache temperature ranking
+
+        Args:
+            query: Search query
+            limit: Final number of results
+            paths: List of paths to use (default: all available)
+            weights: Per-path weight overrides {path: weight}
+
+        Returns:
+            List of {node_id, label, kind, fused_score, sources} sorted by fused score
+        """
+        if paths is None:
+            paths = ["bm25", "q_value", "community", "temperature"]
+        if weights is None:
+            weights = {}
+
+        k = 60  # RRF constant
+        rrf_scores: dict[str, float] = {}
+        node_sources: dict[str, set] = {}
+        node_info: dict[str, dict] = {}
+
+        for path_name in paths:
+            path_weight = weights.get(path_name, 1.0)
+            ranked: list[str] = []
+
+            if path_name == "bm25":
+                results = self.recall(query, limit=limit * 3)
+                ranked = [n.id for n in results]
+            elif path_name == "q_value":
+                results = self.recall_with_q(query, limit=limit * 3)
+                ranked = [r["node_id"] for r in results]
+            elif path_name == "community":
+                try:
+                    results = self.search_community(query, limit=limit * 3)
+                    ranked = [n.id for n in results]
+                except Exception:
+                    pass
+            elif path_name == "temperature":
+                snapshot = self.cache_snapshot()
+                for entry in snapshot["hot"] + snapshot["warm"]:
+                    ranked.append(entry["node_id"])
+
+            for rank, nid in enumerate(ranked):
+                rrf = path_weight / (k + rank + 1)
+                rrf_scores[nid] = rrf_scores.get(nid, 0.0) + rrf
+                node_sources.setdefault(nid, set()).add(path_name)
+                if nid not in node_info:
+                    node = self.get_node(nid)
+                    if node:
+                        node_info[nid] = {
+                            "label": node.label,
+                            "kind": node.kind,
+                        }
+
+        fused = []
+        for nid, score in rrf_scores.items():
+            info = node_info.get(nid, {})
+            fused.append({
+                "node_id": nid,
+                "label": info.get("label", ""),
+                "kind": info.get("kind", ""),
+                "fused_score": round(score, 6),
+                "sources": sorted(node_sources[nid]),
+            })
+        fused.sort(key=lambda x: x["fused_score"], reverse=True)
+        return fused[:limit]
+
+    # ─── Memory Sleep Consolidation ───────────────────────────────────
+
+    def sleep_consolidate(self, similarity_threshold: float = 0.6,
+                          min_weight: float = 0.3,
+                          dry_run: bool = False) -> dict:
+        """Consolidate memories by merging similar low-weight nodes.
+
+        Inspired by biological sleep-time memory consolidation:
+        - Weak memories with high overlap are merged into a single stronger node
+        - Preserves the strongest node in each cluster as the 'anchor'
+        - Edge relationships from merged nodes are redirected to anchor
+
+        This is a destructive operation (unless dry_run=True) — merged nodes
+        are quarantined, not deleted, preserving audit trail.
+
+        Args:
+            similarity_threshold: Minimum label similarity to merge [0, 1]
+            min_weight: Only merge nodes below this weight
+            dry_run: Report without executing
+
+        Returns:
+            {scanned, merged, kept, details}
+        """
+        import difflib
+
+        rows = self.conn.execute(
+            "SELECT id, label, kind, weight FROM nodes "
+            "WHERE quarantined = 0 AND weight < ?",
+            (min_weight,)
+        ).fetchall()
+
+        if len(rows) < 2:
+            return {"scanned": len(rows), "merged": 0, "kept": len(rows),
+                    "details": []}
+
+        # Group by kind first for efficiency
+        kind_groups: dict[str, list] = {}
+        for r in rows:
+            kind_groups.setdefault(r["kind"], []).append(r)
+
+        result = {"scanned": len(rows), "merged": 0, "kept": 0, "details": []}
+        merged_ids: set = set()
+
+        for kind, group in kind_groups.items():
+            for i, base in enumerate(group):
+                if base["id"] in merged_ids:
+                    continue
+                cluster = [base]
+                for candidate in group[i + 1:]:
+                    if candidate["id"] in merged_ids:
+                        continue
+                    sim = difflib.SequenceMatcher(
+                        None, base["label"].lower(), candidate["label"].lower()
+                    ).ratio()
+                    if sim >= similarity_threshold:
+                        cluster.append(candidate)
+
+                if len(cluster) < 2:
+                    result["kept"] += 1
+                    continue
+
+                # Pick anchor: highest weight
+                anchor = max(cluster, key=lambda r: r["weight"] or 0.0)
+                merged_weight = sum(r["weight"] or 0.0 for r in cluster)
+
+                if not dry_run:
+                    for node in cluster:
+                        if node["id"] == anchor["id"]:
+                            continue
+                        # Redirect edges to anchor
+                        self.conn.execute(
+                            "UPDATE edges SET source=? WHERE source=?",
+                            (anchor["id"], node["id"])
+                        )
+                        self.conn.execute(
+                            "UPDATE edges SET target=? WHERE target=?",
+                            (anchor["id"], node["id"])
+                        )
+                        # Quarantine merged node
+                        self.conn.execute(
+                            "UPDATE nodes SET quarantined=1, weight=0.0 WHERE id=?",
+                            (node["id"],)
+                        )
+                        self._tick("update", node["id"], {
+                            "action": "consolidate_merge",
+                            "anchor": anchor["id"],
+                        })
+                        merged_ids.add(node["id"])
+
+                    # Boost anchor weight
+                    self.conn.execute(
+                        "UPDATE nodes SET weight=? WHERE id=?",
+                        (merged_weight, anchor["id"])
+                    )
+                    self._tick("update", anchor["id"], {
+                        "action": "consolidate_anchor",
+                        "absorbed": len(cluster) - 1,
+                    })
+
+                result["merged"] += len(cluster) - 1
+                result["kept"] += 1
+                result["details"].append({
+                    "anchor_id": anchor["id"],
+                    "anchor_label": anchor["label"],
+                    "merged_labels": [r["label"] for r in cluster if r["id"] != anchor["id"]],
+                    "combined_weight": round(merged_weight, 4),
+                })
+
+        self.conn.commit()
+        return result
 
 
 def demo():
