@@ -3,7 +3,7 @@
 ## 待办任务
 
 ### 高优先级（本周）
-- [ ] **agent-memory-graph: README + npm publish** — **1599 tests**, 360+ APIs, 二十一合一 + bi-temporal + Q-value + Lamport clock + conflict detect + strategic forget + LPA community detection + community-aware retrieval + bridge nodes
+- [ ] **agent-memory-graph: README + npm publish** — **1652 tests**, 380+ APIs, 二十七合一 + bi-temporal + Q-value + Lamport clock + conflict detect + strategic forget + LPA + community retrieval + bridge nodes + cache temp + memorywire + staleness + RRF fusion + sleep consolidate
 - [ ] **agent-context-store: README + npm publish** — **2253 tests**, 500+ APIs, 37层管线
 - [ ] **structured-output-toolkit: README + npm publish** — **507 tests**, 4650+ lines
 - [ ] **agent-task-cli: README + npm publish** — **986 tests**
@@ -17,7 +17,7 @@
 - [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
 
 ## 系统状态
-- **agent-memory-graph**: **1627 tests** — 370+ APIs。二十四合一 + bi-temporal validity + Q-value scoring (RL) + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community detection + community-aware retrieval + community profile + bridge nodes + cache temperature + memorywire format export/import + scope-delete guard
+- **agent-memory-graph**: **1652 tests** — 380+ APIs。二十七合一 + bi-temporal validity + Q-value scoring (RL) + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community detection + community-aware retrieval + community profile + bridge nodes + cache temperature + memorywire format export/import + scope-delete guard + temporal staleness scoring + multi-path retrieval fusion (RRF) + sleep consolidation
 - **agent-context-store**: **2253 tests** — 500+ APIs。三大管线 37 层: Graph 12 / Quality 12 / Store 13
 - **structured-output-toolkit**: **507 tests** — 4650+ lines src
 - **agent-task-cli**: **986 tests**
@@ -28,10 +28,11 @@
 - **lab/agent-observability**: 166 tests
 - **AMS v1.0-dev**: 645 tests
 - **prompt-router**: 258 tests
-- **四项目总计**: 5345 tests ✅ (07-03 22:30 同步)
-- **零回滚率**: 连续175天 🏆
+- **四项目总计**: 5370 tests ✅ (07-04 22:30 同步)
+- **零回滚率**: 连续175天 🏆 (cycles 182-184)
 
 ## 近期活动 (07-03 ~ 07-04)
+- **晚间开发** ✅ (07-04 22:00-22:30): 3 cycles — temporal staleness scoring (cycle 182, +9 tests) + multi-path retrieval fusion RRF (cycle 183, +8 tests) + sleep consolidation (cycle 184, +8 tests). Total: 1652 passed, 0 failed. Zero rollback 175 days.
 - **晚间开发** ✅ (07-04 13:23-13:45): 3 cycles — cache_temperature/snapshot/warm_cache/evict_cold (cycle 179, +15 tests) + memorywire format export/import (cycle 180, +8 tests) + delete_node_safe scope-delete guard (cycle 181, +5 tests). Total: 1627 passed, 0 failed. Zero rollback 175 days.
 - **晚间开发** ✅ (07-03 22:00-22:30): 3 cycles — LPA community detection + community-aware retrieval (cycles 176-177, +29 tests) + community profile + bridge nodes (cycle 178, +10 tests). Total: 1599 passed, 0 failed. Zero rollback 174 days.
 - **晚间开发** ✅ (07-03 00:20-00:50): 3 cycles — Lamport clock + typed pub/sub (cycle 173, +17 tests) + conflict detection (cycle 174, +11 tests) + strategic forget (cycle 175, +11 tests). Total: 1560 passed, 0 failed.
@@ -50,7 +51,7 @@
 README(agent-memory-graph) → npm publish → README(agent-context-store) → npm publish → README(structured-output-toolkit) → npm publish → README(agent-task-cli) → npm publish
 
 ## 上次检查
-- **开发: 2026-07-04 13:45** — Cache temperature + memorywire format + scope-delete guard cycles 179-181, +28 tests
+- **开发: 2026-07-04 22:30** — Temporal staleness + multi-path RRF fusion + sleep consolidation cycles 182-184, +25 tests
 - **知识整理: 2026-07-04 02:00** (cron) — MEMORY.md 同步至1599 tests/174天/21合一
 - **深度研究: 2026-07-02 20:00** (Graph-Structured Memory)
 - **GitHub Trending: 2026-07-03 19:00**
