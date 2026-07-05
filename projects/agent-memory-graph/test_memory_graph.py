@@ -18012,3 +18012,169 @@ class TestPathCost:
         # At least one edge exists
         cost = mg.path_cost([a.id, b.id])
         assert cost != float('inf')
+
+
+# ════════════════════════════════════════════════════════════════
+#  Cycle 191: Path Enumeration — all_paths / k_shortest_paths
+# ════════════════════════════════════════════════════════════════
+
+class TestAllPaths:
+    """Tests for all_paths()."""
+
+    def test_all_paths_chain(self):
+        """Chain graph → exactly one path."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        paths = mg.all_paths(a.id, c.id)
+        assert len(paths) == 1
+        assert paths[0] == [a.id, b.id, c.id]
+
+    def test_all_paths_diamond(self):
+        """Diamond graph → two paths."""
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        mg.link(b.id, d.id, "r")
+        mg.link(c.id, d.id, "r")
+        paths = mg.all_paths(a.id, d.id)
+        assert len(paths) == 2
+        # Both should end at d
+        assert all(p[-1] == d.id for p in paths)
+        assert all(p[0] == a.id for p in paths)
+
+    def test_all_paths_same_node(self):
+        """Source == target → [[source]]."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        paths = mg.all_paths(a.id, a.id)
+        assert paths == [[a.id]]
+
+    def test_all_paths_no_connection(self):
+        """Disconnected → empty list."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        assert mg.all_paths(a.id, b.id) == []
+
+    def test_all_paths_max_hops_prunes(self):
+        """max_hops limits path length."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(6)]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        # 5-hop chain, max_hops=3 → no path
+        paths = mg.all_paths(nodes[0].id, nodes[5].id, max_hops=3)
+        assert paths == []
+        # max_hops=5 → 1 path
+        paths = mg.all_paths(nodes[0].id, nodes[5].id, max_hops=5)
+        assert len(paths) == 1
+
+    def test_all_paths_limit_results(self):
+        """Limit caps the number of returned paths."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        d = mg.add("D")
+        # Create many intermediate 2-hop paths
+        for i in range(10):
+            mid = mg.add(f"M{i}")
+            mg.link(a.id, mid.id, "r")
+            mg.link(mid.id, d.id, "r")
+        paths = mg.all_paths(a.id, d.id, limit=5)
+        assert len(paths) <= 5
+
+    def test_all_paths_sorted_by_length(self):
+        """Paths are sorted shortest first."""
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, d.id, "r")       # 1 hop
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, d.id, "r")       # 2 hops
+        mg.link(a.id, c.id, "r")
+        mg.link(c.id, d.id, "r")       # 2 hops
+        paths = mg.all_paths(a.id, d.id)
+        assert len(paths[0]) <= len(paths[-1])
+
+    def test_all_paths_nonexistent_node(self):
+        """Non-existent node → empty list."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        assert mg.all_paths(a.id, "fake_id") == []
+
+    def test_all_paths_no_cycles(self):
+        """All returned paths are simple (no repeated nodes)."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")  # creates a cycle
+        paths = mg.all_paths(a.id, c.id)
+        for p in paths:
+            assert len(p) == len(set(p))  # no repeats
+
+
+class TestKShortestPaths:
+    """Tests for k_shortest_paths()."""
+
+    def test_k_shortest_diamond(self):
+        """Diamond: two paths, sorted by cost."""
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r", weight=1.0)
+        mg.link(b.id, d.id, "r", weight=1.0)   # path cost 2
+        mg.link(a.id, c.id, "r", weight=3.0)
+        mg.link(c.id, d.id, "r", weight=3.0)   # path cost 6
+        paths = mg.k_shortest_paths(a.id, d.id, k=2)
+        assert len(paths) == 2
+        assert paths[0]["cost"] < paths[1]["cost"]
+        assert paths[0]["cost"] == 2.0
+        assert paths[1]["cost"] == 6.0
+
+    def test_k_shortest_single_path(self):
+        """Only one path → k=3 returns 1."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r", weight=1.0)
+        mg.link(b.id, c.id, "r", weight=1.0)
+        paths = mg.k_shortest_paths(a.id, c.id, k=3)
+        assert len(paths) == 1
+        assert paths[0]["cost"] == 2.0
+        assert paths[0]["hops"] == 2
+
+    def test_k_shortest_no_path(self):
+        """Disconnected → empty list."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        assert mg.k_shortest_paths(a.id, b.id, k=3) == []
+
+    def test_k_shortest_same_node(self):
+        """Source == target → one zero-cost path."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        paths = mg.k_shortest_paths(a.id, a.id, k=3)
+        assert len(paths) >= 1
+        assert paths[0]["cost"] == 0.0
+
+    def test_k_shortest_sorted_by_cost(self):
+        """Results sorted ascending by cost."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        d = mg.add("D")
+        for i in range(5):
+            mid = mg.add(f"M{i}")
+            w = float(i + 1)
+            mg.link(a.id, mid.id, "r", weight=w)
+            mg.link(mid.id, d.id, "r", weight=w)
+        paths = mg.k_shortest_paths(a.id, d.id, k=3)
+        costs = [p["cost"] for p in paths]
+        assert costs == sorted(costs)
+
+    def test_k_shortest_includes_hops(self):
+        """Each result includes hop count."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r", weight=1.0)
+        mg.link(b.id, c.id, "r", weight=1.0)
+        paths = mg.k_shortest_paths(a.id, c.id, k=1)
+        assert paths[0]["hops"] == 2

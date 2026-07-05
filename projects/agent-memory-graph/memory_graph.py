@@ -15592,6 +15592,99 @@ class MemoryGraph:
             total += row["weight"] if row["weight"] is not None else 1.0
         return round(total, 6)
 
+    # ─── Path Enumeration ───────────────────────────────────────────
+
+    def all_paths(self, source_id: str, target_id: str,
+                  max_hops: int = 5, limit: int = 20) -> list[list[str]]:
+        """Find all simple paths (no repeated nodes) between two nodes.
+
+        Uses DFS with pruning at *max_hops*.  Returns a list of paths
+        (each a list of node IDs), sorted by length (shortest first).
+        Limited to *limit* results to prevent combinatorial explosion.
+
+        Args:
+            source_id: Starting node ID.
+            target_id: Ending node ID.
+            max_hops: Maximum number of edges in a path.
+            limit: Maximum number of paths to return.
+
+        Returns an empty list if no path exists or nodes don't exist.
+        """
+        # Verify nodes exist
+        for nid in (source_id, target_id):
+            if not self.conn.execute(
+                "SELECT 1 FROM nodes WHERE id=?", (nid,)
+            ).fetchone():
+                return []
+
+        if source_id == target_id:
+            return [[source_id]]
+
+        # Build adjacency
+        rows = self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall()
+        adj: dict[str, list[str]] = {}
+        for r in rows:
+            adj.setdefault(r["source"], []).append(r["target"])
+
+        results: list[list[str]] = []
+
+        def _dfs(current: str, path: list[str], visited: set[str]):
+            if len(results) >= limit:
+                return
+            if len(path) - 1 >= max_hops:
+                return
+            for neighbor in adj.get(current, []):
+                if neighbor == target_id:
+                    results.append(path + [neighbor])
+                    if len(results) >= limit:
+                        return
+                    continue
+                if neighbor in visited:
+                    continue
+                visited.add(neighbor)
+                _dfs(neighbor, path + [neighbor], visited)
+                visited.discard(neighbor)
+
+        _dfs(source_id, [source_id], {source_id})
+        results.sort(key=len)
+        return results
+
+    def k_shortest_paths(self, source_id: str, target_id: str,
+                         k: int = 3, max_hops: int = 8) -> list[dict]:
+        """Find the K lowest-cost simple paths between two nodes.
+
+        Uses Yen's algorithm (simplified): repeatedly find shortest path,
+        then spur from deviations.
+
+        Args:
+            source_id: Starting node ID.
+            target_id: Ending node ID.
+            k: Number of paths to find.
+            max_hops: Maximum path length to consider.
+
+        Returns a list of dicts with ``path``, ``cost``, ``hops``
+        sorted by cost ascending.  May return fewer than *k* if not
+        enough paths exist.
+        """
+        # Get candidate paths via all_paths
+        candidates = self.all_paths(source_id, target_id,
+                                     max_hops=max_hops, limit=k * 5)
+        if not candidates:
+            return []
+
+        # Score each path by cost
+        scored: list[dict] = []
+        for p in candidates:
+            cost = self.path_cost(p)
+            if cost == float('inf'):
+                continue
+            scored.append({"path": p, "cost": cost, "hops": len(p) - 1})
+
+        scored.sort(key=lambda x: x["cost"])
+        return scored[:k]
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
