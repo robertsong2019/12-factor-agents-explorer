@@ -15119,6 +15119,169 @@ class MemoryGraph:
             "memory_health": round(health, 4),
         }
 
+    # ── Memory Diff ─────────────────────────────────────────
+
+    def diff_graph(self, other: 'MemoryGraph') -> dict:
+        """Compute the difference between this graph and another.
+
+        Returns added/removed/changed nodes and edges, useful for
+        audit trails, before/after comparisons, and memory evolution
+        tracking.
+
+        Args:
+            other: The other MemoryGraph to diff against.
+
+        Returns dict with:
+            nodes_added, nodes_removed, nodes_changed,
+            edges_added, edges_removed,
+            summary: {added, removed, changed totals}
+        """
+        self_nodes = {
+            r["id"]: r for r in self.conn.execute(
+                "SELECT * FROM nodes WHERE quarantined=0"
+            ).fetchall()
+        }
+        other_nodes = {
+            r["id"]: r for r in other.conn.execute(
+                "SELECT * FROM nodes WHERE quarantined=0"
+            ).fetchall()
+        }
+
+        self_ids = set(self_nodes.keys())
+        other_ids = set(other_nodes.keys())
+
+        nodes_added = []
+        for nid in other_ids - self_ids:
+            r = other_nodes[nid]
+            nodes_added.append({
+                "id": nid, "label": r["label"], "kind": r["kind"],
+                "weight": r["weight"],
+            })
+
+        nodes_removed = []
+        for nid in self_ids - other_ids:
+            r = self_nodes[nid]
+            nodes_removed.append({
+                "id": nid, "label": r["label"], "kind": r["kind"],
+                "weight": r["weight"],
+            })
+
+        nodes_changed = []
+        for nid in self_ids & other_ids:
+            old = self_nodes[nid]
+            new = other_nodes[nid]
+            changes = {}
+            if old["label"] != new["label"]:
+                changes["label"] = {"old": old["label"], "new": new["label"]}
+            if old["kind"] != new["kind"]:
+                changes["kind"] = {"old": old["kind"], "new": new["kind"]}
+            if abs(old["weight"] - new["weight"]) > 0.001:
+                changes["weight"] = {"old": old["weight"], "new": new["weight"]}
+            old_data = json.loads(old["data"])
+            new_data = json.loads(new["data"])
+            if old_data != new_data:
+                changes["data_added"] = {k: v for k, v in new_data.items() if k not in old_data}
+                changes["data_removed"] = {k: v for k, v in old_data.items() if k not in new_data}
+            if changes:
+                nodes_changed.append({
+                    "id": nid,
+                    "label": new["label"],
+                    "changes": changes,
+                })
+
+        # Edge diff
+        self_edges = {
+            (r["source"], r["target"], r["relation"])
+            for r in self.conn.execute("SELECT * FROM edges").fetchall()
+        }
+        other_edges = {
+            (r["source"], r["target"], r["relation"])
+            for r in other.conn.execute("SELECT * FROM edges").fetchall()
+        }
+
+        edges_added = [
+            {"source": s, "target": t, "relation": r}
+            for s, t, r in other_edges - self_edges
+        ]
+        edges_removed = [
+            {"source": s, "target": t, "relation": r}
+            for s, t, r in self_edges - other_edges
+        ]
+
+        return {
+            "nodes_added": nodes_added,
+            "nodes_removed": nodes_removed,
+            "nodes_changed": nodes_changed,
+            "edges_added": edges_added,
+            "edges_removed": edges_removed,
+            "summary": {
+                "added": len(nodes_added) + len(edges_added),
+                "removed": len(nodes_removed) + len(edges_removed),
+                "changed": len(nodes_changed),
+            },
+        }
+
+    def diff_report(self, diff: dict = None, other: 'MemoryGraph' = None) -> str:
+        """Format a diff as a human-readable report.
+
+        Either pass a pre-computed diff dict, or pass another graph
+        to compute diff on the fly.
+        """
+        if diff is None:
+            if other is None:
+                raise ValueError("Provide either diff dict or other graph")
+            diff = self.diff_graph(other)
+
+        lines = []
+        s = diff["summary"]
+        lines.append(
+            f"Memory Diff: +{s['added']} added, -{s['removed']} removed, ~{s['changed']} changed"
+        )
+
+        if diff["nodes_added"]:
+            lines.append(f"\n  ▲ Nodes added ({len(diff['nodes_added'])}):")
+            for n in diff["nodes_added"]:
+                lines.append(f"    + [{n['kind']}] {n['label']} (w={n['weight']:.2f})")
+
+        if diff["nodes_removed"]:
+            lines.append(f"\n  ▼ Nodes removed ({len(diff['nodes_removed'])}):")
+            for n in diff["nodes_removed"]:
+                lines.append(f"    - [{n['kind']}] {n['label']} (w={n['weight']:.2f})")
+
+        if diff["nodes_changed"]:
+            lines.append(f"\n  ◆ Nodes changed ({len(diff['nodes_changed'])}):")
+            for n in diff["nodes_changed"]:
+                parts = [f"    ~ {n['label']}"]
+                for field, change in n["changes"].items():
+                    if isinstance(change, dict) and "old" in change:
+                        parts.append(f"    {field}: {change['old']} → {change['new']}")
+                    elif field == "data_added":
+                        keys = list(change.keys())
+                        parts.append(f"    data +{keys}")
+                    elif field == "data_removed":
+                        keys = list(change.keys())
+                        parts.append(f"    data -{keys}")
+                lines.append("\n".join(parts))
+
+        if diff["edges_added"]:
+            lines.append(f"\n  ▲ Edges added ({len(diff['edges_added'])}):")
+            for e in diff["edges_added"][:10]:
+                lines.append(f"    + {e['source'][:8]}→{e['target'][:8]} [{e['relation']}]")
+            if len(diff["edges_added"]) > 10:
+                lines.append(f"    ... and {len(diff['edges_added']) - 10} more")
+
+        if diff["edges_removed"]:
+            lines.append(f"\n  ▼ Edges removed ({len(diff['edges_removed'])}):")
+            for e in diff["edges_removed"][:10]:
+                lines.append(f"    - {e['source'][:8]}→{e['target'][:8]} [{e['relation']}]")
+            if len(diff["edges_removed"]) > 10:
+                lines.append(f"    ... and {len(diff['edges_removed']) - 10} more")
+
+        if s["added"] == 0 and s["removed"] == 0 and s["changed"] == 0:
+            lines.append("  (no changes)")
+
+        return "\n".join(lines)
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

@@ -17106,3 +17106,312 @@ class TestGraphAnalytics:
         # Degrees: A=1, B=2, C=1 → avg = 4/3
         result = self.mg.graph_analytics()
         assert result["avg_degree"] == round(4/3, 2)
+
+
+# ── Cycle 187: Memory Diff ────────────────────────────────────────
+
+class TestMemoryDiff:
+    """Diff two MemoryGraph instances."""
+
+    def setup_method(self, method):
+        self.mg1 = MemoryGraph()
+        self.mg2 = MemoryGraph()
+
+    def test_diff_identical_graphs(self):
+        """No differences between graphs with same node IDs."""
+        for mg in [self.mg1, self.mg2]:
+            mg.conn.execute(
+                "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+                "VALUES ('n1','A','concept','{}',0,0,1.0)"
+            )
+            mg.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        assert diff["summary"]["added"] == 0
+        assert diff["summary"]["removed"] == 0
+        assert diff["summary"]["changed"] == 0
+
+    def test_diff_nodes_added(self):
+        """Detect nodes added in other graph."""
+        for mg in [self.mg1, self.mg2]:
+            mg.conn.execute(
+                "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+                "VALUES ('shared','Shared','concept','{}',0,0,1.0)"
+            )
+            mg.conn.commit()
+        self.mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('new1','New','event','{}',0,0,1.0)"
+        )
+        self.mg2.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        assert len(diff["nodes_added"]) == 1
+        assert diff["nodes_added"][0]["id"] == "new1"
+
+    def test_diff_node_added_same_id(self):
+        """Detect node added with same ID (via manual insertion)."""
+        # Insert directly with known IDs
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('node1','Old','fact','{}',0,0,1.0)"
+        )
+        self.mg1.conn.commit()
+
+        self.mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('node1','Old','fact','{}',0,0,1.0)"
+        )
+        self.mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('node2','New','event','{}',0,0,1.0)"
+        )
+        self.mg2.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        assert diff["summary"]["added"] == 1
+        assert diff["nodes_added"][0]["id"] == "node2"
+        assert diff["nodes_added"][0]["label"] == "New"
+
+    def test_diff_node_removed_same_id(self):
+        """Detect node removed."""
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('node1','A','fact','{}',0,0,1.0)"
+        )
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('node2','B','fact','{}',0,0,1.0)"
+        )
+        self.mg1.conn.commit()
+
+        self.mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('node1','A','fact','{}',0,0,1.0)"
+        )
+        self.mg2.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        assert len(diff["nodes_removed"]) == 1
+        assert diff["nodes_removed"][0]["id"] == "node2"
+
+    def test_diff_node_changed_label(self):
+        """Detect label change."""
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('n1','Before','fact','{}',0,0,1.0)"
+        )
+        self.mg1.conn.commit()
+
+        self.mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('n1','After','fact','{}',0,0,1.0)"
+        )
+        self.mg2.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        assert len(diff["nodes_changed"]) == 1
+        assert diff["nodes_changed"][0]["changes"]["label"]["old"] == "Before"
+        assert diff["nodes_changed"][0]["changes"]["label"]["new"] == "After"
+
+    def test_diff_node_changed_weight(self):
+        """Detect weight change."""
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('n1','Node','fact','{}',0,0,0.5)"
+        )
+        self.mg1.conn.commit()
+
+        self.mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('n1','Node','fact','{}',0,0,0.9)"
+        )
+        self.mg2.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        assert len(diff["nodes_changed"]) == 1
+        assert diff["nodes_changed"][0]["changes"]["weight"]["old"] == 0.5
+        assert diff["nodes_changed"][0]["changes"]["weight"]["new"] == 0.9
+
+    def test_diff_node_changed_data(self):
+        """Detect data payload change."""
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('n1','N','fact','{\"a\":1}',0,0,1.0)"
+        )
+        self.mg1.conn.commit()
+
+        self.mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('n1','N','fact','{\"a\":1,\"b\":2}',0,0,1.0)"
+        )
+        self.mg2.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        assert len(diff["nodes_changed"]) == 1
+        assert "data_added" in diff["nodes_changed"][0]["changes"]
+        assert "b" in diff["nodes_changed"][0]["changes"]["data_added"]
+
+    def test_diff_edges_added(self):
+        """Detect new edges."""
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('a','A','fact','{}',0,0,1.0)"
+        )
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('b','B','fact','{}',0,0,1.0)"
+        )
+        self.mg1.conn.commit()
+
+        # Copy nodes to mg2
+        for row in self.mg1.conn.execute("SELECT * FROM nodes").fetchall():
+            self.mg2.conn.execute(
+                "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (row["id"], row["label"], row["kind"], row["data"],
+                 row["created"], row["accessed"], row["weight"])
+            )
+        self.mg2.conn.execute(
+            "INSERT INTO edges (source,target,relation,weight) VALUES ('a','b','knows',1.0)"
+        )
+        self.mg2.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        assert len(diff["edges_added"]) == 1
+        assert diff["edges_added"][0]["source"] == "a"
+        assert diff["edges_added"][0]["target"] == "b"
+
+    def test_diff_edges_removed(self):
+        """Detect removed edges."""
+        # mg1 has edge, mg2 doesn't
+        for mg in [self.mg1, self.mg2]:
+            mg.conn.execute(
+                "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+                "VALUES ('a','A','fact','{}',0,0,1.0)"
+            )
+            mg.conn.execute(
+                "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+                "VALUES ('b','B','fact','{}',0,0,1.0)"
+            )
+
+        self.mg1.conn.execute(
+            "INSERT INTO edges (source,target,relation,weight) VALUES ('a','b','knows',1.0)"
+        )
+        self.mg1.conn.commit()
+        self.mg2.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        assert len(diff["edges_removed"]) == 1
+
+    def test_diff_summary(self):
+        """Summary aggregates all change types."""
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('old','Old','fact','{}',0,0,1.0)"
+        )
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('shared','S','fact','{}',0,0,1.0)"
+        )
+        self.mg1.conn.commit()
+
+        self.mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('new','New','event','{}',0,0,1.0)"
+        )
+        self.mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('shared','S2','fact','{}',0,0,0.8)"
+        )
+        self.mg2.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        s = diff["summary"]
+        # added: 1 node ('new') + 0 edges
+        assert s["added"] == 1
+        # removed: 1 node ('old')
+        assert s["removed"] == 1
+        # changed: 1 node ('shared' - label + weight changed)
+        assert s["changed"] == 1
+
+    def test_diff_quarantined_excluded(self):
+        """Quarantined nodes excluded from diff."""
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,quarantined) "
+            "VALUES ('q','Quarantined','fact','{}',0,0,1.0,1)"
+        )
+        self.mg1.conn.commit()
+
+        diff = self.mg1.diff_graph(self.mg2)
+        # Quarantined node is excluded, so it's like it doesn't exist
+        assert len(diff["nodes_removed"]) == 0
+
+    def test_diff_report_basic(self):
+        """diff_report produces human-readable output."""
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('n1','First','fact','{}',0,0,1.0)"
+        )
+        self.mg1.conn.commit()
+
+        self.mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('n2','Second','event','{}',0,0,1.0)"
+        )
+        self.mg2.conn.commit()
+
+        report = self.mg1.diff_report(other=self.mg2)
+        assert "added" in report
+        assert "removed" in report
+
+    def test_diff_report_no_changes(self):
+        """diff_report shows '(no changes)' for identical graphs."""
+        report = self.mg1.diff_report(other=self.mg2)
+        assert "(no changes)" in report
+
+    def test_diff_report_from_diff_dict(self):
+        """diff_report accepts a pre-computed diff dict."""
+        diff = {
+            "nodes_added": [{"id": "x", "label": "X", "kind": "fact", "weight": 1.0}],
+            "nodes_removed": [],
+            "nodes_changed": [],
+            "edges_added": [],
+            "edges_removed": [],
+            "summary": {"added": 1, "removed": 0, "changed": 0},
+        }
+        report = self.mg1.diff_report(diff=diff)
+        assert "X" in report
+        assert "+1 added" in report
+
+    def test_diff_report_requires_arg(self):
+        """diff_report raises if neither diff nor other is provided."""
+        with pytest.raises(ValueError):
+            self.mg1.diff_report()
+
+    def test_diff_report_truncates_long_edge_lists(self):
+        """Edge list in report is truncated to 10 items."""
+        self.mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+            "VALUES ('src','Src','fact','{}',0,0,1.0)"
+        )
+        self.mg1.conn.commit()
+        for mg in [self.mg1, self.mg2]:
+            for i in range(20):
+                mg.conn.execute(
+                    f"INSERT INTO nodes (id,label,kind,data,created,accessed,weight) "
+                    f"VALUES ('t{i}','T{i}','fact','{{}}',0,0,1.0)"
+                )
+        self.mg1.conn.commit()
+        self.mg2.conn.commit()
+
+        # Add 15 edges to mg2 only
+        for i in range(15):
+            self.mg2.conn.execute(
+                f"INSERT INTO edges (source,target,relation,weight) "
+                f"VALUES ('src','t{i}','r',1.0)"
+            )
+        self.mg2.conn.commit()
+
+        report = self.mg1.diff_report(other=self.mg2)
+        assert "... and 5 more" in report
