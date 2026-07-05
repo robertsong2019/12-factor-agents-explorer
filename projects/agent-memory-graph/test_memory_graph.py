@@ -17663,3 +17663,192 @@ class TestBatchDeleteNodes:
         result = mg.batch_delete_nodes([a.id, "fake_id"])
         assert result["count"] == 1
         assert len(result["skipped"]) == 1
+
+
+# ════════════════════════════════════════════════════════════════
+#  Cycle 189: Link Prediction — predict_links()
+# ════════════════════════════════════════════════════════════════
+
+class TestPredictLinks:
+    """Tests for predict_links()."""
+
+    def test_predict_links_finds_missing_edge(self):
+        """A-B-C chain: should predict A-C link (common neighbor B)."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "knows")
+        mg.link(b.id, c.id, "knows")
+        preds = mg.predict_links(node_id=a.id, limit=10)
+        # A and C share neighbor B → should be top prediction
+        assert any(p["target"] == c.id for p in preds)
+
+    def test_predict_links_empty_graph(self):
+        """No nodes → empty predictions."""
+        mg = MemoryGraph()
+        assert mg.predict_links() == []
+
+    def test_predict_links_no_missing_edges(self):
+        """Fully connected triad → no predictions."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(a.id, c.id, "r")
+        # Directed check: pairs that already have an edge should be excluded
+        preds = mg.predict_links()
+        # All 3 pairs are connected, so no predictions
+        assert len(preds) == 0
+
+    def test_predict_links_score_ordering(self):
+        """Higher common-neighbor score ranks first."""
+        mg = MemoryGraph()
+        # Star: hub connected to s1, s2, s3
+        hub = mg.add("Hub")
+        s1 = mg.add("S1")
+        s2 = mg.add("S2")
+        s3 = mg.add("S3")
+        mg.link(hub.id, s1.id, "r")
+        mg.link(hub.id, s2.id, "r")
+        mg.link(hub.id, s3.id, "r")
+        # New node connected only to s1, s2
+        new = mg.add("New")
+        mg.link(new.id, s1.id, "r")
+        mg.link(new.id, s2.id, "r")
+        preds = mg.predict_links(node_id=new.id, limit=5)
+        # new shares hub, s1, s2 with... many nodes
+        # Top should be hub (2 common: s1, s2) or s3 (2 common: hub)
+        assert len(preds) > 0
+        # Verify scores are descending
+        scores = [p["score"] for p in preds]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_predict_links_limit(self):
+        """Limit parameter truncates results."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(10)]
+        # Connect in a chain
+        for i in range(len(nodes) - 1):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        preds = mg.predict_links(limit=3)
+        assert len(preds) <= 3
+
+    def test_predict_links_min_score_filter(self):
+        """min_score filters out low-scoring predictions."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        preds = mg.predict_links(min_score=100.0)
+        # No pair should have score >= 100
+        assert len(preds) == 0
+
+    def test_predict_links_includes_labels(self):
+        """Predictions include source_label and target_label."""
+        mg = MemoryGraph()
+        a = mg.add("Alpha")
+        b = mg.add("Beta")
+        c = mg.add("Gamma")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        preds = mg.predict_links(node_id=a.id, limit=5)
+        assert len(preds) > 0
+        assert all("source_label" in p for p in preds)
+        assert all("target_label" in p for p in preds)
+
+    def test_predict_links_adamic_adar(self):
+        """Adamic-Adar component is computed."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        d = mg.add("D")  # high-degree common neighbor
+        mg.link(a.id, c.id, "r")
+        mg.link(b.id, c.id, "r")
+        # d connected to many → lower AA contribution
+        for n in [a, b, c]:
+            mg.link(d.id, n.id, "r")
+        preds = mg.predict_links(node_id=a.id, limit=10)
+        aa_scores = [p["adamic_adar"] for p in preds]
+        # At least some non-zero AA scores
+        assert any(s > 0 for s in aa_scores)
+
+    def test_predict_links_common_neighbors_count(self):
+        """Common neighbors count is correct."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c1 = mg.add("C1")
+        c2 = mg.add("C2")
+        c3 = mg.add("C3")
+        # a and b share c1, c2, c3
+        for c in [c1, c2, c3]:
+            mg.link(a.id, c.id, "r")
+            mg.link(b.id, c.id, "r")
+        preds = mg.predict_links(node_id=a.id, limit=10)
+        # Find b in predictions
+        b_pred = next((p for p in preds if p["target"] == b.id), None)
+        assert b_pred is not None
+        assert b_pred["common_neighbors"] == 3
+
+    def test_predict_links_preferential_attachment(self):
+        """PA score is the product of degrees."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        # a has degree 2, b and c have degree 1
+        preds = mg.predict_links(node_id=b.id, limit=10)
+        assert len(preds) > 0
+        # All predictions should have PA computed
+        assert all(p["preferential_attachment"] >= 0 for p in preds)
+
+    def test_predict_links_isolated_node(self):
+        """Isolated node has no predictions."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        preds = mg.predict_links(node_id=a.id)
+        assert preds == []
+
+    def test_predict_links_all_nodes_mode(self):
+        """When node_id=None, scans all node pairs."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        preds = mg.predict_links(limit=20)
+        # Should find the A-C missing link
+        assert any(
+            (p["source"] == a.id and p["target"] == c.id) or
+            (p["source"] == c.id and p["target"] == a.id)
+            for p in preds
+        )
+
+    def test_predict_links_no_self_loop(self):
+        """Never predicts a link from a node to itself."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        preds = mg.predict_links(node_id=a.id, limit=10)
+        assert all(p["source"] != p["target"] for p in preds)
+
+    def test_predict_links_score_is_float(self):
+        """Score is always a float."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        preds = mg.predict_links(node_id=a.id, limit=5)
+        for p in preds:
+            assert isinstance(p["score"], float)

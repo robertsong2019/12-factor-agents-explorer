@@ -15394,6 +15394,117 @@ class MemoryGraph:
                     skipped.append(f"{nid}: not found")
         return {"deleted": deleted, "skipped": skipped, "count": len(deleted)}
 
+    # ─── Link Prediction ────────────────────────────────────────────
+
+    def predict_links(self, node_id: str = None, limit: int = 10,
+                      min_score: float = 0.0) -> list[dict]:
+        """Suggest missing edges using common-neighbor heuristics.
+
+        For each pair of nodes (u, v) that are **not** directly connected,
+        compute a prediction score from three signals:
+
+        * **Common Neighbors** — number of shared neighbors.
+        * **Adamic-Adar** — sum of 1/log(degree(w)) over shared neighbors w.
+        * **Preferential Attachment** — degree(u) × degree(v).
+
+        The final ``score`` is a weighted blend
+        (0.4·CN + 0.4·AA + 0.2·PA_normalised).
+
+        Args:
+            node_id: If given, only predict links *from* this node.
+                     If None, scan all nodes (may be slow on large graphs).
+            limit: Maximum number of suggestions.
+            min_score: Filter out predictions below this threshold.
+
+        Returns a list of dicts sorted by score descending, each with keys:
+            ``source``, ``target``, ``source_label``, ``target_label``,
+            ``common_neighbors``, ``adamic_adar``, ``preferential_attachment``,
+            ``score``.
+        """
+        # Build adjacency sets (undirected for neighbor computation)
+        rows = self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall()
+        adj: dict[str, set[str]] = {}
+        for r in rows:
+            adj.setdefault(r["source"], set()).add(r["target"])
+            adj.setdefault(r["target"], set()).add(r["source"])
+
+        # Compute degree for every node
+        all_nodes = set()
+        for s, ts in adj.items():
+            all_nodes.add(s)
+            all_nodes |= ts
+        # Include isolated nodes too
+        node_rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        for nr in node_rows:
+            all_nodes.add(nr["id"])
+
+        degree = {n: len(adj.get(n, set())) for n in all_nodes}
+
+        import math
+
+        # Determine source set
+        sources = [node_id] if node_id else list(all_nodes)
+
+        predictions: list[dict] = []
+        seen_pairs: set[frozenset] = set()
+
+        for u in sources:
+            neighbors_u = adj.get(u, set())
+            for v in all_nodes:
+                if v == u:
+                    continue
+                pair = frozenset({u, v})
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                # Skip already-connected pairs
+                if v in neighbors_u:
+                    continue
+                # Compute scores
+                neighbors_v = adj.get(v, set())
+                common = neighbors_u & neighbors_v
+                cn = len(common)
+                if cn == 0 and degree[u] * degree[v] == 0:
+                    continue
+                aa = sum(
+                    1.0 / math.log(degree[w])
+                    for w in common
+                    if degree[w] > 1
+                )
+                pa = degree[u] * degree[v]
+                # Normalise PA: divide by max possible (N-1)^2
+                n_total = len(all_nodes)
+                pa_norm = pa / ((n_total - 1) ** 2) if n_total > 1 else 0.0
+                score = 0.4 * cn + 0.4 * aa + 0.2 * pa_norm
+                if score <= min_score:
+                    continue
+                predictions.append({
+                    "source": u,
+                    "target": v,
+                    "common_neighbors": cn,
+                    "adamic_adar": round(aa, 4),
+                    "preferential_attachment": pa,
+                    "score": round(score, 4),
+                })
+
+        predictions.sort(key=lambda p: p["score"], reverse=True)
+
+        # Resolve labels and truncate
+        label_cache: dict[str, str] = {}
+        for p in predictions[:limit]:
+            for key in ("source", "target"):
+                nid = p[key]
+                if nid not in label_cache:
+                    row = self.conn.execute(
+                        "SELECT label FROM nodes WHERE id=?", (nid,)
+                    ).fetchone()
+                    label_cache[nid] = row["label"] if row else nid
+                p[f"{key}_label"] = label_cache[nid]
+
+        return predictions[:limit]
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
