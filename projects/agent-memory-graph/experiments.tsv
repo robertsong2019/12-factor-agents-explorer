@@ -164,3 +164,9 @@ timestamp	commit	metric	value	status	description
 2026-07-05T21:30	aedafdb	test_pass_rate	100%	keep	zero regressions
 2026-07-05T21:35	30d77a3	test_count	1768	keep	Cycle 191: all_paths/k_shortest_paths (+15 tests)
 2026-07-05T21:40	30d77a3	test_pass_rate	100%	keep	zero regressions
+2026-07-05T22:25	cb63fb9	test_count	1782	keep	Cycle 192: extract_subgraph/neighborhood (+14 tests)
+2026-07-05T22:25	cb63fb9	test_pass_rate	100%	keep	zero regressions
+2026-07-05T22:40	23b12df	test_count	1795	keep	Cycle 193: betweenness_all/closeness_all/eigenvector_all (+13 tests)
+2026-07-05T22:40	23b12df	test_pass_rate	100%	keep	zero regressions
+2026-07-05T22:55	88d87e6	test_count	1803	keep	Cycle 194: merge_graph/to_dict/from_dict (+13 tests)
+2026-07-05T22:55	88d87e6	test_pass_rate	100%	keep	zero regressions
