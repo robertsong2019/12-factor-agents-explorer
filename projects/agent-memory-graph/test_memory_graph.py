@@ -17415,3 +17415,251 @@ class TestMemoryDiff:
 
         report = self.mg1.diff_report(other=self.mg2)
         assert "... and 5 more" in report
+
+
+# ════════════════════════════════════════════════════════════════
+#  Cycle 188: Batch Operations — batch_create_nodes / batch_add_edges / batch_delete_nodes
+# ════════════════════════════════════════════════════════════════
+
+class TestBatchCreateNodes:
+    """Tests for batch_create_nodes()."""
+
+    def test_batch_create_basic(self):
+        """Create 5 nodes in one call."""
+        mg = MemoryGraph()
+        result = mg.batch_create_nodes([
+            {"label": "Alpha", "kind": "concept"},
+            {"label": "Beta", "kind": "concept"},
+            {"label": "Gamma", "kind": "concept"},
+            {"label": "Delta", "kind": "fact"},
+            {"label": "Epsilon", "kind": "fact"},
+        ])
+        assert result["count"] == 5
+        assert len(result["created"]) == 5
+        assert result["skipped"] == []
+        assert all(n.label for n in result["created"])
+
+    def test_batch_create_with_data_and_tags(self):
+        """Nodes get correct data and tags."""
+        mg = MemoryGraph()
+        result = mg.batch_create_nodes([
+            {"label": "N1", "data": {"x": 1}, "tags": ["a", "b"]},
+            {"label": "N2", "data": {"y": 2}, "tags": ["c"]},
+        ])
+        n1 = mg.conn.execute("SELECT * FROM nodes WHERE label='N1'").fetchone()
+        assert json.loads(n1["data"]) == {"x": 1}
+        assert json.loads(n1["tags"]) == ["a", "b"]
+
+    def test_batch_create_weight(self):
+        """Custom weight is respected."""
+        mg = MemoryGraph()
+        result = mg.batch_create_nodes([
+            {"label": "Heavy", "weight": 5.0},
+            {"label": "Light", "weight": 0.1},
+        ])
+        h = mg.conn.execute("SELECT weight FROM nodes WHERE label='Heavy'").fetchone()
+        l = mg.conn.execute("SELECT weight FROM nodes WHERE label='Light'").fetchone()
+        assert h["weight"] == 5.0
+        assert l["weight"] == 0.1
+
+    def test_batch_create_default_kind_is_fact(self):
+        """Omitted kind defaults to 'fact'."""
+        mg = MemoryGraph()
+        result = mg.batch_create_nodes([{"label": "X"}])
+        node = result["created"][0]
+        assert node.kind == "fact"
+
+    def test_batch_create_skips_missing_label(self):
+        """Items without label are skipped, not crash."""
+        mg = MemoryGraph()
+        result = mg.batch_create_nodes([
+            {"label": "Good"},
+            {"kind": "concept"},  # no label
+            {"label": "Also Good"},
+        ])
+        assert result["count"] == 2
+        assert len(result["skipped"]) == 1
+
+    def test_batch_create_empty_list(self):
+        """Empty list returns zero count."""
+        mg = MemoryGraph()
+        result = mg.batch_create_nodes([])
+        assert result["count"] == 0
+        assert result["created"] == []
+
+    def test_batch_create_transaction_atomicity(self):
+        """All valid nodes are committed even if some are skipped."""
+        mg = MemoryGraph()
+        mg.batch_create_nodes([
+            {"label": "A"},
+            {},  # missing label → skipped
+            {"label": "B"},
+        ])
+        count = mg.conn.execute("SELECT COUNT(*) AS c FROM nodes").fetchone()["c"]
+        assert count == 2
+
+    def test_batch_create_generates_unique_ids(self):
+        """Each created node gets a unique ID."""
+        mg = MemoryGraph()
+        result = mg.batch_create_nodes([
+            {"label": f"N{i}"} for i in range(10)
+        ])
+        ids = [n.id for n in result["created"]]
+        assert len(set(ids)) == 10
+
+    def test_batch_create_fts_indexed(self):
+        """Created nodes are searchable via FTS."""
+        mg = MemoryGraph()
+        mg.batch_create_nodes([
+            {"label": "UniqueBatchTerm"},
+        ])
+        results = mg.search_by_label("UniqueBatchTerm")
+        assert len(results) >= 1
+
+    def test_batch_create_ticks_event(self):
+        """Batch operation emits a tick."""
+        mg = MemoryGraph()
+        mg.batch_create_nodes([{"label": "T"}])
+        log = mg.event_log()
+        assert any(e["op"] == "batch_create_nodes" for e in log)
+
+
+class TestBatchAddEdges:
+    """Tests for batch_add_edges()."""
+
+    def test_batch_add_edges_basic(self):
+        """Add 3 edges by label in one call."""
+        mg = MemoryGraph()
+        mg.batch_create_nodes([
+            {"label": "A"}, {"label": "B"}, {"label": "C"}
+        ])
+        result = mg.batch_add_edges([
+            {"source": "A", "target": "B", "relation": "r1"},
+            {"source": "B", "target": "C", "relation": "r2"},
+            {"source": "A", "target": "C", "relation": "r3"},
+        ])
+        assert result["count"] == 3
+        assert result["skipped"] == []
+
+    def test_batch_add_edges_by_id(self):
+        """Add edges using node IDs directly."""
+        mg = MemoryGraph()
+        nodes = mg.batch_create_nodes([{"label": "X"}, {"label": "Y"}])
+        x_id, y_id = nodes["created"][0].id, nodes["created"][1].id
+        result = mg.batch_add_edges([
+            {"source": x_id, "target": y_id, "relation": "knows"},
+        ])
+        assert result["count"] == 1
+
+    def test_batch_add_edges_with_weight(self):
+        """Edge weights are respected."""
+        mg = MemoryGraph()
+        mg.batch_create_nodes([{"label": "P"}, {"label": "Q"}])
+        mg.batch_add_edges([
+            {"source": "P", "target": "Q", "relation": "r", "weight": 3.5},
+        ])
+        row = mg.conn.execute(
+            "SELECT weight FROM edges WHERE source=("
+            "SELECT id FROM nodes WHERE label='P') "
+            "AND target=(SELECT id FROM nodes WHERE label='Q')"
+        ).fetchone()
+        assert row["weight"] == 3.5
+
+    def test_batch_add_edges_missing_node_skipped(self):
+        """Non-existent nodes are skipped."""
+        mg = MemoryGraph()
+        mg.add("Real", "concept")
+        result = mg.batch_add_edges([
+            {"source": "Real", "target": "Ghost", "relation": "r"},
+        ])
+        assert result["count"] == 0
+        assert len(result["skipped"]) == 1
+
+    def test_batch_add_edges_missing_fields_skipped(self):
+        """Items missing required fields are skipped."""
+        mg = MemoryGraph()
+        result = mg.batch_add_edges([
+            {"source": "A"},  # missing target, relation
+        ])
+        assert result["count"] == 0
+        assert len(result["skipped"]) == 1
+
+    def test_batch_add_edges_empty(self):
+        """Empty list returns zero."""
+        mg = MemoryGraph()
+        result = mg.batch_add_edges([])
+        assert result["count"] == 0
+
+    def test_batch_add_edges_partial_success(self):
+        """Valid edges added even when some fail."""
+        mg = MemoryGraph()
+        mg.add("A", "concept")
+        result = mg.batch_add_edges([
+            {"source": "A", "target": "Ghost", "relation": "r"},  # fail
+            {"source": "A", "target": "A", "relation": "self"},  # ok (self-loop)
+        ])
+        assert result["count"] == 1
+        assert len(result["skipped"]) == 1
+
+    def test_batch_add_edges_ticks_event(self):
+        """Batch add emits a tick."""
+        mg = MemoryGraph()
+        mg.add("X", "concept")
+        mg.add("Y", "concept")
+        mg.batch_add_edges([{"source": "X", "target": "Y", "relation": "r"}])
+        log = mg.event_log()
+        assert any(e["op"] == "batch_add_edges" for e in log)
+
+
+class TestBatchDeleteNodes:
+    """Tests for batch_delete_nodes()."""
+
+    def test_batch_delete_basic(self):
+        """Delete multiple nodes."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        result = mg.batch_delete_nodes([a.id, b.id, c.id])
+        assert result["count"] == 3
+        assert len(result["deleted"]) == 3
+
+    def test_batch_delete_safe_mode(self):
+        """Safe mode skips nodes with dependents."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "depends_on")
+        # b has a dependent (a points to b), so deleting b should be blocked
+        result = mg.batch_delete_nodes([b.id], safe=True)
+        assert result["count"] == 0
+
+    def test_batch_delete_force_mode(self):
+        """Force mode deletes regardless of dependents."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "depends_on")
+        result = mg.batch_delete_nodes([a.id], safe=False)
+        assert result["count"] == 1
+
+    def test_batch_delete_nonexistent(self):
+        """Non-existent IDs go to skipped."""
+        mg = MemoryGraph()
+        result = mg.batch_delete_nodes(["fake_id_123"])
+        assert result["count"] == 0
+        assert len(result["skipped"]) == 1
+
+    def test_batch_delete_empty(self):
+        """Empty list returns zero."""
+        mg = MemoryGraph()
+        result = mg.batch_delete_nodes([])
+        assert result["count"] == 0
+
+    def test_batch_delete_partial(self):
+        """Valid deletions proceed even if some fail."""
+        mg = MemoryGraph()
+        a = mg.add("Real")
+        result = mg.batch_delete_nodes([a.id, "fake_id"])
+        assert result["count"] == 1
+        assert len(result["skipped"]) == 1

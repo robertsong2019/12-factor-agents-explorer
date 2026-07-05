@@ -15282,6 +15282,118 @@ class MemoryGraph:
 
         return "\n".join(lines)
 
+    # ─── Batch Operations ───────────────────────────────────────────
+
+    def batch_create_nodes(self, nodes_data: list[dict]) -> dict:
+        """Create multiple nodes in a single transaction.
+
+        Each item in *nodes_data* must be a dict with keys:
+            label (required), kind (default 'fact'), data (default {}),
+            tags (default []), weight (default 1.0).
+
+        Returns a dict with keys ``created`` (list of Node),
+        ``skipped`` (list of error strings), and ``count``.
+        """
+        created: list[Node] = []
+        skipped: list[str] = []
+        now = time.time()
+        for item in nodes_data:
+            label = item.get("label")
+            if not label:
+                skipped.append(f"missing label: {item}")
+                continue
+            try:
+                node = Node(
+                    id=uuid.uuid4().hex[:12],
+                    label=label,
+                    kind=item.get("kind", "fact"),
+                    data=item.get("data", {}),
+                    created=now, accessed=now,
+                    weight=item.get("weight", 1.0),
+                )
+                self.conn.execute(
+                    "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (node.id, node.label, node.kind, json.dumps(node.data),
+                     node.created, node.accessed, node.weight,
+                     json.dumps(item.get("tags", []))),
+                )
+                self._fts_sync_node(node.id)
+                created.append(node)
+            except Exception as exc:
+                skipped.append(f"{label}: {exc}")
+        self.conn.commit()
+        self._tick("batch_create_nodes", None, {"count": len(created)})
+        return {"created": created, "skipped": skipped, "count": len(created)}
+
+    def batch_add_edges(self, edges_data: list[dict]) -> dict:
+        """Add multiple edges in a single transaction.
+
+        Each item in *edges_data* must be a dict with keys:
+            source (required), target (required), relation (required),
+            weight (default 1.0).
+
+        Source and target may be either node IDs or labels
+        (resolved via ``link_by_label`` semantics: ID first, then label).
+
+        Returns a dict with keys ``added``, ``skipped``, and ``count``.
+        """
+        added = 0
+        skipped: list[str] = []
+        for item in edges_data:
+            src = item.get("source")
+            tgt = item.get("target")
+            rel = item.get("relation")
+            if not src or not tgt or not rel:
+                skipped.append(f"missing fields: {item}")
+                continue
+            w = item.get("weight", 1.0)
+            # Try direct ID first, then label lookup
+            src_row = self.conn.execute(
+                "SELECT id FROM nodes WHERE id=? OR label=? ORDER BY created DESC LIMIT 1",
+                (src, src),
+            ).fetchone()
+            tgt_row = self.conn.execute(
+                "SELECT id FROM nodes WHERE id=? OR label=? ORDER BY created DESC LIMIT 1",
+                (tgt, tgt),
+            ).fetchone()
+            if not src_row or not tgt_row:
+                skipped.append(f"node not found: {src}→{tgt}")
+                continue
+            try:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO edges VALUES (?,?,?,?)",
+                    (src_row["id"], tgt_row["id"], rel, w),
+                )
+                added += 1
+            except Exception as exc:
+                skipped.append(f"{src}→{tgt}: {exc}")
+        self.conn.commit()
+        self._tick("batch_add_edges", None, {"count": added})
+        return {"added": added, "skipped": skipped, "count": added}
+
+    def batch_delete_nodes(self, node_ids: list[str], safe: bool = True) -> dict:
+        """Delete multiple nodes.  If *safe* is True, nodes with live
+        dependents are skipped (uses ``delete_node_safe``).
+
+        Returns dict with ``deleted``, ``skipped``, ``count``.
+        """
+        deleted: list[str] = []
+        skipped: list[str] = []
+        for nid in node_ids:
+            if safe:
+                result = self.delete_node_safe(nid)
+                if result["deleted"]:
+                    deleted.append(nid)
+                else:
+                    skipped.append(f"{nid}: {result.get('reason', 'unknown')}")
+            else:
+                if self.delete_node(nid):
+                    deleted.append(nid)
+                else:
+                    skipped.append(f"{nid}: not found")
+        return {"deleted": deleted, "skipped": skipped, "count": len(deleted)}
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
