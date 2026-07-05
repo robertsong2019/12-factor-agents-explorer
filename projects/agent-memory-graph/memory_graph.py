@@ -16231,6 +16231,236 @@ class MemoryGraph:
             mg._rebuild_fts()
         return mg
 
+    # ─────────────────────────────────────────────
+    # Cycle 195: Graph Contraction (Supernode Collapse)
+    # ─────────────────────────────────────────────
+
+    def contract_nodes(self, node_ids: list[str],
+                       supernode_label: str,
+                       kind: str = "supernode",
+                       data: dict = None,
+                       quarantine_members: bool = True) -> dict:
+        """Collapse a set of nodes into a single supernode.
+
+        External edges to/from any member node are redirected to the
+        supernode with aggregated weights (sum).  Internal edges between
+        contracted members are dropped (not converted to self-loops).
+
+        Use cases:
+        - Multi-resolution graph views (collapse communities)
+        - Entity merging / deduplication
+        - Abstraction hierarchies
+
+        Args:
+            node_ids: IDs of nodes to contract (must exist).
+            supernode_label: Label for the new supernode.
+            kind: Kind for the supernode (default "supernode").
+            data: Optional extra data to set on the supernode.
+                  Member node data is merged under "contracted_from".
+            quarantine_members: If True, quarantine member nodes
+                                (preserving audit trail) instead of deleting.
+
+        Returns a dict:
+            supernode_id, member_ids, edges_redirected, internal_edges_dropped
+        """
+        # Validate	node_ids
+        existing = set()
+        for nid in node_ids:
+            row = self.conn.execute(
+                "SELECT id FROM nodes WHERE id = ?", (nid,)
+            ).fetchone()
+            if row:
+                existing.add(nid)
+        if len(existing) < 2:
+            return {"supernode_id": None, "error": "Need ≥2 existing nodes to contract"}
+
+        member_ids = list(existing)
+        member_set = set(member_ids)
+
+        # Create supernode
+        sn = self.add(supernode_label, kind=kind,
+                      data=data or {}, tags=["contracted"])
+
+        # Merge member data
+        contracted_from = {}
+        for nid in member_ids:
+            row = self.conn.execute(
+                "SELECT label, kind, data, weight FROM nodes WHERE id = ?", (nid,)
+            ).fetchone()
+            if row:
+                contracted_from[nid] = {
+                    "label": row["label"],
+                    "kind": row["kind"],
+                    "weight": row["weight"],
+                }
+        sn_member_data = json.loads(
+            self.conn.execute("SELECT data FROM nodes WHERE id = ?", (sn.id,)).fetchone()["data"]
+        )
+        sn_member_data["contracted_from"] = contracted_from
+        self.conn.execute(
+            "UPDATE nodes SET data = ? WHERE id = ?",
+            (json.dumps(sn_member_data), sn.id)
+        )
+
+        edges_redirected = 0
+        internal_edges_dropped = 0
+
+        # Redirect external edges → supernode
+        edges_to_process = []
+        for nid in member_ids:
+            for r in self.conn.execute(
+                "SELECT source, target, relation, weight FROM edges WHERE source = ? OR target = ?",
+                (nid, nid)
+            ).fetchall():
+                edges_to_process.append(dict(r))
+
+        seen_edge_keys = {}  # (new_source, new_target, relation) → summed weight
+        seen_internal = set()  # (src, tgt, rel) dedup for internal edges
+
+        for e in edges_to_process:
+            src, tgt, rel, w = e["source"], e["target"], e["relation"], e["weight"]
+            is_internal = src in member_set and tgt in member_set
+            if is_internal:
+                # Count each internal edge once (skip duplicates from reverse scan)
+                ikey = (src, tgt, rel)
+                if ikey not in seen_internal:
+                    internal_edges_dropped += 1
+                    seen_internal.add(ikey)
+                continue
+            # Map endpoints
+            new_src = sn.id if src in member_set else src
+            new_tgt = sn.id if tgt in member_set else tgt
+            key = (new_src, new_tgt, rel)
+            if key in seen_edge_keys:
+                seen_edge_keys[key] += w
+            else:
+                seen_edge_keys[key] = w
+            edges_redirected += 1
+
+        # Write aggregated edges
+        for (new_src, new_tgt, rel), total_w in seen_edge_keys.items():
+            self.conn.execute(
+                """INSERT INTO edges (source, target, relation, weight)
+                   VALUES (?,?,?,?)
+                   ON CONFLICT(source,target,relation) DO UPDATE SET weight = weight + ?""",
+                (new_src, new_tgt, rel, total_w, total_w)
+            )
+            # Merge edge props if any
+            for old_nid in member_ids:
+                old_src = old_nid if new_src == sn.id else new_src
+                old_tgt = old_nid if new_tgt == sn.id else new_tgt
+                prop_row = self.conn.execute(
+                    "SELECT properties FROM edge_props WHERE source=? AND target=? AND relation=?",
+                    (old_src, old_tgt, rel)
+                ).fetchone()
+                if prop_row:
+                    props = json.loads(prop_row["properties"])
+                    if props:
+                        existing_prop = self.conn.execute(
+                            "SELECT properties FROM edge_props WHERE source=? AND target=? AND relation=?",
+                            (new_src, new_tgt, rel)
+                        ).fetchone()
+                        merged = json.loads(existing_prop["properties"]) if existing_prop else {}
+                        merged.update(props)
+                        self.conn.execute(
+                            """INSERT OR REPLACE INTO edge_props (source,target,relation,properties)
+                               VALUES (?,?,?,?)""",
+                            (new_src, new_tgt, rel, json.dumps(merged))
+                        )
+
+        # Remove old edges touching members
+        for nid in member_ids:
+            self.conn.execute(
+                "DELETE FROM edges WHERE source = ? OR target = ?", (nid, nid)
+            )
+            self.conn.execute(
+                "DELETE FROM edge_props WHERE source = ? OR target = ?", (nid, nid)
+            )
+
+        # Quarantine or delete members
+        if quarantine_members:
+            for nid in member_ids:
+                self.conn.execute(
+                    """UPDATE nodes SET quarantined = 1, quarantine_reason = ?
+                       WHERE id = ?""",
+                    (f"contracted into {sn.id}", nid)
+                )
+
+        self.conn.commit()
+        self._rebuild_fts()
+
+        # Emit event
+        self._emit("contract", {
+            "supernode_id": sn.id,
+            "member_ids": member_ids,
+            "edges_redirected": edges_redirected,
+        })
+
+        return {
+            "supernode_id": sn.id,
+            "member_ids": member_ids,
+            "edges_redirected": edges_redirected,
+            "internal_edges_dropped": internal_edges_dropped,
+        }
+
+    def contract_communities(self, labels: list[str] = None,
+                             max_iterations: int = 20,
+                             resolution: float = 1.0) -> dict:
+        """Detect communities and contract each into a supernode.
+
+        Runs LPA community detection, then collapses each community
+        into a single supernode.  Useful for multi-resolution analysis
+        and graph summarisation.
+
+        Args:
+            labels: Optional list of labels for supernodes (one per
+                    community).  If shorter than community count or None,
+                    auto-generated as "community_N".
+            max_iterations: Max LPA iterations.
+            resolution: LPA resolution parameter.
+
+        Returns a dict:
+            communities_found, supernode_ids, total_edges_redirected
+        """
+        # Only contract non-quarantined nodes
+        active_nodes = [
+            r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined = 0"
+            ).fetchall()
+        ]
+        if len(active_nodes) < 2:
+            return {"communities_found": 0, "supernode_ids": [], "total_edges_redirected": 0}
+
+        result = self.detect_communities(
+            max_iterations=max_iterations, resolution=resolution
+        )
+        partition = result.get("node_community", {})
+
+        # Group node IDs by community
+        comm_groups = defaultdict(list)
+        for nid, cid in partition.items():
+            if nid in active_nodes:
+                comm_groups[cid].append(nid)
+
+        # Only contract communities with ≥2 members
+        comm_groups = {k: v for k, v in comm_groups.items() if len(v) >= 2}
+
+        supernode_ids = []
+        total_redirected = 0
+
+        for i, (cid, nids) in enumerate(sorted(comm_groups.items())):
+            label = labels[i] if labels and i < len(labels) else f"community_{cid}"
+            r = self.contract_nodes(nids, label, kind="community_supernode")
+            if r.get("supernode_id"):
+                supernode_ids.append(r["supernode_id"])
+                total_redirected += r.get("edges_redirected", 0)
+
+        return {
+            "communities_found": len(comm_groups),
+            "supernode_ids": supernode_ids,
+            "total_edges_redirected": total_redirected,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

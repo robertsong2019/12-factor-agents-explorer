@@ -18639,3 +18639,283 @@ class TestToDictFromDict:
         mg2 = MemoryGraph.from_dict(d)
         row = mg2.conn.execute("SELECT weight FROM nodes WHERE label='A'").fetchone()
         assert abs(row["weight"] - 0.5) < 1e-9
+
+
+# ─────────────────────────────────────────────
+# Cycle 195: Graph Contraction (Supernode Collapse)
+# ─────────────────────────────────────────────
+
+class TestContractNodes:
+    """Tests for contract_nodes() — collapse nodes into supernodes."""
+
+    def test_basic_contraction(self):
+        """Three nodes contract into one supernode."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        result = mg.contract_nodes([a.id, b.id, c.id], "ABC-supernode")
+        assert result["supernode_id"] is not None
+        assert len(result["member_ids"]) == 3
+        sn = mg.get_node(result["supernode_id"])
+        assert sn is not None
+        assert sn.label == "ABC-supernode"
+        assert sn.kind == "supernode"
+
+    def test_external_edges_redirected(self):
+        """Edges from outside to contracted members are redirected to supernode."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        x = mg.add("X")  # external
+        mg.link(x.id, a.id, "connects", 1.0)
+        mg.link(x.id, b.id, "connects", 2.0)
+        result = mg.contract_nodes([a.id, b.id], "AB")
+        sn_id = result["supernode_id"]
+        # Supernode should have one aggregated edge from X with weight 3.0
+        edge = mg.conn.execute(
+            "SELECT weight FROM edges WHERE source=? AND target=? AND relation=?",
+            (x.id, sn_id, "connects")
+        ).fetchone()
+        assert edge is not None
+        assert abs(edge["weight"] - 3.0) < 1e-9
+        assert result["edges_redirected"] == 2
+
+    def test_internal_edges_dropped(self):
+        """Edges between contracted members are dropped, not self-loops."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "friends", 1.0)
+        result = mg.contract_nodes([a.id, b.id], "AB")
+        assert result["internal_edges_dropped"] == 1
+        # No self-loop on supernode
+        sn_id = result["supernode_id"]
+        self_loops = mg.conn.execute(
+            "SELECT COUNT(*) as c FROM edges WHERE source=? AND target=?",
+            (sn_id, sn_id)
+        ).fetchone()
+        assert self_loops["c"] == 0
+
+    def test_members_quarantined(self):
+        """Member nodes are quarantined (not deleted) by default."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        result = mg.contract_nodes([a.id, b.id], "AB")
+        for nid in result["member_ids"]:
+            row = mg.conn.execute(
+                "SELECT quarantined, quarantine_reason FROM nodes WHERE id=?",
+                (nid,)
+            ).fetchone()
+            assert row["quarantined"] == 1
+            assert "contracted" in row["quarantine_reason"]
+
+    def test_contracted_from_data_preserved(self):
+        """Supernode data contains info about source nodes."""
+        mg = MemoryGraph()
+        a = mg.add("Alice", "person", {"age": 30})
+        b = mg.add("Bob", "person", {"age": 25})
+        result = mg.contract_nodes([a.id, b.id], "AB-group")
+        sn = mg.get_node(result["supernode_id"])
+        data = json.loads(sn.data) if isinstance(sn.data, str) else sn.data
+        assert "contracted_from" in data
+        assert a.id in data["contracted_from"]
+        assert data["contracted_from"][a.id]["label"] == "Alice"
+
+    def test_bidirectional_edges_aggregated(self):
+        """Both incoming and outgoing edges are redirected."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        x = mg.add("X")
+        y = mg.add("Y")
+        mg.link(x.id, a.id, "points_to", 1.0)  # X → A (incoming)
+        mg.link(b.id, y.id, "leads_to", 2.0)    # B → Y (outgoing)
+        result = mg.contract_nodes([a.id, b.id], "AB")
+        sn_id = result["supernode_id"]
+        # X → supernode
+        e1 = mg.conn.execute(
+            "SELECT weight FROM edges WHERE source=? AND target=? AND relation=?",
+            (x.id, sn_id, "points_to")
+        ).fetchone()
+        assert e1 is not None and e1["weight"] == 1.0
+        # supernode → Y
+        e2 = mg.conn.execute(
+            "SELECT weight FROM edges WHERE source=? AND target=? AND relation=?",
+            (sn_id, y.id, "leads_to")
+        ).fetchone()
+        assert e2 is not None and e2["weight"] == 2.0
+
+    def test_too_few_nodes_returns_error(self):
+        """Contracting < 2 nodes returns error."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        result = mg.contract_nodes([a.id], "singleton")
+        assert result["supernode_id"] is None
+        assert "error" in result
+
+    def test_nonexistent_nodes_skipped(self):
+        """Non-existent node IDs are silently skipped."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        result = mg.contract_nodes([a.id, b.id, "fake-id"], "AB")
+        assert len(result["member_ids"]) == 2
+
+    def test_contraction_tags(self):
+        """Supernode gets 'contracted' tag."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        result = mg.contract_nodes([a.id, b.id], "AB")
+        tags = json.loads(mg.conn.execute(
+            "SELECT tags FROM nodes WHERE id=?", (result["supernode_id"],)
+        ).fetchone()["tags"])
+        assert "contracted" in tags
+
+    def test_extra_data_merged(self):
+        """Extra data passed to contract_nodes is set on supernode."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        result = mg.contract_nodes(
+            [a.id, b.id], "AB", data={"source": "manual"}
+        )
+        sn = mg.get_node(result["supernode_id"])
+        data = json.loads(sn.data) if isinstance(sn.data, str) else sn.data
+        assert data["source"] == "manual"
+
+    def test_quarantine_members_false_deletes_edges(self):
+        """When quarantine_members=False, old edges are still cleaned up."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "internal", 1.0)
+        mg.link(c.id, a.id, "external", 1.0)
+        result = mg.contract_nodes([a.id, b.id], "AB", quarantine_members=False)
+        # Members not quarantined
+        a_row = mg.conn.execute(
+            "SELECT quarantined FROM nodes WHERE id=?", (a.id,)
+        ).fetchone()
+        assert a_row["quarantined"] == 0
+        # But old edges removed
+        old_edges = mg.conn.execute(
+            "SELECT COUNT(*) as c FROM edges WHERE source=? OR target=?",
+            (a.id, a.id)
+        ).fetchone()
+        assert old_edges["c"] == 0
+
+    def test_edge_props_merged(self):
+        """Edge properties from redirected edges are merged."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        x = mg.add("X")
+        mg.link(x.id, a.id, "relates", 1.0)
+        # Add edge prop
+        mg.conn.execute(
+            "INSERT OR REPLACE INTO edge_props VALUES (?,?,?,?)",
+            (x.id, a.id, "relates", json.dumps({"confidence": 0.9}))
+        )
+        mg.conn.commit()
+        result = mg.contract_nodes([a.id, b.id], "AB")
+        sn_id = result["supernode_id"]
+        prop = mg.conn.execute(
+            "SELECT properties FROM edge_props WHERE source=? AND target=? AND relation=?",
+            (x.id, sn_id, "relates")
+        ).fetchone()
+        assert prop is not None
+        props = json.loads(prop["properties"])
+        assert props.get("confidence") == 0.9
+
+    def test_contract_then_recall_works(self):
+        """Recall still works after contraction."""
+        mg = MemoryGraph()
+        a = mg.add("Python", "skill")
+        b = mg.add("Rust", "skill")
+        x = mg.add("Project", "concept")
+        mg.link(x.id, a.id, "uses", 1.0)
+        mg.link(x.id, b.id, "uses", 1.0)
+        mg.contract_nodes([a.id, b.id], "Langs")
+        results = mg.recall("Project")
+        assert len(results) > 0
+
+    def test_large_contraction(self):
+        """Contracting 10 nodes into one supernode works."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(10)]
+        ext = mg.add("External")
+        for n in nodes:
+            mg.link(ext.id, n.id, "connects", 1.0)
+        result = mg.contract_nodes([n.id for n in nodes], "Mega")
+        assert len(result["member_ids"]) == 10
+        assert result["edges_redirected"] == 10
+
+
+class TestContractCommunities:
+    """Tests for contract_communities() — auto-detect and contract."""
+
+    def test_basic_community_contraction(self):
+        """Detects communities and contracts them into supernodes."""
+        mg = MemoryGraph()
+        # Create two dense clusters with cross-link
+        a1 = mg.add("A1")
+        a2 = mg.add("A2")
+        a3 = mg.add("A3")
+        a4 = mg.add("A4")
+        b1 = mg.add("B1")
+        b2 = mg.add("B2")
+        b3 = mg.add("B3")
+        b4 = mg.add("B4")
+        # Cluster A (dense)
+        for s, t in [(a1,a2),(a1,a3),(a1,a4),(a2,a3),(a2,a4),(a3,a4)]:
+            mg.link(s.id, t.id, "relates")
+        # Cluster B (dense)
+        for s, t in [(b1,b2),(b1,b3),(b1,b4),(b2,b3),(b2,b4),(b3,b4)]:
+            mg.link(s.id, t.id, "relates")
+        # Single weak cross-link
+        mg.link(a1.id, b1.id, "bridge", 0.1)
+        result = mg.contract_communities()
+        # Should find at least 1 community with ≥2 members
+        assert result["communities_found"] >= 1
+        assert len(result["supernode_ids"]) >= 1
+
+    def test_no_communities_returns_empty(self):
+        """Isolated nodes produce no communities."""
+        mg = MemoryGraph()
+        mg.add("Lonely1")
+        mg.add("Lonely2")
+        result = mg.contract_communities()
+        assert result["communities_found"] == 0
+        assert result["supernode_ids"] == []
+
+    def test_custom_labels(self):
+        """Custom labels are applied to supernodes."""
+        mg = MemoryGraph()
+        a1 = mg.add("A1")
+        a2 = mg.add("A2")
+        a3 = mg.add("A3")
+        a4 = mg.add("A4")
+        mg.link(a1.id, a2.id, "relates")
+        mg.link(a2.id, a3.id, "relates")
+        mg.link(a3.id, a4.id, "relates")
+        mg.link(a4.id, a1.id, "relates")
+        result = mg.contract_communities(labels=["my-cluster"])
+        if result["supernode_ids"]:
+            sn = mg.get_node(result["supernode_ids"][0])
+            assert sn.label == "my-cluster"
+
+    def test_supernodes_kind(self):
+        """Community supernodes have kind='community_supernode'."""
+        mg = MemoryGraph()
+        a1 = mg.add("A1")
+        a2 = mg.add("A2")
+        a3 = mg.add("A3")
+        mg.link(a1.id, a2.id, "relates")
+        mg.link(a2.id, a3.id, "relates")
+        result = mg.contract_communities()
+        for sid in result["supernode_ids"]:
+            sn = mg.get_node(sid)
+            assert sn.kind == "community_supernode"
