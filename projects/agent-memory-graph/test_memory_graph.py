@@ -16690,3 +16690,239 @@ class TestSleepConsolidate:
         result = self.mg.sleep_consolidate()
         assert result["merged"] == 0
         assert result["kept"] == 1
+
+
+# ── Cycle 185: Episodic Memory Replay ────────────────────────────
+
+class TestEpisodicReplay:
+    """Episodic memory: temporal sequence retrieval and replay."""
+
+    def setup_method(self, method):
+        self.mg = MemoryGraph()
+        self.base_time = 1700000000.0  # Fixed epoch for deterministic tests
+
+    def _add_at_time(self, label, kind="event", t=0):
+        """Add a node with a specific created timestamp."""
+        node = self.mg.add(label, kind)
+        self.mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (self.base_time + t, node.id)
+        )
+        self.mg.conn.commit()
+        return node
+
+    def test_retrieve_episodes_basic(self):
+        """retrieve_episodes returns nodes in temporal order."""
+        n1 = self._add_at_time("Breakfast", t=100)
+        n2 = self._add_at_time("Standup meeting", t=200)
+        n3 = self._add_at_time("Code review", t=300)
+
+        episodes = self.mg.retrieve_episodes()
+        assert len(episodes) == 3
+        assert episodes[0]["node"].label == "Breakfast"
+        assert episodes[1]["node"].label == "Standup meeting"
+        assert episodes[2]["node"].label == "Code review"
+
+    def test_retrieve_episodes_time_window(self):
+        """Filter episodes by start_time and end_time."""
+        self._add_at_time("A", t=100)
+        self._add_at_time("B", t=200)
+        self._add_at_time("C", t=300)
+
+        episodes = self.mg.retrieve_episodes(
+            start_time=self.base_time + 150,
+            end_time=self.base_time + 250
+        )
+        assert len(episodes) == 1
+        assert episodes[0]["node"].label == "B"
+
+    def test_retrieve_episodes_kind_filter(self):
+        """Filter episodes by node kind."""
+        self._add_at_time("Event A", kind="event", t=100)
+        self._add_at_time("Fact B", kind="fact", t=200)
+        self._add_at_time("Event C", kind="event", t=300)
+
+        episodes = self.mg.retrieve_episodes(kind="event")
+        assert len(episodes) == 2
+        assert all(ep["node"].kind == "event" for ep in episodes)
+
+    def test_retrieve_episodes_gaps(self):
+        """Episodes include temporal gap calculations."""
+        self._add_at_time("First", t=100)
+        self._add_at_time("Second", t=250)
+        self._add_at_time("Third", t=260)
+
+        episodes = self.mg.retrieve_episodes()
+        assert episodes[0]["prev_gap_seconds"] == 0.0  # First has no prev
+        assert episodes[1]["prev_gap_seconds"] == 150.0  # 250-100
+        assert episodes[2]["prev_gap_seconds"] == 10.0   # 260-250
+        assert episodes[2]["cumulative_seconds"] == 160.0  # 150+10
+
+    def test_retrieve_episodes_limit(self):
+        """Limit the number of episodes returned."""
+        for i in range(10):
+            self._add_at_time(f"E{i}", t=i * 10)
+
+        episodes = self.mg.retrieve_episodes(limit=5)
+        assert len(episodes) == 5
+        assert episodes[0]["node"].label == "E0"
+        assert episodes[4]["node"].label == "E4"
+
+    def test_retrieve_episodes_quarantine_excluded(self):
+        """Quarantined nodes are excluded from episodes."""
+        n1 = self._add_at_time("Active", t=100)
+        n2 = self._add_at_time("Hidden", t=200)
+        self._add_at_time("Visible", t=300)
+
+        self.mg.conn.execute("UPDATE nodes SET quarantined=1 WHERE id=?", (n2.id,))
+        self.mg.conn.commit()
+
+        episodes = self.mg.retrieve_episodes()
+        labels = [ep["node"].label for ep in episodes]
+        assert "Hidden" not in labels
+        assert len(episodes) == 2
+
+    def test_retrieve_episodes_neighborhood(self):
+        """Filter episodes to neighborhood of a specific node."""
+        a = self._add_at_time("Center", kind="concept", t=100)
+        b = self._add_at_time("Connected", kind="concept", t=200)
+        self._add_at_time("Unrelated", kind="concept", t=300)
+
+        self.mg.link(a.id, b.id, "related")
+
+        episodes = self.mg.retrieve_episodes(node_id=a.id)
+        labels = [ep["node"].label for ep in episodes]
+        assert "Center" in labels
+        assert "Connected" in labels
+        assert "Unrelated" not in labels
+
+    def test_retrieve_episodes_empty(self):
+        """Empty graph returns empty episodes."""
+        assert self.mg.retrieve_episodes() == []
+
+    def test_episode_timeline_format(self):
+        """episode_timeline produces human-readable output."""
+        self._add_at_time("First event", t=100)
+        self._add_at_time("Second event", t=200)
+
+        timeline = self.mg.episode_timeline()
+        assert "First event" in timeline
+        assert "Second event" in timeline
+        assert "[event]" in timeline
+
+    def test_episode_timeline_empty(self):
+        """Empty timeline returns placeholder."""
+        assert self.mg.episode_timeline() == "(empty timeline)"
+
+    def test_episode_timeline_gap_formatting(self):
+        """Gap formatting adapts to magnitude (seconds/hours/days)."""
+        self._add_at_time("A", t=100)       # gap: 0
+        self._add_at_time("B", t=100 + 30)  # gap: 30s
+        self._add_at_time("C", t=100 + 4000)  # gap: ~1.1h
+
+        timeline = self.mg.episode_timeline()
+        # Should have gap indicators (not on first line)
+        assert "+30s)" in timeline or "+30.0s)" in timeline
+        # Hours format
+        lines = timeline.strip().split("\n")
+        assert len(lines) == 3
+
+    def test_replay_from_forward(self):
+        """replay_from traverses outgoing edges in temporal order."""
+        a = self._add_at_time("Start", kind="event", t=100)
+        b = self._add_at_time("Next", kind="event", t=200)
+        c = self._add_at_time("End", kind="event", t=300)
+
+        self.mg.link(a.id, b.id, "leads_to")
+        self.mg.link(b.id, c.id, "leads_to")
+
+        result = self.mg.replay_from(a.id, direction="forward", hops=3)
+        assert len(result) == 2  # b and c (not a itself)
+        assert result[0]["node"].label == "Next"
+        assert result[1]["node"].label == "End"
+        assert result[0]["hop"] == 1
+        assert result[1]["hop"] == 2
+
+    def test_replay_from_backward(self):
+        """replay_from backward traverses incoming edges."""
+        a = self._add_at_time("Root", kind="concept", t=100)
+        b = self._add_at_time("Child", kind="concept", t=200)
+        c = self._add_at_time("Grandchild", kind="concept", t=300)
+
+        self.mg.link(a.id, b.id, "has")
+        self.mg.link(b.id, c.id, "has")
+
+        result = self.mg.replay_from(c.id, direction="backward", hops=3)
+        labels = [r["node"].label for r in result]
+        assert "Child" in labels
+        assert "Root" in labels
+
+    def test_replay_from_hops_limit(self):
+        """replay_from respects hop limit."""
+        a = self._add_at_time("A", t=100)
+        b = self._add_at_time("B", t=200)
+        c = self._add_at_time("C", t=300)
+        d = self._add_at_time("D", t=400)
+
+        self.mg.link(a.id, b.id, "next")
+        self.mg.link(b.id, c.id, "next")
+        self.mg.link(c.id, d.id, "next")
+
+        result = self.mg.replay_from(a.id, direction="forward", hops=2)
+        assert len(result) == 2  # Only B (hop 1) and C (hop 2)
+        assert all(r["hop"] <= 2 for r in result)
+
+    def test_replay_from_edge_relation_tracked(self):
+        """replay_from records the edge relation used to reach each node."""
+        a = self._add_at_time("Source", t=100)
+        b = self._add_at_time("Target", t=200)
+        self.mg.link(a.id, b.id, "caused")
+
+        result = self.mg.replay_from(a.id, direction="forward", hops=1)
+        assert len(result) == 1
+        assert result[0]["edge_relation"] == "caused"
+        assert result[0]["prev_node_id"] == a.id
+
+    def test_replay_from_excludes_quarantined(self):
+        """Quarantined nodes are skipped during replay."""
+        a = self._add_at_time("A", t=100)
+        b = self._add_at_time("B", t=200)
+        c = self._add_at_time("C", t=300)
+
+        self.mg.link(a.id, b.id, "next")
+        self.mg.link(b.id, c.id, "next")
+
+        self.mg.conn.execute("UPDATE nodes SET quarantined=1 WHERE id=?", (b.id,))
+        self.mg.conn.commit()
+
+        result = self.mg.replay_from(a.id, direction="forward", hops=3)
+        labels = [r["node"].label for r in result]
+        assert "B" not in labels
+        # C is reachable via 2-hop from A (A->B->C), but B is quarantined
+        # so the traversal won't pass through B to reach C
+        assert "C" not in labels
+
+    def test_replay_from_invalid_direction(self):
+        """Invalid direction raises ValueError."""
+        a = self._add_at_time("A", t=100)
+        with pytest.raises(ValueError):
+            self.mg.replay_from(a.id, direction="sideways")
+
+    def test_retrieve_episodes_with_data(self):
+        """Episodes preserve node data payloads."""
+        node = self._add_at_time("Rich", kind="event", t=100)
+        self.mg.update_node(node.id, data={"importance": "high", "tags": ["critical"]})
+
+        episodes = self.mg.retrieve_episodes()
+        assert len(episodes) == 1
+        assert episodes[0]["node"].data["importance"] == "high"
+
+    def test_episode_timeline_provided_episodes(self):
+        """episode_timeline accepts pre-retrieved episodes."""
+        n1 = self._add_at_time("X", t=100)
+        n2 = self._add_at_time("Y", t=200)
+
+        episodes = self.mg.retrieve_episodes()
+        timeline = self.mg.episode_timeline(episodes=episodes)
+        assert "X" in timeline
+        assert "Y" in timeline

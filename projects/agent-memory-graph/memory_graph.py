@@ -14813,6 +14813,190 @@ class MemoryGraph:
         return result
 
 
+    # ── Episodic Memory Replay ────────────────────────────
+
+    def retrieve_episodes(self, start_time: float = None, end_time: float = None,
+                           kind: str = None, node_id: str = None,
+                           limit: int = 20) -> list[dict]:
+        """Reconstruct temporal sequences of memories (episodes).
+
+        Retrieves nodes ordered by creation time within a time window,
+        optionally filtered by kind or anchored to a specific node's
+        neighborhood. Each episode entry includes the node and its
+        temporal distance from the previous node in the sequence.
+
+        Inspired by episodic memory replay in biological systems —
+        the ability to re-experience a sequence of events in order.
+
+        Args:
+            start_time: Unix timestamp lower bound (inclusive). Default: all.
+            end_time: Upper bound (inclusive). Default: now.
+            kind: Filter by node kind (e.g. 'event', 'fact').
+            node_id: If provided, only include nodes within 2-hop neighborhood.
+            limit: Maximum episodes to return.
+
+        Returns:
+            List of dicts: {node, prev_gap_seconds, cumulative_seconds}
+        """
+        now = time.time()
+        if end_time is None:
+            end_time = now
+        if start_time is None:
+            start_time = 0.0
+
+        # Build neighborhood filter if node_id provided
+        neighbor_ids = None
+        if node_id:
+            neighbor_ids = {node_id}
+            # 1-hop neighbors
+            rows = self.conn.execute(
+                "SELECT DISTINCT target FROM edges WHERE source=? "
+                "UNION SELECT DISTINCT source FROM edges WHERE target=?",
+                (node_id, node_id)
+            ).fetchall()
+            neighbor_ids.update(r[0] for r in rows)
+            # 2-hop neighbors
+            for r in rows:
+                nid = r[0]
+                r2 = self.conn.execute(
+                    "SELECT DISTINCT target FROM edges WHERE source=? "
+                    "UNION SELECT DISTINCT source FROM edges WHERE target=?",
+                    (nid, nid)
+                ).fetchall()
+                neighbor_ids.update(x[0] for x in r2)
+
+        conditions = ["created >= ?", "created <= ?", "quarantined = 0"]
+        params = [start_time, end_time]
+        if kind:
+            conditions.append("kind = ?")
+            params.append(kind)
+        if neighbor_ids is not None:
+            placeholders = ','.join('?' * len(neighbor_ids))
+            conditions.append(f"id IN ({placeholders})")
+            params.extend(list(neighbor_ids))
+
+        where_clause = " AND ".join(conditions)
+        params.append(limit)
+        rows = self.conn.execute(
+            f"SELECT * FROM nodes WHERE {where_clause} ORDER BY created ASC LIMIT ?",
+            params
+        ).fetchall()
+
+        episodes = []
+        prev_time = None
+        cumulative = 0.0
+        for row in rows:
+            node = Node(row["id"], row["label"], row["kind"],
+                        json.loads(row["data"]), row["created"],
+                        row["accessed"], row["weight"])
+            gap = (node.created - prev_time) if prev_time is not None else 0.0
+            cumulative += gap
+            episodes.append({
+                "node": node,
+                "prev_gap_seconds": round(gap, 3),
+                "cumulative_seconds": round(cumulative, 3),
+            })
+            prev_time = node.created
+        return episodes
+
+    def episode_timeline(self, episodes: list[dict] = None,
+                         start_time: float = None, end_time: float = None,
+                         kind: str = None) -> str:
+        """Format episodes as a human-readable timeline.
+
+        If episodes not provided, calls retrieve_episodes() with the
+        given filters. Returns a formatted string with timestamps,
+        temporal gaps, and node labels.
+        """
+        if episodes is None:
+            episodes = self.retrieve_episodes(
+                start_time=start_time, end_time=end_time, kind=kind, limit=50
+            )
+        if not episodes:
+            return "(empty timeline)"
+
+        lines = []
+        for ep in episodes:
+            node = ep["node"]
+            ts = datetime.fromtimestamp(node.created).strftime("%Y-%m-%d %H:%M:%S")
+            gap = ep["prev_gap_seconds"]
+            gap_str = f" (+{gap:.0f}s)" if gap > 0 and gap < 3600 else (
+                f" (+{gap/3600:.1f}h)" if gap >= 3600 and gap < 86400 else (
+                    f" (+{gap/86400:.1f}d)" if gap >= 86400 else ""
+                )
+            )
+            lines.append(f"  {ts}{gap_str} [{node.kind}] {node.label} (w={node.weight:.2f})")
+        return "\n".join(lines)
+
+    def replay_from(self, node_id: str, direction: str = "forward",
+                    hops: int = 3, limit: int = 15) -> list[dict]:
+        """Replay memories starting from a specific node, traversing edges.
+
+        Traverses the graph from node_id either forward (outgoing edges)
+        or backward (incoming edges), collecting nodes in temporal order.
+        Each hop level is tracked. Useful for 'how did I get here?' or
+        'what happened next?' queries.
+
+        Args:
+            node_id: Starting node.
+            direction: 'forward' (outgoing edges) or 'backward' (incoming).
+            hops: Maximum traversal depth.
+            limit: Maximum nodes to return.
+
+        Returns:
+            List of dicts: {node, hop, edge_relation, prev_node_id}
+        """
+        if direction not in ("forward", "backward"):
+            raise ValueError("direction must be 'forward' or 'backward'")
+
+        visited = {node_id}
+        results = []
+        frontier = [(node_id, 0, None, None)]  # (id, hop, relation, prev_id)
+
+        while frontier and len(results) < limit:
+            curr_id, hop, relation, prev_id = frontier.pop(0)
+            # Skip quarantined nodes entirely (don't expand or include)
+            if self._is_quarantined(curr_id) and curr_id != node_id:
+                continue
+            if hop > 0:  # Don't include the starting node itself
+                node = self.get_node(curr_id)
+                if node and not self._is_quarantined(curr_id):
+                    results.append({
+                        "node": node,
+                        "hop": hop,
+                        "edge_relation": relation,
+                        "prev_node_id": prev_id,
+                    })
+                    visited.add(curr_id)
+            if hop >= hops:
+                continue
+
+            if direction == "forward":
+                edges = self.conn.execute(
+                    "SELECT target, relation FROM edges WHERE source=?", (curr_id,)
+                ).fetchall()
+            else:
+                edges = self.conn.execute(
+                    "SELECT source, relation FROM edges WHERE target=?", (curr_id,)
+                ).fetchall()
+
+            for edge in edges:
+                neighbor_id = edge[0]
+                if neighbor_id not in visited:
+                    frontier.append((neighbor_id, hop + 1, edge["relation"], curr_id))
+
+        # Sort by creation time for temporal replay
+        results.sort(key=lambda r: r["node"].created)
+        return results
+
+    def _is_quarantined(self, node_id: str) -> bool:
+        """Check if a node is quarantined."""
+        row = self.conn.execute(
+            "SELECT quarantined FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        return row is not None and row[0] == 1
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
