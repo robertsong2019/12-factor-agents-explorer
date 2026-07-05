@@ -16028,6 +16028,209 @@ class MemoryGraph:
 
         return centrality
 
+    # ─────────────────────────────────────────────
+    # Cycle 194: Graph Merge & Serialization
+    # ─────────────────────────────────────────────
+
+    def merge_graph(self, other: 'MemoryGraph',
+                    strategy: str = "union",
+                    prefix: str = None,
+                    on_conflict: str = "keep_both") -> dict:
+        """Merge another MemoryGraph into this one.
+
+        Useful for multi-agent memory fusion: each agent maintains its
+        own graph, then merges results.
+
+        Args:
+            other: The graph to merge FROM.
+            strategy: "union" (all nodes/edges) or "intersection"
+                      (only nodes that exist in both, plus other's edges).
+            prefix: If given, prefix other's node IDs with this string
+                    to avoid ID collisions (e.g. "agent2_").
+            on_conflict: "keep_both" (add with prefixed ID),
+                         "skip" (don't add conflicting IDs),
+                         "overwrite" (replace local data).
+
+        Returns a dict with merge stats:
+            nodes_added, nodes_skipped, edges_added, edges_skipped
+        """
+        stats = {"nodes_added": 0, "nodes_skipped": 0,
+                 "edges_added": 0, "edges_skipped": 0}
+
+        # Build ID mapping (other_id → target_id in self)
+        id_map: dict[str, str] = {}
+
+        if strategy == "intersection":
+            # Only include nodes that already exist in self (by label match)
+            local_labels = {r["label"]: r["id"] for r in
+                            self.conn.execute("SELECT id, label FROM nodes").fetchall()}
+            for row in other.conn.execute("SELECT * FROM nodes").fetchall():
+                if row["label"] in local_labels:
+                    id_map[row["id"]] = local_labels[row["label"]]
+            # Only map edges between intersection nodes
+            for r in other.conn.execute("SELECT * FROM edges").fetchall():
+                if r["source"] in id_map and r["target"] in id_map:
+                    try:
+                        self.conn.execute(
+                            "INSERT OR IGNORE INTO edges (source,target,relation,weight) VALUES (?,?,?,?)",
+                            (id_map[r["source"]], id_map[r["target"]], r["relation"], r["weight"])
+                        )
+                        if self.conn.total_changes > 0:
+                            stats["edges_added"] += 1
+                        else:
+                            stats["edges_skipped"] += 1
+                    except sqlite3.IntegrityError:
+                        stats["edges_skipped"] += 1
+            self.conn.commit()
+            self._rebuild_fts()
+            return stats
+
+        # Union strategy
+        for row in other.conn.execute("SELECT * FROM nodes").fetchall():
+            other_id = row["id"]
+            # Check if ID collides
+            existing = self.conn.execute(
+                "SELECT 1 FROM nodes WHERE id=?", (other_id,)
+            ).fetchone()
+
+            if existing and prefix is None:
+                # ID collision without prefix
+                if on_conflict == "skip":
+                    id_map[other_id] = other_id
+                    stats["nodes_skipped"] += 1
+                    continue
+                elif on_conflict == "overwrite":
+                    self.conn.execute(
+                        """UPDATE nodes SET label=?, kind=?, data=?, weight=?, tags=?,
+                           source=?, trust_level=?, q_value=?
+                           WHERE id=?""",
+                        (row["label"], row["kind"], row["data"],
+                         row["weight"], row["tags"],
+                         row["source"], row["trust_level"],
+                         row["q_value"], other_id)
+                    )
+                    id_map[other_id] = other_id
+                    stats["nodes_added"] += 1
+                    continue
+                # keep_both: fall through to prefix logic
+
+            # Determine target ID
+            target_id = f"{prefix}{other_id}" if prefix else other_id
+            if existing and on_conflict == "keep_both" and prefix is None:
+                # Auto-generate prefix to avoid collision
+                target_id = f"m_{other_id}"
+
+            id_map[other_id] = target_id
+
+            # Insert node
+            self.conn.execute(
+                """INSERT OR REPLACE INTO nodes
+                   (id,label,kind,data,created,accessed,weight,tags,
+                    source,trust_level,parents,quarantined,quarantine_reason,
+                    valid_from,valid_to,txn_time,q_value)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (target_id, row["label"], row["kind"], row["data"],
+                 row["created"], row["accessed"], row["weight"], row["tags"],
+                 row["source"], row["trust_level"], row["parents"],
+                 row["quarantined"], row["quarantine_reason"],
+                 row["valid_from"], row["valid_to"], row["txn_time"],
+                 row["q_value"])
+            )
+            stats["nodes_added"] += 1
+
+        # Copy edges (using ID mapping)
+        for r in other.conn.execute("SELECT * FROM edges").fetchall():
+            src = id_map.get(r["source"])
+            tgt = id_map.get(r["target"])
+            if src is None or tgt is None:
+                stats["edges_skipped"] += 1
+                continue
+            try:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO edges (source,target,relation,weight) VALUES (?,?,?,?)",
+                    (src, tgt, r["relation"], r["weight"])
+                )
+                if self.conn.total_changes > 0:
+                    stats["edges_added"] += 1
+                else:
+                    stats["edges_skipped"] += 1
+            except sqlite3.IntegrityError:
+                stats["edges_skipped"] += 1
+
+        # Copy edge props
+        for r in other.conn.execute("SELECT * FROM edge_props").fetchall():
+            src = id_map.get(r["source"])
+            tgt = id_map.get(r["target"])
+            if src and tgt:
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO edge_props (source,target,relation,properties) VALUES (?,?,?,?)",
+                    (src, tgt, r["relation"], r["properties"])
+                )
+
+        self.conn.commit()
+        self._rebuild_fts()
+        return stats
+
+    def to_dict(self) -> dict:
+        """Serialize the graph to a plain dict (JSON-safe).
+
+        Includes all nodes, edges, and edge_props.
+        Useful for snapshotting, API responses, or inter-agent transfer.
+
+        Returns a dict with 'nodes', 'edges', 'edge_props', 'meta'.
+        """
+        nodes = []
+        for r in self.conn.execute("SELECT * FROM nodes").fetchall():
+            nodes.append({
+                "id": r["id"], "label": r["label"], "kind": r["kind"],
+                "data": json.loads(r["data"]), "created": r["created"],
+                "accessed": r["accessed"], "weight": r["weight"],
+                "tags": json.loads(r["tags"]),
+                "quarantined": bool(r["quarantined"]),
+                "q_value": r["q_value"],
+            })
+        edges = []
+        for r in self.conn.execute("SELECT * FROM edges").fetchall():
+            edges.append({
+                "source": r["source"], "target": r["target"],
+                "relation": r["relation"], "weight": r["weight"],
+            })
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "meta": {
+                "node_count": len(nodes),
+                "edge_count": len(edges),
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'MemoryGraph':
+        """Deserialize a graph from a dict produced by :meth:`to_dict`.
+
+        Creates a new in-memory MemoryGraph and populates it.
+        """
+        mg = cls()
+        for n in data.get("nodes", []):
+            mg.conn.execute(
+                """INSERT OR REPLACE INTO nodes
+                   (id,label,kind,data,created,accessed,weight,tags)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (n["id"], n["label"], n.get("kind", "fact"),
+                 json.dumps(n.get("data", {})),
+                 n.get("created", time.time()), n.get("accessed", time.time()),
+                 n.get("weight", 1.0), json.dumps(n.get("tags", [])))
+            )
+        for e in data.get("edges", []):
+            mg.conn.execute(
+                "INSERT OR IGNORE INTO edges (source,target,relation,weight) VALUES (?,?,?,?)",
+                (e["source"], e["target"], e["relation"], e.get("weight", 1.0))
+            )
+        mg.conn.commit()
+        if getattr(mg, '_fts_enabled', False):
+            mg._rebuild_fts()
+        return mg
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

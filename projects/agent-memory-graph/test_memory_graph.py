@@ -18466,3 +18466,176 @@ class TestEigenvectorPowerIter:
         ec = mg.eigenvector_all()
         for v in ec.values():
             assert v >= -1e-9
+
+
+class TestMergeGraph:
+    """Tests for merge_graph()."""
+
+    def test_merge_disjoint(self):
+        """Two graphs with no overlapping nodes → all added."""
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        a = mg1.add("A")
+        b = mg2.add("B")
+        stats = mg1.merge_graph(mg2)
+        assert stats["nodes_added"] == 1
+        assert mg1.conn.execute("SELECT COUNT(*) as c FROM nodes").fetchone()["c"] == 2
+
+    def test_merge_edges_preserved(self):
+        """Edges from other graph are added."""
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        a, b = mg2.add("A"), mg2.add("B")
+        mg2.link(a.id, b.id, "knows")
+        mg1.merge_graph(mg2)
+        edges = mg1.conn.execute("SELECT COUNT(*) as c FROM edges").fetchone()["c"]
+        assert edges == 1
+
+    def test_merge_id_collision_keep_both(self):
+        """Same node ID → keep_both creates prefixed copy."""
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        # Insert same ID into both
+        mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("shared", "Node1", "fact", "{}", 0, 0, 1.0, "[]")
+        )
+        mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("shared", "Node2", "fact", "{}", 0, 0, 1.0, "[]")
+        )
+        mg1.conn.commit()
+        mg2.conn.commit()
+        stats = mg1.merge_graph(mg2, on_conflict="keep_both")
+        assert stats["nodes_added"] == 1
+        labels = sorted(r["label"] for r in mg1.conn.execute("SELECT label FROM nodes").fetchall())
+        assert "Node1" in labels
+        assert "Node2" in labels
+
+    def test_merge_id_collision_skip(self):
+        """on_conflict=skip → don't add conflicting nodes."""
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("shared", "Original", "fact", "{}", 0, 0, 1.0, "[]")
+        )
+        mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("shared", "New", "fact", "{}", 0, 0, 1.0, "[]")
+        )
+        mg1.conn.commit()
+        mg2.conn.commit()
+        stats = mg1.merge_graph(mg2, on_conflict="skip")
+        assert stats["nodes_skipped"] == 1
+        label = mg1.conn.execute("SELECT label FROM nodes WHERE id='shared'").fetchone()["label"]
+        assert label == "Original"
+
+    def test_merge_id_collision_overwrite(self):
+        """on_conflict=overwrite → replace local data."""
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        mg1.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("shared", "Old", "fact", "{}", 0, 0, 1.0, "[]")
+        )
+        mg2.conn.execute(
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            ("shared", "New", "fact", "{}", 0, 0, 1.0, "[]")
+        )
+        mg1.conn.commit()
+        mg2.conn.commit()
+        stats = mg1.merge_graph(mg2, on_conflict="overwrite")
+        assert stats["nodes_added"] == 1
+        label = mg1.conn.execute("SELECT label FROM nodes WHERE id='shared'").fetchone()["label"]
+        assert label == "New"
+
+    def test_merge_with_prefix(self):
+        """Prefix avoids ID collision."""
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        a = mg1.add("A")
+        b = mg2.add("B")
+        mg2.link(b.id, b.id, "self")
+        stats = mg1.merge_graph(mg2, prefix="ag2_")
+        assert stats["nodes_added"] == 1
+        # Original IDs preserved
+        assert mg1.conn.execute("SELECT 1 FROM nodes WHERE id=?", (a.id,)).fetchone()
+        # Prefixed ID exists
+        assert mg1.conn.execute("SELECT 1 FROM nodes WHERE id=?", (f"ag2_{b.id}",)).fetchone()
+
+    def test_merge_returns_stats(self):
+        """Returns correct stats dict."""
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        for i in range(3):
+            mg2.add(f"N{i}")
+        stats = mg1.merge_graph(mg2)
+        assert isinstance(stats, dict)
+        assert stats["nodes_added"] == 3
+        assert stats["edges_added"] == 0
+
+    def test_merge_intersection_strategy(self):
+        """Intersection: only nodes by matching label get edges merged."""
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        a1 = mg1.add("Shared")
+        b1 = mg1.add("OnlyHere")
+        a2 = mg2.add("Shared")
+        c2 = mg2.add("OnlyThere")
+        mg2.link(a2.id, c2.id, "r")
+        stats = mg1.merge_graph(mg2, strategy="intersection")
+        # Only "Shared" matched; edge a2→c2 not added (c2 has no match)
+        assert stats["edges_added"] == 0
+        # No new nodes added in intersection mode
+        count = mg1.conn.execute("SELECT COUNT(*) as c FROM nodes").fetchone()["c"]
+        assert count == 2  # a1 and b1 unchanged
+
+
+class TestToDictFromDict:
+    """Tests for to_dict()/from_dict() round-trip."""
+
+    def test_round_trip_basic(self):
+        """Export → import → same data."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "knows")
+        d = mg.to_dict()
+        mg2 = MemoryGraph.from_dict(d)
+        assert mg2.conn.execute("SELECT COUNT(*) as c FROM nodes").fetchone()["c"] == 2
+        assert mg2.conn.execute("SELECT COUNT(*) as c FROM edges").fetchone()["c"] == 1
+
+    def test_to_dict_meta(self):
+        """Meta includes correct counts."""
+        mg = MemoryGraph()
+        for i in range(5):
+            mg.add(f"N{i}")
+        d = mg.to_dict()
+        assert d["meta"]["node_count"] == 5
+        assert d["meta"]["edge_count"] == 0
+
+    def test_to_dict_node_fields(self):
+        """Node dict has expected fields."""
+        mg = MemoryGraph()
+        a = mg.add("Alice", "person", {"age": 30}, tags=["vip"])
+        d = mg.to_dict()
+        node = d["nodes"][0]
+        assert node["label"] == "Alice"
+        assert node["kind"] == "person"
+        assert node["data"]["age"] == 30
+        assert "vip" in node["tags"]
+
+    def test_from_dict_empty(self):
+        """Empty dict → empty graph."""
+        mg = MemoryGraph.from_dict({})
+        assert mg.conn.execute("SELECT COUNT(*) as c FROM nodes").fetchone()["c"] == 0
+
+    def test_round_trip_preserves_weights(self):
+        """Weights survive round-trip."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        mg.reweight(a.id, -0.5)  # weight = 1.0 - 0.5 = 0.5
+        d = mg.to_dict()
+        mg2 = MemoryGraph.from_dict(d)
+        row = mg2.conn.execute("SELECT weight FROM nodes WHERE label='A'").fetchone()
+        assert abs(row["weight"] - 0.5) < 1e-9
