@@ -15685,6 +15685,156 @@ class MemoryGraph:
         scored.sort(key=lambda x: x["cost"])
         return scored[:k]
 
+    # ─────────────────────────────────────────────
+    # Cycle 192: Subgraph Extraction
+    # ─────────────────────────────────────────────
+
+    def extract_subgraph(self, node_id: str, radius: int = 1,
+                         max_nodes: int = 100,
+                         include_quarantined: bool = False) -> 'MemoryGraph':
+        """Extract a neighborhood subgraph around *node_id*.
+
+        Performs BFS up to *radius* hops, collecting all reachable nodes
+        and the edges between them.  Returns a **new** MemoryGraph instance
+        containing only the extracted subset.
+
+        Args:
+            node_id: Centre node for extraction.
+            radius: Maximum hop distance (1 = immediate neighbours).
+            max_nodes: Safety cap to avoid extracting huge subgraphs.
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns a new MemoryGraph.  Raises ValueError if *node_id* not found.
+        """
+        if not self.conn.execute(
+            "SELECT 1 FROM nodes WHERE id=?", (node_id,)
+        ).fetchone():
+            raise ValueError(f"Node not found: {node_id}")
+
+        # BFS to collect node IDs within radius
+        visited: set[str] = set()
+        frontier: set[str] = {node_id}
+        for hop in range(radius + 1):
+            if not frontier or len(visited) >= max_nodes:
+                break
+            next_frontier: set[str] = set()
+            for nid in frontier:
+                if nid in visited or len(visited) >= max_nodes:
+                    continue
+                # Skip quarantined unless explicitly included
+                if not include_quarantined and self._is_quarantined(nid):
+                    continue
+                visited.add(nid)
+                # Get neighbors (both directions)
+                for r in self.conn.execute(
+                    "SELECT target FROM edges WHERE source=?", (nid,)
+                ).fetchall():
+                    if r["target"] not in visited:
+                        next_frontier.add(r["target"])
+                for r in self.conn.execute(
+                    "SELECT source FROM edges WHERE target=?", (nid,)
+                ).fetchall():
+                    if r["source"] not in visited:
+                        next_frontier.add(r["source"])
+            frontier = next_frontier
+
+        # Build subgraph
+        sub = MemoryGraph()
+        # Copy nodes
+        for nid in visited:
+            row = self.conn.execute(
+                "SELECT * FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if row is None:
+                continue
+            sub.conn.execute(
+                """INSERT OR REPLACE INTO nodes
+                   (id,label,kind,data,created,accessed,weight,tags,
+                    source,trust_level,parents,quarantined,quarantine_reason,
+                    valid_from,valid_to,txn_time,q_value)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (row["id"], row["label"], row["kind"], row["data"],
+                 row["created"], row["accessed"], row["weight"], row["tags"],
+                 row["source"], row["trust_level"], row["parents"],
+                 row["quarantined"], row["quarantine_reason"],
+                 row["valid_from"], row["valid_to"], row["txn_time"],
+                 row["q_value"])
+            )
+        # Copy edges between visited nodes
+        for r in self.conn.execute("SELECT * FROM edges").fetchall():
+            if r["source"] in visited and r["target"] in visited:
+                sub.conn.execute(
+                    "INSERT OR REPLACE INTO edges (source,target,relation,weight) VALUES (?,?,?,?)",
+                    (r["source"], r["target"], r["relation"], r["weight"])
+                )
+        # Copy edge props
+        for r in self.conn.execute("SELECT * FROM edge_props").fetchall():
+            if r["source"] in visited and r["target"] in visited:
+                sub.conn.execute(
+                    "INSERT OR REPLACE INTO edge_props (source,target,relation,properties) VALUES (?,?,?,?)",
+                    (r["source"], r["target"], r["relation"], r["properties"])
+                )
+        # Rebuild FTS
+        sub._rebuild_fts()
+        sub.conn.commit()
+        return sub
+
+    def neighborhood(self, node_id: str, radius: int = 1,
+                     include_quarantined: bool = False) -> list[str]:
+        """Return node IDs within *radius* hops of *node_id*.
+
+        Lightweight alternative to :meth:`extract_subgraph` when you only
+        need the ID list, not a full subgraph copy.
+
+        Args:
+            node_id: Centre node.
+            radius: Maximum hop distance.
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns a list of node IDs (including *node_id* itself).
+        Raises ValueError if node not found.
+        """
+        if not self.conn.execute(
+            "SELECT 1 FROM nodes WHERE id=?", (node_id,)
+        ).fetchone():
+            raise ValueError(f"Node not found: {node_id}")
+
+        visited: set[str] = set()
+        frontier: set[str] = {node_id}
+        for hop in range(radius + 1):
+            if not frontier:
+                break
+            next_frontier: set[str] = set()
+            for nid in frontier:
+                if nid in visited:
+                    continue
+                if not include_quarantined and self._is_quarantined(nid):
+                    continue
+                visited.add(nid)
+                for r in self.conn.execute(
+                    "SELECT target FROM edges WHERE source=?", (nid,)
+                ).fetchall():
+                    if r["target"] not in visited:
+                        next_frontier.add(r["target"])
+                for r in self.conn.execute(
+                    "SELECT source FROM edges WHERE target=?", (nid,)
+                ).fetchall():
+                    if r["source"] not in visited:
+                        next_frontier.add(r["source"])
+            frontier = next_frontier
+        return sorted(visited)
+
+    def _rebuild_fts(self):
+        """Rebuild the FTS5 index from the nodes table."""
+        if not getattr(self, '_fts_enabled', False):
+            return
+        self.conn.execute("DELETE FROM nodes_fts")
+        for row in self.conn.execute("SELECT id,label,kind,data,tags FROM nodes").fetchall():
+            self.conn.execute(
+                "INSERT INTO nodes_fts (node_id,label,kind,data,tags) VALUES (?,?,?,?,?)",
+                (row["id"], row["label"], row["kind"], row["data"], row["tags"])
+            )
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

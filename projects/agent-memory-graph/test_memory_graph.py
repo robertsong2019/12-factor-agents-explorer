@@ -18178,3 +18178,152 @@ class TestKShortestPaths:
         mg.link(b.id, c.id, "r", weight=1.0)
         paths = mg.k_shortest_paths(a.id, c.id, k=1)
         assert paths[0]["hops"] == 2
+
+
+class TestExtractSubgraph:
+    """Tests for extract_subgraph()."""
+
+    def test_extract_radius_0(self):
+        """Radius 0 → only the centre node."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        sub = mg.extract_subgraph(a.id, radius=0)
+        nodes = [r["label"] for r in sub.conn.execute("SELECT label FROM nodes").fetchall()]
+        assert nodes == ["A"]
+        # No edges
+        edges = sub.conn.execute("SELECT COUNT(*) as c FROM edges").fetchone()["c"]
+        assert edges == 0
+
+    def test_extract_radius_1(self):
+        """Radius 1 → centre + immediate neighbours."""
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        mg.link(c.id, d.id, "r")  # D is 2 hops away
+        sub = mg.extract_subgraph(a.id, radius=1)
+        labels = sorted(r["label"] for r in sub.conn.execute("SELECT label FROM nodes").fetchall())
+        assert labels == ["A", "B", "C"]
+
+    def test_extract_preserves_edges(self):
+        """Edges between extracted nodes are preserved."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "knows")
+        mg.link(b.id, c.id, "knows")
+        sub = mg.extract_subgraph(a.id, radius=2)
+        edges = sub.conn.execute("SELECT COUNT(*) as c FROM edges").fetchone()["c"]
+        assert edges == 2
+
+    def test_extract_bidirectional(self):
+        """BFS follows both incoming and outgoing edges."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(b.id, a.id, "parent")  # incoming to A
+        mg.link(a.id, c.id, "child")   # outgoing from A
+        sub = mg.extract_subgraph(a.id, radius=1)
+        labels = sorted(r["label"] for r in sub.conn.execute("SELECT label FROM nodes").fetchall())
+        assert labels == ["A", "B", "C"]
+
+    def test_extract_preserves_node_data(self):
+        """Node data/weight/tags survive extraction."""
+        mg = MemoryGraph()
+        a = mg.add("Alice", "person", {"age": 30}, tags=["vip"])
+        b = mg.add("Bob", "person")
+        mg.link(a.id, b.id, "knows")
+        sub = mg.extract_subgraph(a.id, radius=1)
+        row = sub.conn.execute("SELECT * FROM nodes WHERE id=?", (a.id,)).fetchone()
+        assert row["label"] == "Alice"
+        assert json.loads(row["data"])["age"] == 30
+        assert json.loads(row["tags"]) == ["vip"]
+
+    def test_extract_not_found(self):
+        """Non-existent node raises ValueError."""
+        mg = MemoryGraph()
+        mg.add("A")
+        with pytest.raises(ValueError, match="Node not found"):
+            mg.extract_subgraph("nonexistent")
+
+    def test_extract_max_nodes_cap(self):
+        """max_nodes limits the extraction."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(10)]
+        for i in range(9):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        sub = mg.extract_subgraph(nodes[0].id, radius=5, max_nodes=3)
+        count = sub.conn.execute("SELECT COUNT(*) as c FROM nodes").fetchone()["c"]
+        assert count <= 3
+
+    def test_extract_excludes_quarantined(self):
+        """Quarantined nodes excluded by default."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.node_quarantine(b.id, "test")
+        sub = mg.extract_subgraph(a.id, radius=2)
+        labels = [r["label"] for r in sub.conn.execute("SELECT label FROM nodes").fetchall()]
+        assert "B" not in labels
+
+    def test_extract_includes_quarantined_flag(self):
+        """include_quarantined=True keeps quarantined nodes."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        mg.node_quarantine(b.id, "test")
+        sub = mg.extract_subgraph(a.id, radius=1, include_quarantined=True)
+        labels = [r["label"] for r in sub.conn.execute("SELECT label FROM nodes").fetchall()]
+        assert "B" in labels
+
+
+class TestNeighborhood:
+    """Tests for neighborhood()."""
+
+    def test_neighborhood_radius_1(self):
+        """Radius 1 returns centre + direct neighbours."""
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(a.id, c.id, "r")
+        mg.link(c.id, d.id, "r")
+        nb = mg.neighborhood(a.id, radius=1)
+        assert set(nb) == {a.id, b.id, c.id}
+
+    def test_neighborhood_radius_2(self):
+        """Radius 2 reaches further."""
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, d.id, "r")
+        nb = mg.neighborhood(a.id, radius=2)
+        assert set(nb) == {a.id, b.id, c.id}
+        nb2 = mg.neighborhood(a.id, radius=3)
+        assert d.id in set(nb2)
+
+    def test_neighborhood_isolated_node(self):
+        """Isolated node returns just itself."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        nb = mg.neighborhood(a.id, radius=3)
+        assert nb == [a.id]
+
+    def test_neighborhood_not_found(self):
+        """Non-existent node raises ValueError."""
+        mg = MemoryGraph()
+        with pytest.raises(ValueError, match="Node not found"):
+            mg.neighborhood("nonexistent")
+
+    def test_neighborhood_sorted(self):
+        """Result is sorted for deterministic ordering."""
+        mg = MemoryGraph()
+        ids = []
+        for i in range(5):
+            n = mg.add(f"N{i}")
+            ids.append(n.id)
+            if i > 0:
+                mg.link(ids[0], n.id, "r")
+        nb = mg.neighborhood(ids[0], radius=1)
+        assert nb == sorted(nb)
