@@ -18327,3 +18327,142 @@ class TestNeighborhood:
                 mg.link(ids[0], n.id, "r")
         nb = mg.neighborhood(ids[0], radius=1)
         assert nb == sorted(nb)
+
+
+class TestBetweennessBrandes:
+
+    def test_star_graph_centre_high(self):
+        """Star graph: centre node has max betweenness."""
+        mg = MemoryGraph()
+        centre = mg.add("centre")
+        leaves = [mg.add(f"leaf{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(centre.id, leaf.id, "r")
+        bc = mg.betweenness_all()
+        # Centre should have highest betweenness
+        assert bc[centre.id] == max(bc.values())
+        # Leaves have 0 (no shortest paths pass through them)
+        for leaf in leaves:
+            assert bc[leaf.id] == 0.0
+
+    def test_linear_graph_middle_highest(self):
+        """Linear A-B-C-D: B and C have higher betweenness than endpoints."""
+        mg = MemoryGraph()
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, d.id, "r")
+        bc = mg.betweenness_all()
+        assert bc[b.id] > bc[a.id]
+        assert bc[c.id] > bc[a.id]
+
+    def test_single_node(self):
+        """Single node → 0.0."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        bc = mg.betweenness_all()
+        assert bc[a.id] == 0.0
+
+    def test_two_nodes(self):
+        """Two nodes → both 0.0 (no paths through either)."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        bc = mg.betweenness_all()
+        assert bc[a.id] == 0.0
+        assert bc[b.id] == 0.0
+
+    def test_normalized_range(self):
+        """Normalized scores are in [0, 1]."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(5)]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        mg.link(nodes[3].id, nodes[4].id, "r")
+        bc = mg.betweenness_all()
+        for v in bc.values():
+            assert 0.0 <= v <= 1.0
+
+
+class TestClosenessBFS:
+    """Tests for closeness_centrality()."""
+
+    def test_star_centre_highest(self):
+        """Star: centre node has highest closeness."""
+        mg = MemoryGraph()
+        centre = mg.add("C")
+        leaves = [mg.add(f"L{i}") for i in range(3)]
+        for leaf in leaves:
+            mg.link(centre.id, leaf.id, "r")
+        cc = mg.closeness_all()
+        assert cc[centre.id] == max(cc.values())
+
+    def test_disconnected_zero(self):
+        """Isolated node gets closeness 0."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        cc = mg.closeness_all()
+        assert cc[c.id] == 0.0
+
+    def test_fully_connected_max(self):
+        """Fully connected graph: all nodes equal closeness."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(a.id, c.id, "r")
+        cc = mg.closeness_all()
+        vals = list(cc.values())
+        assert max(vals) - min(vals) < 1e-9
+
+    def test_range_0_to_1(self):
+        """All closeness values in [0, 1]."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        cc = mg.closeness_all()
+        for v in cc.values():
+            assert 0.0 <= v <= 1.0
+
+
+class TestEigenvectorPowerIter:
+    """Tests for eigenvector_centrality()."""
+
+    def test_star_centre_highest(self):
+        """Star: centre connected to all leaves → highest score."""
+        mg = MemoryGraph()
+        centre = mg.add("C")
+        leaves = [mg.add(f"L{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(centre.id, leaf.id, "r")
+        ec = mg.eigenvector_all()
+        assert ec[centre.id] == max(ec.values())
+
+    def test_empty_graph(self):
+        """Empty graph → empty dict."""
+        mg = MemoryGraph()
+        ec = mg.eigenvector_all()
+        assert ec == {}
+
+    def test_single_node(self):
+        """Single node → score 1.0."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        ec = mg.eigenvector_all()
+        assert ec[a.id] == 1.0
+
+    def test_all_non_negative(self):
+        """All eigenvector scores non-negative."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(5)]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        mg.link(nodes[3].id, nodes[4].id, "r")
+        ec = mg.eigenvector_all()
+        for v in ec.values():
+            assert v >= -1e-9

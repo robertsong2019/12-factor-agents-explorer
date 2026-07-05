@@ -15835,6 +15835,199 @@ class MemoryGraph:
                 (row["id"], row["label"], row["kind"], row["data"], row["tags"])
             )
 
+    # ─────────────────────────────────────────────
+    # Cycle 193: Centrality Metrics
+    # ─────────────────────────────────────────────
+
+    def betweenness_all(self, normalized: bool = True,
+                        include_quarantined: bool = False) -> dict[str, float]:
+        """Compute betweenness centrality for all nodes (Brandes' algorithm).
+
+        Betweenness = how many shortest paths pass through a node.
+        High-betweenness nodes are "bridges" connecting different parts
+        of the graph.
+
+        Args:
+            normalized: If True, divide by (N-1)(N-2)/2 for undirected.
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns {node_id: centrality_score}.
+        """
+        # Gather active node IDs
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        n = len(node_ids)
+        if n < 3:
+            return {nid: 0.0 for nid in node_ids}
+
+        # Build adjacency (undirected for centrality)
+        node_set = set(node_ids)
+        adj: dict[str, list[str]] = {nid: [] for nid in node_ids}
+        for r in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = r["source"], r["target"]
+            if s in node_set and t in node_set:
+                adj[s].append(t)
+                adj[t].append(s)  # treat as undirected
+
+        # Brandes' algorithm
+        centrality: dict[str, float] = {nid: 0.0 for nid in node_ids}
+        for s in node_ids:
+            # Single-source BFS
+            stack: list[str] = []
+            pred: dict[str, list[str]] = {nid: [] for nid in node_ids}
+            sigma: dict[str, float] = {nid: 0.0 for nid in node_ids}
+            sigma[s] = 1.0
+            dist: dict[str, int] = {nid: -1 for nid in node_ids}
+            dist[s] = 0
+            queue: list[str] = [s]
+            while queue:
+                v = queue.pop(0)
+                stack.append(v)
+                for w in adj[v]:
+                    if dist[w] < 0:
+                        queue.append(w)
+                        dist[w] = dist[v] + 1
+                    if dist[w] == dist[v] + 1:
+                        sigma[w] += sigma[v]
+                        pred[w].append(v)
+            # Accumulation
+            delta: dict[str, float] = {nid: 0.0 for nid in node_ids}
+            while stack:
+                w = stack.pop()
+                for v in pred[w]:
+                    delta[v] += (sigma[v] / sigma[w]) * (1.0 + delta[w])
+                if w != s:
+                    centrality[w] += delta[w]
+
+        # For undirected graphs, each pair is counted twice; halve
+        for nid in centrality:
+            centrality[nid] /= 2.0
+        # Normalize (standard undirected normalization)
+        if normalized and n > 2:
+            factor = 2.0 / ((n - 1) * (n - 2))
+            for nid in centrality:
+                centrality[nid] *= factor
+
+        return centrality
+
+    def closeness_all(self, normalized: bool = True,
+                      include_quarantined: bool = False) -> dict[str, float]:
+        """Compute closeness centrality for all nodes.
+
+        Closeness = reciprocal of average shortest-path distance to all
+        other reachable nodes.  High-closeness nodes can reach the rest
+        of the graph quickly.
+
+        Uses multi-source BFS.  Disconnected nodes get 0.
+
+        Args:
+            normalized: If True, multiply by (reachable_count / (N-1)).
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns {node_id: centrality_score}.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return {nid: 1.0 for nid in node_ids}
+
+        node_set = set(node_ids)
+        adj: dict[str, list[str]] = {nid: [] for nid in node_ids}
+        for r in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = r["source"], r["target"]
+            if s in node_set and t in node_set:
+                adj[s].append(t)
+                adj[t].append(s)
+
+        centrality: dict[str, float] = {}
+        for s in node_ids:
+            # BFS distances
+            dist: dict[str, int] = {s: 0}
+            queue: list[str] = [s]
+            total_dist = 0
+            reachable = 0
+            while queue:
+                v = queue.pop(0)
+                for w in adj[v]:
+                    if w not in dist:
+                        dist[w] = dist[v] + 1
+                        total_dist += dist[w]
+                        reachable += 1
+                        queue.append(w)
+            if total_dist == 0:
+                centrality[s] = 0.0
+            else:
+                cc = reachable / total_dist
+                if normalized:
+                    cc *= reachable / (n - 1)
+                centrality[s] = cc
+
+        return centrality
+
+    def eigenvector_all(self, iterations: int = 100,
+                         tolerance: float = 1e-6,
+                         include_quarantined: bool = False) -> dict[str, float]:
+        """Compute eigenvector centrality for all nodes via power iteration.
+
+        High-eigenvector nodes are those connected to other high-scoring
+        nodes.  Identifies the "core" of influential memories.
+
+        Args:
+            iterations: Max power-iteration steps.
+            tolerance: Convergence threshold (L1 norm).
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns {node_id: centrality_score}.  Empty dict if graph is empty.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        n = len(node_ids)
+        if n == 0:
+            return {}
+        if n == 1:
+            return {node_ids[0]: 1.0}
+
+        node_set = set(node_ids)
+        adj: dict[str, list[str]] = {nid: [] for nid in node_ids}
+        for r in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = r["source"], r["target"]
+            if s in node_set and t in node_set:
+                adj[s].append(t)
+                adj[t].append(s)
+
+        # Power iteration
+        centrality = {nid: 1.0 / n for nid in node_ids}
+        for _ in range(iterations):
+            new_c = {nid: 0.0 for nid in node_ids}
+            for v in node_ids:
+                for w in adj[v]:
+                    new_c[w] += centrality[v]
+            # Normalize
+            norm = sum(v * v for v in new_c.values()) ** 0.5
+            if norm == 0:
+                break
+            new_c = {nid: v / norm for nid, v in new_c.items()}
+            # Check convergence
+            diff = sum(abs(new_c[nid] - centrality[nid]) for nid in node_ids)
+            centrality = new_c
+            if diff < tolerance:
+                break
+
+        return centrality
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
