@@ -14,27 +14,53 @@
 
 ---
 
-## Current Focus (2026-07-04)
+## Current Focus (2026-07-05)
 
 ### Active Theme
-Autoresearch 方法论实践 — **连续174天零回滚率** 🏆。
+Autoresearch 方法论实践 — **连续175天零回滚率** 🏆。
 
-### 项目测试总量 (07-03 快照)
+### 项目测试总量 (07-04 快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
-| agent-memory-graph | **1599** | 360+ | 21合一: graph algo+vector+BM25+Adaptive Fusion+RL Memory+CRDT+Consolidation+Workflow Memory+Graph Reasoning+Adaptive Retrieval+diffusion_retrieve(PPR)+Security+Bi-temporal+Q-value+Lamport clock+pub/sub+conflict detect+strategic forget+LPA community detection+community-aware retrieval+community profile+bridge nodes |
+| agent-memory-graph | **1768** | 385+ | 32合一: graph algo+vector+BM25+Adaptive Fusion+RL Memory+CRDT+Consolidation+Workflow Memory+Graph Reasoning+Adaptive Retrieval+diffusion_retrieve(PPR)+Security+Bi-temporal+Q-value+Lamport clock+pub/sub+conflict detect+strategic forget+LPA community detection+community-aware retrieval+community profile+bridge nodes+cache temperature+memorywire format+scope-delete guard+temporal staleness+RRF multi-path fusion+sleep consolidation+episodic replay+graph analytics+memory diff |
 | agent-context-store | **2253** | 500+ | 三大管线 37 层: Graph 12 / Quality 12 / Store 13 |
 | structured-output-toolkit | **507** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
 | agent-task-cli | **986** | — | Cache+Storage+merge |
-| **四项目总计** | **5345** | — | — |
+| **四项目总计** | **5514** | — | — |
 
 其他: openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / context-forge 513 / nano-agent 314 / AMS v1.0-dev 645 / prompt-router 258
 
 ### 最高优先级
 **README → npm publish** (四项目)。这是当前最大未交付价值。
 
+### 07-05 晚间开发 (4 TDD cycles, autoresearch cron)
+- **Cycle 188: Batch Operations** — batch_create_nodes/batch_add_edges/batch_delete_nodes with transaction safety + ID/label resolution, +24 tests
+- **Cycle 189: Link Prediction** — predict_links() using common-neighbors + Adamic-Adar + preferential-attachment scoring, +14 tests
+- **Cycle 190: Weighted Shortest Path** — shortest_path_weighted() (Dijkstra) + path_cost() helper, +14 tests
+- **Cycle 191: Path Enumeration** — all_paths() (DFS simple path enumeration with hop/limit pruning) + k_shortest_paths() (K lowest-cost paths), +15 tests
+- **agent-memory-graph: 1701→1768 passed**, 零回滚率 177 天
+
+### 07-05 晚间开发 (3 TDD cycles, autoresearch cron)
+- **Cycle 185: Episodic Memory Replay** — retrieve_episodes() (temporal sequence retrieval with time-window/kind/neighborhood filters + gap tracking) + episode_timeline() (human-readable adaptive formatting s/h/d) + replay_from() (BFS forward/backward with hop+edge tracking)，+19 tests
+- **Cycle 186: Graph Analytics** — graph_analytics() one-call dashboard: degree distribution (5 buckets), density, hub nodes (top-5), weight/Q-value stats, orphan detection, reciprocal edges, top relations, composite memory_health [0,1]，+14 tests
+- **Cycle 187: Memory Diff** — diff_graph(other) structural diff (added/removed/changed nodes + edges, quarantine-aware) + diff_report() human-readable with truncation，+16 tests
+- **agent-memory-graph: 1652→1701 passed**，零回滚率 176 天
+
 ### 07-04 晚间深度研究 #002
 - **AI Agent Memory Architecture: SOTA 2026** — 20篇论文/系统全景调研。五大范式: OS启发分层(Letta/MemGPT) / Zettelkasten链接(A-MEM) / 生产平台(Mem0) / 图原生(Cognee/Zep) / 情景+RL(MemRL)。MemRL核心洞察: memory usefulness ≠ similarity, 用Q-value学习"过去有用的"记忆。LRAT(SIGIR 2026): 生产日志是未用训练资产, 失败轨迹也能+15-19%。LoCoMo审计: 6.4%答案错误, judge接受63%故意错误。安全: 90%+agent可被memory poisoning攻击, 对话纠正100%复发。笔记: `catalyst-research/exploration-notes/2026-07-04-agent-memory-architecture.md`
+
+### 07-04 晚间开发 (6 TDD cycles, 两轮)
+
+**第一轮 13:23-13:45:**
+- **Cycle 179: Cache Temperature** — cache_temperature()/snapshot()/warm_cache()/evict_cold(), CPU-cache-inspired hot/warm/cold zones，+15 tests
+- **Cycle 180: Memorywire Format** — to_memorywire_format()/from_memorywire_format() round-trip export/import，+8 tests
+- **Cycle 181: Scope-Delete Guard** — delete_node_safe() prevents deleting nodes with live dependents，+5 tests
+
+**第二轮 22:00-22:30:**
+- **Cycle 182: Temporal Staleness** — staleness_score()/stale_nodes()/fresh_nodes()/refresh_node()，age+access+validity 三因子，+9 tests
+- **Cycle 183: Multi-Path RRF Fusion** — search_multi() 4-path Reciprocal Rank Fusion (bm25/q_value/community/temperature)，+8 tests
+- **Cycle 184: Sleep Consolidation** — sleep_consolidate() 相似低权重节点合并+边缘重定向+隔离，+8 tests
+- **agent-memory-graph: 1599→1652 passed**，零回滚率 175 天
 
 ### 07-03 晚间开发 (3+3 TDD cycles)
 - **Cycle 173: Lamport Logical Clock + Typed Pub/Sub** — lamport_clock()/event_log()/on()/off()，因果排序+响应式订阅，+17 tests
@@ -60,6 +86,8 @@ Autoresearch 方法论实践 — **连续174天零回滚率** 🏆。
 ### 近期研究一览 (详细笔记在 catalyst-research/exploration-notes/)
 | 日期 | 主题 | 核心洞察 |
 |------|------|----------|
+| 07-05 | A2A Trust & Reputation | 六信任模态(Brief/Claim/Proof/Stake/Reputation/Constraint)/EigenTrust全局传播/Beta贝叶斯更新/MAV多维验证/TrustEngineV2七算法代码已验证13tests pass |
+| 07-05 | OTel GenAI Observability | gen_ai.* v1.41 4层 span/invoke_agent→chat→execute_tool/CostAggregator 6tests pass/属性迁移=机械化/MCP semconv v1.39+ |
 | 07-02 | Graph-Structured Memory | Mem0 v3 entity boost SOTA/MemoryArena recall≠agency/遗忘被低估/混合架构收敛 |
 | 07-02 | 知识整理+TDD | 3 cycles(bi-temporal+Q-value+KGE)/1521 tests/零回滚172天 |
 | 07-01 | Graph-Enhanced Memory | HippoRAG/2 PPR 20%/A-MEM 6×多跳/LazyGraphRAG 0.1%成本/Zep双时序KG |
@@ -129,13 +157,19 @@ Autoresearch 方法论实践 — **连续174天零回滚率** 🏆。
 - [x] agent-memory-graph: LPA community detection ✅ (cycles 176-177, +29 tests)
 - [x] agent-memory-graph: community profile + bridge nodes ✅ (cycle 178, +10 tests)
 - [ ] agent-memory-graph: DF-Leiden 集成 (~190行+~120行增量)
-- [ ] agent-memory-graph: cache_temperature() API (~40行+10tests)
-- [ ] memorywire 兼容: toMemorywireFormat() + no-scope-delete guard
+- [x] agent-memory-graph: cache_temperature() API ✅ (cycle 179, +15 tests)
+- [x] memorywire 兼容: toMemorywireFormat() + no-scope-delete guard ✅ (cycles 180-181, +13 tests)
+- [x] agent-memory-graph: temporal staleness scoring ✅ (cycle 182, +9 tests)
+- [x] agent-memory-graph: multi-path RRF fusion ✅ (cycle 183, +8 tests)
+- [x] agent-memory-graph: sleep consolidation ✅ (cycle 184, +8 tests)
+- [x] agent-memory-graph: episodic memory replay ✅ (cycle 185, +19 tests)
+- [x] agent-memory-graph: graph analytics ✅ (cycle 186, +14 tests)
+- [x] agent-memory-graph: memory diff ✅ (cycle 187, +16 tests)
 
 ### 中优先级
 - [ ] openclaw-langgraph-bridge: Supervisor 完善 — 261 tests, Gateway 集成测试
 - [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法集成)
-- [ ] lab/agent-observability: gen_ai.* 属性 + CostAggregator
+- [ ] lab/agent-observability: gen_ai.* 属性 + CostAggregator — **研究完成 ✅ 07-05**, CostAggregator 代码已验证 (6/6 tests pass), 下一步: 写入 src/cost-aggregator.ts + 属性迁移
 - [ ] AMS 生产化: EmbeddingProvider 真实接入
 - [ ] MCP Memory Server: agent-memory-graph-mcp 包 ~200行
 
@@ -143,6 +177,7 @@ Autoresearch 方法论实践 — **连续174天零回滚率** 🏆。
 - [ ] agent-memory-graph-mcp 包实现 + MCP Registry 注册
 - [ ] Agentic evaluation suite (MemoryBenchmarkHarness)
 - [ ] README 定位升级: "Bridge between production and research agent memory"
+- [ ] TrustEngineV2: 实现 lab/a2a-trust-prototype (~300行src+200行tests), 7算法已研究+代码已验证
 
 ---
 
@@ -151,7 +186,7 @@ Autoresearch 方法论实践 — **连续174天零回滚率** 🏆。
 | # | 项目 | Tests | 状态 |
 |---|------|-------|------|
 | 1 | agent-task-cli | 986 | ✅ npm ready |
-| 2 | agent-memory-graph | 1599 | ✅ npm ready, 二十一合一 |
+| 2 | agent-memory-graph | 1701 | ✅ npm ready, 三十一合一 |
 | 3 | agent-context-store | 2253 | ✅ npm ready, 37层管线 |
 | 4 | structured-output-toolkit | 507 | ✅ npm ready |
 | 5 | openclaw-langgraph-bridge | 261 | 🔄 Supervisor 完善 |
