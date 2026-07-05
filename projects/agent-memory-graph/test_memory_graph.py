@@ -16926,3 +16926,183 @@ class TestEpisodicReplay:
         timeline = self.mg.episode_timeline(episodes=episodes)
         assert "X" in timeline
         assert "Y" in timeline
+
+
+# ── Cycle 186: Graph Analytics ────────────────────────────────────
+
+class TestGraphAnalytics:
+    """Comprehensive graph analytics dashboard."""
+
+    def setup_method(self, method):
+        self.mg = MemoryGraph()
+
+    def test_analytics_empty_graph(self):
+        """Empty graph returns zeros across the board."""
+        a = self.mg.graph_analytics()
+        assert a["node_count"] == 0
+        assert a["edge_count"] == 0
+        assert a["density"] == 0.0
+        assert a["avg_degree"] == 0.0
+        assert a["memory_health"] == 0.0
+        assert a["orphan_nodes"] == 0
+
+    def test_analytics_node_edge_count(self):
+        """Basic counts are correct."""
+        a = self.mg.add("A", "concept")
+        b = self.mg.add("B", "concept")
+        self.mg.link(a.id, b.id, "related")
+
+        result = self.mg.graph_analytics()
+        assert result["node_count"] == 2
+        assert result["edge_count"] == 1
+
+    def test_analytics_density(self):
+        """Density = actual / max possible directed edges."""
+        a = self.mg.add("A")
+        b = self.mg.add("B")
+        c = self.mg.add("C")
+        # 3 nodes, max directed = 3*2 = 6
+        self.mg.link(a.id, b.id, "r")
+        self.mg.link(b.id, c.id, "r")
+        # 2 edges out of 6 possible
+        result = self.mg.graph_analytics()
+        assert result["density"] == round(2 / 6, 4)
+
+    def test_analytics_degree_distribution(self):
+        """Degree distribution buckets are correct."""
+        # Create nodes with varying degrees
+        nodes = [self.mg.add(f"N{i}") for i in range(6)]
+        # N0→N1, N0→N2, N0→N3 (N0 degree 3)
+        self.mg.link(nodes[0].id, nodes[1].id, "r")
+        self.mg.link(nodes[0].id, nodes[2].id, "r")
+        self.mg.link(nodes[0].id, nodes[3].id, "r")
+        # N1→N2 (N1 degree 2, N2 degree 2)
+        self.mg.link(nodes[1].id, nodes[2].id, "r")
+        # N4, N5 are orphans (degree 0)
+
+        result = self.mg.graph_analytics()
+        dd = result["degree_distribution"]
+        assert dd["0"] == 2  # N4, N5
+        assert dd["1-2"] == 3  # N1 (2), N2 (2), N3 (1)
+        assert dd["3-5"] == 1  # N0 (3)
+        assert dd["6-10"] == 0
+        assert dd["10+"] == 0
+
+    def test_analytics_hub_nodes(self):
+        """Hub nodes are the top-5 by degree."""
+        a = self.mg.add("Hub", "concept")
+        others = [self.mg.add(f"O{i}") for i in range(5)]
+        for o in others:
+            self.mg.link(a.id, o.id, "connects")
+
+        result = self.mg.graph_analytics()
+        assert len(result["hub_nodes"]) <= 5
+        assert result["hub_nodes"][0]["label"] == "Hub"
+        assert result["hub_nodes"][0]["degree"] == 5
+
+    def test_analytics_orphan_nodes(self):
+        """Orphan detection for nodes with no edges."""
+        a = self.mg.add("Connected1")
+        b = self.mg.add("Connected2")
+        self.mg.add("Lonely1")
+        self.mg.add("Lonely2")
+        self.mg.link(a.id, b.id, "r")
+
+        result = self.mg.graph_analytics()
+        assert result["orphan_nodes"] == 2
+        assert result["orphan_ratio"] == 0.5  # 2/4
+
+    def test_analytics_weight_distribution(self):
+        """Weight distribution stats are computed."""
+        a = self.mg.add("Strong")
+        b = self.mg.add("Weak")
+        self.mg.update_node(a.id, weight=0.9)
+        self.mg.update_node(b.id, weight=0.1)
+
+        result = self.mg.graph_analytics()
+        assert result["high_weight_count"] == 1  # >= 0.7
+        assert result["low_weight_count"] == 1   # < 0.3
+
+    def test_analytics_kind_distribution(self):
+        """Kind distribution reflects node types."""
+        self.mg.add("F1", "fact")
+        self.mg.add("F2", "fact")
+        self.mg.add("E1", "event")
+
+        result = self.mg.graph_analytics()
+        assert result["kind_distribution"]["fact"] == 2
+        assert result["kind_distribution"]["event"] == 1
+
+    def test_analytics_quarantined_excluded(self):
+        """Quarantined nodes excluded from node count."""
+        a = self.mg.add("Active")
+        b = self.mg.add("Hidden")
+        self.mg.conn.execute("UPDATE nodes SET quarantined=1 WHERE id=?", (b.id,))
+        self.mg.conn.commit()
+
+        result = self.mg.graph_analytics()
+        assert result["node_count"] == 1
+
+    def test_analytics_reciprocal_edges(self):
+        """Reciprocal edges (A→B and B→A) are counted."""
+        a = self.mg.add("A")
+        b = self.mg.add("B")
+        self.mg.link(a.id, b.id, "knows")
+        self.mg.link(b.id, a.id, "knows")
+
+        result = self.mg.graph_analytics()
+        assert result["reciprocal_edges"] == 1
+
+    def test_analytics_top_relations(self):
+        """Top relations by frequency."""
+        a = self.mg.add("A")
+        b = self.mg.add("B")
+        c = self.mg.add("C")
+        self.mg.link(a.id, b.id, "parent")
+        self.mg.link(a.id, c.id, "parent")
+        self.mg.link(b.id, c.id, "sibling")
+
+        result = self.mg.graph_analytics()
+        top = result["top_relations"]
+        assert top[0]["relation"] == "parent"
+        assert top[0]["count"] == 2
+
+    def test_analytics_memory_health(self):
+        """Memory health is in [0, 1] and reflects connectivity."""
+        # Well-connected graph
+        nodes = [self.mg.add(f"N{i}") for i in range(5)]
+        for i in range(4):
+            self.mg.link(nodes[i].id, nodes[i+1].id, "next")
+        health_connected = self.mg.graph_analytics()["memory_health"]
+
+        # Sparse graph
+        mg2 = MemoryGraph()
+        for i in range(5):
+            mg2.add(f"N{i}")
+        health_sparse = mg2.graph_analytics()["memory_health"]
+
+        assert 0.0 <= health_connected <= 1.0
+        assert 0.0 <= health_sparse <= 1.0
+        assert health_connected > health_sparse
+
+    def test_analytics_avg_q_value(self):
+        """Q-value average ignores zero values."""
+        a = self.mg.add("A")
+        b = self.mg.add("B")
+        self.mg.conn.execute("UPDATE nodes SET q_value=0.5 WHERE id=?", (a.id,))
+        self.mg.conn.execute("UPDATE nodes SET q_value=0.3 WHERE id=?", (b.id,))
+        self.mg.conn.commit()
+
+        result = self.mg.graph_analytics()
+        assert result["avg_q_value"] == 0.4  # (0.5+0.3)/2
+
+    def test_analytics_avg_degree(self):
+        """Average degree is sum(total_degree)/node_count."""
+        a = self.mg.add("A")
+        b = self.mg.add("B")
+        c = self.mg.add("C")
+        self.mg.link(a.id, b.id, "r")
+        self.mg.link(b.id, c.id, "r")
+        # Degrees: A=1, B=2, C=1 → avg = 4/3
+        result = self.mg.graph_analytics()
+        assert result["avg_degree"] == round(4/3, 2)

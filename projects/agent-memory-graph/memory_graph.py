@@ -14996,6 +14996,129 @@ class MemoryGraph:
         ).fetchone()
         return row is not None and row[0] == 1
 
+    # ── Graph Analytics ─────────────────────────────────────
+
+    def graph_analytics(self) -> dict:
+        """Comprehensive graph analytics in a single call.
+
+        Returns density, degree distribution, centrality metrics,
+        memory health scores, and structural insights.
+        Combines and extends stats() with deeper analysis.
+        """
+        nodes = self.conn.execute(
+            "SELECT * FROM nodes WHERE quarantined=0"
+        ).fetchall()
+        n_count = len(nodes)
+
+        edges = self.conn.execute("SELECT * FROM edges").fetchall()
+        e_count = len(edges)
+
+        # Density: actual / max possible edges (directed, no self-loops)
+        max_edges = n_count * (n_count - 1) if n_count > 1 else 0
+        density = e_count / max_edges if max_edges > 0 else 0.0
+
+        # Degree analysis
+        out_deg = defaultdict(int)
+        in_deg = defaultdict(int)
+        for e in edges:
+            out_deg[e["source"]] += 1
+            in_deg[e["target"]] += 1
+
+        all_degrees = [out_deg.get(r["id"], 0) + in_deg.get(r["id"], 0) for r in nodes]
+        avg_degree = sum(all_degrees) / len(all_degrees) if all_degrees else 0.0
+        max_degree = max(all_degrees) if all_degrees else 0
+
+        # Degree distribution buckets
+        deg_dist = {"0": 0, "1-2": 0, "3-5": 0, "6-10": 0, "10+": 0}
+        for d in all_degrees:
+            if d == 0:
+                deg_dist["0"] += 1
+            elif d <= 2:
+                deg_dist["1-2"] += 1
+            elif d <= 5:
+                deg_dist["3-5"] += 1
+            elif d <= 10:
+                deg_dist["6-10"] += 1
+            else:
+                deg_dist["10+"] += 1
+
+        # Top nodes by degree (hub nodes)
+        node_degrees = [
+            (r["id"], r["label"], out_deg.get(r["id"], 0) + in_deg.get(r["id"], 0))
+            for r in nodes
+        ]
+        node_degrees.sort(key=lambda x: x[2], reverse=True)
+        hubs = [
+            {"id": nid, "label": label, "degree": deg}
+            for nid, label, deg in node_degrees[:5]
+        ]
+
+        # Weight distribution
+        weights = [r["weight"] for r in nodes]
+        avg_weight = sum(weights) / len(weights) if weights else 0.0
+        low_weight = sum(1 for w in weights if w < 0.3)
+        high_weight = sum(1 for w in weights if w >= 0.7)
+
+        # Q-value distribution
+        q_values = [r["q_value"] for r in nodes if r["q_value"] != 0.0]
+        avg_q = sum(q_values) / len(q_values) if q_values else 0.0
+
+        # Kind distribution
+        kind_counts = defaultdict(int)
+        for r in nodes:
+            kind_counts[r["kind"]] += 1
+
+        # Orphan nodes (no edges)
+        connected_ids = set()
+        for e in edges:
+            connected_ids.add(e["source"])
+            connected_ids.add(e["target"])
+        orphans = sum(1 for r in nodes if r["id"] not in connected_ids)
+        orphan_ratio = orphans / n_count if n_count > 0 else 0.0
+
+        # Reciprocal edges (A→B and B→A)
+        edge_pairs = set()
+        reciprocal = 0
+        for e in edges:
+            pair = (e["source"], e["target"])
+            reverse = (e["target"], e["source"])
+            if reverse in edge_pairs:
+                reciprocal += 1
+            edge_pairs.add(pair)
+
+        # Memory health score [0, 1] — composite
+        # Lower orphans, good avg weight, high connectivity → higher score
+        connectivity_score = 1.0 - orphan_ratio if n_count > 0 else 0.0
+        weight_score = min(avg_weight, 1.0)
+        density_score = min(density * 10, 1.0)  # Scale: 0.1 density → full score
+        health = (connectivity_score * 0.4 + weight_score * 0.3 + density_score * 0.3)
+
+        # Relation distribution
+        relation_counts = defaultdict(int)
+        for e in edges:
+            relation_counts[e["relation"]] += 1
+        top_relations = sorted(relation_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        return {
+            "node_count": n_count,
+            "edge_count": e_count,
+            "density": round(density, 4),
+            "avg_degree": round(avg_degree, 2),
+            "max_degree": max_degree,
+            "degree_distribution": deg_dist,
+            "hub_nodes": hubs,
+            "avg_weight": round(avg_weight, 4),
+            "low_weight_count": low_weight,
+            "high_weight_count": high_weight,
+            "avg_q_value": round(avg_q, 4),
+            "kind_distribution": dict(kind_counts),
+            "orphan_nodes": orphans,
+            "orphan_ratio": round(orphan_ratio, 4),
+            "reciprocal_edges": reciprocal,
+            "top_relations": [{"relation": r, "count": c} for r, c in top_relations],
+            "memory_health": round(health, 4),
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
