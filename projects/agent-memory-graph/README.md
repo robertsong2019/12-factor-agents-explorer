@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-1554-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1821-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -39,6 +39,14 @@
 - **鲁棒社区检测** — Leiden 启发的随机化迭代 + 模块度回退，避免对称图标签级联
 - **网络拓扑分析** — 度分布 (Shannon 熵) + 连通前沿 + Freeman 归一化度中心性 + 诱导子图密度 + 加权度 + 邻域普查
 - **多智能体记忆合并** — CRDT-based 合并策略 (LWW/OR-Set/Trust-weighted)，支持多 Agent 记忆图一致合并
+- **MCP Server** — 10 工具 (remember/recall/relate/ask/lookup/neighbors/forget/stats/timeline/health)，可直接接入 mcporter 或任何 MCP 客户端
+- **批量图操作** — batch_create_nodes / batch_add_edges / batch_delete_nodes 单事务批量写入
+- **链路预测** — predict_links 基于 common-neighbors / Adamic-Adar / preferential-attachment 三信号推荐缺失边
+- **加权路径** — shortest_path_weighted (Dijkstra) / path_cost / all_paths / k_shortest_paths (Yen's algorithm)
+- **子图提取** — extract_subgraph 返回新 MemoryGraph，neighborhood 轻量 ID 列表
+- **全图中心性** — betweenness_all / closeness_all / eigenvector_all 一次调用计算所有节点
+- **图序列化** — to_dict / from_dict JSON 安全序列化，支持快照和跨 Agent 传输
+- **图收缩** — contract_nodes 节点合并为超节点 / contract_communities 社区级超节点折叠
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## 安装
@@ -1704,13 +1712,151 @@ results = mg.diffusion_retrieve(
 
 ---
 
+### MCP Server (10 工具)
+
+内置 MCP (Model Context Protocol) Server，可直接接入 mcporter 或任何 MCP 客户端，让 AI Agent 通过标准协议操作记忆图谱。
+
+```bash
+# 启动 MCP Server
+python3 mcp_server.py
+
+# 或通过 mcporter 接入
+mcporter add agent-memory-graph -- python3 /path/to/mcp_server.py
+```
+
+| 工具 | 功能 |
+|------|------|
+| `remember` | 添加或更新记忆节点 |
+| `recall` | BM25 关键词召回 |
+| `relate` | 建立节点间关系边 |
+| `ask` | 混合搜索 (BM25 + 向量 + 图邻居) |
+| `lookup` | 按 ID / 标签 / 类型查找 |
+| `neighbors` | BFS 关联遍历 |
+| `forget` | 删除节点 |
+| `stats` | 图统计概览 |
+| `timeline` | 时间线查询 |
+| `health` | 记忆健康评分 |
+
+---
+
+### 批量图操作
+
+#### `batch_create_nodes(nodes_data) -> dict`
+
+单事务批量创建节点。`nodes_data` 为 `[{label, kind?, data?, tags?}]` 列表。返回 `{created, node_ids}`。
+
+#### `batch_add_edges(edges_data) -> dict`
+
+单事务批量建边。`edges_data` 为 `[{source, target, relation, weight?}]`。返回 `{added, skipped}`。
+
+#### `batch_delete_nodes(node_ids, safe=True) -> dict`
+
+批量删除节点。`safe=True` 时跳过有存活依赖的节点。返回 `{deleted, skipped, reasons}`。
+
+---
+
+### 链路预测
+
+#### `predict_links(node_id=None, limit=10, min_score=0.0) -> list[dict]`
+
+基于三种信号推荐缺失边：
+- **Common Neighbors** — 共同邻居数量
+- **Adamic-Adar** — 共同邻居的 1/log(degree) 之和
+- **Preferential Attachment** — degree(u) × degree(v)
+
+```python
+suggestions = mg.predict_links("node-1", limit=5)
+# [{'source': 'node-1', 'target': 'node-5', 'score': 0.82,
+#   'common_neighbors': 3, 'adamic_adar': 1.2, 'pref_attachment': 12}, ...]
+```
+
+---
+
+### 加权路径算法
+
+#### `shortest_path_weighted(source_id, target_id, default_weight=1.0) -> dict | None`
+
+Dijkstra 加权最短路径。与 BFS 最短路径不同，考虑边权重——经过低权重边的 3 跳路径可能优于 2 跳高权重路径。
+
+#### `path_cost(path) -> float`
+
+计算给定路径的总权重。路径中任一边不存在时返回 `inf`。
+
+#### `all_paths(source_id, target_id, max_hops=5, limit=20) -> list[list[str]]`
+
+两点间所有简单路径（DFS + 深度剪枝）。按长度排序，限制返回 `limit` 条防止组合爆炸。
+
+#### `k_shortest_paths(source_id, target_id, k=3, max_hops=8) -> list[dict]`
+
+K 条最低成本路径（Yen's algorithm）。返回 `[{'path': [...], 'cost': 2.5, 'hops': 3}]`，按成本升序。
+
+---
+
+### 子图提取与邻域
+
+#### `extract_subgraph(node_id, radius=1, max_nodes=100, include_quarantined=False) -> MemoryGraph`
+
+以 `node_id` 为中心，BFS 扩展 `radius` 跳，返回包含子集的**新 MemoryGraph 实例**。`max_nodes` 防止大图抽取。
+
+#### `neighborhood(node_id, radius=1, include_quarantined=False) -> list[str]`
+
+返回 `radius` 跳内的节点 ID 列表（含自身）。`extract_subgraph` 的轻量替代——只需 ID 不需要子图副本时使用。
+
+---
+
+### 全图中心性
+
+#### `betweenness_all(normalized=True, include_quarantined=False) -> dict[str, float]`
+
+所有节点的介数中心性（Brandes 算法）。高介数 = 桥梁节点。
+
+#### `closeness_all(normalized=True, include_quarantined=False) -> dict[str, float]`
+
+所有节点的接近中心性（多源 BFS）。高接近 = 能快速到达全图。
+
+#### `eigenvector_all(iterations=100, tolerance=1e-6, include_quarantined=False) -> dict[str, float]`
+
+所有节点的特征向量中心性（幂迭代）。高值 = 连接到其他重要节点。
+
+---
+
+### 图序列化
+
+#### `to_dict() -> dict`
+
+图序列化为 JSON 安全字典（含 nodes / edges / edge_props / meta）。适用于快照、API 响应、跨 Agent 传输。
+
+#### `from_dict(data) -> MemoryGraph` *(classmethod)*
+
+从 `to_dict()` 输出创建新 MemoryGraph 实例。
+
+```python
+mg_data = mg.to_dict()
+# ... 传输或存储 ...
+mg2 = MemoryGraph.from_dict(mg_data)
+```
+
+---
+
+### 图收缩
+
+#### `contract_nodes(node_ids, supernode_label, kind="supernode", data=None, quarantine_members=True) -> dict`
+
+将一组节点合并为单个超节点。外部边重定向到超节点（权重求和），内部边丢弃。适用于多分辨率图视图和实体去重。
+
+#### `contract_communities(labels=None, max_iterations=20, resolution=1.0) -> dict`
+
+检测社区并将每个社区收缩为超节点。LPA 社区检测 + contract_nodes 组合。适用于图摘要和多层级分析。
+
+---
+
 ## 测试
 
 ```bash
 python3 -m pytest test_memory_graph.py -q
 ```
 
-1554 个测试覆盖所有 API。
+1821 个测试覆盖所有 API（195 个 cycle，179 天零回滚）。
 
 ## 设计思路
 
@@ -1741,6 +1887,11 @@ python3 -m pytest test_memory_graph.py -q
 25. **访问模式分析** — memory_access_pattern 时间访问模式分析：冷热分类（hot/cold/warm per-kind）、访问速度（utilization metric）、昼夜偏差检测（hour-of-day concentration）、4 种推荐
 26. **健康评分 KPI** — memory_health_score 综合健康评分（0-100）：5 维度加权（Vitality 30 + Integrity 20 + Connectivity 20 + Diversity 15 + Maintenance 15）+ 字母等级（A-F）+ 问题标记
 27. **Diffusion 检索** — diffusion_retrieve 实现 ExpGraph 启发的 Personalized PageRank 扩散检索：BM25/向量识别 seed → PPR 传播分数 → 边权重感知衰减 → BM25 混合排序。从研究到生产 <24h 的案例（ExpGraph + Memory-R1 → diffusion_retrieve）
+28. **MCP Server** — 10 工具标准化协议接口 (remember/recall/relate/ask/lookup/neighbors/forget/stats/timeline/health)，AI Agent 可通过 MCP 直接操作记忆图谱，已接入 mcporter 自用 dogfood
+29. **批量操作 + 链路预测** — batch_create_nodes/batch_add_edges/batch_delete_nodes 单事务高效写入；predict_links 三信号推荐缺失边（common-neighbors + Adamic-Adar + preferential-attachment）
+30. **加权路径 + 子图提取** — Dijkstra 加权最短路径 + Yen's k-shortest-paths + all_paths 枚举；extract_subgraph 返回独立子图实例，neighborhood 轻量 ID 列表
+31. **全图中心性 + 图收缩** — betweenness_all/closeness_all/eigenvector_all 批量中心性计算；contract_nodes/contract_communities 超节点折叠实现多分辨率图分析
+32. **图序列化** — to_dict/from_dict 提供 JSON 安全的图序列化方案，支持快照恢复、API 响应和跨 Agent 记忆传输
 
 ## 许可
 
