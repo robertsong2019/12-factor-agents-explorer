@@ -1,225 +1,322 @@
 {
-  "lastUpdated": "2026-06-26T22:01:00Z",
-  "generatedAt": "2026-06-27 06:01 CST",
-  "actionRequired": [
-    {
-      "level": "warning",
-      "item": "github-creative-evening (610a8d6d)",
-      "detail": "Last run ended with error status — needs investigation"
+  "generatedAt": "2026-07-06T06:02:40.423142+08:00",
+  "generatedAtTimestamp": 1783288960,
+  "summary": {
+    "totalSessions": 53,
+    "activeSessions24h": 38,
+    "activeSessions1h": 5,
+    "totalTokensAllTime": 2868044,
+    "totalInputTokens": 2229712,
+    "totalOutputTokens": 413640,
+    "sessionsByKind": {
+      "direct": 52,
+      "group": 1
     },
-    {
-      "level": "warning",
-      "item": "deep-exploration-evening (265091b6)",
-      "detail": "Last run ended with error status — needs investigation"
-    },
-    {
-      "level": "warning",
-      "item": "knowledge-organization (fd0515b0)",
-      "detail": "Last run ended with error status — needs investigation"
+    "sessionsByModel": {
+      "glm-5.1": 42,
+      "glm-5": 11
     }
-  ],
-  "activeNow": [],
-  "crons": [
+  },
+  "cronJobs": [
     {
-      "name": "dashboard-update-morning",
-      "schedule": "6:00 AM daily",
       "id": "f38e0365",
-      "lastRun": "2026-06-26T22:00:00Z",
+      "name": "dashboard-update-morning",
+      "schedule": "0 6 * * *",
       "status": "running",
-      "errors": 0
+      "lastRun": "6:00 AM today"
     },
     {
-      "name": "github-trending-daily",
-      "schedule": "7:00 AM daily",
       "id": "9b2a8701",
-      "lastRun": "2026-06-25T23:00:00Z",
+      "name": "github-trending-daily",
+      "schedule": "0 7 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "8d ago"
     },
     {
-      "name": "github-trending-deep",
-      "schedule": "8:00 AM daily",
       "id": "2c714952",
-      "lastRun": "2026-06-26T00:00:00Z",
+      "name": "github-trending-deep",
+      "schedule": "0 8 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "8d ago"
     },
     {
-      "name": "github-creative-evening",
-      "schedule": "7:00 PM daily",
       "id": "610a8d6d",
-      "lastRun": "2026-06-26T11:00:00Z",
-      "status": "error",
-      "errors": 1
+      "name": "github-creative-evening",
+      "schedule": "0 19 * * *",
+      "status": "ok",
+      "lastRun": "11h ago"
     },
     {
-      "name": "deep-exploration-evening",
-      "schedule": "8:00 PM daily",
       "id": "265091b6",
-      "lastRun": "2026-06-26T12:00:00Z",
-      "status": "error",
-      "errors": 1
-    },
-    {
-      "name": "deep-exploration-evening-utc",
-      "schedule": "8:00 PM UTC daily",
-      "id": "bb46cb70",
-      "lastRun": "2026-06-26T12:00:00Z",
+      "name": "deep-exploration-evening",
+      "schedule": "0 20 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "10h ago"
     },
     {
-      "name": "code-lab-evening",
-      "schedule": "9:00 PM daily",
       "id": "13a2f284",
-      "lastRun": "2026-06-26T13:00:00Z",
+      "name": "code-lab-evening",
+      "schedule": "0 21 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "9h ago"
     },
     {
+      "id": "62bf7f3b",
       "name": "tool-development-evening",
-      "schedule": "10:00 PM daily",
-      "id": "ce2fb615",
-      "lastRun": "2026-06-26T14:00:00Z",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "key-development-1",
-      "schedule": "11:00 PM daily",
-      "id": "78eac6fc",
-      "lastRun": "2026-06-26T15:00:00Z",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "key-development-2",
-      "schedule": "12:00 AM daily",
-      "id": "88679f9e",
-      "lastRun": "2026-06-26T16:00:00Z",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "key-development-3",
-      "schedule": "1:00 AM daily",
-      "id": "b0fd7e8d",
-      "lastRun": "2026-06-26T17:00:00Z",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "knowledge-organization",
-      "schedule": "2:00 AM daily",
-      "id": "fd0515b0",
-      "lastRun": "2026-06-26T18:00:00Z",
+      "schedule": "0 22 * * *",
       "status": "error",
-      "errors": 1
+      "lastRun": "8h ago"
     },
     {
-      "name": "project-testing-morning",
-      "schedule": "3:00 AM daily",
+      "id": "78eac6fc",
+      "name": "key-development-1",
+      "schedule": "0 23 * * *",
+      "status": "ok",
+      "lastRun": "7h ago"
+    },
+    {
+      "id": "88679f9e",
+      "name": "key-development-2",
+      "schedule": "0 0 * * *",
+      "status": "ok",
+      "lastRun": "6h ago"
+    },
+    {
+      "id": "b0fd7e8d",
+      "name": "key-development-3",
+      "schedule": "0 1 * * *",
+      "status": "ok",
+      "lastRun": "5h ago"
+    },
+    {
+      "id": "1ea6e3b0",
+      "name": "knowledge-organization",
+      "schedule": "0 2 * * *",
+      "status": "ok",
+      "lastRun": "4h ago"
+    },
+    {
       "id": "f7510f1f",
-      "lastRun": "2026-06-26T19:00:00Z",
+      "name": "project-testing-morning",
+      "schedule": "0 3 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "3h ago"
     },
     {
-      "name": "documentation-morning",
-      "schedule": "4:00 AM daily",
       "id": "77a5bcc6",
-      "lastRun": "2026-06-26T20:00:00Z",
+      "name": "documentation-morning",
+      "schedule": "0 4 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "2h ago"
     },
     {
-      "name": "essay-generation-morning",
-      "schedule": "5:00 AM daily",
       "id": "686ec55c",
-      "lastRun": "2026-06-26T21:00:00Z",
+      "name": "essay-generation-morning",
+      "schedule": "0 5 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "1h ago"
     }
   ],
-  "sessions": {
-    "totalSessions": 45,
-    "activeInLast24h": 32,
-    "totalInputTokens": 2046151,
-    "totalOutputTokens": 414526,
-    "kinds": { "direct": 44, "group": 1 },
-    "recentSessions": [
-      {
-        "key": "cron:dashboard-update-morning",
-        "age": "0.0h",
-        "model": "glm-5.1",
-        "kind": "cron"
-      },
-      {
-        "key": "cron:essay-generation-morning",
-        "age": "1h",
-        "model": "glm-5.1",
-        "kind": "cron"
-      },
-      {
-        "key": "cron:documentation-morning",
-        "age": "2h",
-        "model": "glm-5.1",
-        "kind": "cron"
-      },
-      {
-        "key": "cron:project-testing-morning",
-        "age": "3h",
-        "model": "glm-5.1",
-        "kind": "cron"
-      },
-      {
-        "key": "cron:knowledge-organization",
-        "age": "4h",
-        "model": "glm-5.1",
-        "kind": "cron"
-      },
-      {
-        "key": "cron:key-development-3",
-        "age": "5h",
-        "model": "glm-5.1",
-        "kind": "cron"
-      },
-      {
-        "key": "cron:key-development-2",
-        "age": "6h",
-        "model": "glm-5.1",
-        "kind": "cron"
-      },
-      {
-        "key": "cron:key-development-1",
-        "age": "7h",
-        "model": "glm-5.1",
-        "kind": "cron"
-      },
-      {
-        "key": "cron:tool-development-evening",
-        "age": "8h",
-        "model": "glm-5.1",
-        "kind": "cron"
-      },
-      {
-        "key": "cron:code-lab-evening",
-        "age": "9h",
-        "model": "glm-5.1",
-        "kind": "cron"
-      }
-    ]
-  },
-  "systemHealth": {
-    "model": "glm-5.1",
-    "cronJobs": 15,
-    "allCronsHealthy": false,
-    "uptime": "nominal",
-    "errorsToday": 3,
-    "errorDetails": "github-creative-evening (610a8d6d), deep-exploration-evening (265091b6), and knowledge-organization (fd0515b0) ended with error on last run"
-  },
-  "projectStats": {
-    "commitsLast24h": 7,
-    "streakDays": 158
-  }
+  "recentSessions": [
+    {
+      "key": "agent:main:cron:f38e0365-7bbf-46fd-bab7-14d51a5d4df0",
+      "ageHours": 0.0,
+      "model": "glm-5.1",
+      "totalTokens": 30759,
+      "inputTokens": 18599,
+      "outputTokens": 7,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:f38e0365-7bbf-46fd-bab7-14d51a5d4df0:run:611a4fc6-4bc4-499d-9b50",
+      "ageHours": 0.0,
+      "model": "glm-5.1",
+      "totalTokens": 30759,
+      "inputTokens": 18599,
+      "outputTokens": 7,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:main",
+      "ageHours": 0.2,
+      "model": "glm-5.1",
+      "totalTokens": 110664,
+      "inputTokens": 136,
+      "outputTokens": 7,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:f0362050-d109-45ca-971b-6cc9cfad90eb",
+      "ageHours": 1.0,
+      "model": "glm-5.1",
+      "totalTokens": 55320,
+      "inputTokens": 38181,
+      "outputTokens": 17348,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:f0362050-d109-45ca-971b-6cc9cfad90eb:run:23932d54-2713-4459-80f9",
+      "ageHours": 1.0,
+      "model": "glm-5.1",
+      "totalTokens": 55320,
+      "inputTokens": 38181,
+      "outputTokens": 17348,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:686ec55c-17ca-43a9-9977-65a3c320ec3a",
+      "ageHours": 1.0,
+      "model": "glm-5.1",
+      "totalTokens": 53788,
+      "inputTokens": 52765,
+      "outputTokens": 9170,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:686ec55c-17ca-43a9-9977-65a3c320ec3a:run:481bfa9c-3697-4238-a617",
+      "ageHours": 1.0,
+      "model": "glm-5.1",
+      "totalTokens": 53788,
+      "inputTokens": 52765,
+      "outputTokens": 9170,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:77a5bcc6-1342-4ff4-836a-f640973006dc",
+      "ageHours": 2.0,
+      "model": "glm-5.1",
+      "totalTokens": 76957,
+      "inputTokens": 64797,
+      "outputTokens": 54,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:77a5bcc6-1342-4ff4-836a-f640973006dc:run:ba8a27c9-18bc-4a32-a26a",
+      "ageHours": 2.0,
+      "model": "glm-5.1",
+      "totalTokens": 78455,
+      "inputTokens": 77986,
+      "outputTokens": 12073,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:f7510f1f-9db8-46e7-8019-3c9a4858db2e",
+      "ageHours": 2.9,
+      "model": "glm-5.1",
+      "totalTokens": 62964,
+      "inputTokens": 50804,
+      "outputTokens": 4,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:f7510f1f-9db8-46e7-8019-3c9a4858db2e:run:2279308d-38a6-4f68-bc3c",
+      "ageHours": 3.0,
+      "model": "glm-5.1",
+      "totalTokens": 62927,
+      "inputTokens": 62634,
+      "outputTokens": 12495,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:1ea6e3b0-4744-4b45-871a-cdd1fcbef48c",
+      "ageHours": 4.0,
+      "model": "glm-5.1",
+      "totalTokens": 37069,
+      "inputTokens": 19514,
+      "outputTokens": 4292,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:1ea6e3b0-4744-4b45-871a-cdd1fcbef48c:run:84b6969a-123b-4193-a90d",
+      "ageHours": 4.0,
+      "model": "glm-5.1",
+      "totalTokens": 37069,
+      "inputTokens": 19514,
+      "outputTokens": 4292,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:fd0515b0-f483-411d-b110-3a16fbc49983",
+      "ageHours": 4.0,
+      "model": "glm-5.1",
+      "totalTokens": 43187,
+      "inputTokens": 41843,
+      "outputTokens": 10684,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:fd0515b0-f483-411d-b110-3a16fbc49983:run:e7d42666-1d5e-46b7-826b",
+      "ageHours": 4.0,
+      "model": "glm-5.1",
+      "totalTokens": 43187,
+      "inputTokens": 41843,
+      "outputTokens": 10684,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:b0fd7e8d-f946-4228-bb85-1baaa3502c7c",
+      "ageHours": 4.8,
+      "model": "glm-5.1",
+      "totalTokens": 69430,
+      "inputTokens": 64630,
+      "outputTokens": 7,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:b0fd7e8d-f946-4228-bb85-1baaa3502c7c:run:f78c1859-6d4f-4f99-967d",
+      "ageHours": 5.0,
+      "model": "glm-5.1",
+      "totalTokens": 74364,
+      "inputTokens": 74334,
+      "outputTokens": 33385,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:88679f9e-ba09-4e1a-8dbd-a2dc12808544",
+      "ageHours": 5.9,
+      "model": "glm-5.1",
+      "totalTokens": 55107,
+      "inputTokens": 42947,
+      "outputTokens": 25,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:88679f9e-ba09-4e1a-8dbd-a2dc12808544:run:258a1d31-a833-48d8-9be8",
+      "ageHours": 6.0,
+      "model": "glm-5.1",
+      "totalTokens": 54418,
+      "inputTokens": 53681,
+      "outputTokens": 16133,
+      "kind": "direct",
+      "agentId": "main"
+    },
+    {
+      "key": "agent:main:cron:78eac6fc-c2d7-41d2-a5d1-9a52892f89ab",
+      "ageHours": 6.7,
+      "model": "glm-5.1",
+      "totalTokens": 52742,
+      "inputTokens": 34886,
+      "outputTokens": 39,
+      "kind": "direct",
+      "agentId": "main"
+    }
+  ]
 }
