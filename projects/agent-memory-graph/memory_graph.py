@@ -15505,6 +15505,93 @@ class MemoryGraph:
 
         return predictions[:limit]
 
+    # ─── Weighted Shortest Path (Dijkstra) ──────────────────────────
+
+    def shortest_path_weighted(self, source_id: str, target_id: str,
+                                default_weight: float = 1.0) -> Optional[dict]:
+        """Find the minimum-cost path between two nodes using edge weights.
+
+        Uses Dijkstra's algorithm.  Unlike ``shortest_path`` (BFS by hops),
+        this accounts for edge ``weight`` values so that a 3-hop path
+        through low-weight edges may beat a 2-hop path through high-weight
+        edges.
+
+        Args:
+            source_id: Starting node ID.
+            target_id: Ending node ID.
+            default_weight: Weight to use if an edge has no weight column
+                            or weight is NULL (default 1.0).
+
+        Returns ``None`` if no path exists, otherwise a dict with:
+            ``path`` (list of node IDs), ``cost`` (total weight),
+            ``hops`` (number of edges).
+        """
+        if source_id == target_id:
+            return {"path": [source_id], "cost": 0.0, "hops": 0}
+
+        import heapq
+
+        # Build weighted adjacency (directed)
+        rows = self.conn.execute(
+            "SELECT source, target, weight FROM edges"
+        ).fetchall()
+        adj: dict[str, list[tuple[str, float]]] = {}
+        for r in rows:
+            w = r["weight"] if r["weight"] is not None else default_weight
+            adj.setdefault(r["source"], []).append((r["target"], w))
+
+        # Dijkstra
+        dist: dict[str, float] = {source_id: 0.0}
+        prev: dict[str, str] = {}
+        visited: set[str] = set()
+        pq: list[tuple[float, str]] = [(0.0, source_id)]
+
+        while pq:
+            d, u = heapq.heappop(pq)
+            if u in visited:
+                continue
+            visited.add(u)
+            if u == target_id:
+                break
+            for v, w in adj.get(u, []):
+                nd = d + w
+                if nd < dist.get(v, float('inf')):
+                    dist[v] = nd
+                    prev[v] = u
+                    heapq.heappush(pq, (nd, v))
+
+        if target_id not in dist:
+            return None
+
+        # Reconstruct path
+        path = [target_id]
+        cur = target_id
+        while cur != source_id:
+            cur = prev[cur]
+            path.append(cur)
+        path.reverse()
+
+        return {"path": path, "cost": round(dist[target_id], 6), "hops": len(path) - 1}
+
+    def path_cost(self, path: list[str]) -> float:
+        """Compute the total weight of a given node-ID path.
+
+        Returns ``inf`` if any edge in the path does not exist.
+        """
+        if len(path) < 2:
+            return 0.0
+        total = 0.0
+        for i in range(len(path) - 1):
+            row = self.conn.execute(
+                "SELECT weight FROM edges WHERE source=? AND target=? "
+                "ORDER BY weight ASC LIMIT 1",
+                (path[i], path[i + 1]),
+            ).fetchone()
+            if not row:
+                return float('inf')
+            total += row["weight"] if row["weight"] is not None else 1.0
+        return round(total, 6)
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

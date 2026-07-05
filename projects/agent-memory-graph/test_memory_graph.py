@@ -17852,3 +17852,163 @@ class TestPredictLinks:
         preds = mg.predict_links(node_id=a.id, limit=5)
         for p in preds:
             assert isinstance(p["score"], float)
+
+
+# ════════════════════════════════════════════════════════════════
+#  Cycle 190: Weighted Shortest Path (Dijkstra) — shortest_path_weighted / path_cost
+# ════════════════════════════════════════════════════════════════
+
+class TestShortestPathWeighted:
+    """Tests for shortest_path_weighted() — Dijkstra-based."""
+
+    def test_weighted_path_direct_edge(self):
+        """Direct edge → single-hop path."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r", weight=2.0)
+        result = mg.shortest_path_weighted(a.id, b.id)
+        assert result is not None
+        assert result["path"] == [a.id, b.id]
+        assert result["cost"] == 2.0
+        assert result["hops"] == 1
+
+    def test_weighted_path_same_node(self):
+        """Source == target → zero-cost path."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        result = mg.shortest_path_weighted(a.id, a.id)
+        assert result is not None
+        assert result["cost"] == 0.0
+        assert result["hops"] == 0
+        assert result["path"] == [a.id]
+
+    def test_weighted_path_prefers_low_weight(self):
+        """3-hop low-weight path beats 2-hop high-weight path."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        d = mg.add("D")
+        # Direct high-cost: A→D weight 10
+        mg.link(a.id, d.id, "r", weight=10.0)
+        # Indirect low-cost: A→B→C→D weight 1+1+1 = 3
+        mg.link(a.id, b.id, "r", weight=1.0)
+        mg.link(b.id, c.id, "r", weight=1.0)
+        mg.link(c.id, d.id, "r", weight=1.0)
+        result = mg.shortest_path_weighted(a.id, d.id)
+        assert result is not None
+        assert result["cost"] == 3.0
+        assert result["hops"] == 3
+
+    def test_weighted_path_no_path(self):
+        """Disconnected nodes → None."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        assert mg.shortest_path_weighted(a.id, b.id) is None
+
+    def test_weighted_path_chain(self):
+        """Chain path correct cost."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r", weight=float(i + 1))
+        # Total: 1+2+3+4 = 10
+        result = mg.shortest_path_weighted(nodes[0].id, nodes[4].id)
+        assert result is not None
+        assert result["cost"] == 10.0
+        assert result["hops"] == 4
+
+    def test_weighted_path_default_weight(self):
+        """Edges without explicit weight use default 1.0."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")  # weight defaults to 1.0 in link()
+        mg.link(b.id, c.id, "r")
+        result = mg.shortest_path_weighted(a.id, c.id)
+        assert result is not None
+        assert result["cost"] == 2.0
+
+    def test_weighted_path_directed_graph(self):
+        """Respects edge direction (no reverse traversal)."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(b.id, a.id, "r", weight=1.0)  # only B→A
+        # A→B should not exist
+        assert mg.shortest_path_weighted(a.id, b.id) is None
+        # B→A should work
+        result = mg.shortest_path_weighted(b.id, a.id)
+        assert result is not None
+
+    def test_weighted_path_multiple_equal_paths(self):
+        """Two equal-cost paths → returns one of them."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        d = mg.add("D")
+        mg.link(a.id, b.id, "r", weight=1.0)
+        mg.link(b.id, d.id, "r", weight=1.0)
+        mg.link(a.id, c.id, "r", weight=1.0)
+        mg.link(c.id, d.id, "r", weight=1.0)
+        result = mg.shortest_path_weighted(a.id, d.id)
+        assert result is not None
+        assert result["cost"] == 2.0
+        assert result["hops"] == 2
+
+    def test_weighted_path_with_zero_weight_edge(self):
+        """Zero-weight edges are allowed."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r", weight=0.0)
+        result = mg.shortest_path_weighted(a.id, b.id)
+        assert result is not None
+        assert result["cost"] == 0.0
+
+
+class TestPathCost:
+    """Tests for path_cost() helper."""
+
+    def test_path_cost_simple(self):
+        """Sum of edge weights along path."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r", weight=2.0)
+        mg.link(b.id, c.id, "r", weight=3.0)
+        assert mg.path_cost([a.id, b.id, c.id]) == 5.0
+
+    def test_path_cost_single_node(self):
+        """Single node path has zero cost."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        assert mg.path_cost([a.id]) == 0.0
+
+    def test_path_cost_empty(self):
+        """Empty path has zero cost."""
+        mg = MemoryGraph()
+        assert mg.path_cost([]) == 0.0
+
+    def test_path_cost_missing_edge(self):
+        """Missing edge → inf cost."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        assert mg.path_cost([a.id, b.id]) == float('inf')
+
+    def test_path_cost_uses_min_weight(self):
+        """When multiple edges exist between nodes, uses minimum weight."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r", weight=5.0)
+        mg.link(a.id, b.id, "s", weight=1.0)  # INSERT OR REPLACE may overwrite
+        # At least one edge exists
+        cost = mg.path_cost([a.id, b.id])
+        assert cost != float('inf')
