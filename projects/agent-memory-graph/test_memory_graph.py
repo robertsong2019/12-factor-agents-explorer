@@ -13351,8 +13351,8 @@ class TestConsolidationPriority:
 # Bi-Temporal Validity Tracking Tests
 # ══════════════════════════════════════════════════════════════
 
-class TestBiTemporalValidity:
-    """Tests for edge bi-temporal validity: set_validity, invalidate, valid_at, snapshot, history."""
+class TestAdaptiveRetrieval:
+    """Tests for adaptive retrieval, search pipelines, and should_admit gate."""
 
     def test_edge_set_validity_basic(self, mg):
         """Set validity window on an edge and verify stored properties."""
@@ -13941,6 +13941,31 @@ class TestBiTemporalValidity:
         assert "complexity" in cls
         assert "effort" in cls
         assert "strategy" in cls
+
+    def test_search_adaptive_trivial_skips_retrieval(self, mg, reasoning_graph):
+        """Trivial queries (greetings) skip retrieval entirely."""
+        result = mg.search_adaptive("hello", limit=5)
+        assert result["strategy"] == "skip"
+        assert result["results"] == []
+        assert result["query_type"] == "trivial"
+        assert result["grade"]["grade"] == "trivial"
+
+    def test_search_adaptive_trivial_chinese(self, mg, reasoning_graph):
+        """Chinese trivial queries also skip retrieval."""
+        result = mg.search_adaptive("你好", limit=5)
+        assert result["strategy"] == "skip"
+        assert result["results"] == []
+
+    def test_classify_query_has_qdap_type(self, mg):
+        """Public classify_query includes qdap_type from QDAP-v2 classifier."""
+        result = mg.classify_query("hello")
+        assert "qdap_type" in result
+        assert result["qdap_type"] == "trivial"
+
+    def test_classify_query_qdap_type_relational(self, mg):
+        """qdap_type reflects relational classification for connection queries."""
+        result = mg.classify_query("connection between nodes")
+        assert result["qdap_type"] == "relational"
 
     # ── search_with_gaps tests ──
 

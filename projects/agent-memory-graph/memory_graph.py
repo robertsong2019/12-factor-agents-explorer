@@ -11806,6 +11806,8 @@ class MemoryGraph:
             "multi_hop_score": multi_hop_score,
             "complex_score": complex_score,
             "reasoning": "; ".join(reasoning),
+            # QDAP-v2 enrichment: include fusion-relevant type for cross-reference
+            "qdap_type": MemoryGraph._classify_query(query).get("type", "semantic"),
         }
 
     def grade_retrieval(self, query: str, results: list[dict],
@@ -11889,6 +11891,21 @@ class MemoryGraph:
         Returns {results, classification, grade, strategy}.
         """
         classification = self.classify_query(query)
+
+        # Trivial queries skip retrieval entirely
+        qdap = self._classify_query(query, [r[0] for r in self.conn.execute(
+            "SELECT DISTINCT label FROM nodes LIMIT 200").fetchall()])
+        if not qdap.get("needs_retrieval", True):
+            return {
+                "results": [],
+                "classification": classification,
+                "grade": {"grade": "trivial", "relevant_count": 0,
+                           "scores": {"avg": 0, "max": 0, "gap": 0},
+                           "recommendation": "no_retrieval_needed"},
+                "strategy": "skip",
+                "query_type": qdap["type"],
+            }
+
         strategy = classification["strategy"]
 
         # Execute based on strategy
