@@ -19081,3 +19081,185 @@ class TestContractCommunities:
         for sid in result["supernode_ids"]:
             sn = mg.get_node(sid)
             assert sn.kind == "community_supernode"
+
+
+class TestFindCycle:
+    """Tests for find_cycle() — returns actual cycle path, not just boolean."""
+
+    def test_simple_triangle(self):
+        """A→B→C→A returns a cycle path containing all three nodes."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        mg.link(c.id, a.id, "to")
+        cycle = mg.find_cycle()
+        assert cycle is not None
+        assert len(cycle) == 4  # A→B→C→A (closed: first == last)
+        assert cycle[0] == cycle[-1]
+        assert set(cycle) == {a.id, b.id, c.id}
+
+    def test_no_cycle_returns_none(self):
+        """DAG returns None."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        assert mg.find_cycle() is None
+
+    def test_self_loop(self):
+        """Self-loop is detected as a trivial cycle."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        mg.link(a.id, a.id, "self")
+        cycle = mg.find_cycle()
+        assert cycle is not None
+        assert len(cycle) == 2  # A→A
+        assert cycle[0] == a.id and cycle[1] == a.id
+
+    def test_longer_cycle(self):
+        """Five-node cycle A→B→C→D→E→A is detected."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(5)]
+        for i in range(5):
+            mg.link(nodes[i].id, nodes[(i + 1) % 5].id, "next")
+        cycle = mg.find_cycle()
+        assert cycle is not None
+        assert len(cycle) == 6  # 5 nodes + closing node
+        assert cycle[0] == cycle[-1]
+        assert set(cycle) == {n.id for n in nodes}
+
+    def test_cycle_with_tail(self):
+        """Graph with a tail leading into a cycle still finds the cycle."""
+        mg = MemoryGraph()
+        tail = mg.add("Tail")
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(tail.id, a.id, "to")
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        mg.link(c.id, a.id, "to")
+        cycle = mg.find_cycle()
+        assert cycle is not None
+        assert cycle[0] == cycle[-1]
+        # Tail should NOT be in the cycle
+        assert tail.id not in set(cycle)
+
+    def test_empty_graph_returns_none(self):
+        """Empty graph has no cycles."""
+        mg = MemoryGraph()
+        assert mg.find_cycle() is None
+
+    def test_single_node_no_edges_returns_none(self):
+        """Isolated node has no cycle."""
+        mg = MemoryGraph()
+        mg.add("Lonely")
+        assert mg.find_cycle() is None
+
+    def test_disconnected_with_cycle(self):
+        """Cycle in a disconnected component is still found."""
+        mg = MemoryGraph()
+        x = mg.add("X")
+        y = mg.add("Y")
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(x.id, y.id, "relates")  # component 1
+        mg.link(a.id, b.id, "to")       # component 2
+        mg.link(b.id, a.id, "to")       # cycle in comp 2
+        cycle = mg.find_cycle()
+        assert cycle is not None
+        assert set(cycle) == {a.id, b.id}
+
+    def test_find_cycle_quarantine_aware(self):
+        """Quarantined nodes are excluded from cycle detection."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        mg.link(c.id, a.id, "to")
+        mg.node_quarantine(c.id, "test")
+        # With C quarantined, cycle A→B→C→A is broken
+        assert mg.find_cycle() is None
+
+
+class TestGraphPeriphery:
+    """Tests for graph_periphery() — nodes with max eccentricity."""
+
+    def test_path_graph_periphery(self):
+        """In a path A-B-C-D, periphery nodes are A and D (eccentricity = 3)."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        d = mg.add("D")
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        mg.link(c.id, d.id, "to")
+        peri = mg.graph_periphery()
+        assert peri is not None
+        assert set(peri) == {a.id, d.id}
+
+    def test_complete_graph_no_periphery_distinction(self):
+        """In a complete graph, all nodes have same eccentricity = 1."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        for s, t in [(a, b), (a, c), (b, c)]:
+            mg.link(s.id, t.id, "to")
+        peri = mg.graph_periphery()
+        # In complete graph K3, all nodes have ecc=1, so all are periphery
+        assert set(peri) == {a.id, b.id, c.id}
+
+    def test_empty_graph_returns_none(self):
+        """Empty graph periphery is None."""
+        mg = MemoryGraph()
+        assert mg.graph_periphery() is None
+
+    def test_single_node(self):
+        """Single node has eccentricity 0 = diameter, so it's periphery."""
+        mg = MemoryGraph()
+        a = mg.add("Solo")
+        peri = mg.graph_periphery()
+        assert peri == [a.id]
+
+    def test_disconnected_components(self):
+        """With disconnected components, nodes unreachable from largest comp
+        have eccentricity limited to their own component."""
+        mg = MemoryGraph()
+        # Path of 3
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        # Isolated pair
+        d = mg.add("D")
+        e = mg.add("E")
+        mg.link(d.id, e.id, "to")
+        peri = mg.graph_periphery()
+        # A and C have ecc=2 (the max), D and E have ecc=1
+        assert set(peri) == {a.id, c.id}
+
+    def test_quarantine_excluded(self):
+        """Quarantined nodes are excluded from periphery computation."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        d = mg.add("D")
+        mg.link(a.id, b.id, "to")
+        mg.link(b.id, c.id, "to")
+        mg.link(c.id, d.id, "to")
+        mg.node_quarantine(d.id, "test")
+        peri = mg.graph_periphery()
+        # With D gone, path is A-B-C, periphery is {A, C}
+        assert d.id not in peri
+        assert set(peri) == {a.id, c.id}

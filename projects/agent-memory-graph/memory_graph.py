@@ -16614,6 +16614,126 @@ class MemoryGraph:
             "total_edges_redirected": total_redirected,
         }
 
+    # ── Cycle Path Detection ─────────────────────────────────────
+
+    def find_cycle(self) -> Optional[list[str]]:
+        """Find and return a cycle path in the graph (directed edges).
+
+        Uses DFS with an explicit stack to track the current path.
+        When a back-edge is found (neighbor is on the current path),
+        the cycle is extracted from the path stack.
+
+        Returns:
+            A list of node IDs representing the cycle, where the first
+            and last elements are equal (closed path), e.g. [A, B, C, A].
+            None if no cycle exists.
+
+        Quarantined nodes are excluded.
+        """
+        nodes = [
+            str(r["id"]) for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined = 0"
+            ).fetchall()
+        ]
+        if not nodes:
+            return None
+
+        adj: dict[str, list[str]] = {}
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges "
+            "WHERE source IN (SELECT id FROM nodes WHERE quarantined = 0) "
+            "AND target IN (SELECT id FROM nodes WHERE quarantined = 0)"
+        ).fetchall():
+            adj.setdefault(str(r["source"]), []).append(str(r["target"]))
+
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color = {nid: WHITE for nid in nodes}
+        parent: dict[str, Optional[str]] = {nid: None for nid in nodes}
+
+        for start in nodes:
+            if color[start] != WHITE:
+                continue
+            stack = [(start, iter(adj.get(start, [])))]
+            color[start] = GRAY
+            path = [start]
+
+            while stack:
+                node, it = stack[-1]
+                advanced = False
+                for nb in it:
+                    if color.get(nb, WHITE) == GRAY:
+                        # Found back-edge → extract cycle
+                        cycle_start_idx = path.index(nb)
+                        cycle = path[cycle_start_idx:] + [nb]
+                        return cycle
+                    if color.get(nb, WHITE) == WHITE:
+                        color[nb] = GRAY
+                        stack.append((nb, iter(adj.get(nb, []))))
+                        path.append(nb)
+                        advanced = True
+                        break
+                if not advanced:
+                    color[node] = BLACK
+                    stack.pop()
+                    path.pop()
+
+        return None
+
+    # ── Graph Periphery ──────────────────────────────────────────
+
+    def graph_periphery(self) -> Optional[list[str]]:
+        """Return nodes with maximum eccentricity (= graph diameter).
+
+        The periphery consists of the "most distant" nodes in the graph —
+        those whose shortest path to some other node equals the diameter.
+        Complementary to graph_center() (nodes with eccentricity = radius).
+
+        Returns:
+            List of node IDs with eccentricity equal to the diameter.
+            None for an empty graph.
+
+        Quarantined nodes are excluded.
+        """
+        rows = self.conn.execute(
+            "SELECT id FROM nodes WHERE quarantined = 0"
+        ).fetchall()
+        if not rows:
+            return None
+
+        # Build quarantine-aware adjacency once for efficiency
+        active_ids = {str(r["id"]) for r in rows}
+        adj: dict[str, list[str]] = {}
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s, t = str(r["source"]), str(r["target"])
+            if s in active_ids and t in active_ids:
+                adj.setdefault(s, []).append(t)
+                adj.setdefault(t, []).append(s)
+
+        def _bfs_max_dist(start: str) -> int:
+            """BFS returning max distance from start to any active node."""
+            dists = {start: 0}
+            queue = [start]
+            while queue:
+                cur = queue.pop(0)
+                for nb in adj.get(cur, []):
+                    if nb not in dists:
+                        dists[nb] = dists[cur] + 1
+                        queue.append(nb)
+            return max(dists.values()) if dists else 0
+
+        eccs: dict[str, int] = {}
+        for row in rows:
+            nid = str(row["id"])
+            eccs[nid] = _bfs_max_dist(nid)
+
+        if not eccs:
+            return None
+
+        max_ecc = max(eccs.values())
+        return sorted([nid for nid, ecc in eccs.items() if ecc == max_ecc])
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
