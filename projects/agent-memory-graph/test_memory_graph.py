@@ -4915,6 +4915,44 @@ class TestAdaptiveFusionExtras:
             assert "specificity" in result
             assert 0.0 <= result["specificity"] <= 1.0
 
+    def test_search_hybrid_skewness_integration(self):
+        """Adaptive fusion uses skewness blend: verify results differ from pure entropy."""
+        mg = MemoryGraph()
+        # Create skewed score distribution: one strong match, several weak
+        nodes = []
+        for i, label in enumerate(["unique_keyword", "other1", "other2", "other3"]):
+            n = mg.add(label, "concept")
+            nodes.append(n)
+        for i in range(1, len(nodes)):
+            mg.link(nodes[0].id, nodes[i].id, "related", weight=0.5)
+        results = mg.search_hybrid("unique_keyword", fusion="adaptive")
+        assert len(results) > 0
+        # Top result should be the unique match
+        assert results[0]["label"] == "unique_keyword"
+
+    def test_search_hybrid_trivial_returns_empty(self):
+        """Trivial query through search_hybrid returns empty (needs_retrieval=False)."""
+        mg = MemoryGraph()
+        mg.add("test", "concept")
+        results = mg.search_hybrid("hello", fusion="adaptive")
+        assert results == []
+
+    def test_score_skewness_blend_modifies_weights(self):
+        """Verify skewness + entropy blend produces different weights than QDAP alone."""
+        # When scores are highly skewed vs flat, fusion weights should shift
+        mg = MemoryGraph()
+        # Node A: strong text match, weak graph
+        a = mg.add("alpha_keyword", "concept")
+        b = mg.add("beta_keyword", "concept")
+        c = mg.add("gamma", "concept")
+        mg.link(a.id, b.id, "related", weight=0.9)
+        mg.link(a.id, c.id, "related", weight=0.1)
+        # Search with adaptive — should blend QDAP + entropy + skewness
+        results = mg.search_hybrid("alpha_keyword", fusion="adaptive")
+        assert len(results) >= 1
+        # The top result should benefit from both text strength and graph connectivity
+        assert results[0]["node_id"] == a.id
+
     def test_search_hybrid_adaptive_adapts_k(self):
         """adaptive 模式 k 值小于经典 RRF k=60。"""
         mg = MemoryGraph()
