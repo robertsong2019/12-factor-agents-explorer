@@ -5323,36 +5323,112 @@ class MemoryGraph:
 
     @staticmethod
     def _classify_query(query: str, known_labels: list[str] = None) -> dict:
-        """QDAP-Lite: 轻量级查询分类,预测最优融合权重。
+        """QDAP-v2: 6-class query classifier with continuous weight interpolation.
 
-        基于 query 特征(长度, 标识符匹配, 关系词)做 per-query 权重预测。
-        参考: Hsu et al. MDPI 2025 QDAP 思想的简化版。
+        Classes: trivial / exact / semantic / relational / temporal / exploratory
+        + needs_retrieval gate (trivial queries skip retrieval entirely).
+        Weights interpolated from specificity ∈ [0,1] instead of discrete buckets.
 
         Returns:
-            {type, weights: [bm25_w, vector_w, graph_w], k}
+            {type, weights: [bm25_w, vector_w, graph_w], k, needs_retrieval, specificity}
         """
         q = query.lower().strip()
         known_labels = known_labels or []
+        words = q.split()
+        word_count = len(words)
 
-        # 特征提取
+        # ── Feature extraction ──
         has_identifier = any(
             label.lower() in q
             for label in known_labels
             if len(label) >= 3
-        ) or any(token.isidentifier() and len(token) >= 4 for token in q.split())
-        is_short = len(q.split()) <= 3
+        )
+        # Avoid false positive: common English words ≥4 chars aren't identifiers
+        common_words = {"what", "when", "where", "which", "that", "this", "with",
+                         "from", "have", "been", "will", "would", "could", "should",
+                         "about", "there", "their", "these", "those", "every",
+                         "machine", "learning", "deep", "data", "model", "system",
+                         "applications", "science", "research", "project", "update",
+                         "question", "between", "through", "during", "before",
+                         "after", "because", "however", "though", "while"}
+        if not has_identifier and word_count <= 2:
+            has_identifier = any(
+                token.isidentifier() and len(token) >= 4 and token not in common_words
+                for token in words
+            )
+
         relation_kw = sum(
             1 for kw in ("relation", "connect", "link", "path", "between",
                          "neighbor", "edge", "关联", "连接", "路径", "邻居")
             if kw in q
         )
+        temporal_kw = sum(
+            1 for kw in ("when", "time", "before", "after", "recent", "latest",
+                         "history", "last", "first", "earliest",
+                         "时间", "之前", "之后", "最近", "历史", "上次")
+            if kw in q
+        )
+        exploratory_kw = sum(
+            1 for kw in ("how", "why", "what if", "explore", "brainstorm",
+                         "compare", "analyze", "design",
+                         "如何", "为什么", "探索", "比较", "分析")
+            if kw in q
+        )
 
-        # Relational queries take priority (even with identifiers)
+        # ── needs_retrieval gate ──
+        # Trivial queries (greetings, single stop-words) skip retrieval
+        stop_words = {"hi", "hello", "hey", "ok", "yes", "no", "thanks",
+                      "你好", "嗯", "好的", "谢谢"}
+        if word_count <= 1 and (q in stop_words or q == ""):
+            return {"type": "trivial", "weights": [0.0, 0.0, 0.0], "k": 0,
+                    "needs_retrieval": False, "specificity": 0.0}
+
+        # ── Class priority: relational > temporal > exact > exploratory > semantic ──
         if relation_kw > 0:
-            return {"type": "relational", "weights": [0.20, 0.25, 0.55], "k": 20}
-        if has_identifier and is_short:
-            return {"type": "exact", "weights": [0.55, 0.20, 0.25], "k": 10}
-        return {"type": "semantic", "weights": [0.25, 0.50, 0.25], "k": 20}
+            q_type = "relational"
+            specificity = 0.85
+        elif temporal_kw > 0:
+            q_type = "temporal"
+            specificity = 0.70
+        elif has_identifier and word_count <= 3:
+            q_type = "exact"
+            specificity = 0.90
+        elif exploratory_kw > 0:
+            q_type = "exploratory"
+            specificity = 0.30
+        else:
+            q_type = "semantic"
+            specificity = 0.50
+
+        # ── Continuous weight interpolation (class-aware) ──
+        # Base weights per class, modulated by specificity
+        base = {
+            "relational":   [0.20, 0.25, 0.55],   # graph-dominant
+            "exact":        [0.55, 0.20, 0.25],   # bm25-dominant
+            "temporal":     [0.45, 0.30, 0.25],   # bm25-leaning (time-sorted)
+            "semantic":     [0.25, 0.50, 0.25],   # vector-dominant
+            "exploratory":  [0.15, 0.45, 0.40],   # vector + graph diverse
+        }[q_type]
+
+        # Specificity modulation: high specificity → sharpen dominant weight
+        # low specificity → flatten toward uniform
+        s = specificity
+        dominant_idx = max(range(3), key=lambda i: base[i])
+        weights = []
+        for i in range(3):
+            if i == dominant_idx:
+                weights.append(base[i] + 0.10 * (s - 0.5))
+            else:
+                weights.append(base[i] - 0.05 * (s - 0.5))
+        # Normalize
+        total = sum(weights)
+        weights = [round(w / total, 3) for w in weights]
+
+        # k scales with exploratory-ness (more open = more results)
+        k = 15 if s >= 0.7 else (25 if s <= 0.35 else 20)
+
+        return {"type": q_type, "weights": weights, "k": k,
+                "needs_retrieval": True, "specificity": round(specificity, 3)}
 
     @staticmethod
     def _entropy_refine(rankings: list[list[str]], initial_weights: list[float],
@@ -5433,6 +5509,11 @@ class MemoryGraph:
 
         # QDAP-Lite 查询分类
         profile = self._classify_query(query, known_labels)
+
+        # Trivial queries skip retrieval entirely
+        if not profile.get("needs_retrieval", True):
+            return []
+
         w_bm25, w_vec, w_graph = profile["weights"]
         K = profile["k"] if fusion == "adaptive" else 60
 

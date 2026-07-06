@@ -4759,21 +4759,22 @@ class TestSearchHybrid:
         assert len(top["sources"]) >= 2  # 至少两路命中
 
     def test_classify_query_exact(self):
-        """QDAP-Lite: 短查询含已知标识符 → exact 类型。"""
+        """QDAP-v2: 短查询含已知标识符 → exact 类型, 高 specificity。"""
         result = MemoryGraph._classify_query("Python", ["Python", "Rust", "machine learning"])
         assert result["type"] == "exact"
-        assert result["k"] == 10
         assert result["weights"][0] > result["weights"][1]  # bm25 权重最高
+        assert result["needs_retrieval"] is True
+        assert result["specificity"] >= 0.85
 
     def test_classify_query_relational(self):
-        """QDAP-Lite: 含关系词 → relational 类型。"""
+        """QDAP-v2: 含关系词 → relational 类型。"""
         result = MemoryGraph._classify_query("connection between AI and ML", [])
         assert result["type"] == "relational"
         assert result["weights"][2] > result["weights"][0]  # graph 权重最高
 
     def test_classify_query_semantic(self):
-        """QDAP-Lite: 一般查询 → semantic 类型。"""
-        result = MemoryGraph._classify_query("how does deep learning work", [])
+        """QDAP-v2: 一般查询 → semantic 类型。"""
+        result = MemoryGraph._classify_query("machine learning applications", [])
         assert result["type"] == "semantic"
         assert result["weights"][1] > result["weights"][0]  # vector 权重最高
 
@@ -4812,9 +4813,57 @@ class TestAdaptiveFusionExtras:
         assert result["type"] == "relational"
 
     def test_classify_query_empty(self):
-        """空查询默认为 semantic。"""
+        """空查询 → trivial, needs_retrieval=False。"""
         result = MemoryGraph._classify_query("", [])
-        assert result["type"] == "semantic"
+        assert result["type"] == "trivial"
+        assert result["needs_retrieval"] is False
+
+    def test_classify_query_trivial_greeting(self):
+        """问候语 → trivial, needs_retrieval=False。"""
+        result = MemoryGraph._classify_query("hello", [])
+        assert result["type"] == "trivial"
+        assert result["needs_retrieval"] is False
+        assert result["specificity"] == 0.0
+
+    def test_classify_query_trivial_chinese(self):
+        """中文问候语 → trivial。"""
+        result = MemoryGraph._classify_query("你好", [])
+        assert result["type"] == "trivial"
+        assert result["needs_retrieval"] is False
+
+    def test_classify_query_temporal(self):
+        """时间词 → temporal 类型。"""
+        result = MemoryGraph._classify_query("what changed since last update", [])
+        assert result["type"] == "temporal"
+        assert result["needs_retrieval"] is True
+        assert result["specificity"] == 0.70
+
+    def test_classify_query_temporal_chinese(self):
+        """中文时间词 → temporal 类型。"""
+        result = MemoryGraph._classify_query("最近有什么变化", [])
+        assert result["type"] == "temporal"
+
+    def test_classify_query_exploratory(self):
+        """探索性查询 → exploratory, 低 specificity。"""
+        result = MemoryGraph._classify_query("how to design a new system", [])
+        assert result["type"] == "exploratory"
+        assert result["specificity"] <= 0.35
+        assert result["k"] == 25  # more results for exploratory
+
+    def test_classify_query_continuous_weights_sum_to_one(self):
+        """连续权重插值后归一化, 三路权重和=1。"""
+        for q in ["Python", "connection path", "how to design", "machine learning", "recent updates"]:
+            result = MemoryGraph._classify_query(q, ["Python"])
+            if result["needs_retrieval"]:
+                total = sum(result["weights"])
+                assert abs(total - 1.0) < 0.01, f"Weights sum={total} for '{q}'"
+
+    def test_classify_query_returns_specificity(self):
+        """所有非 trivial 查询都返回 specificity 字段。"""
+        for q in ["Python code", "connection between nodes", "how to analyze", "recent activity"]:
+            result = MemoryGraph._classify_query(q, ["Python"])
+            assert "specificity" in result
+            assert 0.0 <= result["specificity"] <= 1.0
 
     def test_search_hybrid_adaptive_adapts_k(self):
         """adaptive 模式 k 值小于经典 RRF k=60。"""
