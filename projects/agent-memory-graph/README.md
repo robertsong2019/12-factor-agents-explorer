@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-1821-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1975-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -47,6 +47,8 @@
 - **全图中心性** — betweenness_all / closeness_all / eigenvector_all 一次调用计算所有节点
 - **图序列化** — to_dict / from_dict JSON 安全序列化，支持快照和跨 Agent 传输
 - **图收缩** — contract_nodes 节点合并为超节点 / contract_communities 社区级超节点折叠
+- **自适应检索** — QDAP-v2 6 类查询分类器 (trivial/exact/semantic/relational/temporal/exploratory) + 连续权重插值 + SkewRoute 分数偏度分析 + Entropy 修正，per-query 动态融合权重
+- **图拓扑分析** — find_cycle 环路检测 (DFS back-edge) + graph_periphery 最远节点 + maximal_cliques Bron-Kerbosch 极大团枚举 + clique_number/largest_clique + clique_overlap_matrix 团重叠矩阵 + k_clique_communities CPM 重叠社区
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## 安装
@@ -1848,6 +1850,55 @@ mg2 = MemoryGraph.from_dict(mg_data)
 
 检测社区并将每个社区收缩为超节点。LPA 社区检测 + contract_nodes 组合。适用于图摘要和多层级分析。
 
+### 自适应检索 (QDAP-v2 + SkewRoute)
+
+#### `_classify_query(query, known_labels=None) -> dict` *(staticmethod)*
+
+QDAP-v2 6 类查询分类器。将查询分为 trivial / exact / semantic / relational / temporal / exploratory 六类，基于特征提取（标识符匹配、关系关键词、时间关键词、探索性关键词）计算 specificity ∈ [0,1]，然后通过连续权重插值生成 per-query 三路融合权重 [bm25_w, vector_w, graph_w]。trivial 查询直接跳过检索。
+
+返回：`{type, weights, k, needs_retrieval, specificity}`
+
+#### `_score_skewness(route_scores) -> list[float]` *(staticmethod)*
+
+SkewRoute 检索后分数分布偏度分析。分析每路检索结果的分数偏度——top-heavy 分布（高正偏）表示高置信检索，平坦分布表示不确定。使用标准化三阶矩计算偏度，sigmoid 映射到 [0.1, 0.9] 置信度权重。零训练，即插即用。
+
+#### `search_hybrid(query, embedding=None, limit=10, fusion="adaptive", kge_weight=0.0) -> list[dict]`
+
+三路混合搜索：BM25 文本 + 向量 KNN + 图邻居加权 RRF 融合。支持三种模式：
+- `"adaptive"`（默认）：QDAP-v2 查询分类 + 连续权重插值 + Entropy 修正 + SkewRoute 偏度分析，per-query 动态调整权重
+- `"rrf"`：经典 Reciprocal Rank Fusion, k=60
+- `"wrrf"`：Weighted RRF，用归一化分数置信度加权
+
+### 图拓扑与团分析
+
+#### `find_cycle() -> list[str] | None`
+
+在有向图中查找并返回一个环路路径。基于 DFS 显式栈跟踪当前路径，当发现 back-edge（邻居在当前路径上）时提取环路。返回的路径首尾相等（闭合路径），如 `[A, B, C, A]`。无环返回 None。隔离节点排除。
+
+#### `graph_periphery() -> list[str] | None`
+
+返回图中具有最大偏心率的节点（即位于图直径的「最远」节点）。与 graph_center()（偏心率 = 半径）互补。使用 BFS 计算每个节点的最大距离。隔离节点排除。
+
+#### `maximal_cliques(min_size=3) -> list[list[str]]`
+
+使用 Bron-Kerbosch 算法（带 pivoting 优化）枚举所有极大团。团是所有节点对都直接相连的子图，极大团是不被更大团包含的团。用于识别紧密耦合的记忆簇（冗余事实、密集情景链）。隔离节点排除。
+
+#### `clique_number() -> int`
+
+最大团的节点数。无节点返回 0，无边返回 1。
+
+#### `largest_clique() -> list[str]`
+
+最大的极大团（排序后的节点 ID 列表）。无节点返回空列表。
+
+#### `clique_overlap_matrix() -> dict[tuple[int, int], int]`
+
+计算所有极大团对之间的共享节点数。返回 `(clique_i, clique_j) → shared_count` 字典，仅包含共享 ≥1 节点的团对。用于分析团间重叠结构。
+
+#### `k_clique_communities(k=3) -> list[list[str]]`
+
+CPM (Clique Percolation Method) 重叠社区检测 (Palla et al. 2005)。两个 k-clique 共享 k-1 节点时视为相邻，团邻接图的连通分量即为社区。与 LPA/Leiden 不同，节点可同时属于多个社区。返回按大小降序排列的社区列表。k 必须 ≥ 2。隔离节点排除。
+
 ---
 
 ## 测试
@@ -1856,7 +1907,7 @@ mg2 = MemoryGraph.from_dict(mg_data)
 python3 -m pytest test_memory_graph.py -q
 ```
 
-1821 个测试覆盖所有 API（195 个 cycle，179 天零回滚）。
+1975 个测试覆盖所有 API（195 个 cycle，183 天零回滚）。
 
 ## 设计思路
 
@@ -1892,6 +1943,8 @@ python3 -m pytest test_memory_graph.py -q
 30. **加权路径 + 子图提取** — Dijkstra 加权最短路径 + Yen's k-shortest-paths + all_paths 枚举；extract_subgraph 返回独立子图实例，neighborhood 轻量 ID 列表
 31. **全图中心性 + 图收缩** — betweenness_all/closeness_all/eigenvector_all 批量中心性计算；contract_nodes/contract_communities 超节点折叠实现多分辨率图分析
 32. **图序列化** — to_dict/from_dict 提供 JSON 安全的图序列化方案，支持快照恢复、API 响应和跨 Agent 记忆传输
+33. **自适应检索 (QDAP-v2 + SkewRoute)** — 6 类查询分类器 + 连续权重插值 + 分数偏度分析 + 熵修正，per-query 动态调整 BM25/Vector/Graph 三路融合权重。trivial 查询跳过检索，relational 查询图主导，exact 查询 BM25 主导——让问题自己说话
+34. **图拓扑与团分析** — find_cycle (DFS 环路检测) + graph_periphery (最远节点) + maximal_cliques (Bron-Kerbosch 极大团) + clique_overlap_matrix (团间共享节点) + k_clique_communities (CPM 重叠社区发现，节点可属多社区)
 
 ## 许可
 
