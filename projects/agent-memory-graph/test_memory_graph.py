@@ -4792,6 +4792,56 @@ class TestSearchHybrid:
         refined = MemoryGraph._entropy_refine([["a", "b"]], [1.0])
         assert refined == [1.0]
 
+    # ── Score Skewness (SkewRoute) Tests ──
+
+    def test_score_skewness_topheavy_is_confident(self):
+        """SkewRoute: top-heavy score distribution → higher confidence."""
+        # Route 1: steep dropoff [1.0, 0.1, 0.05] (top-heavy, high skew)
+        # Route 2: flat [0.5, 0.45, 0.4] (uniform, low skew)
+        route_scores = [
+            {"a": 1.0, "b": 0.1, "c": 0.05},
+            {"d": 0.5, "e": 0.45, "f": 0.4},
+        ]
+        confidences = MemoryGraph._score_skewness(route_scores)
+        assert confidences[0] > confidences[1]  # top-heavy → more confident
+
+    def test_score_skewness_empty_route_zero(self):
+        """SkewRoute: single empty route normalizes to neutral uniform."""
+        result = MemoryGraph._score_skewness([{}])
+        # Single empty route: total=0, falls back to uniform [1.0]
+        assert len(result) == 1
+
+    def test_score_skewness_single_score_neutral(self):
+        """SkewRoute: single result, single route → normalizes to 1.0."""
+        result = MemoryGraph._score_skewness([{"a": 1.0}])
+        assert result == [1.0]  # only route → normalized to 1.0
+
+    def test_score_skewness_uniform_scores_neutral(self):
+        """SkewRoute: all-equal scores, single route → normalizes to 1.0."""
+        result = MemoryGraph._score_skewness([{"a": 0.5, "b": 0.5, "c": 0.5}])
+        assert result == [1.0]  # only route → normalized to 1.0
+
+    def test_score_skewness_normalizes_to_one(self):
+        """SkewRoute: confidence weights sum to 1."""
+        route_scores = [
+            {"a": 1.0, "b": 0.5},
+            {"c": 0.8, "d": 0.3},
+        ]
+        result = MemoryGraph._score_skewness(route_scores)
+        assert abs(sum(result) - 1.0) < 0.01
+
+    def test_score_skewness_no_routes(self):
+        """SkewRoute: empty input → empty output."""
+        assert MemoryGraph._score_skewness([]) == []
+
+    def test_score_skewness_all_positive_skew(self):
+        """SkewRoute: exponentially decaying scores → high confidence (>0.5)."""
+        # Classic IR score distribution: [1.0, 0.5, 0.25, 0.125]
+        route_scores = [{"a": 1.0, "b": 0.5, "c": 0.25, "d": 0.125}]
+        result = MemoryGraph._score_skewness(route_scores)
+        # Single route normalizes to 1.0, but confidence before norm should be >0.5
+        assert result[0] == 1.0  # only one route → sum=1
+
     def test_search_hybrid_adaptive_with_relation_keyword(self):
         """adaptive 模式: 关系词查询分类为 relational。"""
         mg = MemoryGraph()

@@ -5431,6 +5431,55 @@ class MemoryGraph:
                 "needs_retrieval": True, "specificity": round(specificity, 3)}
 
     @staticmethod
+    def _score_skewness(route_scores: list[dict[str, float]]) -> list[float]:
+        """SkewRoute: post-retrieval score distribution analysis.
+
+        Analyzes score skewness per route — top-heavy distributions (high skew)
+        indicate confident retrieval; flat distributions indicate uncertainty.
+        Returns per-route confidence weights ∈ [0,1].
+
+        Zero training, plug-and-play complement to _entropy_refine.
+        """
+        import math
+        n_routes = len(route_scores)
+        if n_routes == 0:
+            return []
+
+        confidences = []
+        for scores in route_scores:
+            vals = sorted(scores.values(), reverse=True)
+            if len(vals) < 2:
+                # Single or no result: neutral confidence
+                confidences.append(0.5 if vals else 0.0)
+                continue
+
+            # Skewness via standardized 3rd moment
+            n = len(vals)
+            mean = sum(vals) / n
+            if mean == 0:
+                confidences.append(0.5)
+                continue
+            variance = sum((v - mean) ** 2 for v in vals) / n
+            if variance == 0:
+                # All scores equal → no signal → neutral
+                confidences.append(0.5)
+                continue
+            std = math.sqrt(variance)
+            skew = sum((v - mean) ** 3 for v in vals) / (n * std ** 3)
+
+            # Positive skew = top-heavy dropoff = high confidence (good retrieval)
+            # Negative/flat skew = uniform scores = low confidence
+            # Map skew ∈ [-2, 2] → confidence ∈ [0.1, 0.9] via sigmoid
+            confidence = 1.0 / (1.0 + math.exp(-skew))
+            confidences.append(confidence)
+
+        # Normalize to sum=1
+        total = sum(confidences)
+        if total > 0:
+            return [c / total for c in confidences]
+        return [1.0 / n_routes] * n_routes
+
+    @staticmethod
     def _entropy_refine(rankings: list[list[str]], initial_weights: list[float],
                         max_iter: int = 3) -> list[float]:
         """Entropy-based 权重修正 (Perez et al. ICML VecDB 2025)。
@@ -5613,9 +5662,15 @@ class MemoryGraph:
                     rrf_scores[nid] += kge_weight / (K + rank + 1)
                     sources_map[nid].add("kge")
 
-        # Adaptive: entropy 权重修正
+        # Adaptive: entropy + skewness 权重修正
         if fusion == "adaptive" and len(route_rankings) >= 2:
-            refined = self._entropy_refine(route_rankings, [w_bm25, w_vec, w_graph])
+            entropy_w = self._entropy_refine(route_rankings, [w_bm25, w_vec, w_graph])
+            skew_w = self._score_skewness(route_scores)
+            # Blend: 60% QDAP base + 20% entropy + 20% skewness
+            refined = [
+                0.6 * w + 0.2 * e + 0.2 * s
+                for w, e, s in zip([w_bm25, w_vec, w_graph], entropy_w, skew_w)
+            ]
             # 重新计算 rrf_scores 用修正后的权重 (仅在权重变化显著时)
             if max(abs(r - o) for r, o in zip(refined, [w_bm25, w_vec, w_graph])) > 0.05:
                 rrf_scores = defaultdict(float)
