@@ -19452,3 +19452,241 @@ class TestMaximalCliques:
         result = mg.maximal_cliques()
         assert len(result) == 1
         assert set(result[0]) == {a.id, b.id, c.id}
+
+
+class TestCliqueOverlapMatrix:
+    """Tests for clique_overlap_matrix()."""
+
+    def test_empty_graph(self):
+        """No nodes → empty dict."""
+        mg = MemoryGraph()
+        assert mg.clique_overlap_matrix() == {}
+
+    def test_single_clique(self):
+        """One clique → no pairs → empty dict."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        assert mg.clique_overlap_matrix() == {}
+
+    def test_disjoint_cliques_no_overlap(self):
+        """Two separate triangles share no nodes → empty dict."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        d, e, f = mg.add("D"), mg.add("E"), mg.add("F")
+        for x, y in [(a, b), (b, c), (c, a)]:
+            mg.link(x.id, y.id, "r")
+        for x, y in [(d, e), (e, f), (f, d)]:
+            mg.link(x.id, y.id, "r")
+        assert mg.clique_overlap_matrix() == {}
+
+    def test_two_cliques_sharing_node(self):
+        """Two triangles sharing one node → overlap of 1."""
+        mg = MemoryGraph()
+        # Triangle 1: A-B-C
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        # Triangle 2: A-D-E (shares node A)
+        d, e = mg.add("D"), mg.add("E")
+        mg.link(a.id, d.id, "r")
+        mg.link(d.id, e.id, "r")
+        mg.link(e.id, a.id, "r")
+        result = mg.clique_overlap_matrix()
+        assert len(result) == 1
+        (i, j), shared = next(iter(result.items()))
+        assert shared == 1
+
+    def test_two_cliques_sharing_edge(self):
+        """Two K4s sharing an edge (2 nodes) → overlap of 2."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(6)]
+        # K4 on N0..N3
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        # K4 on N2..N5 (shares N2, N3 with first)
+        for i in range(2, 6):
+            for j in range(i + 1, 6):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        result = mg.clique_overlap_matrix()
+        assert len(result) >= 1
+        max_shared = max(result.values())
+        assert max_shared == 2  # shared edge = 2 common nodes
+
+    def test_quarantine_excluded(self):
+        """Quarantined nodes break cliques and don't create false overlaps."""
+        mg = MemoryGraph()
+        # Two triangles sharing node C: ABC and CDE
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        d, e = mg.add("D"), mg.add("E")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")  # triangle ABC
+        mg.link(c.id, d.id, "r")
+        mg.link(d.id, e.id, "r")
+        mg.link(e.id, c.id, "r")  # triangle CDE
+        # Both triangles share C → overlap exists
+        before = mg.clique_overlap_matrix()
+        assert len(before) > 0
+        # Quarantine C → both triangles break, no overlap
+        mg.node_quarantine(c.id, "test")
+        result = mg.clique_overlap_matrix()
+        assert result == {}
+
+
+class TestKCliqueCommunities:
+    """Tests for k_clique_communities() — Clique Percolation Method."""
+
+    def test_empty_graph(self):
+        """No nodes → empty list."""
+        mg = MemoryGraph()
+        assert mg.k_clique_communities(k=3) == []
+
+    def test_invalid_k(self):
+        """k < 2 raises ValueError."""
+        mg = MemoryGraph()
+        mg.add("A")
+        with pytest.raises(ValueError, match="k must be"):
+            mg.k_clique_communities(k=1)
+
+    def test_no_k_cliques(self):
+        """Graph with edges but no triangles → no 3-clique communities."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.k_clique_communities(k=3) == []
+
+    def test_single_triangle_one_community(self):
+        """A single K3 → one community of 3 nodes."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        result = mg.k_clique_communities(k=3)
+        assert len(result) == 1
+        assert set(result[0]) == {a.id, b.id, c.id}
+
+    def test_two_disjoint_triangles(self):
+        """Two separate triangles → two separate communities."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        d, e, f = mg.add("D"), mg.add("E"), mg.add("F")
+        for x, y in [(a, b), (b, c), (c, a)]:
+            mg.link(x.id, y.id, "r")
+        for x, y in [(d, e), (e, f), (f, d)]:
+            mg.link(x.id, y.id, "r")
+        result = mg.k_clique_communities(k=3)
+        assert len(result) == 2
+        # Both are size 3, check as a set of frozensets
+        comm_sets = {frozenset(c) for c in result}
+        assert frozenset({a.id, b.id, c.id}) in comm_sets
+        assert frozenset({d.id, e.id, f.id}) in comm_sets
+
+    def test_sharing_edge_merges_into_one(self):
+        """Two triangles sharing an edge (2 common nodes) → one community.
+
+        Per CPM: two k-cliques are adjacent if they share k-1 nodes.
+        For k=3, two triangles sharing 2 nodes → adjacent → one community.
+        """
+        mg = MemoryGraph()
+        # Nodes: A-B-C (triangle) and A-B-D (triangle), sharing edge A-B
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        mg.link(a.id, d.id, "r")
+        mg.link(b.id, d.id, "r")
+        result = mg.k_clique_communities(k=3)
+        assert len(result) == 1
+        assert set(result[0]) == {a.id, b.id, c.id, d.id}
+
+    def test_sharing_single_node_keeps_separate(self):
+        """Two triangles sharing only 1 node (< k-1=2) → separate communities."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        d, e = mg.add("D"), mg.add("E")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        mg.link(a.id, d.id, "r")
+        mg.link(d.id, e.id, "r")
+        mg.link(e.id, a.id, "r")
+        result = mg.k_clique_communities(k=3)
+        assert len(result) == 2
+
+    def test_overlapping_membership(self):
+        """A node can belong to multiple CPM communities simultaneously."""
+        # Triangles: X-A-B, X-B-C (one community via shared edge X-B)
+        #            X-D-E, X-E-F (another community via shared edge X-E)
+        mg = MemoryGraph()
+        nodes = {name: mg.add(name) for name in "XABCDEF"}
+        links = [
+            ("X", "A"), ("A", "B"), ("B", "X"),   # triangle XAB
+            ("B", "C"), ("C", "X"),               # triangle XBC
+            ("X", "D"), ("D", "E"), ("E", "X"),   # triangle XDE
+            ("E", "F"), ("F", "X"),               # triangle XEF
+        ]
+        for s, t in links:
+            mg.link(nodes[s].id, nodes[t].id, "r")
+        result = mg.k_clique_communities(k=3)
+        # X appears in both communities (overlapping membership)
+        all_nodes = set()
+        for comm in result:
+            all_nodes |= set(comm)
+        assert nodes["X"].id in all_nodes
+        # Should have at least 2 communities
+        assert len(result) >= 2
+
+    def test_k4_two_resolutions(self):
+        """Two K4s sharing an edge → one community for k=3, two for k=4."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(6)]
+        # K4 on N0..N3
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        # K4 on N2..N5 (shares edge N2-N3)
+        for i in range(2, 6):
+            for j in range(i + 1, 6):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        # k=3: shared edge N2-N3 has 2 nodes ≥ k-1=2 → merged
+        r3 = mg.k_clique_communities(k=3)
+        assert len(r3) == 1
+        assert set(r3[0]) == {nodes[i].id for i in range(6)}
+        # k=4: shared edge has 2 nodes < k-1=3 → separate
+        r4 = mg.k_clique_communities(k=4)
+        assert len(r4) == 2
+
+    def test_quarantine_excluded(self):
+        """Quarantined nodes break cliques and don't participate."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        mg.node_quarantine(c.id, "test")
+        # No triangle left → no communities
+        assert mg.k_clique_communities(k=3) == []
+
+    def test_sorted_output(self):
+        """Communities are sorted by size (desc) then lexicographically."""
+        mg = MemoryGraph()
+        # Large community: two triangles sharing edge → 4 nodes
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        mg.link(a.id, d.id, "r")
+        mg.link(b.id, d.id, "r")
+        # Small community: separate triangle
+        e, f, g = mg.add("E"), mg.add("F"), mg.add("G")
+        mg.link(e.id, f.id, "r")
+        mg.link(f.id, g.id, "r")
+        mg.link(g.id, e.id, "r")
+        result = mg.k_clique_communities(k=3)
+        assert len(result[0]) >= len(result[-1])  # largest first

@@ -16829,6 +16829,108 @@ class MemoryGraph:
             return [str(rows[0]["id"])] if rows else []
         return all_cliques[0]
 
+    # ------------------------------------------------------------------
+    #  Clique Overlap Analysis
+    # ------------------------------------------------------------------
+
+    def clique_overlap_matrix(self) -> dict[tuple[int, int], int]:
+        """Compute shared-node counts between all pairs of maximal cliques.
+
+        For each pair of maximal cliques (i, j) where i < j, records how
+        many nodes they share.  Only pairs with overlap ≥ 1 are included.
+
+        Returns:
+            Dict mapping (clique_i_index, clique_j_index) → shared_node_count.
+            Indices refer to positions in ``maximal_cliques(min_size=1)``.
+            Empty dict if fewer than 2 cliques exist.
+
+        Quarantined nodes are excluded.
+        """
+        cliques = self.maximal_cliques(min_size=1)
+        if len(cliques) < 2:
+            return {}
+
+        # Convert to sets for O(1) intersection
+        sets = [set(c) for c in cliques]
+        result: dict[tuple[int, int], int] = {}
+        for i in range(len(sets)):
+            for j in range(i + 1, len(sets)):
+                shared = len(sets[i] & sets[j])
+                if shared > 0:
+                    result[(i, j)] = shared
+        return result
+
+    # ------------------------------------------------------------------
+    #  Clique Percolation Method (CPM) — overlapping community detection
+    # ------------------------------------------------------------------
+
+    def k_clique_communities(self, k: int = 3) -> list[list[str]]:
+        """Detect overlapping communities via the Clique Percolation Method.
+
+        Palla et al. (2005).  Two k-cliques are considered adjacent if they
+        share k-1 nodes.  Communities are the connected components of the
+        clique-clique adjacency graph.  Unlike Label Propagation or Leiden,
+        nodes may belong to *multiple* communities simultaneously.
+
+        Args:
+            k: clique size for percolation (default 3).  Must be ≥ 2.
+
+        Returns:
+            List of communities, each a sorted list of node IDs.
+            Communities are sorted by size (desc) then lexicographically.
+            Empty list if the graph has no k-cliques.
+
+        Raises:
+            ValueError: if k < 2.
+
+        Quarantined nodes are excluded.
+        """
+        if k < 2:
+            raise ValueError("k must be >= 2")
+
+        cliques = self.maximal_cliques(min_size=k)
+        if not cliques:
+            return []
+
+        # Build clique adjacency: two cliques are adjacent if they share ≥ k-1 nodes
+        clique_sets = [set(c) for c in cliques]
+        n = len(clique_sets)
+        adj: dict[int, list[int]] = {i: [] for i in range(n)}
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if len(clique_sets[i] & clique_sets[j]) >= k - 1:
+                    adj[i].append(j)
+                    adj[j].append(i)
+
+        # Connected components via BFS → each component is a CPM community
+        visited = set()
+        communities: list[list[str]] = []
+
+        for start in range(n):
+            if start in visited:
+                continue
+            # BFS to collect this component
+            component_cliques = []
+            queue = [start]
+            visited.add(start)
+            while queue:
+                cur = queue.pop(0)
+                component_cliques.append(cur)
+                for nb in adj[cur]:
+                    if nb not in visited:
+                        visited.add(nb)
+                        queue.append(nb)
+
+            # Union all nodes from all cliques in the component
+            members: set[str] = set()
+            for ci in component_cliques:
+                members |= clique_sets[ci]
+            communities.append(sorted(members))
+
+        communities.sort(key=lambda c: (-len(c), c))
+        return communities
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
