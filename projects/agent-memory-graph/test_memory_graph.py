@@ -19263,3 +19263,192 @@ class TestGraphPeriphery:
         # With D gone, path is A-B-C, periphery is {A, C}
         assert d.id not in peri
         assert set(peri) == {a.id, c.id}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Cycle 196: Maximal Cliques (Bron-Kerbosch with pivoting)
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestMaximalCliques:
+    """Bron-Kerbosch maximal clique enumeration."""
+
+    def test_empty_graph(self):
+        """Empty graph yields no cliques."""
+        mg = MemoryGraph()
+        assert mg.maximal_cliques() == []
+
+    def test_single_node(self):
+        """Single node has no clique ≥ 3 (default min_size)."""
+        mg = MemoryGraph()
+        a = mg.add("A")
+        assert mg.maximal_cliques() == []
+        # With min_size=1, the single node is a maximal clique
+        result = mg.maximal_cliques(min_size=1)
+        assert result == [[a.id]]
+
+    def test_triangle(self):
+        """K3 is a single maximal clique of size 3."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        result = mg.maximal_cliques()
+        assert len(result) == 1
+        assert set(result[0]) == {a.id, b.id, c.id}
+
+    def test_k4_complete(self):
+        """K4 has one maximal clique of size 4."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        result = mg.maximal_cliques()
+        assert len(result) == 1
+        assert len(result[0]) == 4
+
+    def test_two_triangles_sharing_vertex(self):
+        """Two triangles sharing one vertex → 2 maximal cliques."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        d, e = mg.add("D"), mg.add("E")
+        # Triangle 1: A-B-C
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        # Triangle 2: A-D-E
+        mg.link(a.id, d.id, "r")
+        mg.link(d.id, e.id, "r")
+        mg.link(e.id, a.id, "r")
+        result = mg.maximal_cliques()
+        assert len(result) == 2
+        # Larger clique first (both size 3, so sorted by node IDs)
+        clique_sets = [set(c) for c in result]
+        assert {a.id, b.id, c.id} in clique_sets
+        assert {a.id, d.id, e.id} in clique_sets
+
+    def test_disconnected_edges(self):
+        """Disconnected edges produce no cliques ≥ 3."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        c, d = mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, d.id, "r")
+        assert mg.maximal_cliques() == []
+        # With min_size=2, each edge is a maximal clique
+        result = mg.maximal_cliques(min_size=2)
+        assert len(result) == 2
+
+    def test_pendant_node(self):
+        """A pendant (degree-1) node doesn't create spurious cliques."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        d = mg.add("D")  # pendant
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")  # triangle ABC
+        mg.link(c.id, d.id, "r")  # D pendant on C
+        result = mg.maximal_cliques()
+        assert len(result) == 1
+        assert set(result[0]) == {a.id, b.id, c.id}
+
+    def test_quarantine_excluded(self):
+        """Quarantined nodes don't participate in cliques."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        mg.node_quarantine(c.id, "test")
+        result = mg.maximal_cliques()
+        # Without C, no triangle — only edge A-B
+        assert result == []
+
+    def test_clique_number_empty(self):
+        """Clique number of empty graph is 0."""
+        mg = MemoryGraph()
+        assert mg.clique_number() == 0
+
+    def test_clique_number_single(self):
+        """Clique number with one node and no edges is 1."""
+        mg = MemoryGraph()
+        mg.add("A")
+        assert mg.clique_number() == 1
+
+    def test_clique_number_triangle(self):
+        """Clique number of K3 is 3."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        assert mg.clique_number() == 3
+
+    def test_clique_number_k4_plus_pendant(self):
+        """K4 with pendant → clique number still 4."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(5)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        mg.link(nodes[3].id, nodes[4].id, "pendant")
+        assert mg.clique_number() == 4
+
+    def test_largest_clique_basic(self):
+        """largest_clique returns the biggest maximal clique."""
+        mg = MemoryGraph()
+        # K3 (triangle)
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        # Separate edge (smaller)
+        d, e = mg.add("D"), mg.add("E")
+        mg.link(d.id, e.id, "r")
+        result = mg.largest_clique()
+        assert len(result) == 3
+        assert set(result) == {a.id, b.id, c.id}
+
+    def test_largest_clique_empty_graph(self):
+        """largest_clique on empty graph returns []."""
+        mg = MemoryGraph()
+        assert mg.largest_clique() == []
+
+    def test_largest_clique_single_node(self):
+        """largest_clique on graph with one node returns that node."""
+        mg = MemoryGraph()
+        a = mg.add("Solo")
+        result = mg.largest_clique()
+        assert result == [a.id]
+
+    def test_min_size_filter(self):
+        """min_size parameter filters correctly."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        d, e = mg.add("D"), mg.add("E")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")  # triangle
+        mg.link(d.id, e.id, "r")  # edge
+        # min_size=2 → both triangle and edge
+        r2 = mg.maximal_cliques(min_size=2)
+        assert len(r2) == 2
+        # min_size=3 → only triangle
+        r3 = mg.maximal_cliques(min_size=3)
+        assert len(r3) == 1
+        assert set(r3[0]) == {a.id, b.id, c.id}
+        # min_size=4 → nothing
+        assert mg.maximal_cliques(min_size=4) == []
+
+    def test_directed_edges_treated_undirected(self):
+        """Edges are treated as undirected for clique detection."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        # Only one direction per pair
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(a.id, c.id, "r")
+        result = mg.maximal_cliques()
+        assert len(result) == 1
+        assert set(result[0]) == {a.id, b.id, c.id}

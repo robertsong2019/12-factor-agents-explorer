@@ -16735,6 +16735,101 @@ class MemoryGraph:
         return sorted([nid for nid, ecc in eccs.items() if ecc == max_ecc])
 
 
+    # ------------------------------------------------------------------
+    #  Bron-Kerbosch maximal clique enumeration (with pivoting)
+    # ------------------------------------------------------------------
+
+    def maximal_cliques(self, min_size: int = 3) -> list[list[str]]:
+        """Enumerate all maximal cliques via Bron-Kerbosch with pivoting.
+
+        A clique is a set of nodes where every pair is directly connected.
+        Maximal = not a subset of any larger clique.  Useful for identifying
+        tightly coupled memory clusters (e.g. redundant facts, dense
+        episodic chains).
+
+        Args:
+            min_size: minimum clique size to report (default 3 = triangles+).
+
+        Returns:
+            Sorted list of cliques, each a sorted list of node IDs.
+            Empty list if the graph has no cliques ≥ *min_size*.
+
+        Quarantined nodes are excluded.
+        """
+        rows = self.conn.execute(
+            "SELECT id FROM nodes WHERE quarantined = 0"
+        ).fetchall()
+        if not rows:
+            return []
+
+        active_ids = {str(r["id"]) for r in rows}
+        adj: dict[str, set[str]] = {nid: set() for nid in active_ids}
+        for r in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = str(r["source"]), str(r["target"])
+            if s in active_ids and t in active_ids:
+                adj[s].add(t)
+                adj[t].add(s)
+
+        cliques: list[list[str]] = []
+
+        def _bron_kerbosch(R: set, P: set, X: set):
+            """Classic BK with Brelzig-Kernighan pivot."""
+            if not P and not X:
+                if len(R) >= min_size:
+                    cliques.append(sorted(R))
+                return
+            # Choose pivot u from P ∪ X with max |P ∩ N(u)|
+            pivot_pool = P | X
+            pivot = max(pivot_pool, key=lambda u: len(P & adj[u]))
+            for v in list(P - adj[pivot]):
+                _bron_kerbosch(
+                    R | {v},
+                    P & adj[v],
+                    X & adj[v],
+                )
+                P.discard(v)
+                X.add(v)
+
+        _bron_kerbosch(set(), set(adj.keys()), set())
+        cliques.sort(key=lambda c: (-len(c), c))
+        return cliques
+
+    def clique_number(self) -> int:
+        """Size of the largest clique (0 if empty graph, 1 if no edges)."""
+        rows = self.conn.execute(
+            "SELECT id FROM nodes WHERE quarantined = 0"
+        ).fetchall()
+        if not rows:
+            return 0
+
+        active_ids = {str(r["id"]) for r in rows}
+        # Quick check: any edges at all?
+        edge_count = self.conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE source IN (%s) AND target IN (%s)"
+            % (",".join("?" * len(active_ids)), ",".join("?" * len(active_ids))),
+            list(active_ids) * 2,
+        ).fetchone()[0]
+        if edge_count == 0:
+            return 1 if active_ids else 0
+
+        all_cliques = self.maximal_cliques(min_size=1)
+        return max((len(c) for c in all_cliques), default=1 if active_ids else 0)
+
+    def largest_clique(self) -> list[str]:
+        """The single largest maximal clique (sorted node IDs).
+
+        Returns an empty list if the graph has no nodes.
+        """
+        all_cliques = self.maximal_cliques(min_size=1)
+        if not all_cliques:
+            # No edges — but maybe single nodes exist
+            rows = self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined = 0 ORDER BY id LIMIT 1"
+            ).fetchall()
+            return [str(rows[0]["id"])] if rows else []
+        return all_cliques[0]
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
