@@ -3713,6 +3713,164 @@ export function formatBenchmarkReport(bench) {
   return lines.join('\n');
 }
 
+// ─── F38: Documentation Examples ───────────────────────────────────────
+
+/**
+ * Generate example outputs for each file type, using a mock project.
+ * Useful for documentation, onboarding, and regression testing.
+ *
+ * @param {{ includeGitInfo?: boolean }} opts
+ * @returns {{ agentsMd: string, cursorRules: string, copilotInstructions: string, claudeMd: string, stats: object }}
+ */
+export function generateDocExamples(opts = {}) {
+  const { includeGitInfo = true } = opts;
+
+  const mockInfo = {
+    root: '/example/my-app',
+    pkg: {
+      name: 'my-app',
+      version: '2.1.0',
+      description: 'A sample application for documentation examples',
+      main: 'src/index.js',
+      module: 'src/index.mjs',
+    },
+    frameworks: ['Express', 'React', 'Jest'],
+    monorepo: false,
+    entryPoints: ['src/index.js', 'src/server.js'],
+    scripts: {
+      start: 'node src/server.js',
+      dev: 'nodemon src/server.js',
+      test: 'jest --coverage',
+      build: 'webpack --mode production',
+      lint: 'eslint src/',
+    },
+    deps: {
+      express: '^4.18.0',
+      react: '^18.2.0',
+      jest: '^29.6.0',
+      eslint: '^8.45.0',
+    },
+    configFiles: ['.eslintrc.json', 'jest.config.js', 'webpack.config.js'],
+  };
+
+  const mockLangs = new Map([
+    ['JavaScript', 45],
+    ['TypeScript', 12],
+    ['CSS', 8],
+    ['HTML', 3],
+    ['JSON', 5],
+  ]);
+
+  const mockStructure = `my-app/
+  src/
+    index.js
+    server.js
+    routes/
+      api.js
+      auth.js
+    components/
+      Header.jsx
+      Footer.jsx
+    utils/
+      helpers.js
+  test/
+    api.test.js
+    auth.test.js
+  package.json
+  webpack.config.js`;
+
+  const mockGitInfo = includeGitInfo ? {
+    isRepo: true,
+    totalCommits: 342,
+    contributors: [
+      { name: 'Alice', commits: 180 },
+      { name: 'Bob', commits: 120 },
+      { name: 'Charlie', commits: 42 },
+    ],
+    topFilesChanged: [
+      { file: 'src/server.js', changes: 45 },
+      { file: 'src/routes/api.js', changes: 38 },
+      { file: 'package.json', changes: 22 },
+    ],
+  } : null;
+
+  const agentsMd = generateAgentsMd(mockInfo, mockLangs, mockStructure, mockGitInfo);
+  const cursorRules = generateCursorRules(mockInfo, mockLangs, mockStructure);
+  const copilotInstructions = generateCopilotInstructions(mockInfo);
+  const claudeMd = generateClaudeMd(mockInfo, mockLangs, mockStructure);
+
+  // Collect stats about the generated examples
+  const stats = {
+    agentsMdLines: agentsMd.split('\n').length,
+    cursorRulesLines: cursorRules.split('\n').length,
+    copilotInstructionsLines: copilotInstructions.split('\n').length,
+    claudeMdLines: claudeMd.split('\n').length,
+    totalOutput: agentsMd.length + cursorRules.length + copilotInstructions.length + claudeMd.length,
+  };
+
+  return { agentsMd, cursorRules, copilotInstructions, claudeMd, stats };
+}
+
+/**
+ * Format all documentation examples into a single markdown document.
+ */
+export function formatDocExamples(examples) {
+  const lines = [
+    '# 📖 Context-Forge Documentation Examples',
+    '',
+    'This document shows example outputs for each generated file type',
+    'using a mock project (`my-app`).',
+    '',
+    `**Generated:** ${new Date().toISOString()}`,
+    `**Total output:** ${examples.stats.totalOutput} characters`,
+    '',
+    '---',
+    '',
+    '## AGENTS.md Example',
+    '',
+    '```markdown',
+    examples.agentsMd,
+    '```',
+    '',
+    '---',
+    '',
+    '## .cursorrules Example',
+    '',
+    '```markdown',
+    examples.cursorRules,
+    '```',
+    '',
+    '---',
+    '',
+    '## .github/copilot-instructions.md Example',
+    '',
+    '```markdown',
+    examples.copilotInstructions,
+    '```',
+    '',
+    '---',
+    '',
+    '## CLAUDE.md Example',
+    '',
+    '```markdown',
+    examples.claudeMd,
+    '```',
+    '',
+    '---',
+    '',
+    '## Statistics',
+    '',
+    `| File | Lines |`,
+    `|------|-------|`,
+    `| AGENTS.md | ${examples.stats.agentsMdLines} |`,
+    `| .cursorrules | ${examples.stats.cursorRulesLines} |`,
+    `| copilot-instructions | ${examples.stats.copilotInstructionsLines} |`,
+    `| CLAUDE.md | ${examples.stats.claudeMdLines} |`,
+  ];
+
+  return lines.join('\n');
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });

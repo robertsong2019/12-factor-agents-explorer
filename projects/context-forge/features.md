@@ -39,7 +39,7 @@
 - [x] **F35**: Test file detection — scan for test files, detect framework (jest/pytest/go/vitest/mocha) ✅ 2026-06-27
 - [x] **F36**: Git hotspot analysis — find most frequently changed files ✅ 2026-06-27
 - [x] **F17**: Performance benchmarks on large repos — benchmarkAnalysis + formatBenchmarkReport ✅ 2026-07-07
-- [ ] **F18**: Documentation examples for each generated file type
+- [x] **F18**: Documentation examples for each generated file type ✅ 2026-07-07
 
 ### Security & Quality
 - [x] **F32**: Secret detection — scan source for API keys, tokens, passwords ✅ 2026-06-23
