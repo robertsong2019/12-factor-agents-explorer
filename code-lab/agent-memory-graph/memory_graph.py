@@ -392,6 +392,222 @@ class MemoryGraph:
         results.sort(key=lambda r: -r["effective_score"])
         return results
 
+    # ─────────────────────────────────────────────────────────────
+    #  Memory Confidence — unified trustworthiness score that
+    #  combines activation maturity, weight, Q-value, and staleness
+    #  into a single [0, 1] metric.  Useful as a gate before acting
+    #  on retrieved memories.
+    # ─────────────────────────────────────────────────────────────
+
+    def confidence_score(self, node_id: str,
+                         w_activation: float = 0.30,
+                         w_weight: float = 0.25,
+                         w_q: float = 0.25,
+                         w_freshness: float = 0.20) -> Optional[dict]:
+        """Unified confidence score for a memory node in [0, 1].
+
+        Blends four orthogonal signals:
+
+        1. **Activation** (default 30%) — sigmoid maturation curve.
+           New memories score low until they survive long enough.
+        2. **Weight** (default 25%) — accumulated importance from
+           reinforcement, merging, and manual reweighting.
+        3. **Q-value** (default 25%) — reinforcement-learning score
+           from positive/negative retrieval outcomes.
+        4. **Freshness** (default 20%) — inverse of staleness; rewards
+           recently-accessed, non-expired memories.
+
+        Weights are normalised and must sum to ~1.0 (small floating
+        drift is tolerated).
+
+        Args:
+            node_id: Node to score.
+            w_activation: Weight for activation component.
+            w_weight: Weight for raw node weight component.
+            w_q: Weight for Q-value component.
+            w_freshness: Weight for freshness (1 - staleness) component.
+
+        Returns:
+            ``None`` if node not found, otherwise::
+
+                {
+                    "node_id": str,
+                    "label": str,
+                    "score": float,          # overall [0, 1]
+                    "components": {
+                        "activation": float,  # [0, 1]
+                        "weight": float,      # [0, 1]
+                        "q_value": float,     # [0, 1]
+                        "freshness": float,   # [0, 1]
+                    },
+                    "level": str,  # high / medium / low
+                }
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return None
+
+        # Normalise weights
+        total_w = w_activation + w_weight + w_q + w_freshness
+        if total_w <= 0:
+            return None
+        w_activation /= total_w
+        w_weight /= total_w
+        w_q /= total_w
+        w_freshness /= total_w
+
+        # 1. Activation [0, 1]
+        act = self.node_activation(node_id)
+
+        # 2. Weight normalised to [0, 1]
+        weight_norm = min(max(node.weight or 0.0, 0.0), 1.0)
+
+        # 3. Q-value normalised to [0, 1] via sigmoid
+        q_raw = self.get_q_value(node_id)
+        if q_raw is None:
+            q_raw = 0.0
+        # Sigmoid mapping centred at 0: maps (-inf, inf) → (0, 1)
+        q_norm = 1.0 / (1.0 + math.exp(-max(-50, min(50, q_raw))))
+
+        # 4. Freshness = 1 - staleness [0, 1]
+        staleness = self.staleness_score(node_id)
+        freshness = max(0.0, 1.0 - staleness)
+
+        score = (
+            act * w_activation
+            + weight_norm * w_weight
+            + q_norm * w_q
+            + freshness * w_freshness
+        )
+
+        if score >= 0.7:
+            level = "high"
+        elif score >= 0.4:
+            level = "medium"
+        else:
+            level = "low"
+
+        return {
+            "node_id": node_id,
+            "label": node.label,
+            "score": round(score, 4),
+            "components": {
+                "activation": round(act, 4),
+                "weight": round(weight_norm, 4),
+                "q_value": round(q_norm, 4),
+                "freshness": round(freshness, 4),
+            },
+            "level": level,
+        }
+
+    def batch_confidence(self, node_ids: list[str], **kwargs) -> dict[str, dict]:
+        """Compute confidence scores for multiple nodes.
+
+        Args:
+            node_ids: Nodes to score.
+            **kwargs: Forwarded to :meth:`confidence_score`.
+
+        Returns:
+            {node_id: confidence_dict} for found nodes.
+        """
+        result = {}
+        for nid in node_ids:
+            c = self.confidence_score(nid, **kwargs)
+            if c is not None:
+                result[nid] = c
+        return result
+
+    # ─────────────────────────────────────────────────────────────
+    #  Forgetting Curve — Ebbinghaus-style exponential retention.
+    #  R(t) = exp(-t / S) where S (stability) is derived from the
+    #  node's weight and reinforcement history.  High-weight,
+    #  frequently-accessed memories decay slowly.
+    # ─────────────────────────────────────────────────────────────
+
+    def forgetting_curve(self, node_id: str,
+                         base_stability: float = 24.0,
+                         weight_boost: float = 1.0) -> Optional[dict]:
+        """Ebbinghaus forgetting curve for a memory node.
+
+        Models retention as ``R(t) = e^(-t / S)`` where:
+        - *t* = seconds since last access
+        - *S* (stability) = ``base_stability × (1 + weight × weight_boost)``
+
+        Higher-weight memories have greater stability and decay
+        more slowly, mirroring the spacing effect: reinforced
+        memories resist forgetting.
+
+        Args:
+            node_id: Node to evaluate.
+            base_stability: Base stability in **hours** (default 24h).
+                A memory with weight=0 retains ~37% after this long.
+            weight_boost: Multiplier for how much weight increases
+                stability.  At 1.0, a max-weight (1.0) node has
+                2× the base stability.
+
+        Returns:
+            ``None`` if node not found, otherwise::
+
+                {
+                    "node_id": str,
+                    "retention": float,      # R(t) in (0, 1]
+                    "stability_hours": float,
+                    "hours_since_access": float,
+                    "half_life_hours": float,
+                }
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return None
+
+        now = time.time()
+        last_access = node.accessed or node.created or now
+        hours_since = max((now - last_access) / 3600.0, 0.0)
+
+        w = max(node.weight or 0.0, 0.0)
+        stability_hours = base_stability * (1.0 + w * weight_boost)
+
+        # R(t) = e^(-t / S)
+        retention = math.exp(-hours_since / max(stability_hours, 0.001))
+
+        # Half-life: t where R = 0.5 → t = S × ln(2)
+        half_life = stability_hours * math.log(2)
+
+        return {
+            "node_id": node_id,
+            "retention": round(retention, 4),
+            "stability_hours": round(stability_hours, 4),
+            "hours_since_access": round(hours_since, 2),
+            "half_life_hours": round(half_life, 2),
+        }
+
+    def forgetting_report(self, threshold: float = 0.3,
+                           limit: int = 50) -> list[dict]:
+        """List nodes whose retention has dropped below *threshold*.
+
+        Useful for identifying memories at risk of being forgotten
+        — candidates for either reinforcement or strategic eviction.
+
+        Args:
+            threshold: Retention cutoff (default 0.3).
+            limit: Max nodes to return.
+
+        Returns:
+            List of forgetting-curve dicts (lowest retention first).
+        """
+        rows = self.conn.execute(
+            "SELECT id FROM nodes WHERE quarantined = 0 ORDER BY accessed ASC"
+        ).fetchall()
+
+        at_risk = []
+        for r in rows:
+            fc = self.forgetting_curve(r["id"])
+            if fc and fc["retention"] < threshold:
+                at_risk.append(fc)
+
+        at_risk.sort(key=lambda x: x["retention"])
+        return at_risk[:limit]
+
 
     def decay_all(self):
         """对所有记忆应用遗忘衰减（模拟时间流逝）。"""

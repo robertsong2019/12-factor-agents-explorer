@@ -20165,3 +20165,224 @@ class TestRecallWithActivation:
         for r in results:
             assert 0.0 <= r["activation"] <= 1.0
             assert 0.0 <= r["effective_score"] <= 2.0  # weight * (1 + 0)
+
+
+class TestConfidenceScore:
+    """Tests for MemoryGraph.confidence_score — unified trustworthiness metric."""
+
+    def test_returns_none_for_missing_node(self):
+        mg = MemoryGraph()
+        assert mg.confidence_score("nonexistent") is None
+
+    def test_basic_confidence_for_new_node(self):
+        """New node should have low-to-medium confidence (low activation)."""
+        mg = MemoryGraph()
+        n = mg.add("Python tutorial", "fact", data={"topic": "python"})
+        result = mg.confidence_score(n.id)
+        assert result is not None
+        assert result["node_id"] == n.id
+        assert 0.0 <= result["score"] <= 1.0
+        assert result["level"] in ("high", "medium", "low")
+        # New node: activation near 0, weight default, q=0, freshness high
+        assert result["components"]["activation"] < 0.1
+        assert result["components"]["q_value"] == 0.5  # sigmoid(0) = 0.5
+        assert result["components"]["freshness"] > 0.9  # just created → fresh
+
+    def test_confidence_increases_with_weight(self):
+        """Higher weight should increase the confidence score."""
+        mg = MemoryGraph()
+        n_low = mg.add("low weight fact", "fact")
+        n_high = mg.add("high weight fact", "fact")
+        mg.update_node(n_high.id, weight=0.9)
+        mg.update_node(n_low.id, weight=0.1)
+        low = mg.confidence_score(n_low.id)
+        high = mg.confidence_score(n_high.id)
+        assert high["score"] >= low["score"]
+        assert high["components"]["weight"] > low["components"]["weight"]
+
+    def test_confidence_level_high(self):
+        """A mature, high-weight, fresh node should reach 'high' level."""
+        mg = MemoryGraph()
+        n = mg.add("critical knowledge", "fact")
+        mg.reweight(n.id, 1.0)
+        mg.update_q_value(n.id, reward=5.0)
+        # Simulate age by backdating created
+        mg.conn.execute("UPDATE nodes SET created=? WHERE id=?",
+                        (time.time() - 86400, n.id))  # 24h old
+        mg.conn.commit()
+        result = mg.confidence_score(n.id)
+        assert result["level"] == "high"
+        assert result["score"] >= 0.7
+
+    def test_confidence_level_low_for_stale_unweighted(self):
+        """Stale, unweighted, low-Q node should be 'low' confidence."""
+        mg = MemoryGraph()
+        n = mg.add("forgotten fact", "fact")
+        # Backdate everything and suppress Q-value
+        old = time.time() - 86400 * 60  # 60 days ago
+        mg.conn.execute(
+            "UPDATE nodes SET created=?, accessed=?, weight=?, q_value=? WHERE id=?",
+            (old, old, 0.01, -5.0, n.id)
+        )
+        mg.conn.commit()
+        result = mg.confidence_score(n.id)
+        # With low weight (0.01), negative Q (-5 → sigmoid ≈ 0.007),
+        # very stale (freshness ≈ 0), and 60-day-old creation,
+        # activation is ~1.0 (mature) but other 3 components are near 0.
+        # Score ≈ 0.30×1.0 + 0.25×0.01 + 0.25×0.007 + 0.20×0 ≈ 0.30
+        assert result["level"] == "low"
+        assert result["score"] < 0.4
+
+    def test_custom_weights_normalised(self):
+        """Weights don't need to sum to 1 — they get normalised."""
+        mg = MemoryGraph()
+        n = mg.add("test", "fact")
+        result = mg.confidence_score(n.id, w_activation=10, w_weight=5, w_q=3, w_freshness=2)
+        assert result is not None
+        assert 0.0 <= result["score"] <= 1.0
+
+    def test_zero_total_weight_returns_none(self):
+        """All-zero component weights should return None."""
+        mg = MemoryGraph()
+        n = mg.add("test", "fact")
+        result = mg.confidence_score(n.id, w_activation=0, w_weight=0, w_q=0, w_freshness=0)
+        assert result is None
+
+    def test_all_four_components_present(self):
+        """Confidence should include all four component scores."""
+        mg = MemoryGraph()
+        n = mg.add("test", "fact")
+        result = mg.confidence_score(n.id)
+        comps = result["components"]
+        assert "activation" in comps
+        assert "weight" in comps
+        assert "q_value" in comps
+        assert "freshness" in comps
+        for v in comps.values():
+            assert 0.0 <= v <= 1.0
+
+    def test_batch_confidence(self):
+        """batch_confidence returns scores for all valid nodes."""
+        mg = MemoryGraph()
+        n1 = mg.add("node 1", "fact")
+        n2 = mg.add("node 2", "fact")
+        n3 = mg.add("node 3", "fact")
+        results = mg.batch_confidence([n1.id, n2.id, "fake", n3.id])
+        assert len(results) == 3  # "fake" excluded
+        assert n1.id in results
+        assert n2.id in results
+        assert n3.id in results
+        assert "level" in results[n1.id]
+
+
+class TestForgettingCurve:
+    """Tests for MemoryGraph.forgetting_curve — Ebbinghaus retention model."""
+
+    def test_returns_none_for_missing_node(self):
+        mg = MemoryGraph()
+        assert mg.forgetting_curve("nonexistent") is None
+
+    def test_just_created_node_high_retention(self):
+        """A freshly-created node should have near-1.0 retention."""
+        mg = MemoryGraph()
+        n = mg.add("fresh fact", "fact")
+        fc = mg.forgetting_curve(n.id)
+        assert fc["retention"] > 0.99
+        assert fc["hours_since_access"] < 0.1
+        assert fc["stability_hours"] > 0
+
+    def test_higher_weight_slower_decay(self):
+        """High-weight nodes should retain better than low-weight after same time."""
+        mg = MemoryGraph()
+        n_low = mg.add("low weight", "fact")
+        n_high = mg.add("high weight", "fact")
+        mg.update_node(n_high.id, weight=0.9)
+        mg.update_node(n_low.id, weight=0.1)
+        # Backdate both accesses to 48h ago
+        old = time.time() - 48 * 3600
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id IN (?, ?)",
+                        (old, n_low.id, n_high.id))
+        mg.conn.commit()
+        low_fc = mg.forgetting_curve(n_low.id)
+        high_fc = mg.forgetting_curve(n_high.id)
+        assert high_fc["retention"] > low_fc["retention"]
+        assert high_fc["stability_hours"] > low_fc["stability_hours"]
+
+    def test_retention_decreases_over_time(self):
+        """Retention at 48h should be lower than at 1h."""
+        mg = MemoryGraph()
+        n = mg.add("time test", "fact", data={"w": 0.5})
+        mg.reweight(n.id, 0.5)
+        # 1h ago
+        recent = time.time() - 3600
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (recent, n.id))
+        mg.conn.commit()
+        r1 = mg.forgetting_curve(n.id)["retention"]
+        # 48h ago
+        old = time.time() - 48 * 3600
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old, n.id))
+        mg.conn.commit()
+        r2 = mg.forgetting_curve(n.id)["retention"]
+        assert r1 > r2
+
+    def test_half_life_correctness(self):
+        """At t = half_life, retention should be ≈ 0.5."""
+        mg = MemoryGraph()
+        n = mg.add("half life test", "fact")
+        mg.reweight(n.id, 0.0)  # stability = base only
+        fc = mg.forgetting_curve(n.id, base_stability=24.0)
+        half_life = fc["half_life_hours"]
+        # Simulate exactly half_life hours since access
+        target = time.time() - half_life * 3600
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (target, n.id))
+        mg.conn.commit()
+        fc2 = mg.forgetting_curve(n.id, base_stability=24.0)
+        assert abs(fc2["retention"] - 0.5) < 0.02  # tolerant
+
+    def test_weight_boost_amplifies_stability(self):
+        """weight_boost > 1 should give higher stability for same weight."""
+        mg = MemoryGraph()
+        n = mg.add("boost test", "fact")
+        mg.reweight(n.id, 0.5)
+        s_default = mg.forgetting_curve(n.id, weight_boost=1.0)["stability_hours"]
+        s_boosted = mg.forgetting_curve(n.id, weight_boost=3.0)["stability_hours"]
+        assert s_boosted > s_default
+
+    def test_forgetting_report_returns_at_risk(self):
+        """forgetting_report returns nodes below threshold, sorted ascending."""
+        mg = MemoryGraph()
+        n1 = mg.add("old fact", "fact")
+        n2 = mg.add("newer fact", "fact")
+        # Backdate n1 heavily
+        old = time.time() - 200 * 3600  # ~8.3 days
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old, n1.id))
+        mg.conn.commit()
+        report = mg.forgetting_report(threshold=0.5)
+        ids = [r["node_id"] for r in report]
+        assert n1.id in ids
+        # n2 should not be in the report (just created, retention ~1.0)
+        assert n2.id not in ids
+        # Sorted ascending
+        retentions = [r["retention"] for r in report]
+        assert retentions == sorted(retentions)
+
+    def test_forgetting_report_respects_limit(self):
+        """Report should respect the limit parameter."""
+        mg = MemoryGraph()
+        # Create 5 old nodes
+        old = time.time() - 500 * 3600  # very old → very low retention
+        for i in range(5):
+            n = mg.add(f"old {i}", "fact")
+            mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old, n.id))
+        mg.conn.commit()
+        report = mg.forgetting_report(threshold=0.01, limit=3)
+        assert len(report) <= 3
+
+    def test_forgetting_curve_returns_all_fields(self):
+        """Result should contain all expected fields."""
+        mg = MemoryGraph()
+        n = mg.add("fields test", "fact")
+        fc = mg.forgetting_curve(n.id)
+        for key in ("node_id", "retention", "stability_hours",
+                     "hours_since_access", "half_life_hours"):
+            assert key in fc
