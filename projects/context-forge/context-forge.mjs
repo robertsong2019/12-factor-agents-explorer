@@ -3549,6 +3549,170 @@ export function resolvePath(p) {
   return p.startsWith("/") ? p : join(process.cwd(), p);
 }
 
+// ─── F37: Benchmark Analysis ──────────────────────────────────────────
+
+/**
+ * Run a function and measure its execution time + memory delta.
+ * @returns {{ result: any, durationMs: number, memDeltaKB: number }}
+ */
+async function measureStage(name, fn) {
+  const memBefore = process.memoryUsage().heapUsed;
+  const start = performance.now();
+  const result = await fn();
+  const durationMs = +(performance.now() - start).toFixed(2);
+  const memDeltaKB = +((process.memoryUsage().heapUsed - memBefore) / 1024).toFixed(2);
+  return { name, result, durationMs, memDeltaKB };
+}
+
+/**
+ * Benchmark all analysis stages on a given project root.
+ * Runs each stage independently, collects timing + memory metrics,
+ * and returns a structured report.
+ *
+ * @param {string} root — Project root path
+ * @param {{ maxDepth?: number, maxCommits?: number }} opts
+ * @returns {Promise<{
+ *   project: string,
+ *   timestamp: string,
+ *   totalMs: number,
+ *   stages: Array<{ name: string, durationMs: number, memDeltaKB: number, error?: string }>,
+ *   fileCount: number,
+ *   recommendations: string[]
+ * }>}
+ */
+export async function benchmarkAnalysis(root, opts = {}) {
+  const { maxDepth = 3, maxCommits = 20 } = opts;
+  const stages = [];
+  const recommendations = [];
+
+  // Stage 1: detectProject
+  stages.push(await measureStage('detectProject', async () => {
+    try { return await detectProject(root); }
+    catch (e) { return { error: e.message };
+    }
+  }));
+
+  // Stage 2: parseGitignore
+  stages.push(await measureStage('parseGitignore', async () => {
+    try { return await parseGitignore(root); }
+    catch (e) { return { error: e.message }; }
+  }));
+
+  const gitignore = stages[1].result?.patterns || stages[1].result || [];
+
+  // Stage 3: scanLanguages
+  stages.push(await measureStage('scanLanguages', async () => {
+    try { return await scanLanguages(root, maxDepth, 0, gitignore); }
+    catch (e) { return { error: e.message }; }
+  }));
+
+  // Stage 4: extractImports
+  stages.push(await measureStage('extractImports', async () => {
+    try { return await extractImports(root, maxDepth, 0, gitignore); }
+    catch (e) { return { error: e.message }; }
+  }));
+
+  // Stage 5: extractApiSurface
+  stages.push(await measureStage('extractApiSurface', async () => {
+    try { return await extractApiSurface(root, maxDepth, 0, gitignore); }
+    catch (e) { return { error: e.message }; }
+  }));
+
+  // Stage 6: analyzeGitHistory
+  stages.push(await measureStage('analyzeGitHistory', async () => {
+    try { return await analyzeGitHistory(root, maxCommits); }
+    catch (e) { return { error: e.message }; }
+  }));
+
+  // Stage 7: detectTestFiles
+  stages.push(await measureStage('detectTestFiles', async () => {
+    try { return await detectTestFiles(root, maxDepth, 0, gitignore); }
+    catch (e) { return { error: e.message }; }
+  }));
+
+  // Stage 8: detectSecrets
+  stages.push(await measureStage('detectSecrets', async () => {
+    try { return await detectSecrets(root, maxDepth, 0, gitignore); }
+    catch (e) { return { error: e.message }; }
+  }));
+
+  // Compute totals
+  const totalMs = stages.reduce((sum, s) => sum + s.durationMs, 0);
+
+  // Count files from language scan
+  let fileCount = 0;
+  const langResult = stages[2].result;
+  if (langResult && !langResult.error && langResult.files) {
+    fileCount = langResult.files.length;
+  } else if (langResult && typeof langResult === 'object') {
+    fileCount = Object.values(langResult).reduce((sum, arr) =>
+      sum + (Array.isArray(arr) ? arr.length : 0), 0);
+  }
+
+  // Generate recommendations based on timings
+  for (const s of stages) {
+    if (s.result?.error) {
+      recommendations.push(`⚠️ ${s.name} failed: ${s.result.error}`);
+    } else if (s.durationMs > 1000) {
+      recommendations.push(`🐌 ${s.name} is slow (${s.durationMs}ms) — consider caching or reducing scan depth`);
+    }
+  }
+  if (totalMs > 5000) {
+    recommendations.push(`📊 Total analysis takes ${totalMs}ms — consider running stages in parallel`);
+  }
+  if (recommendations.length === 0) {
+    recommendations.push('✅ All stages performing well');
+  }
+
+  // Strip actual results from stages (keep only metrics)
+  const stageMetrics = stages.map(s => ({
+    name: s.name,
+    durationMs: s.durationMs,
+    memDeltaKB: s.memDeltaKB,
+    ...(s.result?.error ? { error: s.result.error } : {}),
+  }));
+
+  return {
+    project: root,
+    timestamp: new Date().toISOString(),
+    totalMs: +totalMs.toFixed(2),
+    stages: stageMetrics,
+    fileCount,
+    recommendations,
+  };
+}
+
+/**
+ * Format benchmark results as a human-readable report.
+ */
+export function formatBenchmarkReport(bench) {
+  const lines = [
+    '# 🔧 Performance Benchmark Report',
+    '',
+    `**Project:** ${bench.project}`,
+    `**Date:** ${bench.timestamp}`,
+    `**Total Time:** ${bench.totalMs}ms`,
+    `**Files Scanned:** ${bench.fileCount}`,
+    '',
+    '## Stage Breakdown',
+    '',
+    '| Stage | Time (ms) | Memory (KB) | Status |',
+    '|-------|-----------|-------------|--------|',
+  ];
+
+  for (const s of bench.stages) {
+    const status = s.error ? '❌ Error' : '✅ OK';
+    lines.push(`| ${s.name} | ${s.durationMs} | ${s.memDeltaKB} | ${status} |`);
+  }
+
+  lines.push('', '## Recommendations', '');
+  for (const r of bench.recommendations) {
+    lines.push(`- ${r}`);
+  }
+
+  return lines.join('\n');
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
