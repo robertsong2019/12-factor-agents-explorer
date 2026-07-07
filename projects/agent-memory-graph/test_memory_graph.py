@@ -19849,3 +19849,180 @@ class TestKatzCentrality:
         mg.katz_centrality()
         after = mg.stats()
         assert before == after
+
+
+class TestSubgraphCentrality:
+    """Tests for subgraph_centrality() — closed-walk participation."""
+
+    def test_empty_graph(self):
+        """No nodes → empty dict."""
+        mg = MemoryGraph()
+        assert mg.subgraph_centrality() == {}
+
+    def test_single_node(self):
+        """One isolated node → score 1.0 (only k=0 term)."""
+        mg = MemoryGraph()
+        n = mg.add("A")
+        result = mg.subgraph_centrality()
+        assert len(result) == 1
+        assert pytest.approx(result[n.id], abs=1e-9) == 1.0
+
+    def test_invalid_max_order_zero(self):
+        """max_order=0 raises ValueError."""
+        mg = MemoryGraph()
+        mg.add("A")
+        with pytest.raises(ValueError, match="max_order"):
+            mg.subgraph_centrality(max_order=0)
+
+    def test_two_equal_nodes(self):
+        """Two symmetric nodes → equal centrality."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        result = mg.subgraph_centrality()
+        assert pytest.approx(result[a.id], abs=1e-6) == result[b.id]
+
+    def test_triangle_all_equal(self):
+        """Triangle (complete K3) → all nodes equal."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(3)]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        result = mg.subgraph_centrality()
+        for nid in [n.id for n in nodes]:
+            assert pytest.approx(result[nid], abs=1e-6) == 1.0
+
+    def test_isolated_node_lower_than_connected(self):
+        """Isolated node has lower SC than connected nodes."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        iso = mg.add("isolated")
+        result = mg.subgraph_centrality()
+        # Triangle members participate in closed walks; isolated doesn't
+        assert result[iso.id] < result[a.id]
+        assert result[iso.id] < result[b.id]
+
+    def test_triangle_node_higher_than_bridge(self):
+        """Node in a triangle has higher SC than a bridge node."""
+        mg = MemoryGraph()
+        # Triangle: A-B-C-A
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        # Bridge: C-D (D is pendant)
+        d = mg.add("D")
+        mg.link(c.id, d.id, "r")
+        result = mg.subgraph_centrality()
+        # Triangle nodes have closed walks of length 2,3,...
+        # D only has closed walks through C (length 2: D-C-D)
+        # A and B have triangle closed walks too
+        assert result[a.id] > result[d.id]
+        assert result[b.id] > result[d.id]
+
+    def test_all_non_negative(self):
+        """All scores are non-negative."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(6)]
+        for i in range(6):
+            for j in range(i + 1, 6):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        result = mg.subgraph_centrality()
+        for score in result.values():
+            assert score >= 0.0
+
+    def test_complete_graph_uniform(self):
+        """Complete graph K_n → all nodes equal."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        result = mg.subgraph_centrality()
+        for nid in [n.id for n in nodes]:
+            assert pytest.approx(result[nid], abs=1e-6) == 1.0
+
+    def test_normalised_to_one(self):
+        """Max score is 1.0 after normalisation."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        result = mg.subgraph_centrality()
+        assert pytest.approx(max(result.values()), abs=1e-9) == 1.0
+
+    def test_quarantine_excluded(self):
+        """Quarantined nodes excluded by default."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        mg.node_quarantine(c.id, "test")
+        result = mg.subgraph_centrality()
+        assert c.id not in result
+        assert len(result) == 2
+
+    def test_include_quarantined(self):
+        """include_quarantined=True includes all nodes."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        mg.node_quarantine(c.id, "test")
+        result = mg.subgraph_centrality(include_quarantined=True)
+        assert c.id in result
+        assert len(result) == 3
+
+    def test_max_order_truncation(self):
+        """max_order=1 means only k=0 and k=1 terms (k=1 diagonal=0 for no self-loops)."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        result = mg.subgraph_centrality(max_order=1)
+        # Only identity term (k=0) since A has zero diagonal
+        # Both nodes equal, normalised to 1.0
+        assert pytest.approx(result[a.id], abs=1e-9) == 1.0
+        assert pytest.approx(result[b.id], abs=1e-9) == 1.0
+
+    def test_chain_graph_middle_higher(self):
+        """In a chain A-B-C, middle node B has higher SC (more closed walks)."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        result = mg.subgraph_centrality()
+        # B has closed walk B-A-B and B-C-B (length 2)
+        # A has closed walk A-B-A (length 2)
+        # But B also has A-B-C-B etc — more closed walks through both arms
+        assert result[b.id] >= result[a.id]
+
+    def test_non_mutating(self):
+        """subgraph_centrality() does not modify graph state."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        before = mg.stats()
+        mg.subgraph_centrality()
+        after = mg.stats()
+        assert before == after
+
+    def test_star_graph_hub_highest(self):
+        """Star graph: hub participates in more closed walks than leaves."""
+        mg = MemoryGraph()
+        hub = mg.add("hub")
+        leaves = [mg.add(f"L{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(hub.id, leaf.id, "r")
+        result = mg.subgraph_centrality()
+        # Hub has closed walks: hub-L0-hub, hub-L1-hub, ... (4 of length 2)
+        # Also cross walks: hub-L0-hub-L1-hub (length 4), etc.
+        # Each leaf only has: L0-hub-L0 (1 of length 2)
+        #                     L0-hub-L1-hub-L0 (length 4), etc.
+        # Hub accumulates more
+        assert result[hub.id] == max(result.values())

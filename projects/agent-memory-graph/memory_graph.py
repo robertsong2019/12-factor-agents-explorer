@@ -17026,6 +17026,126 @@ class MemoryGraph:
 
         return centrality
 
+    # ------------------------------------------------------------------
+    # Subgraph centrality
+    # ------------------------------------------------------------------
+    def subgraph_centrality(self, max_order: int = 20,
+                            include_quarantined: bool = False
+                            ) -> dict[str, float]:
+        """Compute subgraph centrality for all nodes.
+
+        Subgraph centrality counts closed walks of all lengths,
+        weighted by *1/k!* for length *k*.  It captures a node's
+        participation in subgraph structures (triangles, squares,
+        cycles, etc.).
+
+        The score for node *i* is::
+
+            sc_i = sum_{k=0}^{max_order} (A^k)_{ii} / k!
+
+        where *A* is the adjacency matrix.  This is the *i*-th
+        diagonal entry of the matrix exponential *e^A*.
+
+        **Comparison with other centrality measures:**
+
+        - *Degree centrality*: counts walks of length 1 only.
+        - *Katz centrality*: counts **all** walks (open + closed),
+          discounted by *alpha^k*.
+        - *Subgraph centrality*: counts **closed** walks only,
+          discounted by *1/k!*.
+
+        Subgraph centrality naturally rewards nodes that participate
+        in many triangles and short cycles, making it sensitive to
+        local community structure.
+
+        Args:
+            max_order: Maximum walk length to consider (truncated
+                Taylor series).  Default 20 gives >15 digits of
+                accuracy for typical graphs.
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns ``{node_id: centrality_score}`` normalised to
+        ``[0, 1]``.  Empty dict if graph is empty.
+        """
+        if max_order < 1:
+            raise ValueError("max_order must be >= 1")
+
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+
+        n = len(node_ids)
+        if n == 0:
+            return {}
+        if n == 1:
+            return {node_ids[0]: 1.0}
+
+        node_set = set(node_ids)
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+
+        # Build adjacency matrix
+        A = [[0.0] * n for _ in range(n)]
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s, t = r["source"], r["target"]
+            if s in node_set and t in node_set:
+                i, j = idx[s], idx[t]
+                A[i][j] = 1.0
+                A[j][i] = 1.0
+
+        # Compute diagonal of exp(A) via truncated Taylor series:
+        #   diag(A^0) = 1 for all i (identity)
+        #   diag(A^k) += diag(A^{k-1} * A) / k!
+        # Use iterative matrix multiplication keeping only diagonal.
+
+        import math
+
+        # diag(A^0) = all ones
+        sc = [1.0] * n  # k=0 term: 1/0! = 1
+
+        # For k=1: diag(A^1) = A[i][i] = 0 (no self-loops)
+        # For k>=2: compute iteratively
+        # We only need the diagonal of A^k, but computing it requires
+        # the full matrix product.  For small-to-medium graphs this is
+        # fine.  For large graphs we'd use a sparse approach.
+
+        # Current power: A_power = A^k (full matrix)
+        A_power = [row[:] for row in A]  # copy A as A^1
+
+        for k in range(1, max_order + 1):
+            # Add diagonal of A^k / k!
+            diag = [A_power[i][i] for i in range(n)]
+            inv_fact = 1.0 / math.factorial(k)
+            for i in range(n):
+                sc[i] += diag[i] * inv_fact
+
+            # Compute A^{k+1} = A^k * A (if not last iteration)
+            if k < max_order:
+                new_power = [[0.0] * n for _ in range(n)]
+                for i in range(n):
+                    row = A_power[i]
+                    for j in range(n):
+                        if row[j] != 0.0:
+                            r = row[j]
+                            for col in range(n):
+                                new_power[i][col] += r * A[j][col]
+                A_power = new_power
+
+        # Normalise to [0, 1]
+        max_val = max(sc) if sc else 1.0
+        if max_val > 0:
+            sc = {node_ids[i]: sc[i] / max_val for i in range(n)}
+        else:
+            sc = {node_ids[i]: 0.0 for i in range(n)}
+
+        return sc
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
