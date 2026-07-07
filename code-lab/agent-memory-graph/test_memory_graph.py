@@ -19690,3 +19690,275 @@ class TestKCliqueCommunities:
         mg.link(g.id, e.id, "r")
         result = mg.k_clique_communities(k=3)
         assert len(result[0]) >= len(result[-1])  # largest first
+
+
+# ═════════════════════════════════════════════════════════════════
+#  Memory Maturation — sigmoid activation tests
+# ═════════════════════════════════════════════════════════════════
+
+class TestNodeActivation:
+    """Tests for MemoryGraph.node_activation() — sigmoid maturation."""
+
+    def test_activation_brand_new_node(self):
+        """A node created moments ago should have activation near 0."""
+        mg = MemoryGraph()
+        n = mg.add("fresh memory", "fact")
+        act = mg.node_activation(n.id, half_life_hours=12.0)
+        assert act < 0.1, f"New node activation should be ~0, got {act}"
+
+    def test_activation_mature_node(self):
+        """A node created far in the past should have activation near 1."""
+        mg = MemoryGraph()
+        n = mg.add("old memory", "fact")
+        # Simulate old creation by updating the created timestamp
+        mg.conn.execute("UPDATE nodes SET created=? WHERE id=?",
+                        (time.time() - 72*3600, n.id))  # 72h ago
+        mg.conn.commit()
+        act = mg.node_activation(n.id, half_life_hours=12.0)
+        assert act > 0.99, f"72h-old node should be ~1.0, got {act}"
+
+    def test_activation_half_life_point(self):
+        """At exactly half_life hours, activation should be ~0.5."""
+        mg = MemoryGraph()
+        n = mg.add("half-life test", "fact")
+        mg.conn.execute("UPDATE nodes SET created=? WHERE id=?",
+                        (time.time() - 12*3600, n.id))  # exactly 12h
+        mg.conn.commit()
+        act = mg.node_activation(n.id, half_life_hours=12.0)
+        assert 0.45 < act < 0.55, f"At half-life, activation should be ~0.5, got {act}"
+
+    def test_activation_nonexistent_node(self):
+        """Nonexistent node should return 0.0."""
+        mg = MemoryGraph()
+        assert mg.node_activation("nonexistent") == 0.0
+
+    def test_activation_in_range(self):
+        """Activation should always be in [0, 1]."""
+        mg = MemoryGraph()
+        for hours_ago in [0, 1, 2, 6, 12, 24, 48, 168]:
+            n = mg.add(f"test_{hours_ago}h", "fact")
+            mg.conn.execute("UPDATE nodes SET created=? WHERE id=?",
+                            (time.time() - hours_ago * 3600, n.id))
+            mg.conn.commit()
+            act = mg.node_activation(n.id, half_life_hours=6.0)
+            assert 0.0 <= act <= 1.0, f"Activation {act} out of range for {hours_ago}h"
+
+    def test_activation_monotonic_increasing(self):
+        """Older nodes should have higher activation (monotonic)."""
+        mg = MemoryGraph()
+        activations = []
+        for hours_ago in [0, 3, 6, 12, 24, 48]:
+            n = mg.add(f"age_{hours_ago}h", "fact")
+            mg.conn.execute("UPDATE nodes SET created=? WHERE id=?",
+                            (time.time() - hours_ago * 3600, n.id))
+            mg.conn.commit()
+            activations.append(mg.node_activation(n.id, half_life_hours=12.0))
+        for i in range(len(activations) - 1):
+            assert activations[i] < activations[i + 1], \
+                f"Activation should increase: {activations}"
+
+    def test_activation_custom_half_life(self):
+        """Shorter half-life should mature faster."""
+        mg = MemoryGraph()
+        n1 = mg.add("short_half_life", "fact")
+        mg.conn.execute("UPDATE nodes SET created=? WHERE id=?",
+                        (time.time() - 3 * 3600, n1.id))  # 3h ago
+        mg.conn.commit()
+        short_hl = mg.node_activation(n1.id, half_life_hours=3.0)   # at half-life → 0.5
+        long_hl = mg.node_activation(n1.id, half_life_hours=48.0)   # young → <0.5
+        assert short_hl > long_hl, \
+            f"Short HL should have higher activation: {short_hl} vs {long_hl}"
+
+
+class TestBatchActivation:
+    """Tests for MemoryGraph.batch_activation()."""
+
+    def test_batch_activation_empty(self):
+        """Empty input should return empty dict."""
+        mg = MemoryGraph()
+        assert mg.batch_activation([]) == {}
+
+    def test_batch_activation_multiple(self):
+        """Should return activations for all found nodes."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"batch_{i}", "fact") for i in range(5)]
+        ids = [n.id for n in nodes]
+        result = mg.batch_activation(ids)
+        assert len(result) == 5
+        for nid in ids:
+            assert nid in result
+            assert 0.0 <= result[nid] <= 1.0
+
+    def test_batch_activation_missing_ids(self):
+        """Missing IDs should simply be absent from result."""
+        mg = MemoryGraph()
+        n = mg.add("exists", "fact")
+        result = mg.batch_activation([n.id, "fake1", "fake2"])
+        assert len(result) == 1
+        assert n.id in result
+
+    def test_batch_activation_consistent_with_single(self):
+        """Batch result should match individual calls."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"cons_{i}", "fact") for i in range(3)]
+        for n in nodes:
+            mg.conn.execute("UPDATE nodes SET created=? WHERE id=?",
+                            (time.time() - 3600, n.id))
+        mg.conn.commit()
+        batch = mg.batch_activation([n.id for n in nodes], half_life_hours=6.0)
+        for n in nodes:
+            single = mg.node_activation(n.id, half_life_hours=6.0)
+            assert abs(batch[n.id] - single) < 0.001, \
+                f"Batch {batch[n.id]} != single {single}"
+
+
+# ═════════════════════════════════════════════════════════════════
+#  Recurrence Detector tests
+# ═════════════════════════════════════════════════════════════════
+
+class TestDetectRecurrence:
+    """Tests for MemoryGraph.detect_recurrence()."""
+
+    def test_recurrence_no_match(self):
+        """A unique label should not match anything."""
+        mg = MemoryGraph()
+        mg.add("unique topic XYZ", "fact")
+        result = mg.detect_recurrence("completely different ABC")
+        assert result["count"] == 0
+        assert result["should_trigger"] is False
+
+    def test_recurrence_exact_match(self):
+        """Exact duplicate labels should match."""
+        mg = MemoryGraph()
+        for _ in range(3):
+            mg.add("Python memory management", "fact")
+        result = mg.detect_recurrence("Python memory management")
+        assert result["count"] >= 3
+        assert result["should_trigger"] is True
+
+    def test_recurrence_fuzzy_match(self):
+        """Similar labels should match at lower threshold."""
+        mg = MemoryGraph()
+        mg.add("agent memory consolidation", "fact")
+        mg.add("agent memory consolidation strategy", "fact")
+        result = mg.detect_recurrence("agent memory consolidation",
+                                       similarity_threshold=0.5)
+        assert result["count"] >= 2
+
+    def test_recurrence_kind_filter(self):
+        """Kind filter should narrow results."""
+        mg = MemoryGraph()
+        mg.add("topic A", "fact")
+        mg.add("topic A", "event")
+        result_fact = mg.detect_recurrence("topic A", kind="fact")
+        result_all = mg.detect_recurrence("topic A")
+        assert result_fact["count"] <= result_all["count"]
+
+    def test_recurrence_trigger_threshold(self):
+        """should_trigger should be True at count >= 3."""
+        mg = MemoryGraph()
+        mg.add("recurring theme", "fact")
+        mg.add("recurring theme", "fact")
+        result2 = mg.detect_recurrence("recurring theme")
+        assert result2["count"] >= 2
+        assert result2["should_trigger"] is False
+
+        mg.add("recurring theme", "fact")
+        result3 = mg.detect_recurrence("recurring theme")
+        assert result3["count"] >= 3
+        assert result3["should_trigger"] is True
+
+    def test_recurrence_match_has_similarity(self):
+        """Matches should include similarity scores."""
+        mg = MemoryGraph()
+        mg.add("test label", "fact")
+        result = mg.detect_recurrence("test label")
+        for m in result["matches"]:
+            assert "similarity" in m
+            assert 0.0 <= m["similarity"] <= 1.0
+
+    def test_recurrence_result_structure(self):
+        """Result should have all expected fields."""
+        mg = MemoryGraph()
+        mg.add("structure test", "fact")
+        result = mg.detect_recurrence("structure test")
+        assert "label" in result
+        assert "kind" in result
+        assert "matches" in result
+        assert "count" in result
+        assert "should_trigger" in result
+
+
+class TestRecurrenceReport:
+    """Tests for MemoryGraph.recurrence_report()."""
+
+    def test_report_empty_graph(self):
+        """Empty graph should return empty list."""
+        mg = MemoryGraph()
+        assert mg.recurrence_report() == []
+
+    def test_report_no_recurrence(self):
+        """All unique nodes should return empty list."""
+        mg = MemoryGraph()
+        labels = ["quantum physics", "medieval history", "sushi recipe",
+                  "rust programming", "mountain climbing"]
+        for label in labels:
+            mg.add(label, "fact")
+        assert mg.recurrence_report() == []
+
+    def test_report_finds_clusters(self):
+        """Should find clusters of similar labels."""
+        mg = MemoryGraph()
+        for i in range(4):
+            mg.add(f"machine learning model {i}", "concept")
+        for i in range(3):
+            mg.add(f"data pipeline stage {i}", "event")
+        report = mg.recurrence_report(min_count=3, similarity_threshold=0.4)
+        assert len(report) >= 1
+        assert report[0]["count"] >= 3
+
+    def test_report_sorted_by_count(self):
+        """Report should be sorted by count descending."""
+        mg = MemoryGraph()
+        # Big cluster
+        for i in range(5):
+            mg.add(f"alpha cluster member {i}", "concept")
+        # Small cluster
+        for i in range(3):
+            mg.add(f"beta group item {i}", "concept")
+        report = mg.recurrence_report(min_count=3, similarity_threshold=0.3)
+        if len(report) >= 2:
+            assert report[0]["count"] >= report[1]["count"]
+
+    def test_report_respects_min_count(self):
+        """Clusters smaller than min_count should not appear."""
+        mg = MemoryGraph()
+        mg.add("pair topic one", "fact")
+        mg.add("pair topic two", "fact")
+        report = mg.recurrence_report(min_count=3, similarity_threshold=0.3)
+        # Only 2 similar nodes → should not appear with min_count=3
+        for cluster in report:
+            assert cluster["count"] >= 3
+
+    def test_report_member_ids_exist(self):
+        """All member IDs in clusters should be valid node IDs."""
+        mg = MemoryGraph()
+        for i in range(3):
+            mg.add(f"report check {i}", "fact")
+        report = mg.recurrence_report(min_count=2, similarity_threshold=0.3)
+        all_ids = set()
+        for cluster in report:
+            for mid in cluster["members"]:
+                all_ids.add(mid)
+        # Verify they exist
+        for nid in all_ids:
+            assert mg.get_node(nid) is not None, f"Member {nid} does not exist"
+
+    def test_report_has_kind(self):
+        """Each cluster should report its kind."""
+        mg = MemoryGraph()
+        for i in range(3):
+            mg.add(f"typed cluster {i}", "event")
+        report = mg.recurrence_report(min_count=3, similarity_threshold=0.3)
+        for cluster in report:
+            assert "kind" in cluster

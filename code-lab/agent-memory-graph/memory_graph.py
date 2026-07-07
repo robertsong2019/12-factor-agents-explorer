@@ -16931,6 +16931,175 @@ class MemoryGraph:
         communities.sort(key=lambda c: (-len(c), c))
         return communities
 
+    # ─────────────────────────────────────────────────────────────
+    #  Memory Maturation — sigmoid activation 0→1 over configurable
+    #  half-life (default 12h).  New memories start at activation≈0
+    #  and rise as they "age" without being contradicted.
+    # ─────────────────────────────────────────────────────────────
+
+    def node_activation(self, node_id: str, half_life_hours: float = 12.0) -> float:
+        """Sigmoid activation score for a node based on age.
+
+        New memories start near 0.0 and rise toward 1.0 following a
+        sigmoid curve.  The ``half_life_hours`` parameter controls how
+        quickly the memory matures — at *t = half_life* the activation
+        is 0.5.
+
+        Uses the logistic function: 1 / (1 + exp(-(t - h) / scale))
+        where scale = half_life / 4 for a smooth transition.
+
+        Args:
+            node_id: The node to score.
+            half_life_hours: Hours until activation ≈ 0.5 (default 12h).
+
+        Returns:
+            Activation in [0, 1], or 0.0 if node not found.
+        """
+        row = self.conn.execute(
+            "SELECT created FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row or row["created"] is None:
+            return 0.0
+        age_hours = (time.time() - row["created"]) / 3600.0
+        scale = max(half_life_hours / 4.0, 0.001)
+        x = (age_hours - half_life_hours) / scale
+        # Clamp x to avoid overflow
+        x = max(-50, min(50, x))
+        return 1.0 / (1.0 + math.exp(-x))
+
+    def batch_activation(self, node_ids: list[str], half_life_hours: float = 12.0) -> dict[str, float]:
+        """Compute activation scores for multiple nodes efficiently.
+
+        Args:
+            node_ids: List of node IDs to score.
+            half_life_hours: Maturation half-life (default 12h).
+
+        Returns:
+            {node_id: activation} for each found node.
+        """
+        if not node_ids:
+            return {}
+        placeholders = ",".join("?" * len(node_ids))
+        rows = self.conn.execute(
+            f"SELECT id, created FROM nodes WHERE id IN ({placeholders})",
+            node_ids
+        ).fetchall()
+        scale = max(half_life_hours / 4.0, 0.001)
+        now = time.time()
+        result = {}
+        for r in rows:
+            if r["created"] is None:
+                result[r["id"]] = 0.0
+                continue
+            age_hours = (now - r["created"]) / 3600.0
+            x = max(-50, min(50, (age_hours - half_life_hours) / scale))
+            result[r["id"]] = 1.0 / (1.0 + math.exp(-x))
+        return result
+
+    # ─────────────────────────────────────────────────────────────
+    #  Recurrence Detector — tracks how often the same topic/label
+    #  pattern recurs, enabling trigger-based smart consolidation.
+    # ─────────────────────────────────────────────────────────────
+
+    def detect_recurrence(self, label: str, kind: str = None,
+                          similarity_threshold: float = 0.7,
+                          lookback_count: int = 500) -> dict:
+        """Detect if a label recurs in existing memories.
+
+        Compares *label* against recent nodes using difflib similarity.
+        If the same topic has appeared ≥ 3 times, it signals that smart
+        (LLM-based) consolidation should be triggered.
+
+        Args:
+            label: The label to check.
+            kind: Optional kind filter (e.g. "fact", "event").
+            similarity_threshold: Minimum similarity to count as a match.
+            lookback_count: How many recent nodes to scan.
+
+        Returns:
+            {label, matches: list, count, should_trigger: bool}
+        """
+        import difflib
+        query = "SELECT id, label, kind FROM nodes WHERE quarantined = 0"
+        params: list = []
+        if kind:
+            query += " AND kind = ?"
+            params.append(kind)
+        query += " ORDER BY created DESC LIMIT ?"
+        params.append(lookback_count)
+
+        rows = self.conn.execute(query, params).fetchall()
+        target = label.lower().strip()
+        matches = []
+        for r in rows:
+            sim = difflib.SequenceMatcher(None, target, r["label"].lower()).ratio()
+            if sim >= similarity_threshold:
+                matches.append({"id": r["id"], "label": r["label"],
+                                "kind": r["kind"], "similarity": round(sim, 3)})
+
+        return {
+            "label": label,
+            "kind": kind,
+            "matches": matches,
+            "count": len(matches),
+            "should_trigger": len(matches) >= 3,
+        }
+
+    def recurrence_report(self, min_count: int = 3,
+                          similarity_threshold: float = 0.7) -> list[dict]:
+        """Scan all nodes and find recurring topic clusters.
+
+        Groups nodes by kind, then finds labels that have ≥ *min_count*
+        similar siblings.  Useful for periodic consolidation triggers.
+
+        Args:
+            min_count: Minimum cluster size to report.
+            similarity_threshold: Minimum similarity to cluster.
+
+        Returns:
+            List of {kind, representative_label, count, members} sorted
+            by count descending.
+        """
+        import difflib
+        rows = self.conn.execute(
+            "SELECT id, label, kind FROM nodes WHERE quarantined = 0 ORDER BY kind"
+        ).fetchall()
+
+        # Group by kind
+        kind_groups: dict[str, list] = {}
+        for r in rows:
+            kind_groups.setdefault(r["kind"], []).append(r)
+
+        clusters: list[dict] = []
+        for kind, group in kind_groups.items():
+            assigned: set = set()
+            for i, base in enumerate(group):
+                if base["id"] in assigned:
+                    continue
+                cluster = [base]
+                for candidate in group[i + 1:]:
+                    if candidate["id"] in assigned:
+                        continue
+                    sim = difflib.SequenceMatcher(
+                        None, base["label"].lower(), candidate["label"].lower()
+                    ).ratio()
+                    if sim >= similarity_threshold:
+                        cluster.append(candidate)
+
+                if len(cluster) >= min_count:
+                    for c in cluster:
+                        assigned.add(c["id"])
+                    clusters.append({
+                        "kind": kind,
+                        "representative_label": base["label"],
+                        "count": len(cluster),
+                        "members": [c["id"] for c in cluster],
+                    })
+
+        clusters.sort(key=lambda c: -c["count"])
+        return clusters
+
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
