@@ -16931,6 +16931,101 @@ class MemoryGraph:
         communities.sort(key=lambda c: (-len(c), c))
         return communities
 
+    # ─────────────────────────────────────────────
+    # Cycle 199: Katz Centrality
+    # ─────────────────────────────────────────────
+
+    def katz_centrality(self, alpha: float = 0.1,
+                        beta: float = 1.0,
+                        iterations: int = 100,
+                        tolerance: float = 1e-6,
+                        include_quarantined: bool = False
+                        ) -> dict[str, float]:
+        """Compute Katz centrality for all nodes.
+
+        Katz centrality generalises eigenvector centrality with an
+        attenuation factor *alpha* that discounts long walks.  Unlike
+        eigenvector centrality, it converges for disconnected graphs
+        because each node receives a baseline contribution *beta*.
+
+        The score for node *i* is::
+
+            c_i = beta + alpha * sum(c_j for j in neighbours(i))
+
+        Convergence is guaranteed when ``alpha < 1 / lambda_max``,
+        where ``lambda_max`` is the largest eigenvalue of the adjacency
+        matrix.  For typical sparse graphs (max degree *d*),
+        ``alpha < 1/d`` is a safe default.
+
+        Args:
+            alpha: Attenuation factor (0 < alpha < 1).  Smaller values
+                emphasise local structure; larger values approach
+                eigenvector centrality.
+            beta: Base contribution per node (default 1.0).
+            iterations: Max iterations.
+            tolerance: Convergence threshold (L1 norm).
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns ``{node_id: centrality_score}``.
+        Empty dict if graph is empty.
+        """
+        if not 0 < alpha < 1:
+            raise ValueError("alpha must be in (0, 1)")
+        if beta < 0:
+            raise ValueError("beta must be non-negative")
+
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+
+        n = len(node_ids)
+        if n == 0:
+            return {}
+        if n == 1:
+            return {node_ids[0]: beta}
+
+        node_set = set(node_ids)
+
+        # Build undirected adjacency from edges
+        adj: dict[str, list[str]] = {nid: [] for nid in node_ids}
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s, t = r["source"], r["target"]
+            if s in node_set and t in node_set:
+                adj[s].append(t)
+                adj[t].append(s)
+
+        # Deduplicate
+        for nid in node_ids:
+            adj[nid] = list(set(adj[nid]))
+
+        # Iterative computation: c_i = beta + alpha * sum(c_j)
+        centrality = {nid: beta for nid in node_ids}
+
+        for _ in range(iterations):
+            new_c: dict[str, float] = {}
+            for nid in node_ids:
+                s = sum(centrality[nb] for nb in adj[nid])
+                new_c[nid] = beta + alpha * s
+
+            diff = sum(abs(new_c[nid] - centrality[nid]) for nid in node_ids)
+            centrality = new_c
+            if diff < tolerance:
+                break
+
+        # Normalise to [0, 1] range for comparability
+        max_val = max(centrality.values()) if centrality else 1.0
+        if max_val > 0:
+            centrality = {nid: v / max_val for nid, v in centrality.items()}
+
+        return centrality
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

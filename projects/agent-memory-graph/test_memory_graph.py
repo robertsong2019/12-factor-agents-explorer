@@ -19690,3 +19690,162 @@ class TestKCliqueCommunities:
         mg.link(g.id, e.id, "r")
         result = mg.k_clique_communities(k=3)
         assert len(result[0]) >= len(result[-1])  # largest first
+
+
+class TestKatzCentrality:
+    """Tests for katz_centrality() — Katz centrality with attenuation."""
+
+    def test_empty_graph(self):
+        """No nodes → empty dict."""
+        mg = MemoryGraph()
+        assert mg.katz_centrality() == {}
+
+    def test_single_node(self):
+        """One node → score equals beta normalised to 1.0."""
+        mg = MemoryGraph()
+        n = mg.add("A")
+        result = mg.katz_centrality()
+        assert len(result) == 1
+        assert pytest.approx(result[n.id], abs=1e-9) == 1.0
+
+    def test_invalid_alpha_zero(self):
+        """alpha=0 raises ValueError."""
+        mg = MemoryGraph()
+        mg.add("A")
+        with pytest.raises(ValueError, match="alpha"):
+            mg.katz_centrality(alpha=0.0)
+
+    def test_invalid_alpha_one(self):
+        """alpha=1 raises ValueError."""
+        mg = MemoryGraph()
+        mg.add("A")
+        with pytest.raises(ValueError, match="alpha"):
+            mg.katz_centrality(alpha=1.0)
+
+    def test_invalid_beta_negative(self):
+        """Negative beta raises ValueError."""
+        mg = MemoryGraph()
+        mg.add("A")
+        with pytest.raises(ValueError, match="beta"):
+            mg.katz_centrality(beta=-1.0)
+
+    def test_two_equal_nodes(self):
+        """Two symmetric nodes → equal centrality."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        result = mg.katz_centrality()
+        assert pytest.approx(result[a.id], abs=1e-6) == result[b.id]
+
+    def test_hub_node_higher_score(self):
+        """A hub connected to many leaves has higher Katz centrality."""
+        mg = MemoryGraph()
+        hub = mg.add("hub")
+        leaves = [mg.add(f"leaf{i}") for i in range(5)]
+        for leaf in leaves:
+            mg.link(hub.id, leaf.id, "r")
+        result = mg.katz_centrality()
+        # Hub accumulates contributions from all leaves
+        assert result[hub.id] == max(result.values())
+
+    def test_all_non_negative(self):
+        """All Katz centrality scores are non-negative."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(6)]
+        for i in range(6):
+            for j in range(i + 1, 6):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        result = mg.katz_centrality()
+        for score in result.values():
+            assert score >= 0.0
+
+    def test_complete_graph_uniform(self):
+        """Complete graph K_n → all nodes have equal Katz centrality."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        result = mg.katz_centrality()
+        for nid in [n.id for n in nodes]:
+            assert pytest.approx(result[nid], abs=1e-6) == 1.0
+
+    def test_disconnected_nodes_positive(self):
+        """Disconnected nodes still get positive score (baseline beta)."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        # No edges
+        result = mg.katz_centrality()
+        assert result[a.id] > 0
+        assert result[b.id] > 0
+        # Both equal since no edges to accumulate
+        assert pytest.approx(result[a.id], abs=1e-6) == result[b.id]
+
+    def test_small_alpha_local(self):
+        """Small alpha → scores closer to uniform (local)."""
+        mg = MemoryGraph()
+        hub = mg.add("hub")
+        leaves = [mg.add(f"L{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(hub.id, leaf.id, "r")
+        small_alpha = mg.katz_centrality(alpha=0.01)
+        large_alpha = mg.katz_centrality(alpha=0.2)
+        # With larger alpha, the gap between hub and leaves should be wider
+        small_gap = small_alpha[hub.id] - min(small_alpha[l.id] for l in leaves)
+        large_gap = large_alpha[hub.id] - min(large_alpha[l.id] for l in leaves)
+        assert large_gap > small_gap
+
+    def test_chain_graph_converges(self):
+        """A-B-C-D-E chain converges and returns 5 scores."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"N{i}") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        result = mg.katz_centrality()
+        assert len(result) == 5
+        # Middle nodes accumulate more contributions
+        # than endpoint nodes
+        assert result[nodes[2].id] > result[nodes[0].id]
+
+    def test_quarantine_excluded(self):
+        """Quarantined nodes excluded by default."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        mg.node_quarantine(c.id, "test")
+        result = mg.katz_centrality()
+        assert c.id not in result
+        assert len(result) == 2
+
+    def test_include_quarantined(self):
+        """include_quarantined=True includes all nodes."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        mg.node_quarantine(c.id, "test")
+        result = mg.katz_centrality(include_quarantined=True)
+        assert c.id in result
+        assert len(result) == 3
+
+    def test_normalised_to_one(self):
+        """Max score is 1.0 after normalisation."""
+        mg = MemoryGraph()
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        result = mg.katz_centrality()
+        assert pytest.approx(max(result.values()), abs=1e-9) == 1.0
+
+    def test_non_mutating(self):
+        """katz_centrality() does not modify graph state."""
+        mg = MemoryGraph()
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        before = mg.stats()
+        mg.katz_centrality()
+        after = mg.stats()
+        assert before == after
