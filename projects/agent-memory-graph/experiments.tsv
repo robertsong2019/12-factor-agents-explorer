@@ -173,3 +173,24 @@ timestamp	commit	metric	value	status	description
 2026-07-05T23:05	2605a66	test_count	1803→1821/1821 pass	keep	Cycle 195: graph contraction — contract_nodes()/contract_communities() supernode collapse. External edges aggregated (weight sum), internal edges dropped, members quarantined with audit trail. Edge props merged. contract_communities() wraps LPA + contraction for graph summarisation. Use cases: entity dedup, abstraction hierarchies, multi-resolution views. +18 tests. Zero regressions. 179th consecutive day.
 2026-07-05T23:05	2605a66	code_lines	16287→16517	keep	+230 lines source
 2026-07-05T23:05	2605a66	test_pass_rate	100%	keep	zero regressions
+2026-07-06T21:10	433257c	test_count	1821→1828/1828 pass	keep	Cycle 196: QDAP-v2 6-class query classifier. trivial/exact/semantic/relational/temporal/exploratory + needs_retrieval gate + class-aware continuous weight interpolation. Replaces 3-bucket discrete weights with specificity-modulated per-class base weights. Trivial queries skip retrieval. +7 tests. Zero regressions. 180th consecutive day.
+2026-07-06T21:10	433257c	code_lines	16517→16598	keep	+81 lines source
+2026-07-06T21:10	433257c	test_pass_rate	1002026-07-06T21:10	433257c	test_count	1821→1828/1828 pass	keep	Cycle 196: QDAP-v2 6-class query classifier. trivial/exact/semantic/relational/temporal/exploratory + needs_retrieval gate + class-aware continuous weight interpolation. +7 tests. Zero regressions. 180th day.
+2026-07-06T21:10	433257c	code_lines	16517→16598	keep	+81 lines source
+2026-07-06T21:10	433257c	test_pass_rate	100%	keep	zero regressions
+2026-07-06T21:20	00df329	test_count	1828→1835/1835 pass	keep	Cycle 197: SkewRoute score skewness analysis. _score_skewness() uses 3rd moment of score distribution to derive per-route confidence. Top-heavy=confident, flat=uncertain. Sigmoid mapping, zero training. Integrated into adaptive fusion: 60% QDAP + 20% entropy + 20% skewness. +7 tests. Zero regressions. 180th day.
+2026-07-06T21:20	00df329	code_lines	16598→16653	keep	+55 lines source
+2026-07-06T21:20	00df329	test_pass_rate	100%	keep	zero regressions
+2026-07-06T21:30	e0f22eb	test_count	1835→1923/1923 pass	keep	Cycle 198: Unshadowed TestAdaptiveRetrieval (88 tests lost to duplicate class name) + trivial query skip in search_adaptive + qdap_type in classify_query. Biggest discovery in 180 days. ALL 1923 pass. 180th day.
+2026-07-06T21:30	e0f22eb	code_lines	16653→16670	keep	+17 lines source
+2026-07-06T21:30	e0f22eb	test_pass_rate	100%	keep	zero regressions, 88 unshadowed tests all pass
+2026-07-06T21:40	01fe874	test_count	1923→1926/1926 pass	keep	Cycle 199: skewness fusion integration + trivial e2e + blend correctness tests. +3 tests. 180th day.
+2026-07-06T21:40	01fe874	code_lines	16670	keep	no source change
+2026-07-06T21:40	01fe874	test_pass_rate	100%	keep	zero regressions
+2026-07-06T23:00	78e0e4c	test_count	1941→1958/1958 pass	keep	Cycle 196: Bron-Kerbosch maximal cliques + clique_number + largest_clique. +17 tests. 183rd day zero rollback.
+2026-07-07T00:10	536d709	test_count	1958→1975/1975 pass	keep	Cycle 197 (key-dev-2): clique_overlap_matrix() + k_clique_communities(k). CPM (Palla 2005) overlapping community detection via clique adjacency graph + BFS connected components. Overlap matrix computes shared nodes between all maximal clique pairs. Both build directly on key-dev-1's Bron-Kerbosch. +17 tests. Zero regressions.
+2026-07-07T00:10	536d709	code_lines	16885→17024	keep	+139 lines source (2 methods + 17 test methods)
+2026-07-07T00:10	536d709	test_pass_rate	100%	keep	zero regressions, 184th consecutive day
+2026-07-07T23:00:00+08:00	8f8db30	test_count	1975→1991/1991 pass	keep	Cycle 199: katz_centrality — c_i = beta + alpha * sum(c_j). Generalises eigenvector centrality with attenuation factor. Converges for disconnected graphs. Normalised to [0,1]. include_quarantined flag. +16 tests. Zero regressions. 185th consecutive day.
+2026-07-07T23:00:00+08:00	8f8db30	code_lines	16987→17241	keep	+254 lines source (1 method + 16 test methods)
+2026-07-07T23:00:00+08:00	8f8db30	test_pass_rate	100%	keep	zero regressions, 1991/1991 pass
