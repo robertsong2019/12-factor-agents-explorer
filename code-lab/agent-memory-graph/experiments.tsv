@@ -8,3 +8,7 @@ timestamp	commit	metric	value	status	description
 2026-07-07T21:30	27f0d4b	test_count	2020	keep	+8 tests: recall_with_activation — maturity-gated retrieval
 2026-07-07T21:30	27f0d4b	test_pass_rate	100%	keep	All 2020 passing
 2026-07-07T21:40	20221ab	warnings	0	keep	Fixed SyntaxWarning (invalid escape \{ in docstring)
+2026-07-07T22:10	0f8d521	test_count	2020	baseline	Starting baseline for evening cron session
+2026-07-07T22:10	0f8d521	test_pass_rate	100%	baseline	All 2020 tests passing
+2026-07-07T22:20	0f8d521	test_count	2038	keep	+18 tests: confidence_score, batch_confidence, forgetting_curve, forgetting_report
+2026-07-07T22:20	0f8d521	test_pass_rate	100%	keep	All 2038 passing, 0 regressions, 14.1s
