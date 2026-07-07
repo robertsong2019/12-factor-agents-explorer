@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-1975-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-2007-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -1850,6 +1850,18 @@ mg2 = MemoryGraph.from_dict(mg_data)
 
 检测社区并将每个社区收缩为超节点。LPA 社区检测 + contract_nodes 组合。适用于图摘要和多层级分析。
 
+### 高级中心性
+
+#### `katz_centrality(alpha=0.1, beta=1.0, iterations=100, tolerance=1e-6, include_quarantined=False) -> dict[str, float]`
+
+Katz 中心性。特征向量中心性的推广，引入衰减因子 alpha 折扣长路径。每个节点获得基准贡献 beta，因此在 disconnected graph 上也能收敛。分数 `c_i = beta + alpha * Σ c_j（j 是 i 的邻居）`。alpha 越小越强调局部结构，越大越接近特征向量中心性。收敛条件：`alpha < 1/λ_max`（最大特征值的倒数）。
+
+#### `subgraph_centrality(max_order=20, include_quarantined=False) -> dict[str, float]`
+
+子图中心性。统计所有长度的闭合游走（closed walk），以 `1/k!` 加权长度 k。等价于邻接矩阵指数 `e^A` 的对角线元素。自然地奖励参与大量三角形和短环的节点，对局部社区结构敏感。与 degree centrality（仅长度 1）和 Katz（开+闭合游走）互补。结果归一化到 [0, 1]。
+
+---
+
 ### 自适应检索 (QDAP-v2 + SkewRoute)
 
 #### `_classify_query(query, known_labels=None) -> dict` *(staticmethod)*
@@ -1907,7 +1919,7 @@ CPM (Clique Percolation Method) 重叠社区检测 (Palla et al. 2005)。两个 
 python3 -m pytest test_memory_graph.py -q
 ```
 
-1975 个测试覆盖所有 API（195 个 cycle，183 天零回滚）。
+2007 个测试覆盖所有 API（200 个 cycle，188 天零回滚）。
 
 ## 设计思路
 
@@ -1945,6 +1957,7 @@ python3 -m pytest test_memory_graph.py -q
 32. **图序列化** — to_dict/from_dict 提供 JSON 安全的图序列化方案，支持快照恢复、API 响应和跨 Agent 记忆传输
 33. **自适应检索 (QDAP-v2 + SkewRoute)** — 6 类查询分类器 + 连续权重插值 + 分数偏度分析 + 熵修正，per-query 动态调整 BM25/Vector/Graph 三路融合权重。trivial 查询跳过检索，relational 查询图主导，exact 查询 BM25 主导——让问题自己说话
 34. **图拓扑与团分析** — find_cycle (DFS 环路检测) + graph_periphery (最远节点) + maximal_cliques (Bron-Kerbosch 极大团) + clique_overlap_matrix (团间共享节点) + k_clique_communities (CPM 重叠社区发现，节点可属多社区)
+35. **高级中心性** — katz_centrality (衰减路径求和中心性，generalised eigenvector centrality with attenuation) + subgraph_centrality (闭合游走参与度，matrix exponential 对角线) 提供比 degree/eigenvector 更丰富的节点重要性度量
 
 ## 许可
 
