@@ -1,0 +1,10 @@
+timestamp	commit	metric	value	status	description
+2026-07-07T21:00	e70c38b	test_count	1975	baseline	Starting baseline for code-lab session
+2026-07-07T21:00	e70c38b	test_pass_rate	100%	baseline	All 1975 tests passing
+2026-07-07T21:10	e2a4480	test_count	2000	keep	+25 tests: node_activation, batch_activation, detect_recurrence, recurrence_report
+2026-07-07T21:10	e2a4480	test_pass_rate	100%	keep	All 2000 passing, 0 regressions
+2026-07-07T21:20	b7f21c2	test_count	2012	keep	+12 tests: route_consolidation FAST/SMART trigger routing
+2026-07-07T21:20	b7f21c2	test_pass_rate	100%	keep	All 2012 passing
+2026-07-07T21:30	27f0d4b	test_count	2020	keep	+8 tests: recall_with_activation — maturity-gated retrieval
+2026-07-07T21:30	27f0d4b	test_pass_rate	100%	keep	All 2020 passing
+2026-07-07T21:40	20221ab	warnings	0	keep	Fixed SyntaxWarning (invalid escape \{ in docstring)
