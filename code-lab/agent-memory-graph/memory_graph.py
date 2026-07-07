@@ -351,6 +351,48 @@ class MemoryGraph:
         self.conn.commit()
         return results
 
+    def recall_with_activation(self, query: str, limit: int = 5,
+                               half_life_hours: float = 12.0,
+                               maturity_weight: float = 0.15) -> list[dict]:
+        """Recall memories ranked by weight × activation maturity.
+
+        Extends :meth:`recall` by multiplying the base weight with a
+        sigmoid activation score.  New memories get a soft penalty
+        until they mature, preventing unverified information from
+        dominating retrieval.
+
+        Args:
+            query: Search query string.
+            limit: Maximum results.
+            half_life_hours: Maturation half-life.
+            maturity_weight: How much activation affects ranking (0=ignore, 1=fully gate).
+
+        Returns:
+            List of {node, activation, effective_score} sorted by score.
+        """
+        nodes = self.recall(query, limit=limit)
+        if not nodes:
+            return []
+
+        activations = self.batch_activation(
+            [n.id for n in nodes], half_life_hours=half_life_hours
+        )
+
+        results = []
+        for n in nodes:
+            act = activations.get(n.id, 1.0)
+            # Blend: (1 - maturity_weight) * base_weight + maturity_weight * activation * base_weight
+            effective = n.weight * (1.0 - maturity_weight + maturity_weight * act)
+            results.append({
+                "node": n,
+                "activation": round(act, 4),
+                "effective_score": round(effective, 4),
+            })
+
+        results.sort(key=lambda r: -r["effective_score"])
+        return results
+
+
     def decay_all(self):
         """对所有记忆应用遗忘衰减（模拟时间流逝）。"""
         now = time.time()

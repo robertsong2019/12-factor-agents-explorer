@@ -20084,3 +20084,84 @@ class TestRouteConsolidation:
         for t, info in result["trigger_results"].items():
             assert "active" in info
             assert isinstance(info["active"], bool)
+
+
+# ═════════════════════════════════════════════════════════════════
+#  Recall with Activation Maturity tests
+# ═════════════════════════════════════════════════════════════════
+
+class TestRecallWithActivation:
+    """Tests for MemoryGraph.recall_with_activation()."""
+
+    def test_recall_activation_empty_graph(self):
+        """No nodes should return empty list."""
+        mg = MemoryGraph()
+        assert mg.recall_with_activation("test") == []
+
+    def test_recall_activation_returns_dicts(self):
+        """Should return list of dicts with node, activation, effective_score."""
+        mg = MemoryGraph()
+        mg.add("test fact", "fact")
+        results = mg.recall_with_activation("test")
+        assert len(results) >= 1
+        for r in results:
+            assert "node" in r
+            assert "activation" in r
+            assert "effective_score" in r
+
+    def test_recall_activation_mature_node_scores_higher(self):
+        """Mature nodes should rank higher than brand-new ones."""
+        mg = MemoryGraph()
+        old = mg.add("important fact", "fact")
+        mg.conn.execute("UPDATE nodes SET created=?", (time.time() - 48 * 3600,))
+        new = mg.add("important fact", "fact")
+        mg.conn.commit()
+        results = mg.recall_with_activation("important", maturity_weight=0.5)
+        # The old node should have higher effective_score
+        old_entry = next(r for r in results if r["node"].id == old.id)
+        new_entry = next(r for r in results if r["node"].id == new.id)
+        assert old_entry["effective_score"] > new_entry["effective_score"]
+
+    def test_recall_activation_zero_maturity_weight(self):
+        """With maturity_weight=0, ranking should match plain recall."""
+        mg = MemoryGraph()
+        mg.add("alpha test", "fact")
+        results = mg.recall_with_activation("alpha", maturity_weight=0.0)
+        assert len(results) == 1
+        # effective_score should equal base weight
+        assert abs(results[0]["effective_score"] - results[0]["node"].weight) < 0.01
+
+    def test_recall_activation_full_maturity_weight(self):
+        """With maturity_weight=1.0, brand-new node gets ~0 score."""
+        mg = MemoryGraph()
+        mg.add("brand new fact", "fact")
+        results = mg.recall_with_activation("brand", maturity_weight=1.0)
+        assert len(results) == 1
+        assert results[0]["effective_score"] < 0.1
+
+    def test_recall_activation_sorted_by_effective_score(self):
+        """Results should be sorted descending by effective_score."""
+        mg = MemoryGraph()
+        mg.add("query result A", "fact")
+        mg.add("query result B", "fact")
+        mg.add("query result C", "fact")
+        results = mg.recall_with_activation("query", maturity_weight=0.3)
+        scores = [r["effective_score"] for r in results]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_recall_activation_respects_limit(self):
+        """Should respect the limit parameter."""
+        mg = MemoryGraph()
+        for i in range(10):
+            mg.add(f"limited query {i}", "fact")
+        results = mg.recall_with_activation("limited", limit=3)
+        assert len(results) <= 3
+
+    def test_recall_activation_activation_in_range(self):
+        """Activation scores should be in [0, 1]."""
+        mg = MemoryGraph()
+        mg.add("range test", "fact")
+        results = mg.recall_with_activation("range")
+        for r in results:
+            assert 0.0 <= r["activation"] <= 1.0
+            assert 0.0 <= r["effective_score"] <= 2.0  # weight * (1 + 0)
