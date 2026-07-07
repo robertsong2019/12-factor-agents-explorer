@@ -17100,6 +17100,131 @@ class MemoryGraph:
         return clusters
 
 
+    # ─────────────────────────────────────────────────────────────
+    #  Consolidation Router — trigger-based routing that decides
+    #  between FAST (pure algorithm) and SMART (LLM-assisted)
+    #  consolidation.  Inspired by RecMem (ACL 2026) finding that
+    #  recurrence-triggered lazy consolidation saves 87% token cost.
+    # ─────────────────────────────────────────────────────────────
+
+    def route_consolidation(self, triggers: list[str] = None,
+                            dry_run: bool = False) -> dict:
+        """Evaluate consolidation triggers and route to FAST or SMART mode.
+
+        Routing rules (any SMART trigger wins over FAST):
+        1. **recurrence** — ≥3 similar nodes exist → SMART (merge with LLM summary)
+        2. **conflict**   — contradiction edges detected → SMART (LLM resolves)
+        3. **high_q**     — nodes with Q-value > 0.8 → SMART (preserve important memories)
+        4. **staleness**  — nodes untouched > threshold → FAST (algorithmic prune)
+        5. **similarity** — low-weight similar pairs → FAST (algorithmic merge)
+        6. **none**       — no triggers → skip (lazy mode)
+
+        Args:
+            triggers: Explicit trigger list to evaluate. If None, auto-detects all.
+            dry_run: If True, report what *would* happen without executing.
+
+        Returns:
+            {mode, triggers_evaluated, details, recommendation}
+        """
+        all_triggers = triggers or ["recurrence", "conflict", "high_q",
+                                     "staleness", "similarity"]
+        trigger_results: dict = {}
+        mode = "skip"
+
+        for t in all_triggers:
+            if t == "recurrence":
+                clusters = self.recurrence_report(min_count=3, similarity_threshold=0.7)
+                trigger_results["recurrence"] = {
+                    "active": len(clusters) > 0,
+                    "clusters": len(clusters),
+                    "total_nodes": sum(c["count"] for c in clusters),
+                }
+                if clusters:
+                    mode = "smart"
+
+            elif t == "conflict":
+                conflict_edges = self.conn.execute(
+                    "SELECT COUNT(*) as cnt FROM edges WHERE relation = 'contradicts'"
+                ).fetchone()
+                cnt = conflict_edges["cnt"] if conflict_edges else 0
+                trigger_results["conflict"] = {
+                    "active": cnt > 0,
+                    "conflict_count": cnt,
+                }
+                if cnt > 0:
+                    mode = "smart"
+
+            elif t == "high_q":
+                high_q = self.conn.execute(
+                    "SELECT COUNT(*) as cnt FROM nodes WHERE q_value > 0.8"
+                ).fetchone()
+                cnt = high_q["cnt"] if high_q else 0
+                trigger_results["high_q"] = {
+                    "active": cnt > 0,
+                    "high_q_count": cnt,
+                }
+                if cnt > 0 and mode != "smart":
+                    mode = "smart"
+
+            elif t == "staleness":
+                stale_cutoff = time.time() - 30 * 86400  # 30 days
+                stale = self.conn.execute(
+                    "SELECT COUNT(*) as cnt FROM nodes WHERE accessed < ? AND quarantined = 0",
+                    (stale_cutoff,)
+                ).fetchone()
+                cnt = stale["cnt"] if stale else 0
+                trigger_results["staleness"] = {
+                    "active": cnt > 0,
+                    "stale_count": cnt,
+                }
+                if cnt > 0 and mode == "skip":
+                    mode = "fast"
+
+            elif t == "similarity":
+                # Check for low-weight nodes that could be merged
+                low_w = self.conn.execute(
+                    "SELECT COUNT(*) as cnt FROM nodes WHERE weight < 0.3 AND quarantined = 0"
+                ).fetchone()
+                cnt = low_w["cnt"] if low_w else 0
+                trigger_results["similarity"] = {
+                    "active": cnt > 1,
+                    "low_weight_count": cnt,
+                }
+                if cnt > 1 and mode == "skip":
+                    mode = "fast"
+
+        # Build recommendation
+        recommendation = {
+            "mode": mode,
+            "triggers_evaluated": all_triggers,
+            "trigger_results": trigger_results,
+            "action": None,
+        }
+
+        if dry_run:
+            return recommendation
+
+        # Execute the chosen mode
+        if mode == "fast":
+            result_a = self.consolidate_memory(strategy="auto", dry_run=False)
+            result_b = self.sleep_consolidate(dry_run=False)
+            recommendation["action"] = {
+                "consolidate_memory": result_a,
+                "sleep_consolidate": result_b,
+            }
+        elif mode == "smart":
+            # SMART mode: run FAST first, then flag clusters for LLM
+            fast_result = self.consolidate_memory(strategy="auto", dry_run=False)
+            recommendation["action"] = {
+                "fast_phase": fast_result,
+                "smart_clusters": trigger_results.get("recurrence", {}).get("clusters", 0),
+                "note": "SMART consolidation requires LLM callback for cluster merging",
+            }
+        # skip → do nothing
+
+        return recommendation
+
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

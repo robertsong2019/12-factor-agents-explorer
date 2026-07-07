@@ -19962,3 +19962,125 @@ class TestRecurrenceReport:
         report = mg.recurrence_report(min_count=3, similarity_threshold=0.3)
         for cluster in report:
             assert "kind" in cluster
+
+
+# ═════════════════════════════════════════════════════════════════
+#  Consolidation Router tests
+# ═════════════════════════════════════════════════════════════════
+
+class TestRouteConsolidation:
+    """Tests for MemoryGraph.route_consolidation() — FAST/SMART routing."""
+
+    def test_route_empty_graph_skip(self):
+        """Empty graph with no triggers should return mode=skip."""
+        mg = MemoryGraph()
+        result = mg.route_consolidation(dry_run=True)
+        assert result["mode"] == "skip"
+
+    def test_route_dry_run_structure(self):
+        """Dry run should return structured result with all fields."""
+        mg = MemoryGraph()
+        mg.add("test", "fact")
+        result = mg.route_consolidation(dry_run=True)
+        assert "mode" in result
+        assert "triggers_evaluated" in result
+        assert "trigger_results" in result
+
+    def test_route_recurrence_triggers_smart(self):
+        """≥3 similar nodes should trigger SMART mode."""
+        mg = MemoryGraph()
+        mg.add("machine learning model", "concept")
+        mg.add("machine learning model v2", "concept")
+        mg.add("machine learning model v3", "concept")
+        result = mg.route_consolidation(triggers=["recurrence"], dry_run=True)
+        assert result["mode"] == "smart"
+        assert result["trigger_results"]["recurrence"]["active"] is True
+
+    def test_route_conflict_triggers_smart(self):
+        """Contradiction edges should trigger SMART mode."""
+        mg = MemoryGraph()
+        n1 = mg.add("claim A", "fact")
+        n2 = mg.add("claim B", "fact")
+        mg.link(n1.id, n2.id, "contradicts")
+        result = mg.route_consolidation(triggers=["conflict"], dry_run=True)
+        assert result["mode"] == "smart"
+
+    def test_route_staleness_triggers_fast(self):
+        """Stale nodes should trigger FAST mode (if no smart triggers)."""
+        mg = MemoryGraph()
+        n = mg.add("old fact", "fact")
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?",
+                        (time.time() - 40 * 86400, n.id))  # 40 days ago
+        mg.conn.commit()
+        result = mg.route_consolidation(triggers=["staleness"], dry_run=True)
+        assert result["mode"] == "fast"
+
+    def test_route_similarity_triggers_fast(self):
+        """Low-weight nodes should trigger FAST mode."""
+        mg = MemoryGraph()
+        for i in range(3):
+            mg.add(f"low weight item {i}", "fact", data={}, tags=None)
+            # Set low weight
+        mg.conn.execute("UPDATE nodes SET weight=0.1 WHERE weight >= 0.0")
+        mg.conn.commit()
+        result = mg.route_consolidation(triggers=["similarity"], dry_run=True)
+        assert result["mode"] == "fast"
+
+    def test_route_smart_overrides_fast(self):
+        """If both SMART and FAST triggers fire, SMART should win."""
+        mg = MemoryGraph()
+        # Recurrence (SMART)
+        for _ in range(3):
+            mg.add("recurring topic", "fact")
+        # Staleness (FAST)
+        mg.conn.execute("UPDATE nodes SET accessed=?", (time.time() - 40 * 86400,))
+        mg.conn.commit()
+        result = mg.route_consolidation(
+            triggers=["recurrence", "staleness"], dry_run=True)
+        assert result["mode"] == "smart"
+
+    def test_route_high_q_triggers_smart(self):
+        """High Q-value nodes should trigger SMART mode."""
+        mg = MemoryGraph()
+        n = mg.add("important memory", "fact")
+        mg.conn.execute("UPDATE nodes SET q_value=0.9 WHERE id=?", (n.id,))
+        mg.conn.commit()
+        result = mg.route_consolidation(triggers=["high_q"], dry_run=True)
+        assert result["mode"] == "smart"
+        assert result["trigger_results"]["high_q"]["active"] is True
+
+    def test_route_no_active_triggers(self):
+        """No active triggers should return skip."""
+        mg = MemoryGraph()
+        mg.add("just a fact", "fact")
+        result = mg.route_consolidation(
+            triggers=["recurrence", "conflict"], dry_run=True)
+        assert result["mode"] == "skip"
+
+    def test_route_fast_mode_executes(self):
+        """FAST mode dry_run=False should execute and return action."""
+        mg = MemoryGraph()
+        n = mg.add("stale fact", "fact")
+        mg.conn.execute("UPDATE nodes SET accessed=?", (time.time() - 40 * 86400,))
+        mg.conn.commit()
+        result = mg.route_consolidation(triggers=["staleness"], dry_run=False)
+        assert result["mode"] == "fast"
+        assert result["action"] is not None
+
+    def test_route_all_triggers_evaluated(self):
+        """All requested triggers should appear in results."""
+        mg = MemoryGraph()
+        mg.add("test", "fact")
+        triggers = ["recurrence", "conflict", "high_q", "staleness", "similarity"]
+        result = mg.route_consolidation(triggers=triggers, dry_run=True)
+        for t in triggers:
+            assert t in result["trigger_results"]
+
+    def test_route_trigger_results_have_active_flag(self):
+        """Each trigger result should have an 'active' boolean."""
+        mg = MemoryGraph()
+        mg.add("test", "fact")
+        result = mg.route_consolidation(dry_run=True)
+        for t, info in result["trigger_results"].items():
+            assert "active" in info
+            assert isinstance(info["active"], bool)
