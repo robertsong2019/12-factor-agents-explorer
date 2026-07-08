@@ -17893,6 +17893,197 @@ class MemoryGraph:
 
         return scores
 
+    # ── Matrix-exponential graph metrics ───────────────────
+
+    def _adjacency_matrix(self, node_ids: list[str],
+                          node_set: set[str]) -> list[list[float]]:
+        """Build symmetric adjacency matrix for given node set."""
+        n = len(node_ids)
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        A = [[0.0] * n for _ in range(n)]
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s, t = r["source"], r["target"]
+            if s in node_set and t in node_set:
+                i, j = idx[s], idx[t]
+                A[i][j] = 1.0
+                A[j][i] = 1.0
+        return A
+
+    def estrada_index(self, max_order: int = 20,
+                      include_quarantined: bool = False) -> float:
+        """Compute the Estrada index of the graph.
+
+        The Estrada index measures overall *well-connectedness*.
+        It is the trace of the matrix exponential::
+
+            EE = tr(e^A) = Σ_{k=0}^{∞} tr(A^k) / k!
+
+        where *A* is the adjacency matrix.  Equivalently,
+        ``EE = Σ_i e^(λ_i)`` where *λ_i* are eigenvalues of *A*.
+
+        **Interpretation:**
+
+        - Counts total closed walks of all lengths, weighted by *1/k!*.
+        - Higher EE → densely / redundantly connected graph.
+        - Lower EE → sparse, tree-like structure.
+        - EE is always ≥ *n* (the identity contribution from *k=0*).
+        - Sensitive to triangles and short cycles (like subgraph centrality,
+          but aggregated to the entire graph).
+
+        **Comparison with other graph-level metrics:**
+
+        - *Graph density*: edges / possible edges — ignores topology.
+        - *Transitivity*: 3 × triangles / triads — only considers *k=3*.
+        - *Estrada index*: considers *all* closed walk lengths, weighted
+          by *1/k!* so short cycles dominate but longer ones contribute.
+
+        Args:
+            max_order: Maximum walk length (Taylor series truncation).
+                Default 20 gives >15 digits of accuracy.
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns the Estrada index as a float.  Returns ``0.0`` for
+        an empty graph, ``float(n)`` for *n* nodes with no edges
+        (each isolated node contributes exactly *1* from the *k=0*
+        identity term).
+        """
+        if max_order < 1:
+            raise ValueError("max_order must be >= 1")
+
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+
+        n = len(node_ids)
+        if n == 0:
+            return 0.0
+
+        node_set = set(node_ids)
+        A = self._adjacency_matrix(node_ids, node_set)
+
+        import math
+
+        # EE = Σ_k tr(A^k) / k!
+        # tr(A^0) = n  (identity matrix)
+        # tr(A^1) = 0   (no self-loops, diagonal is zero)
+        # tr(A^2) = 2m  (each edge contributes 2 back-and-forth walks)
+        # tr(A^3) = 6 × (number of triangles)
+
+        ee = float(n)  # k=0 term: tr(I)/0! = n
+
+        A_power = [row[:] for row in A]  # A^1
+        for k in range(1, max_order + 1):
+            trace = sum(A_power[i][i] for i in range(n))
+            ee += trace / math.factorial(k)
+
+            if k < max_order:
+                # A^{k+1} = A^k × A
+                new_power = [[0.0] * n for _ in range(n)]
+                for i in range(n):
+                    row = A_power[i]
+                    for j in range(n):
+                        if row[j] != 0.0:
+                            r = row[j]
+                            for col in range(n):
+                                new_power[i][col] += r * A[j][col]
+                A_power = new_power
+
+        return ee
+
+    def communicability(self, node_a: str, node_b: str,
+                        max_order: int = 20,
+                        include_quarantined: bool = False) -> float:
+        """Compute communicability between two nodes.
+
+        Communicability measures how easily information flows between
+        *node_a* and *node_b*, considering **all** paths (not just
+        shortest paths).  It is the *(a, b)* entry of the matrix
+        exponential::
+
+            G(a, b) = (e^A)_{ab} = Σ_{k=0}^{∞} (A^k)_{ab} / k!
+
+        **Interpretation:**
+
+        - Higher value → more / shorter paths between the two nodes.
+        - ``G(a, a)`` equals the subgraph centrality of *a* (before
+          normalisation).
+        - Two nodes connected by many short paths have higher
+          communicability than two nodes connected by one long path.
+        - Sensitive to triangles: if *a* and *b* share common neighbours,
+          their communicability is boosted.
+
+        **Comparison with shortest-path metrics:**
+
+        - *Shortest path*: only the single shortest route matters.
+        - *Communicability*: all walks contribute, shorter ones weighted
+          more heavily by *1/k!*.
+
+        Args:
+            node_a, node_b: Node IDs to compute communicability for.
+            max_order: Maximum walk length (Taylor series truncation).
+                Default 20 gives >15 digits of accuracy.
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns the communicability score as a float.  Returns ``0.0``
+        if either node does not exist (or is quarantined and excluded).
+        Self-communicability (``node_a == node_b``) returns the
+        subgraph centrality (unnormalised).
+        """
+        if max_order < 1:
+            raise ValueError("max_order must be >= 1")
+
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+
+        n = len(node_ids)
+        if n == 0:
+            return 0.0
+
+        node_set = set(node_ids)
+        if node_a not in node_set or node_b not in node_set:
+            return 0.0
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        ia, ib = idx[node_a], idx[node_b]
+
+        A = self._adjacency_matrix(node_ids, node_set)
+
+        import math
+
+        # (e^A)_{ab} = Σ_k (A^k)_{ab} / k!
+        # k=0: (I)_{ab} = 1 if a==b, else 0
+        score = 1.0 if ia == ib else 0.0
+
+        A_power = [row[:] for row in A]  # A^1
+        for k in range(1, max_order + 1):
+            score += A_power[ia][ib] / math.factorial(k)
+
+            if k < max_order:
+                new_power = [[0.0] * n for _ in range(n)]
+                for i in range(n):
+                    row = A_power[i]
+                    for j in range(n):
+                        if row[j] != 0.0:
+                            r = row[j]
+                            for col in range(n):
+                                new_power[i][col] += r * A[j][col]
+                A_power = new_power
+
+        return score
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

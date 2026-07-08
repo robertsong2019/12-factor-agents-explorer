@@ -20997,3 +20997,390 @@ n        D has higher centrality than A despite same degree pattern,
 
         assert before_nodes == after_nodes
         assert before_edges == after_edges
+
+
+class TestEstradaIndex:
+    """Tests for MemoryGraph.estrada_index()."""
+
+    def test_empty_graph(self, mg):
+        """Empty graph has EE = 0.0."""
+        assert mg.estrada_index() == 0.0
+
+    def test_single_node(self, mg):
+        """Single isolated node: EE = 1.0 (only the k=0 identity term)."""
+        mg.add("A", "test")
+        assert mg.estrada_index() == pytest.approx(1.0)
+
+    def test_no_edges_n_nodes(self, mg):
+        """n isolated nodes: EE = n (each contributes 1 from k=0)."""
+        for i in range(5):
+            mg.add(f"n{i}", "test")
+        assert mg.estrada_index() == pytest.approx(5.0)
+
+    def test_single_edge(self, mg):
+        """Two nodes, one edge: EE = 2 + 2*edge_round_trip/2! + ...
+
+        For a single edge A-B:
+        tr(A^0) = 2, tr(A^1) = 0, tr(A^2) = 2 (back-and-forth),
+        tr(A^3) = 0, tr(A^4) = 2, ...
+        EE = 2 + 2/2! + 2/4! + 2/6! + ... = 2 + 2*(cosh(1)-1) ≈ 2 + 1.0861
+        = 3.0861...
+
+        Equivalently: EE = e^1 + e^(-1) = 2*cosh(1) ≈ 3.0862
+        """
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        import math
+        expected = 2 * math.cosh(1.0)  # eigenvalues of [[0,1],[1,0]] are ±1
+        assert mg.estrada_index() == pytest.approx(expected, abs=1e-10)
+
+    def test_triangle_k3(self, mg):
+        """Complete triangle K3: eigenvalues of adjacency are 2, -1, -1.
+
+        EE = e^2 + e^(-1) + e^(-1) = e^2 + 2/e
+        """
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        import math
+        expected = math.e ** 2 + 2 * math.e ** (-1)
+        assert mg.estrada_index() == pytest.approx(expected, abs=1e-10)
+
+    def test_complete_graph_k4(self, mg):
+        """Complete graph K4: eigenvalues are 3, -1, -1, -1.
+
+        EE = e^3 + 3/e
+        """
+        nodes = [mg.add(f"n{i}", "test") for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "rel")
+        import math
+        expected = math.e ** 3 + 3 * math.e ** (-1)
+        assert mg.estrada_index() == pytest.approx(expected, abs=1e-9)
+
+    def test_more_edges_higher_ee(self, mg):
+        """Adding edges should increase (or keep same) the Estrada index."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+
+        # No edges
+        ee0 = mg.estrada_index()
+
+        # One edge
+        mg.link(a.id, b.id, "rel")
+        ee1 = mg.estrada_index()
+        assert ee1 > ee0
+
+        # Two edges (path)
+        mg.link(b.id, c.id, "rel")
+        ee2 = mg.estrada_index()
+        assert ee2 > ee1
+
+        # Three edges (triangle / complete)
+        mg.link(a.id, c.id, "rel")
+        ee3 = mg.estrada_index()
+        assert ee3 > ee2
+
+    def test_triangle_richer_than_path(self, mg):
+        """Triangle (3 edges) has higher EE than path (2 edges) with same nodes."""
+        # Path graph A-B-C
+        a = mg.add("A", "t")
+        b = mg.add("B", "t")
+        c = mg.add("C", "t")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        ee_path = mg.estrada_index()
+
+        # Now make it a triangle
+        mg.link(a.id, c.id, "rel")
+        ee_triangle = mg.estrada_index()
+        assert ee_triangle > ee_path
+
+    def test_invalid_max_order(self, mg):
+        """max_order < 1 raises ValueError."""
+        with pytest.raises(ValueError, match="max_order"):
+            mg.estrada_index(max_order=0)
+
+    def test_max_order_truncation(self, mg):
+        """max_order=1 gives only k=0 + k=1 terms (identity + A diagonal)."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        # max_order=1: EE = tr(I)/0! + tr(A)/1! = 2 + 0 = 2
+        # (tr(A) = 0 since no self-loops)
+        assert mg.estrada_index(max_order=1) == pytest.approx(2.0)
+
+    def test_quarantined_excluded(self, mg):
+        """Quarantined nodes excluded by default."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        q = mg.add("quarantined", "test")
+        mg.conn.execute("UPDATE nodes SET quarantined=1 WHERE id=?", (q.id,))
+        mg.conn.commit()
+        # Only A and B count
+        import math
+        expected = 2 * math.cosh(1.0)
+        assert mg.estrada_index() == pytest.approx(expected, abs=1e-10)
+
+    def test_quarantined_included(self, mg):
+        """Quarantined nodes included when flag is set."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        q = mg.add("isolated_q", "test")
+        mg.conn.execute("UPDATE nodes SET quarantined=1 WHERE id=?", (q.id,))
+        mg.conn.commit()
+        # A, B, and q: 2*cosh(1) + 1 (isolated node contributes 1)
+        import math
+        expected = 2 * math.cosh(1.0) + 1.0
+        assert mg.estrada_index(include_quarantined=True) == pytest.approx(expected, abs=1e-10)
+
+    def test_non_mutating(self, mg):
+        """estrada_index() does not modify the graph."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        before_nodes = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        before_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+
+        mg.estrada_index()
+
+        after_nodes = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        after_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+        assert before_nodes == after_nodes
+        assert before_edges == after_edges
+
+    def test_star_graph_hub_contribution(self, mg):
+        """Star graph K_{1,4}: eigenvalues are ±2, 0, 0, 0.
+
+        EE = e^2 + e^(-2) + 3 = 2*cosh(2) + 3
+        """
+        center = mg.add("center", "test")
+        for i in range(4):
+            leaf = mg.add(f"leaf{i}", "test")
+            mg.link(center.id, leaf.id, "rel")
+        import math
+        expected = 2 * math.cosh(2.0) + 3.0
+        assert mg.estrada_index() == pytest.approx(expected, abs=1e-9)
+
+    def test_chain_graph_3_nodes(self, mg):
+        """Path A-B-C: adjacency eigenvalues are √2, 0, -√2.
+
+        EE = e^√2 + e^0 + e^(-√2) = 1 + 2*cosh(√2)
+        """
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        import math
+        sq2 = math.sqrt(2)
+        expected = 1.0 + 2.0 * math.cosh(sq2)
+        assert mg.estrada_index() == pytest.approx(expected, abs=1e-9)
+
+
+class TestCommunicability:
+    """Tests for MemoryGraph.communicability()."""
+
+    def test_empty_graph(self, mg):
+        """Empty graph returns 0.0."""
+        assert mg.communicability("A", "B") == 0.0
+
+    def test_node_not_found(self, mg):
+        """Non-existent node returns 0.0."""
+        a = mg.add("A", "test")
+        mg.add("B", "test")
+        mg.link(a.id, "B", "rel")
+        assert mg.communicability("A", "nonexistent") == 0.0
+        assert mg.communicability("nonexistent", "A") == 0.0
+
+    def test_self_communicability_is_identity_plus(self, mg):
+        """G(a,a) = 1 (identity) + closed walks contribution.
+
+        For isolated node: G(a,a) = 1.0 (just the k=0 term).
+        """
+        a = mg.add("A", "test")
+        assert mg.communicability(a.id, a.id) == pytest.approx(1.0)
+
+    def test_self_communicability_with_edge(self, mg):
+        """G(a,a) with a-b edge: includes back-and-forth closed walks.
+
+        G(a,a) = 1 + A^2_aa/2! + A^4_aa/4! + ...
+        With one edge: A^2_aa = 1 (back-and-forth), A^4_aa = 1, ...
+        = 1 + 1/2! + 1/4! + ... = 1 + (cosh(1) - 1) = cosh(1)
+        """
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        import math
+        assert mg.communicability(a.id, a.id) == pytest.approx(math.cosh(1.0), abs=1e-10)
+
+    def test_directly_connected_pair(self, mg):
+        """Two nodes connected by single edge.
+
+        G(a,b) = A_ab/1! + A^3_ab/3! + ...
+        For single edge: = 1 + 1/3! + 1/5! + ... = sinh(1)
+        """
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        import math
+        assert mg.communicability(a.id, b.id) == pytest.approx(math.sinh(1.0), abs=1e-10)
+
+    def test_disconnected_nodes(self, mg):
+        """Two isolated nodes have G(a,b) = 0.0."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        assert mg.communicability(a.id, b.id) == 0.0
+
+    def test_triangle_higher_than_path(self, mg):
+        """In a triangle, communicability A-C is higher than in a path A-B-C.
+
+        Triangle: A-C have a direct edge + common neighbor B
+        Path: A-C only connected through B
+        """
+        # Path: A-B-C
+        a = mg.add("A", "t")
+        b = mg.add("B", "t")
+        c = mg.add("C", "t")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        comm_path = mg.communicability(a.id, c.id)
+
+        # Triangle: add A-C edge
+        mg.link(a.id, c.id, "rel")
+        comm_triangle = mg.communicability(a.id, c.id)
+        assert comm_triangle > comm_path
+
+    def test_symmetry(self, mg):
+        """G(a,b) == G(b,a) for undirected graphs."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        assert mg.communicability(a.id, c.id) == pytest.approx(
+            mg.communicability(c.id, a.id)
+        )
+
+    def test_invalid_max_order(self, mg):
+        """max_order < 1 raises ValueError."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        with pytest.raises(ValueError, match="max_order"):
+            mg.communicability(a.id, b.id, max_order=0)
+
+    def test_max_order_truncation(self, mg):
+        """max_order=1: G(a,b) = I_ab + A_ab = 0 + A_ab.
+
+        For connected pair: A_ab = 1.
+        """
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        # max_order=1: G = (I)_{ab}/0! + (A)_{ab}/1! = 0 + 1 = 1
+        assert mg.communicability(a.id, b.id, max_order=1) == pytest.approx(1.0)
+
+    def test_quarantined_excluded(self, mg):
+        """Communicability with a quarantined node returns 0."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.conn.execute("UPDATE nodes SET quarantined=1 WHERE id=?", (b.id,))
+        mg.conn.commit()
+        assert mg.communicability(a.id, b.id) == 0.0
+        assert mg.communicability(b.id, a.id) == 0.0
+
+    def test_quarantined_included(self, mg):
+        """Include quarantined nodes when flag is set."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.conn.execute("UPDATE nodes SET quarantined=1 WHERE id=?", (b.id,))
+        mg.conn.commit()
+        import math
+        assert mg.communicability(a.id, b.id, include_quarantined=True) == pytest.approx(
+            math.sinh(1.0), abs=1e-10
+        )
+
+    def test_common_neighbor_boost(self, mg):
+        """Nodes sharing a common neighbor have higher communicability
+        than nodes at the same shortest distance but without common neighbors.
+
+        Setup 1: A-B-C (A and C share common neighbor B)
+        Setup 2: A-B-C-D (A and D at distance 3, no common neighbor)
+
+        A-C comm > A-D comm despite different distances.
+        Actually let's test: same distance 2, but one has common neighbors.
+        Setup X: A-B, B-C, A-C' (triangle for C', just path for C)
+        """
+        # Path graph: A-B-C-D (A and C at distance 2 via B)
+        a1 = mg.add("path_A", "t")
+        b1 = mg.add("path_B", "t")
+        c1 = mg.add("path_C", "t")
+        mg.link(a1.id, b1.id, "rel")
+        mg.link(b1.id, c1.id, "rel")
+        comm_path = mg.communicability(a1.id, c1.id)
+
+        # Graph with common neighbor: A-B, A-D, B-C, D-C
+        # A and C share two common neighbors (B and D)
+        a2 = mg.add("sq_A", "t")
+        b2 = mg.add("sq_B", "t")
+        c2 = mg.add("sq_C", "t")
+        d2 = mg.add("sq_D", "t")
+        mg.link(a2.id, b2.id, "rel")
+        mg.link(b2.id, c2.id, "rel")
+        mg.link(a2.id, d2.id, "rel")
+        mg.link(d2.id, c2.id, "rel")
+        comm_square = mg.communicability(a2.id, c2.id)
+
+        # In the square, A and C have higher communicability because
+        # there are two length-2 paths (via B and via D)
+        assert comm_square > comm_path
+
+    def test_non_mutating(self, mg):
+        """communicability() does not modify the graph."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        before_nodes = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        before_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+
+        mg.communicability(a.id, c.id)
+
+        after_nodes = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        after_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+        assert before_nodes == after_nodes
+        assert before_edges == after_edges
+
+    def test_estrada_index_equals_sum_of_self_communicability(self, mg):
+        """EE = Σ_i G(i,i) for all non-quarantined nodes.
+
+        This verifies the mathematical identity that the Estrada index
+        equals the sum of self-communicabilities.
+        """
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(a.id, c.id, "rel")
+
+        ee = mg.estrada_index()
+        sum_self_comm = (
+            mg.communicability(a.id, a.id) +
+            mg.communicability(b.id, b.id) +
+            mg.communicability(c.id, c.id)
+        )
+        assert ee == pytest.approx(sum_self_comm, abs=1e-9)
