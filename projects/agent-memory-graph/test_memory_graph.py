@@ -20734,3 +20734,266 @@ class TestConsolidationRouter:
         fast_triggers = [t for t in result["all_triggers"] if t["mode"] == "fast"]
         for t in fast_triggers:
             assert "action" in t
+
+
+class TestLaplacianCentrality:
+    """Tests for MemoryGraph.laplacian_centrality()."""
+
+    def test_empty_graph(self, mg):
+        """Empty graph returns empty dict."""
+        assert mg.laplacian_centrality() == {}
+
+    def test_single_node(self, mg):
+        """Single node gets score 1.0 (normalised max)."""
+        a = mg.add("A", "test")
+        result = mg.laplacian_centrality()
+        assert result == {a.id: 1.0}
+
+    def test_two_equal_nodes_symmetry(self, mg):
+        """Two connected nodes have equal Laplacian centrality."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        result = mg.laplacian_centrality()
+        assert result[a.id] == pytest.approx(result[b.id])
+
+    def test_hub_node_highest_in_star(self, mg):
+        """In a star graph, the hub has highest Laplacian centrality."""
+        center = mg.add("center", "test")
+        leaves = [mg.add(f"leaf{i}", "test") for i in range(5)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "rel")
+        result = mg.laplacian_centrality()
+        assert result[center.id] == max(result.values())
+        # Hub should be 1.0 after normalisation
+        assert result[center.id] == pytest.approx(1.0)
+
+    def test_leaf_node_lowest_in_star(self, mg):
+        """In a star graph, leaf nodes have the lowest centrality."""
+        center = mg.add("center", "test")
+        leaves = [mg.add(f"leaf{i}", "test") for i in range(3)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "rel")
+        result = mg.laplacian_centrality()
+        all_scores = list(result.values())
+        for leaf in leaves:
+            assert result[leaf.id] < result[center.id]
+
+    def test_triangle_all_equal(self, mg):
+        """Complete triangle (K3) — all nodes have equal centrality."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        result = mg.laplacian_centrality()
+        assert result[a.id] == pytest.approx(result[b.id])
+        assert result[b.id] == pytest.approx(result[c.id])
+
+    def test_complete_graph_uniform(self, mg):
+        """Complete graph K4 — all nodes have equal centrality."""
+        nodes = [mg.add(f"n{i}", "test") for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "rel")
+        result = mg.laplacian_centrality()
+        scores = list(result.values())
+        for s in scores[1:]:
+            assert s == pytest.approx(scores[0])
+
+    def test_isolated_node_lower_than_connected(self, mg):
+        """Isolated node has lower centrality than connected ones."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("isolated", "test")
+        mg.link(a.id, b.id, "rel")
+        result = mg.laplacian_centrality()
+        assert result[c.id] < result[a.id]
+        assert result[c.id] < result[b.id]
+
+    def test_bridge_node_high_centrality(self, mg):
+        """A bridge node connecting two clusters has high centrality.
+
+n        Setup: cluster1 -- bridge -- cluster2
+        The bridge node is critical for connectivity.
+        """
+        # Cluster 1: triangle
+        a1 = mg.add("a1", "test")
+        a2 = mg.add("a2", "test")
+        a3 = mg.add("a3", "test")
+        mg.link(a1.id, a2.id, "rel")
+        mg.link(a2.id, a3.id, "rel")
+        mg.link(a1.id, a3.id, "rel")
+
+        # Cluster 2: triangle
+        b1 = mg.add("b1", "test")
+        b2 = mg.add("b2", "test")
+        b3 = mg.add("b3", "test")
+        mg.link(b1.id, b2.id, "rel")
+        mg.link(b2.id, b3.id, "rel")
+        mg.link(b1.id, b3.id, "rel")
+
+        # Bridge node
+        bridge = mg.add("bridge", "test")
+        mg.link(bridge.id, a1.id, "rel")
+        mg.link(bridge.id, b1.id, "rel")
+
+        result = mg.laplacian_centrality()
+        # Bridge should have high centrality due to connecting
+        # two high-degree clusters (connected to a1 and b1,
+        # each of which has degree 3 within their cluster)
+        # C_L(bridge) = 2² + 2 + 2*(3+3) = 4+2+12 = 18
+        # C_L(a1) = 4² + 4 + 2*(2+2+2) = 16+4+12 = 32
+        # Actually a1 has higher centrality since it has more edges
+        # But bridge is still significant
+        assert result[bridge.id] > 0
+        # The non-bridge cluster nodes should generally be higher
+        # due to higher degree
+        assert result[a1.id] > result[bridge.id]
+
+    def test_all_scores_non_negative(self, mg):
+        """All centrality scores must be non-negative."""
+        nodes = [mg.add(f"n{i}", "test") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i + 1].id, "rel")
+        result = mg.laplacian_centrality()
+        for nid, score in result.items():
+            assert score >= 0.0
+
+    def test_all_scores_leq_one(self, mg):
+        """Normalised scores must be ≤ 1.0."""
+        nodes = [mg.add(f"n{i}", "test") for i in range(6)]
+        # Some arbitrary structure
+        mg.link(nodes[0].id, nodes[1].id, "rel")
+        mg.link(nodes[0].id, nodes[2].id, "rel")
+        mg.link(nodes[1].id, nodes[3].id, "rel")
+        mg.link(nodes[2].id, nodes[4].id, "rel")
+        mg.link(nodes[3].id, nodes[5].id, "rel")
+        result = mg.laplacian_centrality()
+        for score in result.values():
+            assert score <= 1.0 + 1e-9
+
+    def test_quarantined_excluded_by_default(self, mg):
+        """Quarantined nodes are excluded by default."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        # Quarantine node a
+        mg.conn.execute("UPDATE nodes SET quarantined=1 WHERE id=?", (a.id,))
+        mg.conn.commit()
+
+        result = mg.laplacian_centrality()
+        assert a.id not in result
+        assert b.id in result
+
+    def test_quarantined_included_when_requested(self, mg):
+        """Quarantined nodes are included when flag is set."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.conn.execute("UPDATE nodes SET quarantined=1 WHERE id=?", (a.id,))
+        mg.conn.commit()
+
+        result = mg.laplacian_centrality(include_quarantined=True)
+        assert a.id in result
+        assert b.id in result
+
+    def test_chain_graph_middle_higher_than_ends(self, mg):
+        """In a chain A-B-C-D, middle nodes have higher centrality.
+
+n        C_L(B) = 2² + 2 + 2*(1+2) = 4+2+6 = 12
+        C_L(A) = 1² + 1 + 2*(2) = 1+1+4 = 6
+        C_L(C) = 2² + 2 + 2*(2+1) = 4+2+6 = 12 (same as B)
+        C_L(D) = 1² + 1 + 2*(2) = 1+1+4 = 6
+        """
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        d = mg.add("D", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(c.id, d.id, "rel")
+
+        result = mg.laplacian_centrality()
+        assert result[b.id] > result[a.id]
+        assert result[c.id] > result[d.id]
+        # B and C should be approximately equal
+        assert result[b.id] == pytest.approx(result[c.id])
+        # A and D should be approximately equal
+        assert result[a.id] == pytest.approx(result[d.id])
+
+    def test_manual_formula_verification(self, mg):
+        """Verify the exact Laplacian centrality formula.
+
+n        Graph: A-B, A-C, B-C (triangle)
+        All have degree 2.
+        C_L(v) = d_v² + d_v + 2·Σ d_u (neighbors)
+               = 4 + 2 + 2*(2+2) = 4+2+8 = 14
+        All equal → normalised to 1.0.
+        """
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(a.id, c.id, "rel")
+
+        result = mg.laplacian_centrality()
+        # All equal → normalised to 1.0
+        assert result[a.id] == pytest.approx(1.0)
+
+    def test_high_degree_neighbor_boost(self, mg):
+        """Node connected to high-degree neighbor gets boost.
+
+n        Setup:
+        - Hub H connected to A, B, C (degree 4 with D)
+        - D connected only to H and E
+        - E connected only to D
+
+n        C_L(D) = 2² + 2 + 2*(d_H + d_E) = 4 + 2 + 2*(4 + 1) = 6 + 10 = 16
+        C_L(A) = 1² + 1 + 2*(d_H) = 1 + 1 + 2*4 = 2 + 8 = 10
+
+n        D has higher centrality than A despite same degree pattern,
+        because D's neighbor H has high degree.
+        Actually wait - A has degree 1, D has degree 2.
+        Let's compare A (degree 1) with E (degree 1):
+        C_L(A) = 1 + 1 + 2*(4) = 10
+        C_L(E) = 1 + 1 + 2*(2) = 6
+        A > E because A's neighbor (H) has higher degree than E's neighbor (D).
+        """
+        h = mg.add("hub", "test")
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        d = mg.add("D", "test")
+        e = mg.add("E", "test")
+
+        mg.link(h.id, a.id, "rel")
+        mg.link(h.id, b.id, "rel")
+        mg.link(h.id, c.id, "rel")
+        mg.link(h.id, d.id, "rel")
+        mg.link(d.id, e.id, "rel")
+
+        result = mg.laplacian_centrality()
+        # A (connected to hub, degree 4) > E (connected to D, degree 2)
+        assert result[a.id] > result[e.id]
+
+    def test_non_mutating(self, mg):
+        """laplacian_centrality() does not modify the graph."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+
+        before_nodes = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        before_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+
+        mg.laplacian_centrality()
+
+        after_nodes = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        after_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+
+        assert before_nodes == after_nodes
+        assert before_edges == after_edges

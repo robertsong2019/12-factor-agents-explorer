@@ -17800,6 +17800,99 @@ class MemoryGraph:
             "decisions": decisions,
         }
 
+    # ===================================================================
+    # Laplacian Centrality (Network Disruption Importance)
+    # ===================================================================
+
+    def laplacian_centrality(self, include_quarantined: bool = False
+                             ) -> dict[str, float]:
+        """Compute Laplacian centrality for all nodes.
+
+        Laplacian centrality measures the importance of each node
+        by quantifying how much the graph's *Laplacian energy*
+        drops when that node (and all its edges) is removed.
+
+        The Laplacian energy of a graph is defined as the sum of
+        squared eigenvalues of the Laplacian matrix *L = D - A*::
+
+            E_L(G) = tr(L²) = Σ_i d_i² + 2m
+
+        where *d_i* is the degree of node *i* and *m* is the number
+        of edges.
+
+        When node *v* is removed, the energy drop is::
+
+            C_L(v) = d_v² + d_v + 2·Σ_{u ∈ N(v)} d_u
+
+        This captures both direct importance (*d_v²*) and indirect
+        importance through neighbours (the sum of neighbour degrees).
+
+        **Comparison with other centrality measures:**
+
+        - *Degree centrality*: counts direct connections only.
+        - *Betweenness centrality*: measures path mediation.
+        - *Eigenvector centrality*: importance from important neighbours.
+        - *Subgraph centrality*: closed-walk participation.
+        - *Laplacian centrality*: **network disruption potential** —
+          how much connectivity is lost if this node disappears.
+
+        Laplacian centrality rewards nodes that are both highly
+        connected themselves AND connected to other highly-connected
+        nodes, making it sensitive to critical bridging roles.
+
+        Args:
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns ``{node_id: centrality_score}`` normalised to
+        ``[0, 1]``.  Empty dict if graph is empty.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+
+        n = len(node_ids)
+        if n == 0:
+            return {}
+        if n == 1:
+            return {node_ids[0]: 1.0}
+
+        node_set = set(node_ids)
+
+        # Build adjacency lists and compute degrees
+        neighbors: dict[str, list[str]] = {nid: [] for nid in node_ids}
+        degree: dict[str, int] = {nid: 0 for nid in node_ids}
+
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s, t = r["source"], r["target"]
+            if s in node_set and t in node_set:
+                neighbors[s].append(t)
+                neighbors[t].append(s)
+                degree[s] += 1
+                degree[t] += 1
+
+        # Laplacian centrality: C_L(v) = d_v² + d_v + 2·Σ_{u ∈ N(v)} d_u
+        scores: dict[str, float] = {}
+        for nid in node_ids:
+            dv = degree[nid]
+            neighbor_degree_sum = sum(degree[u] for u in neighbors[nid])
+            scores[nid] = float(dv * dv + dv + 2 * neighbor_degree_sum)
+
+        # Normalise to [0, 1]
+        max_val = max(scores.values()) if scores else 1.0
+        if max_val > 0:
+            scores = {nid: scores[nid] / max_val for nid in node_ids}
+        else:
+            scores = {nid: 0.0 for nid in node_ids}
+
+        return scores
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
