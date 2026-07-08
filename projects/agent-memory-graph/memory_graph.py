@@ -17429,6 +17429,143 @@ class MemoryGraph:
         self.conn.commit()
         return tc
 
+    # ─────────────────────────────────────────────
+    # Cycle 202: Forgetting Curve (Ebbinghaus + FOREVER)
+    # Source: FOREVER (arXiv:2601.03938, ACL 2026)
+    # ─────────────────────────────────────────────
+
+    def forgetting_curve(self, node_id: str,
+                         graph_activity: float = 0.5) -> float:
+        """Compute and apply Ebbinghaus forgetting curve with adaptive intensity.
+
+        Implements the FOREVER model's insight: memory decay should
+        account for graph activity, not just wall-clock time.
+
+        Retention formula::
+
+            R(t) = e^(-0.693 * t / S_eff)
+
+        Where effective stability *S_eff* combines:
+          - base half-life (default 168h = 1 week)
+          - access reinforcement (spaced repetition, ×1.5 per access)
+          - activity adjustment (high activity → slower decay)
+          - Q-value bonus (important memories last longer)
+
+        Updates the node's weight to the computed retention.
+        Returns retention [0, 1].
+        """
+        row = self.conn.execute(
+            "SELECT created, accessed, weight, q_value FROM nodes WHERE id=?",
+            (node_id,),
+        ).fetchone()
+        if not row:
+            return 0.0
+
+        base_half_life = 168.0       # 1 week default
+        reinforcement_factor = 1.5   # each access ×1.5 half-life
+        intensity_sensitivity = 0.1 # activity modulation
+
+        age_hours = (time.time() - row["created"]) / 3600.0
+
+        # Estimate access count from weight and accessed timestamp
+        time_since_access = max(0.0, (time.time() - row["accessed"]) / 3600.0)
+        accessed_recently = time_since_access < 24.0
+        access_proxy = 1 if accessed_recently else 0
+
+        # Q-value extends half-life (Q=1 → 5x)
+        q_val = row["q_value"] or 0.0
+        q_multiplier = 1.0 + q_val * 4.0
+
+        # Reinforcement (spaced repetition)
+        access_multiplier = reinforcement_factor ** access_proxy
+
+        # Activity adjustment (FOREVER-inspired)
+        activity_multiplier = 1.0 + intensity_sensitivity * graph_activity
+
+        s_eff = (
+            base_half_life
+            * access_multiplier
+            * activity_multiplier
+            * q_multiplier
+        )
+
+        retention = math.exp(-0.693 * age_hours / s_eff)
+        retention = max(0.0, min(1.0, retention))
+
+        self.conn.execute(
+            "UPDATE nodes SET weight=? WHERE id=?",
+            (retention, node_id),
+        )
+        self.conn.commit()
+        return retention
+
+    def batch_forgetting(self, graph_activity: float = 0.5) -> dict:
+        """Apply forgetting curve to all nodes.
+
+        Returns stats including which nodes fell below the minimum
+        weight threshold and should be considered "forgotten".
+        """
+        min_weight = 0.05
+        rows = self.conn.execute(
+            "SELECT id, created, accessed, weight, q_value FROM nodes"
+        ).fetchall()
+        forgotten = []
+        total_retention = 0.0
+        count = 0
+
+        for r in rows:
+            age_h = (time.time() - r["created"]) / 3600.0
+            time_since_access = max(0.0, (time.time() - r["accessed"]) / 3600.0)
+            access_proxy = 1 if time_since_access < 24.0 else 0
+            q_val = r["q_value"] or 0.0
+
+            q_mult = 1.0 + q_val * 4.0
+            access_mult = 1.5 ** access_proxy
+            activity_mult = 1.0 + 0.1 * graph_activity
+            s_eff = 168.0 * access_mult * activity_mult * q_mult
+
+            retention = math.exp(-0.693 * age_h / s_eff)
+            retention = max(0.0, min(1.0, retention))
+
+            self.conn.execute(
+                "UPDATE nodes SET weight=? WHERE id=?",
+                (retention, r["id"]),
+            )
+            total_retention += retention
+            count += 1
+            if retention < min_weight:
+                forgotten.append(r["id"])
+
+        self.conn.commit()
+        return {
+            "total": count,
+            "forgotten": len(forgotten),
+            "forgotten_ids": forgotten,
+            "avg_retention": round(total_retention / max(count, 1), 4),
+            "graph_activity": graph_activity,
+        }
+
+    def forgetting_curve_data(self, access_count: int = 0,
+                              q_value: float = 0.0,
+                              max_hours: float = 720,
+                              points: int = 50) -> list:
+        """Generate forgetting curve data points for visualization.
+
+        Useful for debugging, documentation, and parameter tuning.
+        Returns list of ``{"hours": float, "retention": float}``.
+        """
+        base_half_life = 168.0
+        access_mult = 1.5 ** access_count
+        q_mult = 1.0 + q_value * 4.0
+        s_eff = base_half_life * access_mult * (1.0 + 0.1 * 0.5) * q_mult
+
+        curve = []
+        for i in range(points):
+            t = max_hours * i / max(points - 1, 1)
+            r = math.exp(-0.693 * t / s_eff)
+            curve.append({"hours": round(t, 1), "retention": round(r, 4)})
+        return curve
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

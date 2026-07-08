@@ -20364,3 +20364,128 @@ class TestConfidenceScore:
         mg.batch_confidence()
         after = mg.stats()
         assert before == after
+
+
+# ═══════════════════════════════════════════════════════════
+# Cycle 202: Forgetting Curve Tests
+# Source: FOREVER (arXiv:2601.03938, ACL 2026) + Ebbinghaus (1885)
+# ═══════════════════════════════════════════════════════════
+
+class TestForgettingCurve:
+    """Tests for Ebbinghaus + FOREVER forgetting curve."""
+
+    def test_fresh_node_high_retention(self, mg):
+        """A brand-new node should have retention near 1.0."""
+        n = mg.add("fresh", "fact")
+        r = mg.forgetting_curve(n.id)
+        assert r > 0.99
+
+    def test_old_node_lower_retention(self, mg):
+        """An old node should have lower retention than a fresh one."""
+        old = mg.add("old", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 336 * 3600, old.id),  # 14 days
+        )
+        mg.conn.commit()
+        fresh = mg.add("fresh", "fact")
+
+        r_old = mg.forgetting_curve(old.id)
+        r_fresh = mg.forgetting_curve(fresh.id)
+        assert r_old < r_fresh
+
+    def test_retention_updates_weight(self, mg):
+        """forgetting_curve should update the node's weight."""
+        n = mg.add("test", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 336 * 3600, n.id),
+        )
+        mg.conn.commit()
+        mg.forgetting_curve(n.id)
+        node = mg.get_node(n.id)
+        assert node.weight < 1.0
+
+    def test_nonexistent_node(self, mg):
+        """forgetting_curve on non-existent returns 0.0."""
+        assert mg.forgetting_curve("ghost") == 0.0
+
+    def test_retention_in_range(self, mg):
+        """Retention should always be in [0, 1]."""
+        n = mg.add("boundary", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 8760 * 3600, n.id),  # 1 year
+        )
+        mg.conn.commit()
+        r = mg.forgetting_curve(n.id)
+        assert 0.0 <= r <= 1.0
+
+    def test_q_value_extends_retention(self, mg):
+        """High Q-value nodes should decay slower."""
+        normal = mg.add("normal", "fact")
+        important = mg.add("important", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=?, q_value=? WHERE id=?",
+            (time.time() - 336 * 3600, 0.9, important.id),
+        )
+        mg.conn.execute(
+            "UPDATE nodes SET created=?, q_value=? WHERE id=?",
+            (time.time() - 336 * 3600, 0.0, normal.id),
+        )
+        mg.conn.commit()
+
+        r_important = mg.forgetting_curve(important.id)
+        r_normal = mg.forgetting_curve(normal.id)
+        assert r_important > r_normal
+
+    def test_activity_affects_decay(self, mg):
+        """Higher graph activity should slow decay (FOREVER model)."""
+        n = mg.add("test", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 336 * 3600, n.id),
+        )
+        mg.conn.commit()
+
+        r_low_activity = mg.forgetting_curve(n.id, graph_activity=0.0)
+        # Reset weight for clean test
+        mg.conn.execute("UPDATE nodes SET weight=1.0 WHERE id=?", (n.id,))
+        mg.conn.commit()
+        r_high_activity = mg.forgetting_curve(n.id, graph_activity=1.0)
+        assert r_high_activity >= r_low_activity
+
+    def test_batch_forgetting(self, mg):
+        """batch_forgetting updates all nodes and returns stats."""
+        fresh = mg.add("fresh", "fact")
+        old = mg.add("old", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 720 * 3600, old.id),  # 30 days
+        )
+        mg.conn.commit()
+
+        result = mg.batch_forgetting()
+        assert result["total"] == 2
+        assert "avg_retention" in result
+        assert isinstance(result["forgotten_ids"], list)
+
+    def test_batch_forgetting_empty(self, mg):
+        """batch_forgetting on empty graph."""
+        result = mg.batch_forgetting()
+        assert result["total"] == 0
+
+    def test_forgetting_curve_data(self, mg):
+        """forgetting_curve_data returns properly formatted visualization data."""
+        curve = mg.forgetting_curve_data(max_hours=168, points=20)
+        assert len(curve) == 20
+        assert curve[0]["retention"] >= curve[-1]["retention"]
+        assert curve[0]["hours"] == 0.0
+        assert curve[-1]["hours"] == 168.0
+
+    def test_curve_data_with_access_reinforcement(self, mg):
+        """More accesses should produce a flatter (slower decay) curve."""
+        no_access = mg.forgetting_curve_data(access_count=0, max_hours=336)
+        with_access = mg.forgetting_curve_data(access_count=3, max_hours=336)
+        # At the end, the curve with access should have higher retention
+        assert with_access[-1]["retention"] > no_access[-1]["retention"]
