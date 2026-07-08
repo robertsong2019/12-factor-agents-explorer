@@ -20026,3 +20026,204 @@ class TestSubgraphCentrality:
         #                     L0-hub-L1-hub-L0 (length 4), etc.
         # Hub accumulates more
         assert result[hub.id] == max(result.values())
+
+
+# ═══════════════════════════════════════════════════════════
+# Cycle 200: Memory Maturation Tests
+# Source: Human-Inspired Memory Architecture (arXiv:2605.08538)
+# ═══════════════════════════════════════════════════════════
+
+class TestMemoryMaturation:
+    """Tests for sigmoid activation-based memory maturation."""
+
+    def test_new_node_activation_zero(self, mg):
+        """Freshly created nodes should have activation ≈ 0."""
+        n = mg.add("fresh memory", "fact")
+        act = mg.memory_maturation(n.id)
+        assert act < 0.1
+        assert act >= 0.0
+
+    def test_activation_stored_in_db(self, mg):
+        """memory_maturation should persist activation to the database."""
+        n = mg.add("persisted memory", "event")
+        mg.memory_maturation(n.id)
+        stored = mg.get_activation(n.id)
+        assert stored > 0.0
+        assert stored < 0.1
+
+    def test_get_activation_nonexistent(self, mg):
+        """Non-existent node returns 0.0."""
+        assert mg.get_activation("nonexistent_id") == 0.0
+
+    def test_maturation_nonexistent(self, mg):
+        """memory_maturation on non-existent node returns 0.0."""
+        assert mg.memory_maturation("ghost_id") == 0.0
+
+    def test_is_mature_false_for_new(self, mg):
+        """New nodes should not be mature."""
+        n = mg.add("immature", "fact")
+        assert mg.is_mature(n.id) is False
+
+    def test_is_mature_with_simulated_age(self, mg):
+        """Node with simulated old age should be mature."""
+        n = mg.add("old memory", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 48 * 3600, n.id),
+        )
+        mg.conn.commit()
+        assert mg.is_mature(n.id) is True
+
+    def test_sigmoid_at_half_activation_point(self, mg):
+        """At t=t_half, activation should be exactly 0.5."""
+        n = mg.add("half life test", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 24 * 3600, n.id),
+        )
+        mg.conn.commit()
+        act = mg.memory_maturation(n.id, t_half=24.0, k=6.0)
+        assert abs(act - 0.5) < 0.01
+
+    def test_sigmoid_old_node_near_one(self, mg):
+        """At t=48h (2*t_half), activation should be > 0.9."""
+        n = mg.add("old node", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 48 * 3600, n.id),
+        )
+        mg.conn.commit()
+        act = mg.memory_maturation(n.id, t_half=24.0, k=6.0)
+        assert act > 0.9
+
+    def test_custom_parameters(self, mg):
+        """Custom t_half and k should produce different curves."""
+        n = mg.add("custom", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 2 * 3600, n.id),
+        )
+        mg.conn.commit()
+        act = mg.memory_maturation(n.id, t_half=1.0, k=0.5)
+        assert act > 0.8  # 2h with t_half=1h: sigmoid(2) ≈ 0.88
+
+    def test_batch_maturation_basic(self, mg):
+        """batch_maturation updates all nodes and returns stats."""
+        old = mg.add("old node", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 72 * 3600, old.id),
+        )
+        mg.add("new node", "fact")
+        mid = mg.add("mid node", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 24 * 3600, mid.id),
+        )
+        mg.conn.commit()
+        stats = mg.batch_maturation()
+        assert stats["total"] == 3
+        assert stats["mature"] >= 1
+        assert stats["silent"] >= 1
+
+    def test_batch_maturation_empty_graph(self, mg):
+        """batch_maturation on empty graph returns zero counts."""
+        stats = mg.batch_maturation()
+        assert stats["total"] == 0
+        assert stats["mature"] == 0
+
+    def test_activation_increases_monotonically(self, mg):
+        """Activation should increase as a node ages."""
+        n = mg.add("monotonic", "fact")
+        ages = [0, 6, 12, 18, 24, 30, 36, 42, 48]
+        prev = -1.0
+        for age_h in ages:
+            mg.conn.execute(
+                "UPDATE nodes SET created=? WHERE id=?",
+                (time.time() - age_h * 3600, n.id),
+            )
+            mg.conn.commit()
+            act = mg.memory_maturation(n.id)
+            assert act >= prev - 0.001
+            prev = act
+
+    def test_is_mature_custom_threshold(self, mg):
+        """Custom threshold should work correctly."""
+        n = mg.add("threshold test", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 18 * 3600, n.id),
+        )
+        mg.conn.commit()
+        # 18h with t_half=24: activation ≈ 0.27
+        assert mg.is_mature(n.id, threshold=0.2) is True
+        assert mg.is_mature(n.id, threshold=0.5) is False
+
+    def test_maturation_does_not_mutate_graph_structure(self, mg):
+        """Running maturation should not alter nodes/edges."""
+        a = mg.add("node A", "fact")
+        b = mg.add("node B", "fact")
+        mg.link(a.id, b.id, "related")
+        before = mg.stats()
+        mg.batch_maturation()
+        after = mg.stats()
+        assert before == after
+
+
+class TestRecallWithActivation:
+    """Tests for activation-gated recall."""
+
+    def test_recall_returns_mature_first(self, mg):
+        """Mature memories should rank higher than immature ones."""
+        old = mg.add("important old fact", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 48 * 3600, old.id),
+        )
+        mg.add("important new fact", "fact")
+        mg.conn.commit()
+        results = mg.recall_with_activation("important", limit=5)
+        assert len(results) >= 1
+        ids = [r[0] for r in results]
+        assert old.id in ids
+
+    def test_recall_activation_values_in_result(self, mg):
+        """Results should include activation values."""
+        n = mg.add("test fact", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 48 * 3600, n.id),
+        )
+        mg.conn.commit()
+        results = mg.recall_with_activation("test", limit=5)
+        assert len(results) >= 1
+        for r in results:
+            assert len(r) == 5
+            assert 0.0 <= r[4] <= 1.0
+
+    def test_recall_fallback_to_immature(self, mg):
+        """When not enough mature results, immature memories fill in."""
+        n = mg.add("unique keyword xyz", "fact")
+        results = mg.recall_with_activation("xyz", limit=3)
+        assert len(results) >= 1
+        assert results[0][0] == n.id
+
+    def test_recall_respects_limit(self, mg):
+        """recall_with_activation respects the limit parameter."""
+        for i in range(10):
+            mg.add(f"shared keyword item{i}", "fact")
+            mg.conn.execute(
+                "UPDATE nodes SET created=? WHERE id=?",
+                (time.time() - 48 * 3600, mg.conn.execute(
+                    "SELECT id FROM nodes ORDER BY created DESC LIMIT 1"
+                ).fetchone()["id"]),
+            )
+        mg.conn.commit()
+        results = mg.recall_with_activation("shared", limit=3)
+        assert len(results) <= 3
+
+    def test_recall_no_results_for_unrelated_query(self, mg):
+        """Unrelated query returns empty or minimal results."""
+        mg.add("cats and dogs", "fact")
+        results = mg.recall_with_activation("quantum physics", limit=5)
+        assert len(results) <= 1

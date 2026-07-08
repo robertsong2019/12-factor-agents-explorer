@@ -106,6 +106,7 @@ class MemoryGraph:
             ("valid_to", "REAL DEFAULT NULL"),
             ("txn_time", "REAL DEFAULT NULL"),
             ("q_value", "REAL DEFAULT 0.0"),
+            ("activation", "REAL DEFAULT 0.0"),
         ]
         for col, typedef in migrations:
             if col not in existing_cols:
@@ -17145,6 +17146,142 @@ class MemoryGraph:
             sc = {node_ids[i]: 0.0 for i in range(n)}
 
         return sc
+
+    # ─────────────────────────────────────────────
+    # Cycle 200: Memory Maturation (sigmoid activation)
+    # Source: Human-Inspired Memory Architecture (arXiv:2605.08538)
+    # ─────────────────────────────────────────────
+
+    def memory_maturation(self, node_id: str, t_half: float = 24.0,
+                          k: float = 6.0) -> float:
+        """Compute and store sigmoid activation for a node.
+
+        Implements the engram maturation model: new memories start
+        with activation ≈ 0 (silent) and gradually mature via::
+
+            A(t) = 1 / (1 + e^(-(t - t_half) / k))
+
+        where *t* is age in hours, *t_half* is half-activation
+        time (default 24 h), and *k* controls curve steepness.
+
+        At t=0:     A ≈ 0.04  (nearly silent)
+        At t=t_half: A = 0.50  (half-activated)
+        At t=2*t_half: A ≈ 0.96 (nearly mature)
+
+        Returns the computed activation value [0, 1].
+        """
+        row = self.conn.execute(
+            "SELECT created FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return 0.0
+        age_hours = (time.time() - row["created"]) / 3600.0
+        activation = 1.0 / (1.0 + math.exp(-(age_hours - t_half) / k))
+        self.conn.execute(
+            "UPDATE nodes SET activation=? WHERE id=?",
+            (activation, node_id),
+        )
+        self.conn.commit()
+        return activation
+
+    def get_activation(self, node_id: str) -> float:
+        """Return the current activation strength of a node [0, 1].
+
+        Returns 0.0 if node doesn't exist.
+        """
+        row = self.conn.execute(
+            "SELECT activation FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return 0.0
+        return row["activation"] if row["activation"] is not None else 0.0
+
+    def is_mature(self, node_id: str, threshold: float = 0.5) -> bool:
+        """Check whether a node has matured past the activation threshold.
+
+        Convenience wrapper around :meth:`memory_maturation` + threshold
+        comparison.  Updates activation before checking.
+        """
+        return self.memory_maturation(node_id) >= threshold
+
+    def batch_maturation(self, t_half: float = 24.0,
+                         k: float = 6.0) -> dict:
+        """Update activation for every node in the graph.
+
+        Returns a summary dict with counts by maturity bucket::
+
+            mature   – activation ≥ 0.7
+            emerging – 0.3 ≤ activation < 0.7
+            silent   – activation < 0.3
+        """
+        rows = self.conn.execute(
+            "SELECT id, created FROM nodes"
+        ).fetchall()
+        mature = emerging = silent = 0
+        now = time.time()
+        for r in rows:
+            age_h = (now - r["created"]) / 3600.0
+            act = 1.0 / (1.0 + math.exp(-(age_h - t_half) / k))
+            self.conn.execute(
+                "UPDATE nodes SET activation=? WHERE id=?",
+                (act, r["id"]),
+            )
+            if act >= 0.7:
+                mature += 1
+            elif act >= 0.3:
+                emerging += 1
+            else:
+                silent += 1
+        self.conn.commit()
+        return {
+            "total": len(rows),
+            "mature": mature,
+            "emerging": emerging,
+            "silent": silent,
+        }
+
+    def recall_with_activation(self, query: str, limit: int = 5,
+                               activation_threshold: float = 0.5,
+                               fallback_to_immature: bool = True
+                               ) -> list:
+        """Recall memories, filtering by activation maturity.
+
+        Combines :meth:`recall` with activation gating.  Mature memories
+        (activation ≥ *threshold*) are returned first.  If fewer than
+        ``limit`` mature results are found and *fallback_to_immature*
+        is True, the remaining slots are filled from immature memories.
+
+        Returns a list of (node_id, label, kind, weight, activation) tuples.
+        """
+        # Refresh activations for all nodes
+        self.batch_maturation()
+
+        # Query FTS/BM25 for relevance
+        candidates = self.recall(query, limit=limit * 3)
+
+        results = []
+        mature = []
+        immature = []
+        for node in candidates:
+            act = self.get_activation(node.id)
+            if act >= activation_threshold:
+                mature.append((node, act))
+            else:
+                immature.append((node, act))
+
+        # Sort mature by weight * activation
+        mature.sort(key=lambda x: -x[0].weight * x[1])
+        results.extend(mature[:limit])
+
+        # Fallback: fill remaining slots with immature if needed
+        if len(results) < limit and fallback_to_immature:
+            immature.sort(key=lambda x: -x[0].weight)
+            results.extend(immature[:limit - len(results)])
+
+        return [
+            (n.id, n.label, n.kind, round(n.weight, 4), round(a, 4))
+            for n, a in results
+        ]
 
 
 def demo():
