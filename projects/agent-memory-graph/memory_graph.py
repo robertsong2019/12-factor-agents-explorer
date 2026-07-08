@@ -17566,6 +17566,100 @@ class MemoryGraph:
             curve.append({"hours": round(t, 1), "retention": round(r, 4)})
         return curve
 
+    # ─────────────────────────────────────────────
+    # Cycle 203: Recurrence Detector
+    # Source: RecMem (arXiv:2605.16045, ACL 2026 Findings)
+    # ─────────────────────────────────────────────
+
+    def detect_recurrence(self, node_id: str,
+                          min_recurrence: int = 3,
+                          similarity_threshold: float = 0.75,
+                          window_hours: float = 48.0) -> dict:
+        """Detect whether a node's topic has recurred enough to trigger
+        smart consolidation.
+
+        Inspired by RecMem's three-tier subconscious architecture:
+        new interactions accumulate in a subconscious layer; when the
+        same topic recurs ≥ *min_recurrence* times within
+        *window_hours*, a consolidation trigger is fired.
+
+        Uses lightweight word-overlap similarity as a proxy for
+        embedding cosine similarity.
+
+        Returns a dict with trigger info, or ``{"triggered": False}``
+        if no recurrence threshold was met.
+        """
+        target = self.get_node(node_id)
+        if not target:
+            return {"triggered": False, "reason": "node_not_found"}
+
+        # Gather candidate nodes within the time window
+        now = time.time()
+        window_start = now - window_hours * 3600
+        rows = self.conn.execute(
+            "SELECT id, label FROM nodes WHERE created >= ? AND id != ?",
+            (window_start, node_id),
+        ).fetchall()
+
+        # Compute word-overlap similarity
+        target_words = set(target.label.lower().split())
+        if not target_words:
+            return {"triggered": False, "reason": "empty_content"}
+
+        similar = []
+        for r in rows:
+            candidate_words = set(r["label"].lower().split())
+            if not candidate_words:
+                continue
+            overlap = len(target_words & candidate_words)
+            sim = overlap / len(target_words | candidate_words)
+            if sim >= similarity_threshold:
+                similar.append({"id": r["id"], "label": r["label"], "similarity": round(sim, 3)})
+
+        total_count = len(similar) + 1  # include self
+
+        if total_count >= min_recurrence:
+            return {
+                "triggered": True,
+                "type": "recurrence",
+                "count": total_count,
+                "threshold": min_recurrence,
+                "similar_nodes": similar,
+                "should_consolidate": True,
+                "mode": "smart",
+            }
+
+        return {
+            "triggered": False,
+            "count": total_count,
+            "threshold": min_recurrence,
+            "similar_nodes": similar,
+        }
+
+    def batch_recurrence(self, min_recurrence: int = 3,
+                         similarity_threshold: float = 0.75,
+                         window_hours: float = 48.0) -> dict:
+        """Scan all nodes for recurrence patterns.
+
+        Returns a summary with triggered nodes and consolidation
+        candidates.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        triggers = []
+        for r in rows:
+            result = self.detect_recurrence(
+                r["id"], min_recurrence, similarity_threshold, window_hours
+            )
+            if result.get("triggered"):
+                triggers.append(result)
+
+        return {
+            "total_scanned": len(rows),
+            "triggers": triggers,
+            "trigger_count": len(triggers),
+            "consolidation_candidates": len(triggers),
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

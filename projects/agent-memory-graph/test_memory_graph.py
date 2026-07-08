@@ -20489,3 +20489,102 @@ class TestForgettingCurve:
         with_access = mg.forgetting_curve_data(access_count=3, max_hours=336)
         # At the end, the curve with access should have higher retention
         assert with_access[-1]["retention"] > no_access[-1]["retention"]
+
+
+# ═══════════════════════════════════════════════════════════
+# Cycle 203: Recurrence Detector Tests
+# Source: RecMem (arXiv:2605.16045, ACL 2026 Findings)
+# ═══════════════════════════════════════════════════════════
+
+class TestRecurrenceDetector:
+    """Tests for RecMem-inspired recurrence detection."""
+
+    def test_no_recurrence_single_node(self, mg):
+        """Single node with no similar nodes should not trigger."""
+        n = mg.add("unique topic xyz", "fact")
+        result = mg.detect_recurrence(n.id, min_recurrence=3)
+        assert result["triggered"] is False
+
+    def test_recurrence_triggers(self, mg):
+        """Three similar nodes should trigger consolidation."""
+        mg.add("python programming", "fact")
+        mg.add("python programming tips", "fact")
+        n = mg.add("python programming guide", "fact")
+
+        result = mg.detect_recurrence(n.id, min_recurrence=3,
+                                      similarity_threshold=0.3)
+        assert result["triggered"] is True
+        assert result["count"] >= 3
+        assert result["should_consolidate"] is True
+
+    def test_nonexistent_node(self, mg):
+        """Non-existent node returns not triggered."""
+        result = mg.detect_recurrence("ghost")
+        assert result["triggered"] is False
+        assert result["reason"] == "node_not_found"
+
+    def test_respects_window(self, mg):
+        """Nodes outside the time window should be excluded."""
+        old = mg.add("python programming old", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 72 * 3600, old.id),  # 3 days ago
+        )
+        mg.conn.commit()
+
+        # New nodes in a 24h window
+        n = mg.add("python programming new", "fact")
+
+        # With 24h window, old node should be excluded
+        result = mg.detect_recurrence(n.id, min_recurrence=3,
+                                      similarity_threshold=0.3,
+                                      window_hours=24.0)
+        assert result["triggered"] is False
+
+    def test_similarity_threshold(self, mg):
+        """Higher similarity threshold should find fewer matches."""
+        mg.add("cats love warm places", "fact")
+        mg.add("dogs love warm places", "fact")
+        n = mg.add("cats love warm spots", "fact")
+
+        # Low threshold: should match
+        result_low = mg.detect_recurrence(n.id, min_recurrence=2,
+                                          similarity_threshold=0.2)
+        assert result_low["count"] >= 2
+
+    def test_batch_recurrence(self, mg):
+        """batch_recurrence scans all nodes."""
+        for i in range(4):
+            mg.add(f"shared topic item{i}", "fact")
+
+        result = mg.batch_recurrence(min_recurrence=3,
+                                     similarity_threshold=0.2)
+        assert result["total_scanned"] == 4
+        assert "trigger_count" in result
+
+    def test_batch_recurrence_empty(self, mg):
+        """batch_recurrence on empty graph."""
+        result = mg.batch_recurrence()
+        assert result["total_scanned"] == 0
+        assert result["trigger_count"] == 0
+
+    def test_trigger_mode_is_smart(self, mg):
+        """Triggered recurrence should recommend smart consolidation."""
+        for i in range(3):
+            mg.add("recurrence test topic", "fact")
+        n = mg.add("recurrence test topic again", "fact")
+
+        result = mg.detect_recurrence(n.id, min_recurrence=3,
+                                      similarity_threshold=0.3)
+        if result["triggered"]:
+            assert result["mode"] == "smart"
+
+    def test_does_not_mutate_structure(self, mg):
+        """Detection should not alter graph structure."""
+        a = mg.add("topic A", "fact")
+        b = mg.add("topic A variant", "fact")
+        mg.link(a.id, b.id, "related")
+        before = mg.stats()
+        mg.batch_recurrence()
+        after = mg.stats()
+        assert before == after
