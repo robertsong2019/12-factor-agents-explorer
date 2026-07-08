@@ -443,8 +443,8 @@ function analyzeComplexity(filePath) {
       complexity++;
     }
     
-    // 检查嵌套层次
-    const indentLevel = line.match(/^\s*/)?.[0].length || 0;
+    // 检查嵌套层次（使用原始行而非 trimmed 行）
+    const indentLevel = lines[i].match(/^\s*/)?.[0].length || 0;
     if (indentLevel > 16) {
       issues.push(`第${i + 1}行: 缩进过深 (${indentLevel}级)`);
     }
@@ -467,8 +467,8 @@ async function analyzeSecurity(filePath) {
     { regex: /eval\s*\(/g, issue: '使用eval函数，存在安全风险' },
     { regex: /innerHTML\s*=/g, issue: '使用innerHTML，可能存在XSS风险' },
     { regex: /document\.write\s*\(/g, issue: '使用document.write，已废弃且有安全风险' },
-    { regex: /setTimeout\s*\([^,]+,/g, issue: '使用setTimeout字符串参数，可能有安全风险' },
-    { regex: /setInterval\s*\([^,]+,/g, issue: '使用setInterval字符串参数，可能有安全风险' },
+    { regex: /setTimeout\s*\(['"][^'"]*['"]/, issue: '使用setTimeout字符串参数，可能有安全风险' },
+    { regex: /setInterval\s*\(['"][^'"]*['"]/, issue: '使用setInterval字符串参数，可能有安全风险' },
     { regex: /\$\{[^}]*\}/g, issue: '使用模板字符串拼接，注意SQL注入风险' }
   ];
   
