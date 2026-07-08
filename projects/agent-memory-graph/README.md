@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-2007-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-2122-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -1860,6 +1860,18 @@ Katz 中心性。特征向量中心性的推广，引入衰减因子 alpha 折�
 
 子图中心性。统计所有长度的闭合游走（closed walk），以 `1/k!` 加权长度 k。等价于邻接矩阵指数 `e^A` 的对角线元素。自然地奖励参与大量三角形和短环的节点，对局部社区结构敏感。与 degree centrality（仅长度 1）和 Katz（开+闭合游走）互补。结果归一化到 [0, 1]。
 
+#### `laplacian_centrality(include_quarantined=False) -> dict[str, float]`
+
+Laplacian 中心性。衡量移除节点后图 Laplacian 能量 `E_L = tr(L²)` 的下降幅度。公式：`C_L(v) = d_v² + d_v + 2·Σ_{u ∈ N(v)} d_u`，其中 `d_v` 是节点度，`N(v)` 是邻居集合。同时捕获直接连接重要性（`d_v²`）和间接重要性（邻居度之和）。与其他中心性不同，Laplacian 中心性关注的是**网络中断潜力**——移除该节点会损失多少连通性。对桥接关键节点特别敏感。结果归一化到 [0, 1]。
+
+#### `estrada_index(max_order=20, include_quarantined=False) -> float`
+
+Estrada 指数。图级别的整体连通性度量，定义为邻接矩阵指数的迹：`EE = tr(e^A) = Σ_i e^(λ_i)`。统计所有长度的闭合游走并以 `1/k!` 加权。EE 越高表示图越密集/冗余连接，越低表示稀疏树状结构。EE 始终 ≥ n（节点数）。对三角形和短环敏感（类似子图中心性但聚合到全图）。使用截断 Taylor 级数（默认 max_order=20，精度 >15 位）。
+
+#### `communicability(node_a, node_b, max_order=20, include_quarantined=False) -> float`
+
+通信度。衡量两节点间通过**所有路径**的信息流便捷度：`G(a,b) = (e^A)_{ab} = Σ (A^k)_{ab}/k!`。比最短路径更全面——多条短路径的通信度高于一条长路径。共享邻居（三角形）会显著提升通信度。自通信度（`a == b`）等于该节点的子图中心性（未归一化）。
+
 ---
 
 ### 自适应检索 (QDAP-v2 + SkewRoute)
@@ -1919,7 +1931,7 @@ CPM (Clique Percolation Method) 重叠社区检测 (Palla et al. 2005)。两个 
 python3 -m pytest test_memory_graph.py -q
 ```
 
-2007 个测试覆盖所有 API（200 个 cycle，188 天零回滚）。
+2122 个测试覆盖所有 API（206 个 cycle，190 天零回滚）。
 
 ## 设计思路
 
@@ -1957,7 +1969,7 @@ python3 -m pytest test_memory_graph.py -q
 32. **图序列化** — to_dict/from_dict 提供 JSON 安全的图序列化方案，支持快照恢复、API 响应和跨 Agent 记忆传输
 33. **自适应检索 (QDAP-v2 + SkewRoute)** — 6 类查询分类器 + 连续权重插值 + 分数偏度分析 + 熵修正，per-query 动态调整 BM25/Vector/Graph 三路融合权重。trivial 查询跳过检索，relational 查询图主导，exact 查询 BM25 主导——让问题自己说话
 34. **图拓扑与团分析** — find_cycle (DFS 环路检测) + graph_periphery (最远节点) + maximal_cliques (Bron-Kerbosch 极大团) + clique_overlap_matrix (团间共享节点) + k_clique_communities (CPM 重叠社区发现，节点可属多社区)
-35. **高级中心性** — katz_centrality (衰减路径求和中心性，generalised eigenvector centrality with attenuation) + subgraph_centrality (闭合游走参与度，matrix exponential 对角线) 提供比 degree/eigenvector 更丰富的节点重要性度量
+35. **高级中心性** — katz_centrality (衰减路径求和中心性) + subgraph_centrality (闭合游走参与度) + laplacian_centrality (网络中断潜力，Laplacian 能量下降) + estrada_index (全图连通性指数) + communicability (节点对信息流便捷度) 提供 11 种中心性/连通性度量，覆盖从节点级到图级别的多维度重要性分析
 
 ## 许可
 
