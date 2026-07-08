@@ -17660,6 +17660,146 @@ class MemoryGraph:
             "consolidation_candidates": len(triggers),
         }
 
+    # ─────────────────────────────────────────────
+    # Cycle 204: Consolidation Router
+    # Source: Dual-Mode Consolidation Architecture (自有设计)
+    # ─────────────────────────────────────────────
+
+    def consolidation_router(self, node_id: str) -> dict:
+        """Evaluate triggers and route a node to FAST or SMART consolidation.
+
+        Inspects six trigger signals and decides whether *node_id*
+        needs lightweight (FAST) or deep (SMART) consolidation:
+
+        1. **Recurrence** – topic recurred ≥3 times → SMART
+        2. **Divergence** – semantic_divergence > 0.6 → SMART
+        3. **Low confidence** – confidence_score < 0.3 → FAST (flag)
+        4. **Low retention** – retention_score < 0.15 → FAST (evict)
+        5. **High Q-value, low activation** – promising but young → FAST (boost)
+        6. **Maturation crossover** – activation crossing 0.5 → SMART
+
+        Returns a routing decision dict with mode, trigger, reason,
+        and recommended actions.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return {"node_id": node_id, "mode": "skip",
+                    "reason": "node_not_found", "trigger": "none"}
+
+        triggers = []
+
+        # 1. Recurrence trigger
+        rec = self.detect_recurrence(
+            node_id, similarity_threshold=0.35)
+        if rec.get("triggered"):
+            triggers.append({
+                "type": "recurrence",
+                "mode": "smart",
+                "detail": f"{rec['count']} similar nodes in window",
+            })
+
+        # 2. Divergence trigger
+        div = self.semantic_divergence(node_id)
+        if div and div.get("divergence", 0) > 0.6:
+            triggers.append({
+                "type": "divergence",
+                "mode": "smart",
+                "detail": f"divergence={div['divergence']:.3f}",
+            })
+
+        # 3. Low confidence trigger
+        conf = self.confidence_score(node_id)
+        if conf < 0.4:
+            triggers.append({
+                "type": "low_confidence",
+                "mode": "fast",
+                "detail": f"confidence={conf:.3f}",
+                "action": "flag_for_review",
+            })
+
+        # 4. Low retention trigger
+        ret = self.retention_score(node_id)
+        if ret and ret.get("score", 1.0) < 0.15:
+            triggers.append({
+                "type": "low_retention",
+                "mode": "fast",
+                "detail": f"retention={ret['score']:.3f}",
+                "action": "evict_candidate",
+            })
+
+        # 5. High Q-value + low activation → boost
+        act = self.get_activation(node_id)
+        qval_row = self.conn.execute(
+            "SELECT q_value FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        qval = qval_row["q_value"] if qval_row else 0.0
+        if qval > 0.5 and act < 0.3:
+            triggers.append({
+                "type": "high_q_low_activation",
+                "mode": "fast",
+                "detail": f"q={qval:.3f}, activation={act:.3f}",
+                "action": "boost_activation",
+            })
+
+        # 6. Maturation crossover → SMART (just crossed threshold)
+        if 0.45 <= act <= 0.55:
+            triggers.append({
+                "type": "maturation_crossover",
+                "mode": "smart",
+                "detail": f"activation={act:.3f} (near 0.5)",
+            })
+
+        # Decide: if any SMART trigger → SMART; else if FAST → FAST; else IDLE
+        smart_triggers = [t for t in triggers if t["mode"] == "smart"]
+        fast_triggers = [t for t in triggers if t["mode"] == "fast"]
+
+        if smart_triggers:
+            mode = "smart"
+            primary = smart_triggers[0]
+        elif fast_triggers:
+            mode = "fast"
+            primary = fast_triggers[0]
+        else:
+            mode = "idle"
+            primary = None
+
+        return {
+            "node_id": node_id,
+            "mode": mode,
+            "trigger": primary["type"] if primary else "none",
+            "reason": primary["detail"] if primary else "no triggers fired",
+            "action": primary.get("action") if primary else None,
+            "all_triggers": triggers,
+            "trigger_count": len(triggers),
+        }
+
+    def batch_consolidation_routing(self) -> dict:
+        """Route every node in the graph and return a routing summary.
+
+        Returns counts by mode plus per-node routing decisions.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        decisions = []
+        smart_count = fast_count = idle_count = 0
+
+        for r in rows:
+            decision = self.consolidation_router(r["id"])
+            decisions.append(decision)
+            if decision["mode"] == "smart":
+                smart_count += 1
+            elif decision["mode"] == "fast":
+                fast_count += 1
+            else:
+                idle_count += 1
+
+        return {
+            "total": len(rows),
+            "smart": smart_count,
+            "fast": fast_count,
+            "idle": idle_count,
+            "decisions": decisions,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

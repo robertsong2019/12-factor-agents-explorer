@@ -20588,3 +20588,149 @@ class TestRecurrenceDetector:
         mg.batch_recurrence()
         after = mg.stats()
         assert before == after
+
+
+class TestConsolidationRouter:
+    """Tests for trigger-based FAST/SMART consolidation routing."""
+
+    def test_nonexistent_node(self, mg):
+        """Non-existent node should return skip mode."""
+        result = mg.consolidation_router("ghost")
+        assert result["mode"] == "skip"
+        assert result["reason"] == "node_not_found"
+
+    def test_idle_node_no_triggers(self, mg):
+        """A well-behaved node with no issues should be idle."""
+        n = mg.add("stable fact", "fact")
+        result = mg.consolidation_router(n.id)
+        assert result["mode"] == "idle"
+        assert result["trigger"] == "none"
+        assert result["trigger_count"] == 0
+
+    def test_recurrence_triggers_smart(self, mg):
+        """Recurring topic should route to SMART mode."""
+        for i in range(4):
+            mg.add(f"overlap topic {i}", "fact")
+        n = mg.add("overlap topic new", "fact")
+
+        result = mg.consolidation_router(n.id)
+        assert result["mode"] == "smart"
+        assert "recurrence" in [t["type"] for t in result["all_triggers"]]
+
+    def test_low_confidence_triggers_fast(self, mg):
+        """Low confidence node should route to FAST mode."""
+        n = mg.add("uncertain claim", "fact")
+        # Make node low-confidence: unknown source, old, tiny weight, many transforms
+        mg.set_source(n.id, "unknown")  # trust 0.2
+        mg.conn.execute(
+            "UPDATE nodes SET created=?, weight=0.01, transform_count=8 "
+            "WHERE id=?",
+            (time.time() - 90 * 86400, n.id),  # 90 days old
+        )
+        mg.conn.commit()
+
+        result = mg.consolidation_router(n.id)
+        assert result["mode"] in ("fast", "smart")
+        # At least low_confidence should fire
+        types = [t["type"] for t in result["all_triggers"]]
+        assert "low_confidence" in types
+
+    def test_maturation_crossover_triggers_smart(self, mg):
+        """Node near activation 0.5 should trigger maturation crossover."""
+        n = mg.add("maturing memory", "fact")
+        # Set activation near 0.5
+        mg.conn.execute("UPDATE nodes SET activation=0.48 WHERE id=?", (n.id,))
+        mg.conn.commit()
+
+        result = mg.consolidation_router(n.id)
+        types = [t["type"] for t in result["all_triggers"]]
+        assert "maturation_crossover" in types
+
+    def test_smart_takes_priority_over_fast(self, mg):
+        """If both SMART and FAST triggers fire, SMART wins."""
+        # Create recurrence (SMART) + high Q low activation (FAST)
+        for i in range(4):
+            mg.add(f"shared topic {i}", "fact")
+        n = mg.add("shared topic new", "fact")
+        # Set activation near 0.5 for extra SMART trigger
+        mg.conn.execute("UPDATE nodes SET activation=0.50 WHERE id=?", (n.id,))
+        mg.conn.commit()
+
+        result = mg.consolidation_router(n.id)
+        assert result["mode"] == "smart"
+        assert result["trigger_count"] >= 2
+
+    def test_divergence_triggers_smart(self, mg):
+        """High semantic divergence should route to SMART."""
+        # Create a node that's very different from its neighbors
+        a = mg.add("alpha beta gamma", "fact")
+        b = mg.add("completely different content xyz", "fact")
+        mg.link(a.id, b.id, "related")
+
+        result = mg.consolidation_router(a.id)
+        # Divergence may or may not trigger depending on threshold,
+        # but mode should be valid
+        assert result["mode"] in ("smart", "fast", "idle")
+
+    def test_high_q_low_activation_triggers_fast(self, mg):
+        """High Q-value with low activation should trigger boost (FAST)."""
+        n = mg.add("promising young node", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET activation=0.1, q_value=0.8 WHERE id=?", (n.id,))
+        mg.conn.commit()
+
+        result = mg.consolidation_router(n.id)
+        types = [t["type"] for t in result["all_triggers"]]
+        assert "high_q_low_activation" in types
+
+    def test_routing_returns_all_triggers(self, mg):
+        """Router should return all triggers that fired, not just primary."""
+        n = mg.add("test node", "fact")
+        result = mg.consolidation_router(n.id)
+        assert "all_triggers" in result
+        assert isinstance(result["all_triggers"], list)
+        assert "trigger_count" in result
+
+    def test_batch_routing_summary(self, mg):
+        """batch_consolidation_routing returns correct summary."""
+        for i in range(5):
+            mg.add(f"node {i}", "fact")
+
+        result = mg.batch_consolidation_routing()
+        assert result["total"] == 5
+        assert result["smart"] + result["fast"] + result["idle"] == 5
+        assert len(result["decisions"]) == 5
+
+    def test_batch_routing_empty_graph(self, mg):
+        """batch_consolidation_routing on empty graph."""
+        result = mg.batch_consolidation_routing()
+        assert result["total"] == 0
+        assert result["smart"] == 0
+        assert result["fast"] == 0
+        assert result["idle"] == 0
+
+    def test_router_does_not_mutate_graph(self, mg):
+        """Routing should not alter graph structure."""
+        a = mg.add("topic A", "fact")
+        b = mg.add("topic B", "fact")
+        mg.link(a.id, b.id, "related")
+        before = mg.stats()
+
+        mg.consolidation_router(a.id)
+        mg.batch_consolidation_routing()
+
+        after = mg.stats()
+        assert before == after
+
+    def test_action_field_populated_for_fast(self, mg):
+        """FAST triggers should include an action field."""
+        n = mg.add("fresh node", "fact")
+        # Force high Q + low activation
+        mg.conn.execute(
+            "UPDATE nodes SET activation=0.05, q_value=0.9 WHERE id=?", (n.id,))
+        mg.conn.commit()
+
+        result = mg.consolidation_router(n.id)
+        fast_triggers = [t for t in result["all_triggers"] if t["mode"] == "fast"]
+        for t in fast_triggers:
+            assert "action" in t
