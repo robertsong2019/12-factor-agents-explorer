@@ -107,6 +107,8 @@ class MemoryGraph:
             ("txn_time", "REAL DEFAULT NULL"),
             ("q_value", "REAL DEFAULT 0.0"),
             ("activation", "REAL DEFAULT 0.0"),
+            ("transform_count", "INTEGER DEFAULT 0"),
+            ("confidence", "REAL DEFAULT 0.5"),
         ]
         for col, typedef in migrations:
             if col not in existing_cols:
@@ -17282,6 +17284,150 @@ class MemoryGraph:
             (n.id, n.label, n.kind, round(n.weight, 4), round(a, 4))
             for n, a in results
         ]
+
+    # ─────────────────────────────────────────────
+    # Cycle 201: Confidence Score (Unified Trust Metric)
+    # Source: Portable Agent Memory (arXiv:2605.11032)
+    # ─────────────────────────────────────────────
+
+    # Source trust levels (arXiv:2605.11032 provenance model)
+    _SOURCE_TRUST = {
+        "verified_user": 1.0,
+        "user_corrected": 0.95,
+        "llm_extracted": 0.7,
+        "inferred": 0.5,
+        "external": 0.3,
+        "unknown": 0.2,
+    }
+
+    def confidence_score(self, node_id: str, conflicts: int = 0,
+                         w_source: float = 0.30,
+                         w_consistency: float = 0.25,
+                         w_freshness: float = 0.15,
+                         w_corroboration: float = 0.20,
+                         w_transformation: float = 0.10) -> float:
+        """Compute and store a unified confidence score [0, 1].
+
+        Combines five dimensions from the Portable Agent Memory
+        provenance model (arXiv:2605.11032)::
+
+            source        – who said it (provenance trust)
+            consistency   – conflicts with existing knowledge?
+            freshness     – exponential decay (30-day half-life)
+            corroboration – how many times accessed/confirmed
+            transformation – information loss from merges/summaries
+
+        Returns the computed confidence [0.0, 1.0].
+        """
+        row = self.conn.execute(
+            "SELECT source, trust_level, created, accessed, "
+            "weight, transform_count FROM nodes WHERE id=?",
+            (node_id,),
+        ).fetchone()
+        if not row:
+            return 0.0
+
+        # 1. Source trust
+        src = row["source"] or "unknown"
+        source_score = self._SOURCE_TRUST.get(src, row["trust_level"] or 0.2)
+
+        # 2. Consistency (conflict penalty)
+        consistency_score = max(0.0, 1.0 - 0.3 * conflicts)
+
+        # 3. Freshness (30-day half-life exponential decay)
+        age_days = (time.time() - row["created"]) / 86400.0
+        freshness_score = math.exp(-0.693 * age_days / 30.0)
+
+        # 4. Corroboration (access frequency as proxy)
+        # Use weight as access proxy if accessed timestamps are close to created
+        access_proxy = row["weight"] * 10  # scale weight to log domain
+        corroboration_score = min(1.0, math.log(access_proxy + 1) / math.log(10))
+
+        # 5. Transformation cost
+        tc = row["transform_count"] or 0
+        transformation_score = 1.0 / (1.0 + 0.2 * tc)
+
+        confidence = (
+            w_source * source_score
+            + w_consistency * consistency_score
+            + w_freshness * freshness_score
+            + w_corroboration * corroboration_score
+            + w_transformation * transformation_score
+        )
+
+        confidence = round(confidence, 4)
+        self.conn.execute(
+            "UPDATE nodes SET confidence=? WHERE id=?",
+            (confidence, node_id),
+        )
+        self.conn.commit()
+        return confidence
+
+    def get_confidence(self, node_id: str) -> float:
+        """Return the stored confidence score of a node [0, 1]."""
+        row = self.conn.execute(
+            "SELECT confidence FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return 0.0
+        return row["confidence"] if row["confidence"] is not None else 0.5
+
+    def batch_confidence(self, conflict_map: dict = None) -> dict:
+        """Score all nodes. *conflict_map*: ``{node_id: conflict_count}``.
+
+        Returns summary stats.
+        """
+        conflict_map = conflict_map or {}
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        scored = 0
+        low_confidence = []
+        total_conf = 0.0
+        for r in rows:
+            c = self.confidence_score(r["id"], conflict_map.get(r["id"], 0))
+            scored += 1
+            total_conf += c
+            if c < 0.3:
+                low_confidence.append(r["id"])
+        return {
+            "scored": scored,
+            "avg_confidence": round(total_conf / max(scored, 1), 4),
+            "low_confidence_ids": low_confidence,
+        }
+
+    def set_source(self, node_id: str, source: str) -> bool:
+        """Set the provenance source for a node.
+
+        Recognized sources (from arXiv:2605.11032):
+        ``verified_user``, ``user_corrected``, ``llm_extracted``,
+        ``inferred``, ``external``, ``unknown``.
+        """
+        row = self.conn.execute(
+            "SELECT id FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return False
+        self.conn.execute(
+            "UPDATE nodes SET source=? WHERE id=?", (source, node_id)
+        )
+        self.conn.commit()
+        return True
+
+    def increment_transform(self, node_id: str) -> int:
+        """Increment transform_count (call after merge/summarize).
+
+        Returns the new transform_count value.
+        """
+        row = self.conn.execute(
+            "SELECT transform_count FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return 0
+        tc = (row["transform_count"] or 0) + 1
+        self.conn.execute(
+            "UPDATE nodes SET transform_count=? WHERE id=?", (tc, node_id)
+        )
+        self.conn.commit()
+        return tc
 
 
 def demo():

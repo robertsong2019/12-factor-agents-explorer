@@ -20227,3 +20227,140 @@ class TestRecallWithActivation:
         mg.add("cats and dogs", "fact")
         results = mg.recall_with_activation("quantum physics", limit=5)
         assert len(results) <= 1
+
+
+# ═══════════════════════════════════════════════════════════
+# Cycle 201: Confidence Score Tests
+# Source: Portable Agent Memory (arXiv:2605.11032)
+# ═══════════════════════════════════════════════════════════
+
+class TestConfidenceScore:
+    """Tests for the unified confidence scoring system."""
+
+    def test_basic_confidence(self, mg):
+        """A fresh node with default source should have mid-range confidence."""
+        n = mg.add("test fact", "fact")
+        c = mg.confidence_score(n.id)
+        assert 0.0 < c < 1.0
+
+    def test_confidence_stored_in_db(self, mg):
+        """confidence_score should persist to the database."""
+        n = mg.add("persisted", "fact")
+        mg.confidence_score(n.id)
+        stored = mg.get_confidence(n.id)
+        assert stored > 0.0
+
+    def test_confidence_nonexistent_node(self, mg):
+        """Non-existent node returns 0.0."""
+        assert mg.confidence_score("ghost") == 0.0
+
+    def test_get_confidence_nonexistent(self, mg):
+        """get_confidence on non-existent returns 0.0."""
+        assert mg.get_confidence("phantom") == 0.0
+
+    def test_verified_user_highest_confidence(self, mg):
+        """verified_user source should produce higher confidence than unknown."""
+        verified = mg.add("user said this", "fact")
+        mg.set_source(verified.id, "verified_user")
+
+        unknown = mg.add("vague rumor", "fact")
+        mg.set_source(unknown.id, "unknown")
+
+        c_verified = mg.confidence_score(verified.id)
+        c_unknown = mg.confidence_score(unknown.id)
+        assert c_verified > c_unknown
+
+    def test_conflict_lowers_confidence(self, mg):
+        """More conflicts should lower the confidence score."""
+        n = mg.add("contested fact", "fact")
+        c_no_conflict = mg.confidence_score(n.id, conflicts=0)
+        c_with_conflict = mg.confidence_score(n.id, conflicts=3)
+        assert c_with_conflict < c_no_conflict
+
+    def test_freshness_decay(self, mg):
+        """Older nodes should have lower freshness contribution."""
+        fresh = mg.add("fresh fact", "fact")
+        old = mg.add("old fact", "fact")
+        mg.conn.execute(
+            "UPDATE nodes SET created=? WHERE id=?",
+            (time.time() - 60 * 86400, old.id),  # 60 days old
+        )
+        mg.conn.commit()
+
+        c_fresh = mg.confidence_score(fresh.id)
+        c_old = mg.confidence_score(old.id)
+        assert c_fresh > c_old
+
+    def test_transform_count_lowers_confidence(self, mg):
+        """More transforms should lower confidence."""
+        n1 = mg.add("original", "fact")
+        n2 = mg.add("transformed", "fact")
+        mg.increment_transform(n2.id)
+        mg.increment_transform(n2.id)
+        mg.increment_transform(n2.id)
+
+        c1 = mg.confidence_score(n1.id)
+        c2 = mg.confidence_score(n2.id)
+        assert c1 > c2
+
+    def test_set_source(self, mg):
+        """set_source should update the source column."""
+        n = mg.add("test", "fact")
+        assert mg.set_source(n.id, "verified_user") is True
+        c = mg.confidence_score(n.id)
+        # With verified_user, confidence should be decent
+        assert c > 0.4
+
+    def test_set_source_nonexistent(self, mg):
+        """set_source on non-existent node returns False."""
+        assert mg.set_source("ghost", "verified_user") is False
+
+    def test_increment_transform(self, mg):
+        """increment_transform should increase count and return new value."""
+        n = mg.add("test", "fact")
+        assert mg.increment_transform(n.id) == 1
+        assert mg.increment_transform(n.id) == 2
+        assert mg.increment_transform(n.id) == 3
+
+    def test_increment_transform_nonexistent(self, mg):
+        """increment_transform on non-existent returns 0."""
+        assert mg.increment_transform("ghost") == 0
+
+    def test_batch_confidence(self, mg):
+        """batch_confidence scores all nodes and returns summary."""
+        n1 = mg.add("fact 1", "fact")
+        n2 = mg.add("fact 2", "fact")
+        mg.set_source(n1.id, "verified_user")
+        mg.set_source(n2.id, "unknown")
+
+        result = mg.batch_confidence()
+        assert result["scored"] == 2
+        assert "avg_confidence" in result
+        assert isinstance(result["low_confidence_ids"], list)
+
+    def test_batch_confidence_empty(self, mg):
+        """batch_confidence on empty graph."""
+        result = mg.batch_confidence()
+        assert result["scored"] == 0
+
+    def test_confidence_range_zero_to_one(self, mg):
+        """Confidence should always be in [0, 1]."""
+        n = mg.add("boundary test", "fact")
+        mg.set_source(n.id, "verified_user")
+        mg.conn.execute(
+            "UPDATE nodes SET created=?, weight=10.0 WHERE id=?",
+            (time.time() - 365 * 86400, n.id),  # 1 year old
+        )
+        mg.conn.commit()
+        c = mg.confidence_score(n.id, conflicts=10)
+        assert 0.0 <= c <= 1.0
+
+    def test_confidence_does_not_mutate_structure(self, mg):
+        """Scoring should not alter graph structure."""
+        a = mg.add("A", "fact")
+        b = mg.add("B", "fact")
+        mg.link(a.id, b.id, "related")
+        before = mg.stats()
+        mg.batch_confidence()
+        after = mg.stats()
+        assert before == after
