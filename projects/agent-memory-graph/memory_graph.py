@@ -18528,6 +18528,173 @@ class MemoryGraph:
         return combined
 
 
+    # ------------------------------------------------------------------
+    # Unified retrieval pipeline orchestrator
+    # ------------------------------------------------------------------
+
+    def retrieve(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        stages: list[str] | None = None,
+        rerank: bool = True,
+        rerank_centrality: str = "degree",
+        rerank_alpha: float = 0.5,
+        damping: float = 0.85,
+        rrf_k: int = 60,
+        explain: bool = False,
+    ) -> list[dict] | dict:
+        """End-to-end retrieval pipeline — one call, four stages.
+
+        Chains the full GraphRAG retrieval pipeline automatically:
+
+        1. **Keyword** — ``recall()`` BM25-style label matching
+        2. **Topology** — ``ppr_retrieve()`` Personalized PageRank walk
+        3. **Hybrid** — ``hybrid_retrieve()`` RRF fusion of all signals
+        4. **Re-rank** — ``graph_rerank()`` centrality boosting
+
+        This is the convenience entry point for production use —
+        callers don't need to know the internal stage order.
+
+        Args:
+            query:              Search query string.
+            limit:              Max results in final output.
+            stages:             Custom stage subset, e.g.
+                                ``["keyword", "rerank"]``.
+                                Default: all four stages.
+            rerank:             If ``False``, skip the re-rank stage
+                                even if included in *stages*.
+            rerank_centrality:  Centrality measure for re-rank.
+            rerank_alpha:       Blend factor (0=pure retrieval,
+                                1=pure centrality).
+            damping:            PPR damping factor.
+            rrf_k:              RRF fusion constant.
+            explain:            If ``True``, return ``{results, explain}``
+                                with per-stage counts and timing.
+
+        Returns:
+            List of result dicts sorted by final score.
+            Each dict has at minimum ``node_id``, ``score``, ``node``.
+            If *explain* is ``True``, returns a dict with
+            ``results`` and ``explain`` (stage metadata).
+        """
+        import time
+
+        all_stages = ["keyword", "topology", "hybrid", "rerank"]
+        active = stages if stages is not None else list(all_stages)
+        if not rerank and "rerank" in active:
+            active = [s for s in active if s != "rerank"]
+
+        trace: dict = {"query": query, "stages": [], "limits": {"limit": limit}}
+        t0 = time.perf_counter()
+
+        # ---- Stage 1: Keyword -----------------------------------------
+        kw_nodes = []
+        if "keyword" in active:
+            t1 = time.perf_counter()
+            kw_nodes = self.recall(query, limit=max(limit, 20))
+            trace["stages"].append({
+                "name": "keyword",
+                "candidates": len(kw_nodes),
+                "elapsed_ms": round((time.perf_counter() - t1) * 1000, 2),
+            })
+
+        # Early exit if no keyword hits and no further enrichment
+        if not kw_nodes and active == ["keyword"]:
+            trace["total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+            return {"results": [], "explain": trace} if explain else []
+
+        # ---- Stage 2: Topology (PPR) ----------------------------------
+        if "topology" in active and kw_nodes:
+            t2 = time.perf_counter()
+            try:
+                seed_ids = [n.id for n in kw_nodes]
+                ppr = self.personalized_pagerank(seed_ids, damping=damping)
+                seed_set = set(seed_ids)
+                ppr_results = [
+                    {"node_id": nid, "ppr_score": score}
+                    for nid, score in ppr.items()
+                    if nid not in seed_set and score > 0
+                ]
+                ppr_results.sort(key=lambda x: x["ppr_score"], reverse=True)
+                ppr_results = ppr_results[:max(limit, 20)]
+                for item in ppr_results:
+                    item["node"] = self.get_node(item["node_id"])
+            except Exception:
+                ppr_results = []
+            trace["stages"].append({
+                "name": "topology",
+                "candidates": len(ppr_results),
+                "elapsed_ms": round((time.perf_counter() - t2) * 1000, 2),
+            })
+        else:
+            ppr_results = []
+
+        # ---- Stage 3: Hybrid (RRF) ------------------------------------
+        if "hybrid" in active:
+            t3 = time.perf_counter()
+            hybrid = self.hybrid_retrieve(
+                query, limit=max(limit, 20), damping=damping, k=rrf_k
+            )
+            trace["stages"].append({
+                "name": "hybrid",
+                "candidates": len(hybrid),
+                "elapsed_ms": round((time.perf_counter() - t3) * 1000, 2),
+            })
+            candidates = hybrid
+        elif kw_nodes:
+            # Use keyword results if hybrid skipped
+            candidates = [
+                {"node_id": n.id, "rrf_score": n.weight, "node": n}
+                for n in kw_nodes
+            ]
+        elif ppr_results:
+            candidates = ppr_results
+        else:
+            candidates = []
+
+        # ---- Stage 4: Re-rank (centrality) ----------------------------
+        if "rerank" in active and candidates:
+            t4 = time.perf_counter()
+            reranked = self.graph_rerank(
+                candidates, alpha=rerank_alpha, centrality=rerank_centrality
+            )
+            trace["stages"].append({
+                "name": "rerank",
+                "candidates": len(reranked),
+                "elapsed_ms": round((time.perf_counter() - t4) * 1000, 2),
+            })
+            final = [
+                {
+                    "node_id": r["node_id"],
+                    "score": r["combined_score"],
+                    "retrieval_score": r["retrieval_score"],
+                    "centrality_score": r["centrality_score"],
+                    "node": r["node"],
+                }
+                for r in reranked
+            ]
+        else:
+            final = [
+                {
+                    "node_id": c.get("node_id", ""),
+                    "score": c.get("rrf_score", c.get("ppr_score", 0.0)),
+                    "node": c.get("node"),
+                }
+                for c in candidates
+            ]
+
+        # Trim to limit
+        final = final[:limit]
+        trace["total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+        trace["final_count"] = len(final)
+
+        if explain:
+            return {"results": final, "explain": trace}
+        return final
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

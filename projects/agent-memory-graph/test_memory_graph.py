@@ -22111,3 +22111,181 @@ class TestGraphRerank:
         for r in reranked:
             assert r["node"] is not None
             assert hasattr(r["node"], "label")
+
+
+# =====================================================================
+# Cycle 212: retrieve() — unified pipeline orchestrator
+# =====================================================================
+
+class TestRetrievePipeline:
+    """Tests for the unified retrieve() orchestrator."""
+
+    def test_retrieve_basic(self, mg):
+        """retrieve() should return results for a matching query."""
+        a = mg.add("Python programming", "skill")
+        b = mg.add("FastAPI web", "tool")
+        mg.link(a.id, b.id, "used_for")
+        results = mg.retrieve("Python")
+        assert len(results) > 0
+        assert all("node_id" in r for r in results)
+        assert all("score" in r for r in results)
+        assert all("node" in r for r in results)
+
+    def test_retrieve_empty_graph(self, mg):
+        """retrieve() on empty graph should return []."""
+        results = mg.retrieve("nothing")
+        assert results == []
+
+    def test_retrieve_no_match(self, mg):
+        """retrieve() with non-matching query should return []."""
+        mg.add("Python", "skill")
+        results = mg.retrieve("nonexistent_topic_xyz")
+        assert results == []
+
+    def test_retrieve_limit(self, mg):
+        """retrieve() should respect limit parameter."""
+        first = None
+        for i in range(15):
+            n = mg.add(f"Python topic {i}", "test")
+            if first is None:
+                first = n
+            else:
+                mg.link(n.id, first.id, "rel")
+        results = mg.retrieve("Python", limit=5)
+        assert len(results) <= 5
+
+    def test_retrieve_explain_mode(self, mg):
+        """explain=True should return {results, explain} with stage metadata."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "used_for")
+        out = mg.retrieve("Python", explain=True)
+        assert isinstance(out, dict)
+        assert "results" in out
+        assert "explain" in out
+        ex = out["explain"]
+        assert ex["query"] == "Python"
+        assert "stages" in ex
+        assert isinstance(ex["stages"], list)
+        assert len(ex["stages"]) > 0
+        for stage in ex["stages"]:
+            assert "name" in stage
+            assert "candidates" in stage
+            assert "elapsed_ms" in stage
+        assert "total_ms" in ex
+
+    def test_retrieve_explain_false_returns_list(self, mg):
+        """explain=False (default) should return a plain list."""
+        mg.add("Python", "skill")
+        results = mg.retrieve("Python")
+        assert isinstance(results, list)
+
+    def test_retrieve_custom_stages_keyword_only(self, mg):
+        """Custom stages: keyword-only should skip topology/hybrid/rerank."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+        out = mg.retrieve("Python", stages=["keyword"], explain=True)
+        stage_names = [s["name"] for s in out["explain"]["stages"]]
+        assert "keyword" in stage_names
+        assert "topology" not in stage_names
+        assert "hybrid" not in stage_names
+        assert "rerank" not in stage_names
+
+    def test_retrieve_skip_rerank_flag(self, mg):
+        """rerank=False should skip the rerank stage."""
+        a = mg.add("Python", "skill", tags=["programming"])
+        b = mg.add("FastAPI", "tool", tags=["python"])
+        mg.link(a.id, b.id, "used_for")
+        out = mg.retrieve("Python", rerank=False, explain=True)
+        stage_names = [s["name"] for s in out["explain"]["stages"]]
+        assert "rerank" not in stage_names
+
+    def test_retrieve_rerank_disabled_with_flag(self, mg):
+        """rerank=False overrides stages list including rerank."""
+        a = mg.add("Python", "skill")
+        mg.link(a.id, mg.add("related", "concept").id, "rel")
+        out = mg.retrieve(
+            "Python", stages=["keyword", "rerank"],
+            rerank=False, explain=True
+        )
+        stage_names = [s["name"] for s in out["explain"]["stages"]]
+        assert "rerank" not in stage_names
+
+    def test_retrieve_results_sorted_by_score(self, mg):
+        """Results should be sorted by score descending."""
+        nodes = [mg.add(f"Python topic {i}", "test") for i in range(6)]
+        for i in range(5):
+            mg.link(nodes[0].id, nodes[i + 1].id, "rel")
+        results = mg.retrieve("Python")
+        scores = [r["score"] for r in results]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_retrieve_preserves_graph(self, mg):
+        """retrieve() should not modify the graph."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+        before_n = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        before_e = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+        mg.retrieve("Python")
+        after_n = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        after_e = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+        assert before_n == after_n
+        assert before_e == after_e
+
+    def test_retrieve_with_topology_expansion(self, mg):
+        """Full pipeline should find nodes beyond keyword matches via PPR."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        c = mg.add("uvicorn", "tool")
+        mg.link(a.id, b.id, "used_for")
+        mg.link(b.id, c.id, "depends_on")
+        out = mg.retrieve("Python", explain=True)
+        node_ids = [r["node_id"] for r in out["results"]]
+        assert a.id in node_ids
+
+    def test_retrieve_rerank_alpha_zero(self, mg):
+        """alpha=0 means pure retrieval (centrality ignored)."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+        out = mg.retrieve("Python", rerank_alpha=0.0, explain=True)
+        assert len(out["results"]) > 0
+
+    def test_retrieve_rerank_alpha_one(self, mg):
+        """alpha=1 means pure centrality (retrieval score ignored)."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+        out = mg.retrieve("Python", rerank_alpha=1.0, explain=True)
+        assert len(out["results"]) > 0
+
+    def test_retrieve_custom_centrality(self, mg):
+        """Different centrality measures should be accepted."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+        for method in ("degree", "pagerank", "eigenvector"):
+            results = mg.retrieve("Python", rerank_centrality=method)
+            assert isinstance(results, list)
+
+    def test_retrieve_keyword_only_on_isolated_node(self, mg):
+        """Keyword-only stage should work even with no edges (no PPR)."""
+        mg.add("Python standalone", "skill")
+        results = mg.retrieve("Python", stages=["keyword"])
+        assert len(results) > 0
+
+    def test_retrieve_ppr_fallback_on_sparse_graph(self, mg):
+        """If PPR fails on sparse graph, pipeline should continue."""
+        a = mg.add("Python", "skill")
+        results = mg.retrieve("Python")
+        assert isinstance(results, list)
+
+    def test_retrieve_trace_has_final_count(self, mg):
+        """explain output should include final_count."""
+        a = mg.add("Python", "skill")
+        mg.link(a.id, mg.add("related", "concept").id, "rel")
+        out = mg.retrieve("Python", explain=True)
+        assert "final_count" in out["explain"]
+        assert out["explain"]["final_count"] == len(out["results"])
