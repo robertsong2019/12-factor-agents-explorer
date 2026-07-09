@@ -1874,6 +1874,50 @@ Estrada 指数。图级别的整体连通性度量，定义为邻接矩阵指数
 
 ---
 
+### GraphRAG 检索管线 (Cycles 207-213)
+
+#### `personalized_pagerank(seed_ids, *, damping=0.85, max_iter=100, tol=1e-6, seed_weights=None) -> dict[str, float]`
+
+Personalized PageRank (PPR) — topic-sensitive PageRank 从 seed 节点传播。与全局 PageRank 不同，PPR 只向 seed 节点 teleport，让图拓扑从 seed 传播相关性。HippoRAG 核心检索算法。seed_weights 可选按重要性加权 seed。
+
+#### `ppr_retrieve(query, *, limit=10, damping=0.85) -> list[dict]`
+
+两阶段检索管线（HippoRAG pattern）：1) recall() 关键词匹配找到 seed 节点；2) 从 seed 运行 PPR 发现多跳邻居。让图拓扑参与检索——单次传播即可发现概念相关但无关键词重叠的节点。
+
+#### `compute_graph_activity(window_hours=1.0) -> float`
+
+计算最近时间窗口内的归一化图活跃度 [0, 1]。实现 FOREVER 模型：活跃图（每小时多新节点/边）保留记忆更久，沉寂图加速遗忘。Sigmoid 归一化。
+
+#### `auto_forget(window_hours=1.0) -> dict`
+
+便捷封装 batch_forgetting()，自动从近期图事件计算 graph_activity。活跃图忘记更少，沉寂图忘记更多。返回 batch_forgetting 结果 + computed graph_activity。
+
+#### `hybrid_retrieve(query, *, limit=10, damping=0.85, k=60) -> list[dict]`
+
+混合检索：keyword + PPR + tag 三路 RRF (Reciprocal Rank Fusion) 融合。三路信号：1) recall() BM25 关键词匹配；2) ppr_retrieve() 图游走；3) search_by_tag() 标签精确匹配。RRF score = Σ 1/(k + rank_i)，k=60 (标准值)。
+
+#### `graph_rerank(results, *, alpha=0.5, centrality='degree') -> list[dict]`
+
+图中心性重排序。将原始检索分数与图中心性分数混合：combined = α·centrality_norm + (1−α)·retrieval_norm。boost 结构重要的节点。centrality 可选 degree/pagerank/betweenness/eigenvector。GraphRAG/HippoRAG2 管线的标准最终步骤。
+
+#### `retrieve(query, *, limit=10, stages=None, rerank=True, rerank_centrality='degree', rerank_alpha=0.5, damping=0.85, rrf_k=60, explain=False) -> list[dict] | dict`
+
+端到端检索管线——一次调用，四个阶段：1) Keyword (recall BM25)；2) Topology (ppr_retrieve PPR 游走)；3) Hybrid (hybrid_retrieve RRF 融合)；4) Re-rank (graph_rerank 中心性加权)。explain=True 返回每阶段中间结果和分数。
+
+#### `natural_connectivity(max_order=20, include_quarantined=False) -> float`
+
+自然连通性——尺寸归一化鲁棒性度量（平均子图中心性的对数）。λ̄ = ln(EE/n)，其中 EE 是 Estrada 指数，n 是节点数。消除图尺寸偏差，可公平比较不同大小的图。值越高表示越鲁棒。
+
+#### `effective_resistance(node_a, node_b, *, include_quarantined=False) -> float`
+
+有效电阻（电路 analogy）。将图视为电路，每条边是 1Ω 电阻。R(a,b) = L⁺_aa + L⁺_bb − 2·L⁺_ab（Laplacian 伪逆）。低电阻→多短路径→连通好；高电阻→少/长路径→连通差。三角形中 R=2/3（并联路径降低电阻）。
+
+#### `information_centrality(*, include_quarantined=False) -> dict[str, float]`
+
+信息中心性 (Stephenson & Zelen 1989)。基于有效电阻：信息流 I(v,w) = 1/R(v,w)，中心性 C_I(v) = n / Σ_w R(v,w)。考虑所有路径（非仅最短路径）的信息流效率。惩罚长链末端的节点。
+
+---
+
 ### 自适应检索 (QDAP-v2 + SkewRoute)
 
 #### `_classify_query(query, known_labels=None) -> dict` *(staticmethod)*
@@ -1931,7 +1975,7 @@ CPM (Clique Percolation Method) 重叠社区检测 (Palla et al. 2005)。两个 
 python3 -m pytest test_memory_graph.py -q
 ```
 
-2122 个测试覆盖所有 API（206 个 cycle，190 天零回滚）。
+2288 个测试覆盖所有 API（213 个 cycle，197 天零回滚）。
 
 ## 设计思路
 
@@ -1969,7 +2013,8 @@ python3 -m pytest test_memory_graph.py -q
 32. **图序列化** — to_dict/from_dict 提供 JSON 安全的图序列化方案，支持快照恢复、API 响应和跨 Agent 记忆传输
 33. **自适应检索 (QDAP-v2 + SkewRoute)** — 6 类查询分类器 + 连续权重插值 + 分数偏度分析 + 熵修正，per-query 动态调整 BM25/Vector/Graph 三路融合权重。trivial 查询跳过检索，relational 查询图主导，exact 查询 BM25 主导——让问题自己说话
 34. **图拓扑与团分析** — find_cycle (DFS 环路检测) + graph_periphery (最远节点) + maximal_cliques (Bron-Kerbosch 极大团) + clique_overlap_matrix (团间共享节点) + k_clique_communities (CPM 重叠社区发现，节点可属多社区)
-35. **高级中心性** — katz_centrality (衰减路径求和中心性) + subgraph_centrality (闭合游走参与度) + laplacian_centrality (网络中断潜力，Laplacian 能量下降) + estrada_index (全图连通性指数) + communicability (节点对信息流便捷度) 提供 11 种中心性/连通性度量，覆盖从节点级到图级别的多维度重要性分析
+35. **高级中心性** — katz_centrality (衰减路径求和中心性) + subgraph_centrality (闭合游走参与度) + laplacian_centrality (网络中断潜力，Laplacian 能量下降) + estrada_index (全图连通性指数) + communicability (节点对信息流便捷度) + natural_connectivity (尺寸归一化鲁棒性) + effective_resistance (电路 analogy 节点对连通性) + information_centrality (Stephenson-Zelen 信息流效率) 提供 14 种中心性/连通性度量，覆盖从节点级到图级别的多维度重要性分析
+36. **GraphRAG 检索管线** — personalized_pagerank (HippoRAG 核心 PPR 从 seed 节点传播相关性) + ppr_retrieve (关键词→seed→PPR 两阶段检索) + compute_graph_activity/auto_forget (FOREVER 模型：活跃图忘记更少，沉寂图加速遗忘) + hybrid_retrieve (RRF 融合 keyword+PPR+tag 三路信号) + graph_rerank (中心性加权重排序) + retrieve() 统一四阶段管线编排器 (keyword→PPR→hybrid→rerank)
 
 ## 许可
 
