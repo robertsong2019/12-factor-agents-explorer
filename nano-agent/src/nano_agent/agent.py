@@ -148,7 +148,7 @@ class Agent:
         """执行工具调用"""
         tool_name = tool_call["name"]
         try:
-            arguments = json.loads(tool_call["arguments"])
+            arguments = json.loads(tool_call.get("arguments", "{}"))
         except (json.JSONDecodeError, TypeError) as e:
             return f"错误: 无效的参数格式 - {e}"
 
