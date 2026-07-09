@@ -220,3 +220,5 @@ timestamp	commit	metric	value	status	description
 2026-07-09T22:40:00+08:00	d06b4d7	test_pass_rate	100%	keep	All 2189 passing, 0 regressions, 15.53s
 2026-07-09T23:00:00+08:00	6b9df89	test_count	2189→2207	keep	Cycle 212: retrieve() — unified 4-stage pipeline orchestrator. One-call endpoint: keyword→PPR→RRF hybrid→centrality rerank. Custom stage subsets, explain mode with per-stage timing. +18 tests. Zero regressions. 207th consecutive day.
 2026-07-09T23:00:00+08:00	6b9df89	test_pass_rate	100%	keep	All 2207 passing, 0 regressions, 15.79s
+2026-07-10T00:00:00+08:00	ddfa076	test_count	2207→2246	keep	Cycle 213: natural_connectivity (λ̄=ln(EE/n)) + effective_resistance (Laplacian pseudoinverse via Gaussian elimination) + information_centrality (Stephenson & Zelen 1989, all-path info flow). New _laplacian_pseudoinverse() infrastructure enables future current-flow betweenness. K_n R=2/n, C4 R=3/4 adj/1 opposite, triangle R=2/3 verified. 12th-14th graph-theory metrics. +39 tests. Zero regressions. 207th consecutive day.
+2026-07-10T00:00:00+08:00	ddfa076	test_pass_rate	100%	keep	All 2246 passing, 0 regressions, 16.17s
