@@ -18315,6 +18315,79 @@ class MemoryGraph:
             item["node"] = self.get_node(item["node_id"])
         return ranked[:limit]
 
+    def hybrid_retrieve(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        damping: float = 0.85,
+        k: int = 60,
+    ) -> list[dict]:
+        """Hybrid retrieval combining keyword + PPR + tag search via RRF.
+
+        Uses Reciprocal Rank Fusion (RRF) to merge three retrieval signals:
+
+        1. **Keyword** (``recall``) — BM25-style keyword matching on labels
+        2. **Topology** (``ppr_retrieve``) — graph walk from keyword seeds
+        3. **Tag** (``search_by_tag``) — exact tag match
+
+        RRF score for each node::
+
+            rrf = Σ_i  1 / (k + rank_i)
+
+        where *k* is the RRF constant (default 60, standard value from
+        the original paper).  This gives higher-ranked items more weight
+        without depending on raw score scales.
+
+        Args:
+            query:   Search query string.
+            limit:   Max results to return.
+            damping: PPR damping factor.
+            k:       RRF constant (larger = smoother fusion).
+
+        Returns:
+            List of ``{node_id, rrf_score, sources}`` sorted by RRF score.
+        """
+        rrf_scores: dict[str, float] = defaultdict(float)
+        sources_map: dict[str, set[str]] = defaultdict(set)
+
+        # Signal 1: Keyword recall
+        kw_results = self.recall(query, limit=max(limit, 20))
+        for rank, node in enumerate(kw_results, 1):
+            rrf_scores[node.id] += 1.0 / (k + rank)
+            sources_map[node.id].add("keyword")
+
+        # Signal 2: PPR topology retrieval
+        try:
+            ppr_results = self.ppr_retrieve(query, limit=max(limit, 20), damping=damping)
+            for rank, item in enumerate(ppr_results, 1):
+                nid = item["node_id"]
+                rrf_scores[nid] += 1.0 / (k + rank)
+                sources_map[nid].add("topology")
+        except Exception:
+            pass  # PPR needs edges; skip if graph is sparse
+
+        # Signal 3: Tag search
+        try:
+            tag_results = self.search_by_tag(query)
+            for rank, node in enumerate(tag_results, 1):
+                rrf_scores[node.id] += 1.0 / (k + rank)
+                sources_map[node.id].add("tag")
+        except Exception:
+            pass
+
+        # Sort by RRF score
+        ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+        result = []
+        for nid, score in ranked[:limit]:
+            result.append({
+                "node_id": nid,
+                "rrf_score": round(score, 6),
+                "sources": sorted(sources_map[nid]),
+                "node": self.get_node(nid),
+            })
+        return result
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

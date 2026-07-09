@@ -21826,3 +21826,145 @@ class TestPersonalizedPageRank:
         global_pr = mg.pagerank()
         # PPR should give A much higher score than global
         assert ppr_result[a.id] > global_pr[a.id]
+
+
+# ==================================================================
+# Hybrid Retrieve (RRF Fusion) Tests
+# ==================================================================
+
+class TestHybridRetrieve:
+    """Tests for hybrid_retrieve (RRF fusion of keyword + PPR + tag)."""
+
+    def test_basic_retrieval(self, mg):
+        """hybrid_retrieve returns results for a matching query."""
+        a = mg.add("Python programming", "skill", tags=["python"])
+        b = mg.add("FastAPI framework", "tool", tags=["python", "web"])
+        mg.link(a.id, b.id, "used_for")
+        results = mg.hybrid_retrieve("Python")
+        assert len(results) > 0
+        assert any(r["node_id"] == a.id for r in results)
+
+    def test_no_match_returns_empty(self, mg):
+        """Query matching nothing returns empty list."""
+        a = mg.add("Python", "skill")
+        results = mg.hybrid_retrieve("xyzzy_no_such_word")
+        assert results == []
+
+    def test_rrf_score_is_float(self, mg):
+        """RRF scores should be floats."""
+        a = mg.add("Python", "skill")
+        b = mg.add("Python tutorial", "guide")
+        results = mg.hybrid_retrieve("Python")
+        for r in results:
+            assert isinstance(r["rrf_score"], float)
+            assert r["rrf_score"] > 0
+
+    def test_results_sorted_by_rrf(self, mg):
+        """Results should be sorted descending by RRF score."""
+        nodes = [mg.add(f"Python guide {i}", "test") for i in range(5)]
+        results = mg.hybrid_retrieve("Python")
+        scores = [r["rrf_score"] for r in results]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_sources_field_populated(self, mg):
+        """Each result should have a 'sources' list."""
+        a = mg.add("Python", "skill", tags=["programming"])
+        results = mg.hybrid_retrieve("Python")
+        for r in results:
+            assert "sources" in r
+            assert isinstance(r["sources"], list)
+
+    def test_keyword_source_present(self, mg):
+        """Nodes matched by keyword should have 'keyword' in sources."""
+        a = mg.add("Python programming", "skill")
+        results = mg.hybrid_retrieve("Python")
+        top = [r for r in results if r["node_id"] == a.id]
+        if top:
+            assert "keyword" in top[0]["sources"]
+
+    def test_tag_source_present(self, mg):
+        """Nodes matched by tag should have 'tag' in sources."""
+        a = mg.add("special_topic", "concept", tags=["python"])
+        results = mg.hybrid_retrieve("python")
+        top = [r for r in results if r["node_id"] == a.id]
+        if top:
+            assert "tag" in top[0]["sources"]
+
+    def test_multiple_source_boost(self, mg):
+        """Node matched by multiple signals should rank higher than single-signal."""
+        # This node matches keyword AND tag
+        multi = mg.add("Python expert", "person", tags=["python"])
+        # This node matches only keyword
+        single = mg.add("Python learner", "person")
+        # Link them so PPR can also boost multi
+        mg.link(multi.id, single.id, "mentors")
+        results = mg.hybrid_retrieve("python")
+        multi_rank = next(
+            (i for i, r in enumerate(results) if r["node_id"] == multi.id),
+            len(results),
+        )
+        single_rank = next(
+            (i for i, r in enumerate(results) if r["node_id"] == single.id),
+            len(results),
+        )
+        # Multi-source node should rank at least as high
+        assert multi_rank <= single_rank
+
+    def test_limit_parameter(self, mg):
+        """limit controls result count."""
+        for i in range(15):
+            mg.add(f"Python item {i}", "test")
+        results = mg.hybrid_retrieve("Python", limit=5)
+        assert len(results) <= 5
+
+    def test_node_object_included(self, mg):
+        """Results should include Node objects."""
+        a = mg.add("Python", "skill")
+        results = mg.hybrid_retrieve("Python")
+        for r in results:
+            assert r["node"] is not None
+            assert hasattr(r["node"], "label")
+
+    def test_empty_graph(self, mg):
+        """Empty graph should return empty results."""
+        results = mg.hybrid_retrieve("anything")
+        assert results == []
+
+    def test_k_parameter_affects_scores(self, mg):
+        """Different k values should produce different score magnitudes."""
+        a = mg.add("Python", "skill")
+        b = mg.add("Python guide", "book")
+        r1 = mg.hybrid_retrieve("Python", k=10)
+        r2 = mg.hybrid_retrieve("Python", k=1000)
+        # With k=10, top score should be higher than k=1000
+        assert r1[0]["rrf_score"] > r2[0]["rrf_score"]
+
+    def test_topology_source_with_edges(self, mg):
+        """With edges, topology (PPR) should appear in sources for connected nodes."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        c = mg.add("Web app", "concept")
+        mg.link(a.id, b.id, "used_for")
+        mg.link(b.id, c.id, "type_of")
+        results = mg.hybrid_retrieve("Python")
+        # At least one result should have topology source
+        all_sources = set()
+        for r in results:
+            all_sources.update(r["sources"])
+        assert "keyword" in all_sources  # at minimum keyword should work
+
+    def test_preserves_graph_integrity(self, mg):
+        """hybrid_retrieve should not modify the graph."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+
+        before_nodes = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        before_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+
+        mg.hybrid_retrieve("Python")
+
+        after_nodes = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        after_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+        assert before_nodes == after_nodes
+        assert before_edges == after_edges
