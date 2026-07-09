@@ -18388,6 +18388,145 @@ class MemoryGraph:
             })
         return result
 
+    # ------------------------------------------------------------------
+    # Post-retrieval re-ranking via graph centrality
+    # ------------------------------------------------------------------
+
+    def graph_rerank(
+        self,
+        results: list,
+        *,
+        alpha: float = 0.5,
+        centrality: str = "degree",
+    ) -> list[dict]:
+        """Re-rank retrieval results using graph centrality scores.
+
+        Blends the original retrieval score with a graph-centrality
+        score to boost nodes that are structurally important::
+
+            combined = α · centrality_norm + (1−α) · retrieval_norm
+
+        This is the standard final step in GraphRAG / HippoRAG2
+        pipelines: after candidate retrieval (keyword, PPR, hybrid),
+        re-rank by graph topology to surface structurally central
+        nodes that might be under-ranked by text-only signals.
+
+        Args:
+            results:     Retrieval results — either ``Node`` objects
+                         (from :meth:`recall`) or dicts with
+                         ``node_id`` / ``rrf_score`` (from
+                         :meth:`hybrid_retrieve`).
+            alpha:       Blend factor [0, 1].
+                         ``0`` = pure retrieval, ``1`` = pure centrality.
+            centrality:  Centrality measure to use —
+                         ``"degree"``, ``"eigenvector"``, ``"pagerank"``,
+                         ``"betweenness"``, or ``"closeness"``.
+
+        Returns:
+            List of dicts sorted by ``combined_score`` descending::
+
+                [{node_id, combined_score, retrieval_score,
+                  centrality_score, node}]
+        """
+        if not results:
+            return []
+
+        # --- Extract node IDs and retrieval scores -----------------
+        node_ids: list[str] = []
+        retrieval_scores: dict[str, float] = {}
+
+        for item in results:
+            if isinstance(item, dict):
+                # From hybrid_retrieve / ppr_retrieve
+                nid = item.get("node_id", "")
+                score = item.get("rrf_score", item.get("ppr_score", 0.0))
+            elif hasattr(item, "id"):
+                # Node object from recall()
+                nid = item.id
+                score = getattr(item, "weight", 1.0)
+            else:
+                continue
+            if nid:
+                node_ids.append(nid)
+                retrieval_scores[nid] = score
+
+        if not node_ids:
+            return []
+
+        # --- Compute centrality scores for candidate nodes ---------
+        unique_ids = list(dict.fromkeys(node_ids))
+
+        centrality_scores: dict[str, float] = {}
+        method = centrality.lower().strip()
+
+        if method == "eigenvector":
+            try:
+                ev = self.eigenvector_all(normalized=True)
+                for nid in unique_ids:
+                    centrality_scores[nid] = ev.get(nid, 0.0)
+            except Exception:
+                method = "degree"  # fallback
+
+        if method == "pagerank":
+            try:
+                pr = self.pagerank()
+                for nid in unique_ids:
+                    centrality_scores[nid] = pr.get(nid, 0.0)
+            except Exception:
+                method = "degree"
+
+        if method == "betweenness":
+            try:
+                bc = self.betweenness_all(normalized=True)
+                for nid in unique_ids:
+                    centrality_scores[nid] = bc.get(nid, 0.0)
+            except Exception:
+                method = "degree"
+
+        if method == "closeness":
+            try:
+                cc = self.closeness_all(normalized=True)
+                for nid in unique_ids:
+                    centrality_scores[nid] = cc.get(nid, 0.0)
+            except Exception:
+                method = "degree"
+
+        if method not in ("eigenvector", "pagerank", "betweenness", "closeness"):
+            # Degree centrality (default / fallback)
+            for nid in unique_ids:
+                centrality_scores[nid] = self.degree_centrality(nid)
+
+        # --- Normalise scores to [0, 1] -----------------------------
+        def _normalise(scores: dict[str, float]) -> dict[str, float]:
+            if not scores:
+                return {}
+            vals = list(scores.values())
+            lo, hi = min(vals), max(vals)
+            rng = hi - lo
+            if rng < 1e-12:
+                return {k: 1.0 for k in scores}  # all same → uniform
+            return {k: (v - lo) / rng for k, v in scores.items()}
+
+        ret_norm = _normalise(retrieval_scores)
+        cen_norm = _normalise(centrality_scores)
+
+        # --- Blend and sort -----------------------------------------
+        combined: list[dict] = []
+        for nid in unique_ids:
+            r_score = ret_norm.get(nid, 0.0)
+            c_score = cen_norm.get(nid, 0.0)
+            blended = alpha * c_score + (1.0 - alpha) * r_score
+            combined.append({
+                "node_id": nid,
+                "combined_score": round(blended, 6),
+                "retrieval_score": round(r_score, 6),
+                "centrality_score": round(c_score, 6),
+                "node": self.get_node(nid),
+            })
+
+        combined.sort(key=lambda x: x["combined_score"], reverse=True)
+        return combined
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

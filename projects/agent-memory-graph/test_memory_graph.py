@@ -21968,3 +21968,146 @@ class TestHybridRetrieve:
         after_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
         assert before_nodes == after_nodes
         assert before_edges == after_edges
+
+
+class TestGraphRerank:
+    """Tests for graph_rerank (post-retrieval re-ranking via graph centrality)."""
+
+    def test_rerank_returns_list(self, mg):
+        """graph_rerank should return a list of dicts."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "used_for")
+        results = mg.recall("Python")
+        reranked = mg.graph_rerank(results)
+        assert isinstance(reranked, list)
+        assert len(reranked) == len(results)
+
+    def test_empty_input(self, mg):
+        """Empty results list should return empty."""
+        reranked = mg.graph_rerank([])
+        assert reranked == []
+
+    def test_single_node(self, mg):
+        """Single node should return with combined score fields."""
+        a = mg.add("Python", "skill")
+        reranked = mg.graph_rerank([a])
+        assert len(reranked) == 1
+        assert reranked[0]["node_id"] == a.id
+        assert "combined_score" in reranked[0]
+        assert "retrieval_score" in reranked[0]
+        assert "centrality_score" in reranked[0]
+
+    def test_hub_node_boosted(self, mg):
+        """A hub node (many connections) should rank higher after rerank."""
+        hub = mg.add("Python", "skill")
+        leaf1 = mg.add("Django", "tool")
+        leaf2 = mg.add("Flask", "tool")
+        leaf3 = mg.add("FastAPI", "tool")
+        isolated = mg.add("Python notes", "draft")
+        mg.link(hub.id, leaf1.id, "used_for")
+        mg.link(hub.id, leaf2.id, "used_for")
+        mg.link(hub.id, leaf3.id, "used_for")
+        results = mg.recall("Python")
+        reranked = mg.graph_rerank(results)
+        # Hub should be top after rerank due to higher centrality
+        assert reranked[0]["node_id"] == hub.id
+
+    def test_alpha_controls_blend(self, mg):
+        """alpha=0 means pure retrieval score, alpha=1 means pure centrality."""
+        a = mg.add("Python", "skill")
+        b = mg.add("Python tutorial", "guide")
+        mg.link(a.id, b.id, "rel")
+        results = mg.recall("Python")
+        pure_retrieval = mg.graph_rerank(results, alpha=0.0)
+        pure_centrality = mg.graph_rerank(results, alpha=1.0)
+        for r in pure_retrieval:
+            assert r["centrality_score"] == 0.0 or abs(r["combined_score"] - r["retrieval_score"]) < 0.001
+        for r in pure_centrality:
+            assert r["retrieval_score"] == 0.0 or abs(r["combined_score"] - r["centrality_score"]) < 0.001
+
+    def test_centrality_method_choice(self, mg):
+        """Different centrality methods should be selectable."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        c = mg.add("Django", "tool")
+        mg.link(a.id, b.id, "used_for")
+        mg.link(a.id, c.id, "used_for")
+        results = mg.recall("Python")
+        for method in ("degree", "eigenvector", "pagerank"):
+            reranked = mg.graph_rerank(results, centrality=method)
+            assert len(reranked) == len(results)
+            assert all("combined_score" in r for r in reranked)
+
+    def test_results_sorted_by_combined(self, mg):
+        """Output should be sorted descending by combined_score."""
+        nodes = [mg.add(f"Python topic {i}", "test") for i in range(6)]
+        for i in range(5):
+            mg.link(nodes[0].id, nodes[i + 1].id, "rel")
+        results = mg.recall("Python")
+        reranked = mg.graph_rerank(results)
+        scores = [r["combined_score"] for r in reranked]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_rerank_preserves_graph(self, mg):
+        """graph_rerank should not modify the graph."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+        results = mg.recall("Python")
+        before_n = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        before_e = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+        mg.graph_rerank(results)
+        after_n = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        after_e = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+        assert before_n == after_n
+        assert before_e == after_e
+
+    def test_accepts_node_objects(self, mg):
+        """graph_rerank should accept Node objects from recall()."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+        results = mg.recall("Python")
+        reranked = mg.graph_rerank(results)
+        assert len(reranked) == len(results)
+
+    def test_accepts_dicts(self, mg):
+        """graph_rerank should also accept dict results from hybrid_retrieve()."""
+        a = mg.add("Python", "skill", tags=["programming"])
+        b = mg.add("FastAPI", "tool", tags=["python"])
+        mg.link(a.id, b.id, "used_for")
+        hybrid = mg.hybrid_retrieve("Python")
+        reranked = mg.graph_rerank(hybrid)
+        assert len(reranked) == len(hybrid)
+        assert all("combined_score" in r for r in reranked)
+
+    def test_default_alpha_half(self, mg):
+        """Default alpha should be 0.5 (equal blend)."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+        results = mg.recall("Python")
+        reranked = mg.graph_rerank(results)
+        for r in reranked:
+            expected = 0.5 * r["centrality_score"] + 0.5 * r["retrieval_score"]
+            assert abs(r["combined_score"] - expected) < 0.001
+
+    def test_unknown_centrality_graceful(self, mg):
+        """Unknown centrality method should not crash, falls back to degree."""
+        a = mg.add("Python", "skill")
+        results = mg.recall("Python")
+        reranked = mg.graph_rerank(results, centrality="unknown_method")
+        assert len(reranked) == len(results)
+        assert all(r["centrality_score"] >= 0 for r in reranked)
+
+    def test_node_object_included(self, mg):
+        """Each result should include the Node object."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+        results = mg.recall("Python")
+        reranked = mg.graph_rerank(results)
+        for r in reranked:
+            assert r["node"] is not None
+            assert hasattr(r["node"], "label")
