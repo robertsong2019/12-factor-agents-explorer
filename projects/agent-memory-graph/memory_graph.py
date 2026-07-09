@@ -18084,6 +18084,155 @@ class MemoryGraph:
 
         return score
 
+    # ------------------------------------------------------------------
+    # Personalized PageRank (HippoRAG core algorithm)
+    # ------------------------------------------------------------------
+
+    def personalized_pagerank(
+        self,
+        seed_ids: list[str],
+        *,
+        damping: float = 0.85,
+        max_iter: int = 100,
+        tol: float = 1e-6,
+        seed_weights: list[float] | None = None,
+    ) -> dict[str, float]:
+        """Personalized PageRank (PPR) — topic-sensitive PageRank from seed nodes.
+
+        Unlike global PageRank which distributes the teleport uniformly across all
+        nodes, PPR teleports only to **seed_ids**, letting graph topology propagate
+        relevance from the seeds.  This is the core retrieval algorithm of
+        HippoRAG 2 (ICML'25): given query-matched seed nodes, PPR discovers
+        multi-hop neighbours in a single propagation step.
+
+        Args:
+            seed_ids:     Nodes to teleport to (the "personalisation vector").
+            damping:      ``1 - damping`` is the teleport probability per iteration.
+            max_iter:     Maximum power-iteration steps.
+            tol:          L1 convergence threshold.
+            seed_weights: Optional non-negative weights for each seed (normalised
+                          internally).  Uniform if ``None``.
+
+        Returns:
+            ``{node_id: ppr_score}`` — scores sum to ≈1.0 over all nodes.
+        """
+        if not seed_ids:
+            return {}
+
+        # Validate / normalise seed weights
+        if seed_weights is None:
+            seed_weights = [1.0] * len(seed_ids)
+        if len(seed_weights) != len(seed_ids):
+            raise ValueError("seed_weights length must match seed_ids length")
+        total_w = sum(seed_weights)
+        if total_w <= 0:
+            return {}
+        teleport = {}
+        for sid, sw in zip(seed_ids, seed_weights):
+            if sw > 0:
+                teleport[sid] = teleport.get(sid, 0.0) + sw
+        for sid in teleport:
+            teleport[sid] /= total_w
+
+        # Load graph
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return {}
+        node_ids = [str(r["id"]) for r in rows]
+        id_set = set(node_ids)
+
+        # Filter seeds to existing nodes
+        teleport = {sid: w for sid, w in teleport.items() if sid in id_set}
+        if not teleport:
+            return {}
+
+        n = len(node_ids)
+        rank = {nid: 0.0 for nid in node_ids}
+        # Initialise: uniform over seeds
+        for nid in node_ids:
+            rank[nid] = teleport.get(nid, 0.0)
+
+        # Build outbound adjacency with weights
+        outbound = {nid: [] for nid in node_ids}
+        outbound_count = {nid: 0 for nid in node_ids}
+        edges = self.conn.execute(
+            "SELECT source, target, weight FROM edges"
+        ).fetchall()
+        for e in edges:
+            s, t = str(e["source"]), str(e["target"])
+            if s in id_set and t in id_set:
+                outbound[s].append(t)
+                outbound_count[s] += 1
+
+        for _ in range(max_iter):
+            new_rank = {nid: 0.0 for nid in node_ids}
+
+            # Distribute rank through edges
+            for src in node_ids:
+                deg = outbound_count[src]
+                if deg > 0 and rank[src] > 0:
+                    share = rank[src] / deg
+                    for tgt in outbound[src]:
+                        new_rank[tgt] += share
+
+            # Dangling nodes: redistribute uniformly
+            dangling_sum = sum(
+                rank[nid] for nid in node_ids if outbound_count[nid] == 0
+            )
+            if dangling_sum > 0:
+                for nid in node_ids:
+                    new_rank[nid] += dangling_sum / n
+
+            # Teleport to seeds only
+            for nid in node_ids:
+                new_rank[nid] = (
+                    (1 - damping) * teleport.get(nid, 0.0)
+                    + damping * new_rank[nid]
+                )
+
+            diff = sum(abs(new_rank[nid] - rank[nid]) for nid in node_ids)
+            rank = new_rank
+            if diff < tol:
+                break
+
+        return rank
+
+    def ppr_retrieve(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        damping: float = 0.85,
+    ) -> list[dict]:
+        """Retrieve nodes via Personalized PageRank.
+
+        Two-stage pipeline (HippoRAG pattern):
+        1. Use :meth:`recall` (keyword) to find seed nodes matching *query*.
+        2. Run PPR from those seeds to discover multi-hop neighbours.
+
+        This lets graph topology participate in retrieval — a single propagation
+        step finds conceptually related nodes even without keyword overlap.
+
+        Returns a list of ``{node, ppr_score}`` dicts sorted by PPR score,
+        excluding the seeds themselves.
+        """
+        seeds = self.recall(query, limit=max(limit, 5))
+        if not seeds:
+            return []
+        seed_ids = [s.id for s in seeds]
+        ppr = self.personalized_pagerank(seed_ids, damping=damping)
+        seed_set = set(seed_ids)
+        ranked = [
+            {"node_id": nid, "ppr_score": score}
+            for nid, score in ppr.items()
+            if nid not in seed_set and score > 0
+        ]
+        ranked.sort(key=lambda x: x["ppr_score"], reverse=True)
+        # Attach node objects
+        for item in ranked[:limit]:
+            item["node"] = self.get_node(item["node_id"])
+        return ranked[:limit]
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

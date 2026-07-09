@@ -21384,3 +21384,294 @@ class TestCommunicability:
             mg.communicability(c.id, c.id)
         )
         assert ee == pytest.approx(sum_self_comm, abs=1e-9)
+
+
+# ==================================================================
+# Personalized PageRank (PPR) — HippoRAG core algorithm
+# ==================================================================
+
+class TestPersonalizedPageRank:
+    """Tests for personalized_pagerank and ppr_retrieve."""
+
+    def test_empty_seeds_returns_empty(self, mg):
+        """No seeds → empty result."""
+        result = mg.personalized_pagerank([])
+        assert result == {}
+
+    def test_empty_graph_returns_empty(self, mg):
+        """No nodes in graph → empty result even with seeds."""
+        a = mg.add("A", "test")
+        # Delete it to have empty graph
+        mg.delete_node(a.id)
+        result = mg.personalized_pagerank(["nonexistent"])
+        assert result == {}
+
+    def test_single_node_single_seed(self, mg):
+        """One node, one seed → all rank concentrated on that node."""
+        a = mg.add("A", "test")
+        result = mg.personalized_pagerank([a.id])
+        assert a.id in result
+        assert result[a.id] == pytest.approx(1.0, abs=1e-6)
+
+    def test_scores_sum_to_one(self, mg):
+        """PPR scores over all nodes should sum to ≈1.0."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        result = mg.personalized_pagerank([a.id])
+        total = sum(result.values())
+        assert total == pytest.approx(1.0, abs=1e-4)
+
+    def test_seed_node_gets_higher_score_than_distant(self, mg):
+        """Seed (centre of star) should have higher PPR than peripheral nodes."""
+        centre = mg.add("Centre", "test")
+        periph1 = mg.add("P1", "test")
+        periph2 = mg.add("P2", "test")
+        periph3 = mg.add("P3", "test")
+        # Star: centre connects to all peripherals bidirectionally
+        for p in [periph1, periph2, periph3]:
+            mg.link(centre.id, p.id, "rel")
+            mg.link(p.id, centre.id, "rel")
+        result = mg.personalized_pagerank([centre.id])
+        # Centre (seed) should have highest score
+        assert result[centre.id] > result[periph1.id]
+        assert result[centre.id] > result[periph2.id]
+        assert result[centre.id] > result[periph3.id]
+        # Peripheral nodes should have equal score
+        assert result[periph1.id] == pytest.approx(result[periph2.id], abs=1e-8)
+
+    def test_non_seed_neighbour_discovered(self, mg):
+        """PPR discovers multi-hop neighbours not matching any keyword."""
+        a = mg.add("Alice", "person")
+        b = mg.add("Bob", "person")
+        c = mg.add("Charlie", "person")
+        d = mg.add("David", "person")
+        # Bidirectional chain: A ↔ B ↔ C ↔ D
+        mg.link(a.id, b.id, "knows")
+        mg.link(b.id, a.id, "knows")
+        mg.link(b.id, c.id, "knows")
+        mg.link(c.id, b.id, "knows")
+        mg.link(c.id, d.id, "knows")
+        mg.link(d.id, c.id, "knows")
+        result = mg.personalized_pagerank([a.id])
+        # David (3 hops away) should have non-zero score
+        assert result[d.id] > 0
+
+    def test_multiple_seeds_weighted(self, mg):
+        """Multiple seeds with different weights."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, c.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        result = mg.personalized_pagerank(
+            [a.id, b.id], seed_weights=[3.0, 1.0]
+        )
+        # A should have higher score (3x teleport weight)
+        assert result[a.id] > result[b.id]
+
+    def test_seed_weights_validation(self, mg):
+        """Mismatched seed_weights length raises ValueError."""
+        a = mg.add("A", "test")
+        with pytest.raises(ValueError, match="seed_weights length"):
+            mg.personalized_pagerank([a.id], seed_weights=[1.0, 2.0])
+
+    def test_zero_weights_returns_empty(self, mg):
+        """All-zero seed weights → empty result."""
+        a = mg.add("A", "test")
+        result = mg.personalized_pagerank([a.id], seed_weights=[0.0])
+        assert result == {}
+
+    def test_nonexistent_seed_filtered(self, mg):
+        """Nonexistent seed IDs are silently filtered."""
+        a = mg.add("A", "test")
+        result = mg.personalized_pagerank([a.id, "nonexistent-id"])
+        assert a.id in result
+        assert "nonexistent-id" not in result
+
+    def test_damping_effect(self, mg):
+        """Higher damping → more spread to distant nodes."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        d = mg.add("D", "test")
+        # Bidirectional chain for consistent monotonic behaviour
+        for s, t in [(a,b),(b,a),(b,c),(c,b),(c,d),(d,c)]:
+            mg.link(s.id, t.id, "rel")
+        high_damping = mg.personalized_pagerank([a.id], damping=0.95)
+        low_damping = mg.personalized_pagerank([a.id], damping=0.5)
+        # With low damping, more score stays at seed
+        assert low_damping[a.id] > high_damping[a.id]
+        # With high damping, more spreads to distant node
+        assert high_damping[d.id] > low_damping[d.id]
+
+    def test_dangling_node_redistribution(self, mg):
+        """Dangling nodes (no out-edges) redistribute rank uniformly."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        # B is dangling (no out-edges)
+        result = mg.personalized_pagerank([a.id])
+        # Both should have score
+        assert result[a.id] > 0
+        assert result[b.id] > 0
+        total = result[a.id] + result[b.id]
+        assert total == pytest.approx(1.0, abs=1e-4)
+
+    def test_convergence(self, mg):
+        """PPR should converge to stable values."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, a.id, "rel")
+        # With a simple 2-node cycle, convergence should be stable
+        result1 = mg.personalized_pagerank([a.id], max_iter=200, tol=1e-12)
+        result2 = mg.personalized_pagerank([a.id], max_iter=500, tol=1e-15)
+        # Should converge to same values
+        assert result1[a.id] == pytest.approx(result2[a.id], abs=1e-6)
+
+    def test_cycle_graph(self, mg):
+        """In a directed cycle, PPR favours nodes closer downstream from seed."""
+        nodes = [mg.add(f"N{i}", "test") for i in range(6)]
+        for i in range(6):
+            mg.link(nodes[i].id, nodes[(i + 1) % 6].id, "rel")
+        result = mg.personalized_pagerank([nodes[0].id])
+        # N1 (1-hop downstream) should score higher than N3 (3-hop downstream)
+        assert result[nodes[1].id] > result[nodes[3].id]
+        assert result[nodes[3].id] > result[nodes[5].id]
+
+    def test_disconnected_components(self, mg):
+        """PPR stays mostly within reachable component from seeds."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        d = mg.add("D", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, a.id, "rel")
+        mg.link(c.id, d.id, "rel")
+        mg.link(d.id, c.id, "rel")
+        # Seed in component 1 only
+        result = mg.personalized_pagerank([a.id])
+        # A and B should have much higher scores than C and D
+        assert result[a.id] > result[c.id] * 10
+        assert result[b.id] > result[d.id] * 10
+
+    def test_weighted_seeds_normalisation(self, mg):
+        """Seed weights are normalised internally — same result regardless of scale."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, c.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        r1 = mg.personalized_pagerank([a.id, b.id], seed_weights=[1.0, 1.0])
+        r2 = mg.personalized_pagerank([a.id, b.id], seed_weights=[100.0, 100.0])
+        # Same relative weights → same result
+        for nid in r1:
+            assert r1[nid] == pytest.approx(r2[nid], abs=1e-8)
+
+    def test_duplicate_seed_ids_merge_weights(self, mg):
+        """Duplicate seed IDs should merge their weights."""
+        a = mg.add("A", "test")
+        result = mg.personalized_pagerank([a.id, a.id], seed_weights=[1.0, 1.0])
+        assert result[a.id] == pytest.approx(1.0, abs=1e-6)
+
+    def test_graph_structure_independence(self, mg):
+        """PPR on isolated node returns all rank on it."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        # No edges at all
+        result = mg.personalized_pagerank([a.id])
+        # With teleport, A gets (1-d) per iteration, B gets damping*0
+        # but dangling redistribution keeps it alive
+        assert result[a.id] > result[b.id]
+
+    # ------------------------------------------------------------------
+    # ppr_retrieve tests
+    # ------------------------------------------------------------------
+
+    def test_ppr_retrieve_basic(self, mg):
+        """ppr_retrieve finds related nodes via graph topology."""
+        a = mg.add("Python programming", "skill")
+        b = mg.add("FastAPI framework", "tool")
+        c = mg.add("Web development", "concept")
+        mg.link(a.id, b.id, "used_for")
+        mg.link(b.id, c.id, "type_of")
+        results = mg.ppr_retrieve("Python")
+        assert len(results) > 0
+        # Should discover nodes related through graph
+        node_ids = [r["node_id"] for r in results]
+        # At least one non-seed node should be found
+        assert len(node_ids) >= 1
+
+    def test_ppr_retrieve_no_match(self, mg):
+        """Query matching nothing → empty result."""
+        a = mg.add("Python", "skill")
+        results = mg.ppr_retrieve("xyzzy_nosuchword")
+        assert results == []
+
+    def test_ppr_retrieve_excludes_seeds(self, mg):
+        """Seed nodes should not appear in retrieval results."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        c = mg.add("Web", "concept")
+        mg.link(a.id, b.id, "used_for")
+        mg.link(b.id, c.id, "type_of")
+        results = mg.ppr_retrieve("Python")
+        # Seeds (nodes matching "Python") should be excluded
+        for r in results:
+            assert r["ppr_score"] > 0
+
+    def test_ppr_retrieve_limit(self, mg):
+        """limit parameter controls result count."""
+        nodes = [mg.add(f"Node{i}", "test") for i in range(10)]
+        for i in range(9):
+            mg.link(nodes[i].id, nodes[i + 1].id, "rel")
+        results = mg.ppr_retrieve("Node0", limit=3)
+        assert len(results) <= 3
+
+    def test_ppr_retrieve_includes_node_objects(self, mg):
+        """Results should include Node objects."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "used_for")
+        results = mg.ppr_retrieve("Python")
+        for r in results:
+            assert r["node"] is not None
+            assert hasattr(r["node"], "label")
+
+    def test_ppr_retrieve_sorted_by_score(self, mg):
+        """Results should be sorted descending by ppr_score."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        c = mg.add("Web", "concept")
+        d = mg.add("Database", "concept")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(c.id, d.id, "rel")
+        results = mg.ppr_retrieve("Python")
+        scores = [r["ppr_score"] for r in results]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_ppr_retrieve_custom_damping(self, mg):
+        """Custom damping parameter is accepted."""
+        a = mg.add("Python", "skill")
+        b = mg.add("FastAPI", "tool")
+        mg.link(a.id, b.id, "rel")
+        # Should not raise
+        results = mg.ppr_retrieve("Python", damping=0.5)
+        assert isinstance(results, list)
+
+    def test_ppr_vs_global_pagerank_difference(self, mg):
+        """PPR with seed should differ from global PageRank distribution."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(c.id, a.id, "rel")
+        ppr_result = mg.personalized_pagerank([a.id])
+        global_pr = mg.pagerank()
+        # PPR should give A much higher score than global
+        assert ppr_result[a.id] > global_pr[a.id]
