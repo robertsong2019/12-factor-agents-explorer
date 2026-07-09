@@ -20492,6 +20492,157 @@ class TestForgettingCurve:
 
 
 # ═══════════════════════════════════════════════════════════
+# Cycle 208: Graph Activity Computation Tests
+# Source: FOREVER (arXiv:2601.03938)
+# ═══════════════════════════════════════════════════════════
+
+class TestComputeGraphActivity:
+    """Tests for compute_graph_activity and auto_forget."""
+
+    def test_empty_graph_activity(self, mg):
+        """Empty graph should return a valid float in [0, 1]."""
+        activity = mg.compute_graph_activity()
+        assert 0.0 <= activity <= 1.0
+
+    def test_activity_with_recent_nodes(self, mg):
+        """Adding nodes in the current window should increase activity."""
+        # Add several nodes now (within the default 1h window)
+        for i in range(10):
+            mg.add(f"Recent{i}", "test")
+        activity = mg.compute_graph_activity(window_hours=1.0)
+        assert activity > 0.0
+
+    def test_activity_decreases_with_time(self, mg):
+        """Activity should be lower when events are outside the window."""
+        # Add nodes with old timestamps
+        old_time = time.time() - 7200  # 2 hours ago
+        for i in range(5):
+            n = mg.add(f"Old{i}", "test")
+            mg.conn.execute("UPDATE nodes SET created=? WHERE id=?", (old_time, n.id))
+        mg.conn.commit()
+
+        activity_old = mg.compute_graph_activity(window_hours=1.0)
+
+        # Add recent nodes
+        for i in range(5):
+            mg.add(f"Recent{i}", "test")
+
+        activity_recent = mg.compute_graph_activity(window_hours=1.0)
+        assert activity_recent > activity_old
+
+    def test_activity_in_range(self, mg):
+        """Activity should always be normalised to [0, 1]."""
+        for i in range(50):
+            mg.add(f"Node{i}", "test")
+        activity = mg.compute_graph_activity(window_hours=0.001)
+        assert 0.0 <= activity <= 1.0
+
+    def test_activity_with_edges(self, mg):
+        """Edges contribute to activity alongside nodes."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "rel")
+        mg.link(b.id, c.id, "rel")
+        mg.link(a.id, c.id, "rel")
+        activity = mg.compute_graph_activity(window_hours=1.0)
+        assert activity > 0.0
+
+    def test_activity_returns_float(self, mg):
+        """Return type should be float."""
+        activity = mg.compute_graph_activity()
+        assert isinstance(activity, float)
+
+    def test_activity_window_parameter(self, mg):
+        """Different window sizes should give different activity values."""
+        # Add some nodes
+        for i in range(5):
+            mg.add(f"Node{i}", "test")
+
+        narrow = mg.compute_graph_activity(window_hours=0.5)
+        wide = mg.compute_graph_activity(window_hours=24.0)
+        # Both should be valid
+        assert 0.0 <= narrow <= 1.0
+        assert 0.0 <= wide <= 1.0
+
+    def test_activity_with_zero_window(self, mg):
+        """Very small window should not crash."""
+        mg.add("A", "test")
+        # Window of effectively zero - should still return a value
+        activity = mg.compute_graph_activity(window_hours=0.001)
+        assert 0.0 <= activity <= 1.0
+
+    def test_auto_forget_returns_dict(self, mg):
+        """auto_forget should return a dict with forgetting stats."""
+        for i in range(5):
+            mg.add(f"Node{i}", "test")
+        result = mg.auto_forget()
+        assert isinstance(result, dict)
+        assert "graph_activity" in result
+        assert "activity_source" in result
+        assert result["activity_source"] == "auto"
+
+    def test_auto_forget_includes_standard_keys(self, mg):
+        """auto_forget should include keys from batch_forgetting."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+        result = mg.auto_forget()
+        # batch_forgetting returns these keys
+        assert "forgotten" in result
+        assert "avg_retention" in result
+        assert "total" in result
+
+    def test_auto_forget_activity_in_range(self, mg):
+        """auto_forget should compute activity in [0, 1]."""
+        for i in range(10):
+            mg.add(f"N{i}", "test")
+        result = mg.auto_forget()
+        assert 0.0 <= result["graph_activity"] <= 1.0
+
+    def test_auto_forget_with_window(self, mg):
+        """auto_forget should accept window_hours parameter."""
+        a = mg.add("A", "test")
+        result = mg.auto_forget(window_hours=6.0)
+        assert isinstance(result, dict)
+        assert "graph_activity" in result
+
+    def test_auto_forget_preserves_graph(self, mg):
+        """auto_forget should not add or remove nodes/edges (just decays weights)."""
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "rel")
+
+        before_nodes = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        before_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+
+        mg.auto_forget()
+
+        after_nodes = mg.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        after_edges = mg.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+        assert before_nodes == after_nodes
+        assert before_edges == after_edges
+
+    def test_activity_high_for_busy_graph(self, mg):
+        """A graph with a burst of recent activity should have higher activity than baseline."""
+        # Seed historical data: 5 old nodes created 10h ago
+        old_time = time.time() - 36000  # 10h ago
+        for i in range(5):
+            n = mg.add(f"Old{i}", "test")
+            mg.conn.execute("UPDATE nodes SET created=? WHERE id=?", (old_time, n.id))
+        mg.conn.commit()
+
+        baseline = mg.compute_graph_activity(window_hours=1.0)
+
+        # Now add a burst of recent nodes
+        for i in range(20):
+            mg.add(f"Recent{i}", "test")
+
+        burst = mg.compute_graph_activity(window_hours=1.0)
+        assert burst > baseline
+
+
+# ═══════════════════════════════════════════════════════════
 # Cycle 203: Recurrence Detector Tests
 # Source: RecMem (arXiv:2605.16045, ACL 2026 Findings)
 # ═══════════════════════════════════════════════════════════

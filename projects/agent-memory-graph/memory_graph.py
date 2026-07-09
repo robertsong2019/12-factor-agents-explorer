@@ -17567,6 +17567,88 @@ class MemoryGraph:
         return curve
 
     # ─────────────────────────────────────────────
+    # Cycle 208: Graph Activity Computation
+    # Source: FOREVER (arXiv:2601.03938)
+    # ─────────────────────────────────────────────
+
+    def compute_graph_activity(self, window_hours: float = 1.0) -> float:
+        """Compute normalised graph activity for the recent time window.
+
+        Implements the FOREVER mapping of model-centric time → graph
+        activity.  An active memory graph (many new nodes/edges per
+        hour) retains memories longer, while a dormant graph
+        accelerates forgetting.
+
+        Activity is normalised to ``[0, 1]`` using a sigmoid:
+
+        .. code-block:: text
+
+           activity = new_events / window_hours
+           normalised = sigmoid(activity - midpoint)
+
+        where *midpoint* is auto-calibrated to the median activity
+        over the graph's lifetime.
+
+        Returns:
+            Normalised activity score in ``[0, 1]``.
+        """
+        now = time.time()
+        window_start = now - window_hours * 3600
+
+        # Count new nodes in the window (edges don't have a created column)
+        new_nodes = self.conn.execute(
+            "SELECT count(*) FROM nodes WHERE created >= ?",
+            (window_start,),
+        ).fetchone()[0]
+        # Approximate edge creation via edge_props if available
+        try:
+            new_edges = self.conn.execute(
+                "SELECT count(*) FROM edge_props WHERE created >= ?",
+                (window_start,),
+            ).fetchone()[0]
+        except Exception:
+            new_edges = 0
+
+        total_events = new_nodes + new_edges
+        raw_rate = total_events / max(window_hours, 0.001)
+
+        # Auto-calibrate midpoint from historical data
+        oldest = self.conn.execute(
+            "SELECT MIN(created) FROM nodes"
+        ).fetchone()[0]
+        total_nodes = self.conn.execute(
+            "SELECT count(*) FROM nodes"
+        ).fetchone()[0]
+
+        if oldest and total_nodes > 0:
+            lifetime_hours = max((now - oldest) / 3600.0, 1.0)
+            avg_rate = total_nodes / lifetime_hours
+            midpoint = max(avg_rate, 0.1)
+        else:
+            midpoint = 1.0  # default for empty/new graphs
+
+        # Sigmoid normalisation
+        normalised = 1.0 / (1.0 + math.exp(-(raw_rate - midpoint) / max(midpoint, 0.1)))
+        return round(normalised, 4)
+
+    def auto_forget(self, window_hours: float = 1.0) -> dict:
+        """Run batch forgetting with auto-computed graph activity.
+
+        This is a convenience wrapper around :meth:`batch_forgetting`
+        that automatically computes ``graph_activity`` from recent
+        graph events, following the FOREVER model: active graphs forget
+        less, dormant graphs forget more.
+
+        Returns the :meth:`batch_forgetting` result dict plus the
+        computed ``graph_activity`` value.
+        """
+        activity = self.compute_graph_activity(window_hours)
+        result = self.batch_forgetting(graph_activity=activity)
+        result["graph_activity"] = activity
+        result["activity_source"] = "auto"
+        return result
+
+    # ─────────────────────────────────────────────
     # Cycle 203: Recurrence Detector
     # Source: RecMem (arXiv:2605.16045, ACL 2026 Findings)
     # ─────────────────────────────────────────────
