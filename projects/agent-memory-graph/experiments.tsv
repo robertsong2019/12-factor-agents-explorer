@@ -210,3 +210,11 @@ timestamp	commit	metric	value	status	description
 2026-07-08T22:15	bb884a5	test_pass_rate	100%	keep	2075/2075 pass
 2026-07-08T23:00:00+08:00	6a8d8fb	test_count	2075→2092	keep	Cycle 205: laplacian_centrality — network disruption importance. C_L(v)=d_v²+d_v+2·Σ_{u∈N(v)}d_u. Measures Laplacian energy (tr(L²)) drop when node removed. Captures direct+indirect connectivity. 11th centrality measure. +17 tests. Zero regressions. 205th consecutive day.
 2026-07-08T23:00:00+08:00	6a8d8fb	test_pass_rate	100%	keep	2092/2092 pass
+2026-07-09T21:05	68f95ec	test_count	2148	keep	+26 tests: personalized_pagerank + ppr_retrieve (HippoRAG PPR)
+2026-07-09T21:05	68f95ec	test_pass_rate	100%	keep	All 2148 passing, 0 regressions, 15.19s
+2026-07-09T21:20	f7a8e2b	test_count	2162	keep	+14 tests: compute_graph_activity + auto_forget (FOREVER model)
+2026-07-09T21:20	f7a8e2b	test_pass_rate	100%	keep	All 2162 passing, 0 regressions, 15.98s
+2026-07-09T21:30	65e3ebb	test_count	2176	keep	+14 tests: hybrid_retrieve (RRF fusion keyword+PPR+tag)
+2026-07-09T21:30	65e3ebb	test_pass_rate	100%	keep	All 2176 passing, 0 regressions, 15.25s
+2026-07-09T22:40:00+08:00	d06b4d7	test_count	2176→2189	keep	Cycle 211: graph_rerank — post-retrieval re-ranking. combined = α·centrality + (1-α)·retrieval. Supports degree/eigenvector/pagerank/betweenness/closeness. Accepts Node objects and dicts. Completes 4-stage pipeline: keyword→PPR→hybrid(RRF)→rerank. +13 tests. Zero regressions. 206th consecutive day.
+2026-07-09T22:40:00+08:00	d06b4d7	test_pass_rate	100%	keep	All 2189 passing, 0 regressions, 15.53s
