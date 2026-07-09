@@ -1,322 +1,388 @@
 {
-  "generatedAt": "2026-07-06T06:02:40.423142+08:00",
-  "generatedAtTimestamp": 1783288960,
+  "generatedAt": "2026-07-10T06:01:23.931162+08:00",
+  "generatedAtTimestamp": 1783634483,
   "summary": {
-    "totalSessions": 53,
-    "activeSessions24h": 38,
-    "activeSessions1h": 5,
-    "totalTokensAllTime": 2868044,
-    "totalInputTokens": 2229712,
-    "totalOutputTokens": 413640,
+    "totalSessions": 37,
+    "activeSessions24h": 24,
+    "activeSessions1h": 3,
+    "approxTotalContextTokens": 0,
     "sessionsByKind": {
-      "direct": 52,
+      "direct": 36,
       "group": 1
     },
     "sessionsByModel": {
-      "glm-5.1": 42,
+      "glm-5.1": 23,
+      "glm-5-turbo": 3,
       "glm-5": 11
-    }
+    },
+    "cronTotal": 20,
+    "cronOk": 0,
+    "cronError": 0,
+    "cronRunning": 0,
+    "errorJobs": []
   },
   "cronJobs": [
     {
       "id": "f38e0365",
+      "fullId": "f38e0365-7bbf-46fd-bab7-14d51a5d4df0",
       "name": "dashboard-update-morning",
-      "schedule": "0 6 * * *",
-      "status": "running",
-      "lastRun": "6:00 AM today"
+      "schedule": "cron 0 6 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "9b2a8701",
+      "fullId": "9b2a8701-ab69-49b0-bef4-d9ef6d7ecf9e",
       "name": "github-trending-daily",
-      "schedule": "0 7 * * *",
-      "status": "ok",
-      "lastRun": "8d ago"
+      "schedule": "cron 0 7 * *",
+      "status": "*",
+      "lastRun": "@",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "2c714952",
-      "name": "github-trending-deep",
-      "schedule": "0 8 * * *",
-      "status": "ok",
-      "lastRun": "8d ago"
+      "fullId": "2c714952-04af-4192-8e0a-95758dcbb3db",
+      "name": "github-trending-deep-...",
+      "schedule": "cron 0 8 * *",
+      "status": "*",
+      "lastRun": "@",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "610a8d6d",
+      "fullId": "610a8d6d-faba-40c2-945c-9ba8472c4839",
       "name": "github-creative-evening",
-      "schedule": "0 19 * * *",
-      "status": "ok",
-      "lastRun": "11h ago"
+      "schedule": "cron 0 19 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
+    },
+    {
+      "id": "ad37c59a",
+      "fullId": "ad37c59a-6265-4e29-b372-71788835afbf",
+      "name": "github-creative-evening",
+      "schedule": "cron 0 19 * *",
+      "status": "*",
+      "lastRun": "@",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "265091b6",
+      "fullId": "265091b6-6c5f-4afb-8485-7108945fe1f7",
       "name": "deep-exploration-evening",
-      "schedule": "0 20 * * *",
-      "status": "ok",
-      "lastRun": "10h ago"
+      "schedule": "cron 0 20 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
+    },
+    {
+      "id": "a4bf5e2a",
+      "fullId": "a4bf5e2a-a7ba-4e00-a8a5-fb3b03d6fd66",
+      "name": "deep-exploration-evening",
+      "schedule": "cron 0 20 * *",
+      "status": "*",
+      "lastRun": "@",
+      "nextRun": "*",
+      "model": "glm-5.1"
+    },
+    {
+      "id": "bb46cb70",
+      "fullId": "bb46cb70-ec67-4790-b98d-bdacf280f2a1",
+      "name": "deep-exploration-evening",
+      "schedule": "cron 0 12 * *",
+      "status": "*",
+      "lastRun": "@",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "13a2f284",
+      "fullId": "13a2f284-a1ed-4394-979a-5392fbdf50f7",
       "name": "code-lab-evening",
-      "schedule": "0 21 * * *",
-      "status": "ok",
-      "lastRun": "9h ago"
+      "schedule": "cron 0 21 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "62bf7f3b",
+      "fullId": "62bf7f3b-862d-45b9-86b7-f3d9fcc1ea19",
       "name": "tool-development-evening",
-      "schedule": "0 22 * * *",
-      "status": "error",
-      "lastRun": "8h ago"
+      "schedule": "cron 0 22 * *",
+      "status": "*",
+      "lastRun": "@",
+      "nextRun": "*",
+      "model": "glm-5.1"
+    },
+    {
+      "id": "ce2fb615",
+      "fullId": "ce2fb615-132a-4c40-864f-86de27bea24c",
+      "name": "tool-development-evening",
+      "schedule": "cron 0 22 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "78eac6fc",
+      "fullId": "78eac6fc-c2d7-41d2-a5d1-9a52892f89ab",
       "name": "key-development-1",
-      "schedule": "0 23 * * *",
-      "status": "ok",
-      "lastRun": "7h ago"
+      "schedule": "cron 0 23 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "88679f9e",
+      "fullId": "88679f9e-ba09-4e1a-8dbd-a2dc12808544",
       "name": "key-development-2",
-      "schedule": "0 0 * * *",
-      "status": "ok",
-      "lastRun": "6h ago"
+      "schedule": "cron 0 0 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "b0fd7e8d",
+      "fullId": "b0fd7e8d-f946-4228-bb85-1baaa3502c7c",
       "name": "key-development-3",
-      "schedule": "0 1 * * *",
-      "status": "ok",
-      "lastRun": "5h ago"
+      "schedule": "cron 0 1 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "1ea6e3b0",
-      "name": "knowledge-organization",
-      "schedule": "0 2 * * *",
-      "status": "ok",
-      "lastRun": "4h ago"
+      "fullId": "1ea6e3b0-4744-4b45-871a-cdd1fcbef48c",
+      "name": "knowledge-organizatio...",
+      "schedule": "cron 0 2 * *",
+      "status": "*",
+      "lastRun": "@",
+      "nextRun": "*",
+      "model": "glm-5.1"
+    },
+    {
+      "id": "fd0515b0",
+      "fullId": "fd0515b0-f483-411d-b110-3a16fbc49983",
+      "name": "knowledge-organizatio...",
+      "schedule": "cron 0 2 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "f7510f1f",
+      "fullId": "f7510f1f-9db8-46e7-8019-3c9a4858db2e",
       "name": "project-testing-morning",
-      "schedule": "0 3 * * *",
-      "status": "ok",
-      "lastRun": "3h ago"
+      "schedule": "cron 0 3 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "77a5bcc6",
+      "fullId": "77a5bcc6-1342-4ff4-836a-f640973006dc",
       "name": "documentation-morning",
-      "schedule": "0 4 * * *",
-      "status": "ok",
-      "lastRun": "2h ago"
+      "schedule": "cron 0 4 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
     },
     {
       "id": "686ec55c",
+      "fullId": "686ec55c-17ca-43a9-9977-65a3c320ec3a",
       "name": "essay-generation-morning",
-      "schedule": "0 5 * * *",
-      "status": "ok",
-      "lastRun": "1h ago"
+      "schedule": "cron 0 5 * *",
+      "status": "*",
+      "lastRun": "(exact)",
+      "nextRun": "*",
+      "model": "default"
+    },
+    {
+      "id": "f0362050",
+      "fullId": "f0362050-d109-45ca-971b-6cc9cfad90eb",
+      "name": "essay-generation-morning",
+      "schedule": "cron 0 5 * *",
+      "status": "*",
+      "lastRun": "@",
+      "nextRun": "*",
+      "model": "glm-5.1"
     }
   ],
   "recentSessions": [
     {
-      "key": "agent:main:cron:f38e0365-7bbf-46fd-bab7-14d51a5d4df0",
-      "ageHours": 0.0,
-      "model": "glm-5.1",
-      "totalTokens": 30759,
-      "inputTokens": 18599,
-      "outputTokens": 7,
+      "key": "agent:main:cron:...5d4df0",
       "kind": "direct",
-      "agentId": "main"
-    },
-    {
-      "key": "agent:main:cron:f38e0365-7bbf-46fd-bab7-14d51a5d4df0:run:611a4fc6-4bc4-499d-9b50",
-      "ageHours": 0.0,
+      "age": "now",
       "model": "glm-5.1",
-      "totalTokens": 30759,
-      "inputTokens": 18599,
-      "outputTokens": 7,
-      "kind": "direct",
-      "agentId": "main"
+      "contextTokens": "37k/205k",
+      "contextPercent": "18%"
     },
     {
       "key": "agent:main:main",
-      "ageHours": 0.2,
-      "model": "glm-5.1",
-      "totalTokens": 110664,
-      "inputTokens": 136,
-      "outputTokens": 7,
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5-turbo",
+      "contextTokens": "135k/205k",
+      "contextPercent": "66%"
     },
     {
-      "key": "agent:main:cron:f0362050-d109-45ca-971b-6cc9cfad90eb",
-      "ageHours": 1.0,
-      "model": "glm-5.1",
-      "totalTokens": 55320,
-      "inputTokens": 38181,
-      "outputTokens": 17348,
+      "key": "agent:main:cron:...ad90eb",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "58k/205k",
+      "contextPercent": "28%"
     },
     {
-      "key": "agent:main:cron:f0362050-d109-45ca-971b-6cc9cfad90eb:run:23932d54-2713-4459-80f9",
-      "ageHours": 1.0,
-      "model": "glm-5.1",
-      "totalTokens": 55320,
-      "inputTokens": 38181,
-      "outputTokens": 17348,
+      "key": "agent:main:cron:...20ec3a",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "53k/205k",
+      "contextPercent": "26%"
     },
     {
-      "key": "agent:main:cron:686ec55c-17ca-43a9-9977-65a3c320ec3a",
-      "ageHours": 1.0,
-      "model": "glm-5.1",
-      "totalTokens": 53788,
-      "inputTokens": 52765,
-      "outputTokens": 9170,
+      "key": "agent:main:cron:...3006dc",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "64k/205k",
+      "contextPercent": "31%"
     },
     {
-      "key": "agent:main:cron:686ec55c-17ca-43a9-9977-65a3c320ec3a:run:481bfa9c-3697-4238-a617",
-      "ageHours": 1.0,
-      "model": "glm-5.1",
-      "totalTokens": 53788,
-      "inputTokens": 52765,
-      "outputTokens": 9170,
+      "key": "agent:main:cron:...58db2e",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "53k/205k",
+      "contextPercent": "26%"
     },
     {
-      "key": "agent:main:cron:77a5bcc6-1342-4ff4-836a-f640973006dc",
-      "ageHours": 2.0,
-      "model": "glm-5.1",
-      "totalTokens": 76957,
-      "inputTokens": 64797,
-      "outputTokens": 54,
+      "key": "agent:main:cron:...bef48c",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "49k/205k",
+      "contextPercent": "24%"
     },
     {
-      "key": "agent:main:cron:77a5bcc6-1342-4ff4-836a-f640973006dc:run:ba8a27c9-18bc-4a32-a26a",
-      "ageHours": 2.0,
-      "model": "glm-5.1",
-      "totalTokens": 78455,
-      "inputTokens": 77986,
-      "outputTokens": 12073,
+      "key": "agent:main:cron:...c49983",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "49k/205k",
+      "contextPercent": "24%"
     },
     {
-      "key": "agent:main:cron:f7510f1f-9db8-46e7-8019-3c9a4858db2e",
-      "ageHours": 2.9,
-      "model": "glm-5.1",
-      "totalTokens": 62964,
-      "inputTokens": 50804,
-      "outputTokens": 4,
+      "key": "agent:main:cron:...502c7c",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "59k/205k",
+      "contextPercent": "29%"
     },
     {
-      "key": "agent:main:cron:f7510f1f-9db8-46e7-8019-3c9a4858db2e:run:2279308d-38a6-4f68-bc3c",
-      "ageHours": 3.0,
-      "model": "glm-5.1",
-      "totalTokens": 62927,
-      "inputTokens": 62634,
-      "outputTokens": 12495,
+      "key": "agent:main:cron:...808544",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "61k/205k",
+      "contextPercent": "30%"
     },
     {
-      "key": "agent:main:cron:1ea6e3b0-4744-4b45-871a-cdd1fcbef48c",
-      "ageHours": 4.0,
-      "model": "glm-5.1",
-      "totalTokens": 37069,
-      "inputTokens": 19514,
-      "outputTokens": 4292,
+      "key": "agent:main:cron:...2f89ab",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "49k/205k",
+      "contextPercent": "24%"
     },
     {
-      "key": "agent:main:cron:1ea6e3b0-4744-4b45-871a-cdd1fcbef48c:run:84b6969a-123b-4193-a90d",
-      "ageHours": 4.0,
-      "model": "glm-5.1",
-      "totalTokens": 37069,
-      "inputTokens": 19514,
-      "outputTokens": 4292,
+      "key": "agent:main:cron:...c1ea19",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "49k/205k",
+      "contextPercent": "24%"
     },
     {
-      "key": "agent:main:cron:fd0515b0-f483-411d-b110-3a16fbc49983",
-      "ageHours": 4.0,
-      "model": "glm-5.1",
-      "totalTokens": 43187,
-      "inputTokens": 41843,
-      "outputTokens": 10684,
+      "key": "agent:main:cron:...bea24c",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "60k/205k",
+      "contextPercent": "29%"
     },
     {
-      "key": "agent:main:cron:fd0515b0-f483-411d-b110-3a16fbc49983:run:e7d42666-1d5e-46b7-826b",
-      "ageHours": 4.0,
-      "model": "glm-5.1",
-      "totalTokens": 43187,
-      "inputTokens": 41843,
-      "outputTokens": 10684,
+      "key": "agent:main:cron:...df50f7",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "71k/205k",
+      "contextPercent": "35%"
     },
     {
-      "key": "agent:main:cron:b0fd7e8d-f946-4228-bb85-1baaa3502c7c",
-      "ageHours": 4.8,
-      "model": "glm-5.1",
-      "totalTokens": 69430,
-      "inputTokens": 64630,
-      "outputTokens": 7,
+      "key": "agent:main:cron:...d6fd66",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "69k/205k",
+      "contextPercent": "34%"
     },
     {
-      "key": "agent:main:cron:b0fd7e8d-f946-4228-bb85-1baaa3502c7c:run:f78c1859-6d4f-4f99-967d",
-      "ageHours": 5.0,
-      "model": "glm-5.1",
-      "totalTokens": 74364,
-      "inputTokens": 74334,
-      "outputTokens": 33385,
+      "key": "agent:main:cron:...80f2a1",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "59k/205k",
+      "contextPercent": "29%"
     },
     {
-      "key": "agent:main:cron:88679f9e-ba09-4e1a-8dbd-a2dc12808544",
-      "ageHours": 5.9,
-      "model": "glm-5.1",
-      "totalTokens": 55107,
-      "inputTokens": 42947,
-      "outputTokens": 25,
+      "key": "agent:main:cron:...5fe1f7",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "62k/205k",
+      "contextPercent": "30%"
     },
     {
-      "key": "agent:main:cron:88679f9e-ba09-4e1a-8dbd-a2dc12808544:run:258a1d31-a833-48d8-9be8",
-      "ageHours": 6.0,
-      "model": "glm-5.1",
-      "totalTokens": 54418,
-      "inputTokens": 53681,
-      "outputTokens": 16133,
+      "key": "agent:main:cron:...2c4839",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5-turbo",
+      "contextTokens": "70k/205k",
+      "contextPercent": "34%"
     },
     {
-      "key": "agent:main:cron:78eac6fc-c2d7-41d2-a5d1-9a52892f89ab",
-      "ageHours": 6.7,
-      "model": "glm-5.1",
-      "totalTokens": 52742,
-      "inputTokens": 34886,
-      "outputTokens": 39,
+      "key": "agent:main:cron:...35afbf",
       "kind": "direct",
-      "agentId": "main"
+      "age": "ago",
+      "model": "glm-5.1",
+      "contextTokens": "51k/205k",
+      "contextPercent": "25%"
+    },
+    {
+      "key": "agent:main:cron:...4ab7cb",
+      "kind": "direct",
+      "age": "ago",
+      "model": "glm-5-turbo",
+      "contextTokens": "65k/205k",
+      "contextPercent": "32%"
     }
   ]
 }
