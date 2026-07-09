@@ -22289,3 +22289,456 @@ class TestRetrievePipeline:
         out = mg.retrieve("Python", explain=True)
         assert "final_count" in out["explain"]
         assert out["explain"]["final_count"] == len(out["results"])
+
+
+# ==================================================================
+# Cycle 213: Natural connectivity + Effective resistance + Information centrality
+# ==================================================================
+
+class TestNaturalConnectivity:
+    """Tests for natural_connectivity()."""
+
+    def test_empty_graph(self, mg):
+        assert mg.natural_connectivity() == 0.0
+
+    def test_single_node(self, mg):
+        mg.add("solo")
+        # EE = 1, n = 1, ln(1/1) = 0
+        assert mg.natural_connectivity() == 0.0
+
+    def test_n_isolated_nodes(self, mg):
+        """n isolated nodes: EE = n, ln(n/n) = 0."""
+        for i in range(5):
+            mg.add(f"node{i}")
+        assert mg.natural_connectivity() == 0.0
+
+    def test_single_edge(self, mg):
+        """K2: EE = 2*cosh(1), λ̄ = ln(2*cosh(1)/2) = ln(cosh(1))."""
+        import math
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        expected = math.log(math.cosh(1))
+        assert mg.natural_connectivity() == pytest.approx(expected, abs=1e-6)
+
+    def test_triangle_k3(self, mg):
+        """K3: λ̄ = ln(EE/3) where EE = e² + 2/e."""
+        import math
+        nodes = [mg.add(f"n{i}") for i in range(3)]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        ee = math.exp(2) + 2 * math.exp(-1)
+        expected = math.log(ee / 3)
+        assert mg.natural_connectivity() == pytest.approx(expected, abs=1e-5)
+
+    def test_complete_graph_k4(self, mg):
+        """K4: λ̄ = ln(EE/4) where EE = e³ + 3/e."""
+        import math
+        nodes = [mg.add(f"n{i}") for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        ee = math.exp(3) + 3 * math.exp(-1)
+        expected = math.log(ee / 4)
+        assert mg.natural_connectivity() == pytest.approx(expected, abs=1e-4)
+
+    def test_monotonically_increasing_with_edges(self, mg):
+        """Adding edges should increase natural connectivity."""
+        nodes = [mg.add(f"n{i}") for i in range(5)]
+        nc0 = mg.natural_connectivity()  # no edges
+
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        nc1 = mg.natural_connectivity()
+
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        nc2 = mg.natural_connectivity()
+
+        mg.link(nodes[0].id, nodes[2].id, "r")  # triangle
+        nc3 = mg.natural_connectivity()
+
+        assert nc0 < nc1 < nc2 < nc3
+
+    def test_complete_gt_path(self, mg):
+        """Complete graph should have higher λ̄ than path graph (same nodes)."""
+        # Path P4
+        nodes_a = [mg.add(f"a{i}") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes_a[i].id, nodes_a[i + 1].id, "r")
+        nc_path = mg.natural_connectivity()
+
+        mg2 = MemoryGraph(":memory:")
+        nodes_b = [mg2.add(f"b{i}") for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg2.link(nodes_b[i].id, nodes_b[j].id, "r")
+        nc_complete = mg2.natural_connectivity()
+
+        assert nc_complete > nc_path
+
+    def test_invalid_max_order_raises(self, mg):
+        mg.add("node")
+        with pytest.raises(ValueError):
+            mg.natural_connectivity(max_order=0)
+
+    def test_quarantine_excluded(self, mg):
+        """Quarantined nodes should be excluded by default."""
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(a.id, c.id, "r")
+
+        nc_full = mg.natural_connectivity()
+        mg.node_quarantine(c.id, "test")
+        nc_partial = mg.natural_connectivity()
+        assert nc_partial < nc_full
+
+    def test_include_quarantined(self, mg):
+        """include_quarantined=True should match unquarantined result."""
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        nc_before = mg.natural_connectivity()
+
+        mg.node_quarantine(b.id, "test")
+        nc_with = mg.natural_connectivity(include_quarantined=True)
+        assert nc_with == pytest.approx(nc_before, abs=1e-6)
+
+    def test_non_mutating(self, mg):
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        nc1 = mg.natural_connectivity()
+        nc2 = mg.natural_connectivity()
+        assert nc1 == nc2
+
+    def test_size_independence_property(self, mg):
+        """Natural connectivity of a path should be roughly similar
+        regardless of size — this is the key property that distinguishes
+        it from the raw Estrada index."""
+        # Path P3
+        nodes3 = [mg.add(f"p3_{i}") for i in range(3)]
+        for i in range(2):
+            mg.link(nodes3[i].id, nodes3[i + 1].id, "r")
+        nc_p3 = mg.natural_connectivity()
+
+        # Path P5
+        mg2 = MemoryGraph(":memory:")
+        nodes5 = [mg2.add(f"p5_{i}") for i in range(5)]
+        for i in range(4):
+            mg2.link(nodes5[i].id, nodes5[i + 1].id, "r")
+        nc_p5 = mg2.natural_connectivity()
+
+        # Both should be close to 0 (unlike raw EE which scales with n)
+        assert abs(nc_p3) < 1.0
+        assert abs(nc_p5) < 1.0
+
+
+class TestEffectiveResistance:
+    """Tests for effective_resistance()."""
+
+    def test_empty_graph(self, mg):
+        assert mg.effective_resistance("x", "y") == 0.0
+
+    def test_node_not_found(self, mg):
+        a = mg.add("A")
+        assert mg.effective_resistance(a.id, "nonexistent") == 0.0
+        assert mg.effective_resistance("nonexistent", a.id) == 0.0
+
+    def test_same_node(self, mg):
+        """R(v, v) = 0 for any node."""
+        a = mg.add("A")
+        assert mg.effective_resistance(a.id, a.id) == 0.0
+
+    def test_direct_edge_tree(self, mg):
+        """In a tree, directly connected nodes have R = 1 ohm."""
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert mg.effective_resistance(a.id, b.id) == pytest.approx(1.0, abs=1e-6)
+
+    def test_triangle_k3(self, mg):
+        """Triangle K3: R = 2/3 for each pair (parallel paths)."""
+        nodes = [mg.add(f"n{i}") for i in range(3)]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        for i in range(3):
+            for j in range(i + 1, 3):
+                assert mg.effective_resistance(
+                    nodes[i].id, nodes[j].id
+                ) == pytest.approx(2.0 / 3.0, abs=1e-4)
+
+    def test_square_c4(self, mg):
+        """Square C4: adjacent nodes have R = 3/4, opposite have R = 1."""
+        nodes = [mg.add(f"n{i}") for i in range(4)]
+        # 0-1-2-3-0 (cycle)
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[(i + 1) % 4].id, "r")
+
+        # Adjacent
+        assert mg.effective_resistance(
+            nodes[0].id, nodes[1].id
+        ) == pytest.approx(3.0 / 4.0, abs=1e-4)
+        # Opposite
+        assert mg.effective_resistance(
+            nodes[0].id, nodes[2].id
+        ) == pytest.approx(1.0, abs=1e-4)
+
+    def test_complete_graph_kn(self, mg):
+        """Complete graph K_n: R(i,j) = 2/n for all pairs."""
+        n = 5
+        nodes = [mg.add(f"n{i}") for i in range(n)]
+        for i in range(n):
+            for j in range(i + 1, n):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+
+        expected = 2.0 / n
+        for i in range(n):
+            for j in range(i + 1, n):
+                assert mg.effective_resistance(
+                    nodes[i].id, nodes[j].id
+                ) == pytest.approx(expected, abs=1e-4)
+
+    def test_disconnected_nodes(self, mg):
+        """Nodes in different components have R = ∞."""
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        # c is isolated
+        assert mg.effective_resistance(a.id, c.id) == float('inf')
+
+    def test_symmetry(self, mg):
+        """R(a, b) = R(b, a)."""
+        nodes = [mg.add(f"n{i}") for i in range(4)]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        mg.link(nodes[0].id, nodes[3].id, "r")
+
+        for i in range(4):
+            for j in range(4):
+                if i != j:
+                    assert mg.effective_resistance(
+                        nodes[i].id, nodes[j].id
+                    ) == pytest.approx(
+                        mg.effective_resistance(nodes[j].id, nodes[i].id),
+                        abs=1e-10
+                    )
+
+    def test_path_graph_distances(self, mg):
+        """Path P4: R increases with distance.
+        R(adjacent) < R(2-hop) < R(3-hop).
+        """
+        nodes = [mg.add(f"n{i}") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+
+        r1 = mg.effective_resistance(nodes[0].id, nodes[1].id)
+        r2 = mg.effective_resistance(nodes[0].id, nodes[2].id)
+        r3 = mg.effective_resistance(nodes[0].id, nodes[3].id)
+
+        assert r1 < r2 < r3
+        # Path P4 is a tree: adjacent R = 1.0 (bridge edge, no parallel paths)
+        assert r1 == pytest.approx(1.0, abs=1e-6)
+        # 2-hop distance: R = 2.0 (series resistors)
+        assert r2 == pytest.approx(2.0, abs=0.01)
+        # 3-hop: R = 3.0
+        assert r3 == pytest.approx(3.0, abs=0.01)
+
+    def test_parallel_edges_reduce_resistance(self, mg):
+        """More paths between nodes → lower resistance."""
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")  # direct
+        r_direct = mg.effective_resistance(a.id, b.id)
+
+        mg.link(b.id, c.id, "r")
+        mg.link(a.id, c.id, "r")  # triangle: adds parallel path
+        r_triangle = mg.effective_resistance(a.id, b.id)
+
+        assert r_triangle < r_direct
+
+    def test_quarantine_excluded(self, mg):
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        r_before = mg.effective_resistance(a.id, b.id)
+        assert r_before == pytest.approx(1.0, abs=1e-6)
+
+        # Quarantine b → effectively removes it
+        mg.node_quarantine(b.id, "test")
+        # a is now alone, so effective_resistance to b should be 0.0 (not found)
+        r_after = mg.effective_resistance(a.id, b.id)
+        assert r_after == 0.0
+
+    def test_non_mutating(self, mg):
+        nodes = [mg.add(f"n{i}") for i in range(3)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[(i + 1) % 3].id, "r")
+        r1 = mg.effective_resistance(nodes[0].id, nodes[1].id)
+        r2 = mg.effective_resistance(nodes[0].id, nodes[1].id)
+        assert r1 == r2
+
+
+class TestInformationCentrality:
+    """Tests for information_centrality()."""
+
+    def test_empty_graph(self, mg):
+        assert mg.information_centrality() == {}
+
+    def test_single_node(self, mg):
+        a = mg.add("solo")
+        scores = mg.information_centrality()
+        assert len(scores) == 1
+        assert scores[a.id] == 1.0
+
+    def test_all_scores_in_unit_interval(self, mg):
+        nodes = [mg.add(f"n{i}") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        scores = mg.information_centrality()
+        for v in scores.values():
+            assert 0.0 <= v <= 1.0
+
+    def test_triangle_uniform(self, mg):
+        """In a triangle (K3), all nodes are symmetric → equal centrality."""
+        nodes = [mg.add(f"n{i}") for i in range(3)]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        scores = mg.information_centrality()
+        values = list(scores.values())
+        assert max(values) - min(values) < 1e-6
+
+    def test_complete_graph_uniform(self, mg):
+        """Complete graph K4: all nodes symmetric."""
+        n = 4
+        nodes = [mg.add(f"n{i}") for i in range(n)]
+        for i in range(n):
+            for j in range(i + 1, n):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        scores = mg.information_centrality()
+        values = list(scores.values())
+        assert max(values) - min(values) < 1e-6
+
+    def test_star_hub_highest(self, mg):
+        """Star graph: hub should have highest information centrality."""
+        hub = mg.add("hub")
+        leaves = [mg.add(f"leaf{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(hub.id, leaf.id, "r")
+
+        scores = mg.information_centrality()
+        hub_score = scores[hub.id]
+        for leaf in leaves:
+            assert scores[leaf.id] < hub_score
+
+    def test_path_middle_higher_than_ends(self, mg):
+        """Path graph P5: middle nodes are more central than end nodes."""
+        n = 5
+        nodes = [mg.add(f"n{i}") for i in range(n)]
+        for i in range(n - 1):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+
+        scores = mg.information_centrality()
+        # Middle (index 2) should be higher than ends (index 0, 4)
+        assert scores[nodes[2].id] > scores[nodes[0].id]
+        assert scores[nodes[2].id] > scores[nodes[4].id]
+
+    def test_disconnected_penalised(self, mg):
+        """Nodes in different components should get lower scores."""
+        # Two separate triangles
+        t1 = [mg.add(f"t1_{i}") for i in range(3)]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                mg.link(t1[i].id, t1[j].id, "r")
+
+        t2 = [mg.add(f"t2_{i}") for i in range(3)]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                mg.link(t2[i].id, t2[j].id, "r")
+
+        scores = mg.information_centrality()
+        # All nodes have unreachable pairs, so all should get low scores
+        for v in scores.values():
+            assert v == 0.0  # disconnected graph → all penalised to 0
+
+    def test_bridge_node_valued(self, mg):
+        """Bridge node connecting two clusters should have decent centrality."""
+        # Cluster 1
+        c1 = [mg.add(f"c1_{i}") for i in range(3)]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                mg.link(c1[i].id, c1[j].id, "r")
+
+        # Cluster 2
+        c2 = [mg.add(f"c2_{i}") for i in range(3)]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                mg.link(c2[i].id, c2[j].id, "r")
+
+        # Bridge
+        bridge = mg.add("bridge")
+        mg.link(c1[0].id, bridge.id, "r")
+        mg.link(bridge.id, c2[0].id, "r")
+
+        scores = mg.information_centrality()
+        # Bridge should have non-zero score
+        assert scores[bridge.id] > 0.0
+        # All nodes should have non-negative scores
+        for v in scores.values():
+            assert v >= 0.0
+
+    def test_more_edges_higher_scores(self, mg):
+        """Adding edges should generally increase information centrality."""
+        # Start with path P4
+        nodes = [mg.add(f"n{i}") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        scores_path = mg.information_centrality()
+        total_path = sum(scores_path.values())
+
+        # Add edge to make a cycle
+        mg.link(nodes[0].id, nodes[3].id, "r")
+        scores_cycle = mg.information_centrality()
+        total_cycle = sum(scores_cycle.values())
+
+        assert total_cycle > total_path
+
+    def test_quarantine_excluded(self, mg):
+        """Quarantined nodes are excluded from computation."""
+        nodes = [mg.add(f"n{i}") for i in range(4)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+
+        scores_full = mg.information_centrality()
+        assert len(scores_full) == 4
+
+        mg.node_quarantine(nodes[3].id, "test")
+        scores_partial = mg.information_centrality()
+        assert len(scores_partial) == 3
+        assert nodes[3].id not in scores_partial
+
+    def test_non_mutating(self, mg):
+        nodes = [mg.add(f"n{i}") for i in range(3)]
+        for i in range(3):
+            mg.link(nodes[i].id, nodes[(i + 1) % 3].id, "r")
+        s1 = mg.information_centrality()
+        s2 = mg.information_centrality()
+        assert s1 == s2
+
+    def test_all_nodes_present(self, mg):
+        """Every non-quarantined node should appear in the result."""
+        nodes = [mg.add(f"n{i}") for i in range(6)]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[3].id, nodes[4].id, "r")
+        mg.link(nodes[4].id, nodes[5].id, "r")
+        scores = mg.information_centrality()
+        for n in nodes:
+            assert n.id in scores

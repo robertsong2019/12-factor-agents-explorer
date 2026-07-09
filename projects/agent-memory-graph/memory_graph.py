@@ -18167,6 +18167,330 @@ class MemoryGraph:
         return score
 
     # ------------------------------------------------------------------
+    # Natural connectivity + Effective resistance + Information centrality
+    # ------------------------------------------------------------------
+
+    def natural_connectivity(self, max_order: int = 20,
+                             include_quarantined: bool = False) -> float:
+        """Natural connectivity — size-normalised robustness measure.
+
+        Also known as the *average subgraph centrality* or the
+        *logarithm of the mean Estrada index*::
+
+            λ̄ = ln(EE / n)
+
+        where *EE* is the Estrada index and *n* the node count.
+
+        **Why normalise?**
+
+        The raw Estrada index scales with graph size — a path of 50
+        nodes has larger EE than a path of 5 nodes, even though both
+        are equally "path-like".  Natural connectivity removes this
+        size bias, enabling fair comparison across graphs of different
+        orders.
+
+        **Interpretation:**
+
+        - Higher λ̄ → more robust / redundant connectivity.
+        - For a complete graph *K_n*: λ̄ ≈ *n-1* (maximum for *n* nodes).
+        - For a path graph: λ̄ ≈ 0 (minimal connectivity).
+        - For an empty graph: λ̄ = 0 exactly (each node isolated, EE = n,
+          ln(1) = 0).
+
+        Args:
+            max_order: Taylor series truncation for Estrada index.
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns the natural connectivity as a float.  Returns ``0.0``
+        for an empty graph.
+        """
+        import math
+
+        if include_quarantined:
+            count = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        else:
+            count = self.conn.execute(
+                "SELECT COUNT(*) FROM nodes WHERE quarantined=0"
+            ).fetchone()[0]
+
+        if count == 0:
+            return 0.0
+
+        ee = self.estrada_index(max_order, include_quarantined)
+        return math.log(ee / count)
+
+    def _laplacian_pseudoinverse(self, node_ids: list[str],
+                                 node_set: set[str]) -> list[list[float]] | None:
+        """Compute the Moore-Penrose pseudoinverse of the graph Laplacian.
+
+        Uses the formula (for connected graphs)::
+
+            L⁺ = (L + J/n)⁻¹ − J/n
+
+        where *J* is the all-ones matrix and *n* the node count.
+        This requires one *n×n* matrix inversion via Gaussian elimination.
+
+        Returns ``None`` if the graph has 0 or 1 nodes.
+        """
+        n = len(node_ids)
+        if n <= 1:
+            return None
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+
+        # Build Laplacian L = D − A
+        L = [[0.0] * n for _ in range(n)]
+        degrees = [0] * n
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s, t = r["source"], r["target"]
+            if s in node_set and t in node_set:
+                i, j = idx[s], idx[t]
+                L[i][j] -= 1.0
+                L[j][i] -= 1.0
+                degrees[i] += 1
+                degrees[j] += 1
+        for i in range(n):
+            L[i][i] = float(degrees[i])
+
+        # L⁺ = (L + J/n)⁻¹ − J/n
+        # Add J/n to L
+        jn = 1.0 / n
+        M = [[L[i][j] + jn for j in range(n)] for i in range(n)]
+
+        # Invert M via Gauss-Jordan elimination with partial pivoting
+        # Augmented matrix [M | I]
+        aug = [[M[i][j] for j in range(n)] + [
+            1.0 if i == j else 0.0 for j in range(n)
+        ] for i in range(n)]
+
+        for col in range(n):
+            # Partial pivot: find row with largest |value| in this column
+            pivot_row = col
+            max_val = abs(aug[col][col])
+            for row in range(col + 1, n):
+                if abs(aug[row][col]) > max_val:
+                    max_val = abs(aug[row][col])
+                    pivot_row = row
+
+            if max_val < 1e-14:
+                # Singular — fall back gracefully
+                return None
+
+            # Swap rows
+            if pivot_row != col:
+                aug[col], aug[pivot_row] = aug[pivot_row], aug[col]
+
+            # Scale pivot row
+            pivot_val = aug[col][col]
+            inv_pivot = 1.0 / pivot_val
+            for j in range(2 * n):
+                aug[col][j] *= inv_pivot
+
+            # Eliminate column in all other rows
+            for row in range(n):
+                if row == col:
+                    continue
+                factor = aug[row][col]
+                if factor != 0.0:
+                    for j in range(2 * n):
+                        aug[row][j] -= factor * aug[col][j]
+
+        # Extract inverse from augmented matrix
+        inv = [[aug[i][n + j] for j in range(n)] for i in range(n)]
+
+        # Subtract J/n
+        L_plus = [[inv[i][j] - jn for j in range(n)] for i in range(n)]
+
+        return L_plus
+
+    def effective_resistance(self, node_a: str, node_b: str,
+                             *, include_quarantined: bool = False) -> float:
+        """Effective resistance between two nodes (electrical analogy).
+
+        Treats the graph as an electrical circuit where each edge is a
+        1-ohm resistor.  The effective resistance *R(a, b)* is the
+        resistance measured between nodes *a* and *b*.
+
+        Computed via the Laplacian pseudoinverse::
+
+            R(a, b) = L⁺_{aa} + L⁺_{bb} − 2·L⁺_{ab}
+
+        **Interpretation:**
+
+        - Lower resistance → many short paths → well connected.
+        - Higher resistance → few / long paths → poorly connected.
+        - For directly connected nodes in a tree: *R = 1*.
+        - For nodes in a triangle: *R = 2/3* (parallel paths reduce it).
+        - For disconnected nodes: *R = ∞* (returns ``float('inf')``).
+
+        **Relation to information centrality:**
+
+        Information centrality uses *1 / R(a, b)* as "information flow".
+        The sum *Σ_w R(v, w)* appears in the denominator.
+
+        Args:
+            node_a, node_b: Node IDs.
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns the effective resistance as a float.  Returns ``0.0``
+        if either node doesn't exist.  Returns ``float('inf')`` if the
+        nodes are in different connected components.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+
+        node_set = set(node_ids)
+        if node_a not in node_set or node_b not in node_set:
+            return 0.0
+
+        if node_a == node_b:
+            return 0.0
+
+        # Check connectivity (must be in same component)
+        # Use the pseudoinverse: if nodes are disconnected, R = inf
+        L_plus = self._laplacian_pseudoinverse(node_ids, node_set)
+        if L_plus is None:
+            return 0.0 if node_a == node_b else float('inf')
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        ia, ib = idx[node_a], idx[node_b]
+
+        r = L_plus[ia][ia] + L_plus[ib][ib] - 2.0 * L_plus[ia][ib]
+
+        # Numerical noise can push slightly below 0 for directly-connected nodes
+        if r < 0:
+            r = 0.0
+
+        # Detect disconnection: if R is very large, nodes are likely
+        # in different components.  Verify with BFS for robustness.
+        if r > 1e6:
+            dists = self._bfs_distances(node_a)
+            if node_b not in dists:
+                return float('inf')
+
+        return r
+
+    def information_centrality(self, *, include_quarantined: bool = False
+                               ) -> dict[str, float]:
+        """Information centrality — information flow efficiency per node.
+
+        Proposed by Stephenson & Zelen (1989).  Measures how efficiently
+        information flows from a node to all others, considering **all**
+        paths (not just shortest paths).
+
+        Based on *effective resistance*: the information flow between
+        *v* and *w* is *I(v, w) = 1 / R(v, w)*.  The centrality of
+        node *v* is::
+
+            C_I(v) = n / Σ_w R(v, w)
+
+        (where *R(v, v) = 0* is excluded from the sum).
+
+        **Key properties:**
+
+        - Captures both direct and indirect connectivity.
+        - Penalises nodes at the end of long chains.
+        - Rewards nodes in the centre of dense clusters.
+        - For disconnected nodes, *R = ∞* so *I = 0*, which lowers
+          the centrality of nodes with unreachable neighbours.
+
+        **Comparison with other centralities:**
+
+        - *Closeness*: uses shortest-path distance only.
+        - *Betweenness*: counts paths that pass *through* a node.
+        - *Information*: considers all paths via effective resistance.
+
+        Args:
+            include_quarantined: If False, skip quarantined nodes.
+
+        Returns a dict mapping node IDs to centrality scores in
+        ``[0, 1]``.  Higher = more central.  Empty graph returns ``{}``.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+
+        n = len(node_ids)
+        if n == 0:
+            return {}
+        if n == 1:
+            return {node_ids[0]: 1.0}
+
+        node_set = set(node_ids)
+        L_plus = self._laplacian_pseudoinverse(node_ids, node_set)
+        if L_plus is None:
+            return {nid: 0.0 for nid in node_ids}
+
+        # For each node, sum of effective resistances to all others
+        # R(v, w) = L⁺_{vv} + L⁺_{ww} − 2·L⁺_{vw}
+        # Σ_w R(v, w) = n·L⁺_{vv} + Σ_w L⁺_{ww} − 2·Σ_w L⁺_{vw}
+        #             = n·L⁺_{vv} + tr(L⁺) − 2·(row sum of L⁺)_v
+        trace_L = sum(L_plus[i][i] for i in range(n))
+        row_sums = [sum(L_plus[i][j] for j in range(n)) for i in range(n)]
+
+        scores: dict[str, float] = {}
+        raw_scores: list[float] = []
+
+        for i, nid in enumerate(node_ids):
+            total_r = n * L_plus[i][i] + trace_L - 2.0 * row_sums[i]
+            # Exclude self: R(v, v) should be 0, but the formula
+            # includes it.  The L⁺ formula gives R(v,v) = 0 exactly
+            # (L⁺_{vv} + L⁺_{vv} − 2·L⁺_{vv} = 0), so the sum is correct.
+
+            # For disconnected nodes, total_r can be extremely large (inf).
+            # Check connectivity to handle this properly.
+            if total_r < 1e-10:
+                # All resistances ~0 means perfectly connected (shouldn't happen
+                # unless n=1).  Assign max score.
+                raw_scores.append(float('inf'))
+                continue
+
+            # Check if this node can reach all others
+            # (for disconnected graphs, effective resistance is infinite
+            # for unreachable pairs, making the formula break down)
+            dists = self._bfs_distances(nid)
+            reachable = len(dists)
+
+            if reachable < n:
+                # Some nodes unreachable — penalise heavily
+                # Use only reachable nodes for the sum, then penalise
+                unreachable = n - reachable
+                # Each unreachable pair contributes effectively infinite R
+                # We approximate by adding a large penalty
+                raw_scores.append(total_r + unreachable * 1e6)
+            else:
+                raw_scores.append(total_r)
+
+        # C_I(v) = n / Σ_w R(v, w), then normalise to [0, 1]
+        for i, nid in enumerate(node_ids):
+            if raw_scores[i] == float('inf'):
+                scores[nid] = 1.0
+            elif raw_scores[i] >= 1e6:
+                scores[nid] = 0.0  # disconnected nodes get 0
+            else:
+                scores[nid] = n / raw_scores[i] if raw_scores[i] > 0 else 0.0
+
+        # Normalise to [0, 1]
+        max_score = max(scores.values()) if scores else 1.0
+        if max_score > 0:
+            scores = {k: v / max_score for k, v in scores.items()}
+
+        return scores
+
+    # ------------------------------------------------------------------
     # Personalized PageRank (HippoRAG core algorithm)
     # ------------------------------------------------------------------
 
