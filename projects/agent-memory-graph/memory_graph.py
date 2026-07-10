@@ -18490,6 +18490,164 @@ class MemoryGraph:
 
         return scores
 
+    def current_flow_betweenness(
+        self,
+        *,
+        include_quarantined: bool = False,
+        normalized: bool = True,
+    ) -> dict[str, float]:
+        """Current-flow betweenness centrality (Brandes & Fleischer 2007).
+
+        Also known as *random-walk betweenness*.  Measures the expected
+        number of times a random walk from *s* to *t* passes through *v*,
+        averaged over all source-target pairs.
+
+        For each pair (s, t) a unit current is injected at *s* and
+        extracted at *t*.  The voltage at node *u* is::
+
+            V_u = L\u207a_us \u2212 L\u207a_ut
+
+        The current through node *v* (for this pair) equals half the
+        sum of absolute currents on its incident edges::
+
+            b_{st}(v) = \u00bd \u03a3_{w \u2208 N(v)} |V_v \u2212 V_w|
+
+        Total CFB(v) = \u03a3_{s<t} b_{st}(v),  normalised by (n\u22121)(n\u22122)/2.
+
+        Time complexity: O(n\u00b2 \u00b7 m) where *m* is the number of edges
+        (acceptable for graphs up to ~ 500 nodes).
+
+        Args:
+            include_quarantined: If ``True``, include quarantined nodes.
+            normalized:          If ``True``, normalise to ``[0, 1]``.
+
+        Returns:
+            ``{node_id: cf_betweenness_score}``.
+
+        Raises:
+            ValueError: If the graph has fewer than 3 nodes.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        node_ids.sort()
+        n = len(node_ids)
+
+        if n < 3:
+            raise ValueError(
+                "current_flow_betweenness requires >= 3 nodes, got %d" % n
+            )
+
+        node_set = set(node_ids)
+        L_plus = self._laplacian_pseudoinverse(node_ids, node_set)
+        if L_plus is None:
+            return {nid: 0.0 for nid in node_ids}
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+
+        # Build adjacency for the subgraph
+        adj: list[list[int]] = [[] for _ in range(n)]
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s_id, t_id = r["source"], r["target"]
+            if s_id in node_set and t_id in node_set:
+                si, ti = idx[s_id], idx[t_id]
+                adj[si].append(ti)
+                adj[ti].append(si)
+
+        cfb = [0.0] * n
+
+        for s in range(n):
+            for t in range(s + 1, n):
+                # Voltage at each node for unit current s -> t
+                # V_u = L+_us - L+_ut
+                # Current through v = (1/2) * sum |V_v - V_w| for w in N(v)
+                for v in range(n):
+                    if v == s or v == t:
+                        continue
+                    v_volt = L_plus[v][s] - L_plus[v][t]
+                    flow = 0.0
+                    for w in adj[v]:
+                        w_volt = L_plus[w][s] - L_plus[w][t]
+                        flow += abs(v_volt - w_volt)
+                    cfb[v] += 0.5 * flow
+
+        scores = {node_ids[i]: cfb[i] for i in range(n)}
+
+        if normalized:
+            norm = (n - 1) * (n - 2) / 2.0
+            if norm > 0:
+                scores = {k: v / norm for k, v in scores.items()}
+
+        return scores
+
+    def current_flow_closeness(
+        self,
+        *,
+        include_quarantined: bool = False,
+    ) -> dict[str, float]:
+        """Current-flow closeness centrality (Brandes & Fleischer 2007).
+
+        Also known as *random-walk closeness*.  For each node *v*::
+
+            CFC(v) = (n - 1) / \u03a3_{w\u2260v} R(v, w)
+
+        where ``R(v, w) = L\u207a_vv + L\u207a_ww \u2212 2\u00b7L\u207a_vw`` is the
+        effective resistance between *v* and *w*.
+
+        Args:
+            include_quarantined: If ``True``, include quarantined nodes.
+
+        Returns:
+            ``{node_id: cf_closeness_score}`` in range ``(0, 1]``.
+
+        Raises:
+            ValueError: If the graph has fewer than 2 nodes.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        node_ids.sort()
+        n = len(node_ids)
+
+        if n < 2:
+            raise ValueError(
+                "current_flow_closeness requires >= 2 nodes, got %d" % n
+            )
+
+        node_set = set(node_ids)
+        L_plus = self._laplacian_pseudoinverse(node_ids, node_set)
+        if L_plus is None:
+            return {nid: 0.0 for nid in node_ids}
+
+        scores: dict[str, float] = {}
+        for i, nid in enumerate(node_ids):
+            total_r = 0.0
+            count = 0
+            for j in range(n):
+                if i == j:
+                    continue
+                r = L_plus[i][i] + L_plus[j][j] - 2.0 * L_plus[i][j]
+                total_r += r
+                count += 1
+            if total_r > 1e-12:
+                scores[nid] = count / total_r
+            else:
+                scores[nid] = float('inf')
+
+        return scores
+
     # ------------------------------------------------------------------
     # Personalized PageRank (HippoRAG core algorithm)
     # ------------------------------------------------------------------
