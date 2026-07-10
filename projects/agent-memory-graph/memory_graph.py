@@ -5123,6 +5123,80 @@ class MemoryGraph:
 
         return (m / cycle_rank) * total
 
+    def randic_index(self) -> Optional[float]:
+        """Randić connectivity index (Kier & Hall 1976).
+
+        One of the most cited molecular descriptors::
+
+            R = \u03a3_{(u,v) \u2208 E} 1 / \u221a(d_u \u00b7 d_v)
+
+        where *d_u* is the degree of node *u*.
+
+        **Properties:**
+        - Path P\u2099: R \u2192 increases with length, dominated by end-edges
+        - Complete K\u2099: R = n/2 (all degrees equal)
+        - Cycle C\u2099: R = n/2 (all degrees = 2)
+        - Star K_{1,n-1}: R = \u221a(n-1)
+        - Adding edges generally *decreases* R (more high-degree nodes)
+
+        Returns:
+            Randić index (float), or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        # Build degree map
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        total = 0.0
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                total += 1.0 / math.sqrt(ds * dt)
+        return total if total > 0 else None
+
+    def harary_index(self) -> Optional[float]:
+        """Harary index — sum of reciprocal pairwise distances.
+
+        The reciprocal-distance analog of the Wiener index::
+
+            H = \u03a3_{u<v} 1 / d(u, v)
+
+        where ``d(u, v)`` is the shortest-path distance. Unreachable
+        pairs contribute zero (same convention as ``wiener_index``).
+
+        **Properties:**
+        - Higher H = more "compact" / well-connected graph
+        - H \u2264 n(n-1)/2 with equality for complete graphs
+        - For K\u2099: H = n(n-1)/2 (all distances = 1)
+        - For C\u2084: H = 5 (4 pairs at d=1, 2 pairs at d=2)
+        - More sensitive to short distances than Wiener
+
+        References:
+            Ivanciuc, T. & Ivanciuc, O. (2000), pl Harary.
+            Original: Harary (1969) for digraphs; adapted by
+            Plavšić et al. (1993) for molecular graphs.
+
+        Returns:
+            Harary index (float), or ``None`` for < 2 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        total = 0.0
+        for i, nid in enumerate(node_ids):
+            dists = self._bfs_distances(nid)
+            for other in node_ids[i + 1:]:
+                d = dists.get(other)
+                if d and d > 0:
+                    total += 1.0 / d
+        return total
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 

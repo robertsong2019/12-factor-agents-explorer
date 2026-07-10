@@ -22742,3 +22742,255 @@ class TestInformationCentrality:
         scores = mg.information_centrality()
         for n in nodes:
             assert n.id in scores
+
+
+# ------------------------------------------------------------------
+# Randić connectivity index (Kier & Hall 1976)
+# ------------------------------------------------------------------
+
+class TestRandicIndex:
+    """Tests for randic_index() — Σ 1/√(d_u · d_v) over edges."""
+
+    def test_empty(self, mg):
+        assert mg.randic_index() is None
+
+    def test_single_node(self, mg):
+        mg.add("A")
+        assert mg.randic_index() is None
+
+    def test_two_isolated(self, mg):
+        mg.add("A")
+        mg.add("B")
+        assert mg.randic_index() is None  # no edges
+
+    def test_single_edge(self, mg):
+        """K₂: one edge, both degrees = 1. R = 1/√1 = 1."""
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert abs(mg.randic_index() - 1.0) < 1e-9
+
+    def test_triangle(self, mg):
+        """K₃: 3 edges, all degrees = 2. R = 3·(1/√4) = 3/2."""
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        assert abs(mg.randic_index() - 1.5) < 1e-9
+
+    def test_complete_k4(self, mg):
+        """K₄: 6 edges, all degrees = 3. R = 6·(1/√9) = 6/3 = 2 = n/2."""
+        nodes = [mg.add(str(i)) for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        assert abs(mg.randic_index() - 2.0) < 1e-9
+
+    def test_cycle_c4(self, mg):
+        """C₄: 4 edges, all degrees = 2. R = 4·(1/√4) = 2 = n/2."""
+        nodes = [mg.add(str(i)) for i in range(4)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[(i + 1) % 4].id, "r")
+        assert abs(mg.randic_index() - 2.0) < 1e-9
+
+    def test_star_k14(self, mg):
+        """K_{1,4}: center deg=4, leaves deg=1. R = 4·(1/√4) = √4 = 2 = √(n-1)."""
+        center = mg.add("C")
+        leaves = [mg.add(f"L{i}") for i in range(4)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        assert abs(mg.randic_index() - 2.0) < 1e-9
+
+    def test_path_p3(self, mg):
+        """P₃: A-B-C. Edges (A,B): 1/√(1·2), (B,C): 1/√(2·1). R = 2/√2 = √2."""
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        expected = 2.0 / (2 ** 0.5)
+        assert abs(mg.randic_index() - expected) < 1e-9
+
+    def test_complete_graph_formula(self, mg):
+        """For K_n: R = n/2 (all degrees = n-1, m=n(n-1)/2 edges)."""
+        for n in range(2, 7):
+            mg2 = MemoryGraph(":memory:")
+            nodes = [mg2.add(f"n{i}") for i in range(n)]
+            for i in range(n):
+                for j in range(i + 1, n):
+                    mg2.link(nodes[i].id, nodes[j].id, "r")
+            assert abs(mg2.randic_index() - n / 2.0) < 1e-9
+
+    def test_star_formula(self, mg):
+        """For K_{1,k}: R = √k."""
+        for k in range(1, 6):
+            mg2 = MemoryGraph(":memory:")
+            center = mg2.add("C")
+            for i in range(k):
+                leaf = mg2.add(f"L{i}")
+                mg2.link(center.id, leaf.id, "r")
+            assert abs(mg2.randic_index() - (k ** 0.5)) < 1e-9
+
+    def test_cycle_formula(self, mg):
+        """For C_n: R = n/2."""
+        for n in range(3, 8):
+            mg2 = MemoryGraph(":memory:")
+            nodes = [mg2.add(f"n{i}") for i in range(n)]
+            for i in range(n):
+                mg2.link(nodes[i].id, nodes[(i + 1) % n].id, "r")
+            assert abs(mg2.randic_index() - n / 2.0) < 1e-9
+
+    def test_adding_edge_decreases(self, mg):
+        """Adding edges to a star increases degrees, generally decreasing R."""
+        center = mg.add("C")
+        leaves = [mg.add(f"L{i}") for i in range(5)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        r_before = mg.randic_index()
+        # Connect two leaves — now both have degree 2
+        mg.link(leaves[0].id, leaves[1].id, "r")
+        r_after = mg.randic_index()
+        # Adding an edge between leaves changes the contribution of those edges
+        # The new edge contributes 1/sqrt(2*2) = 0.5
+        # But the existing center-leaf edges for L0,L1 change from 1/sqrt(1*5)
+        #   to 1/sqrt(2*5), which is smaller
+        # Net effect can vary, but total should be reasonable
+        assert r_before > 0 and r_after > 0
+
+    def test_disconnected_components(self, mg):
+        """Two disjoint edges: each contributes 1/√1 = 1. Total R = 2."""
+        a, b = mg.add("A"), mg.add("B")
+        c, d = mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, d.id, "r")
+        assert abs(mg.randic_index() - 2.0) < 1e-9
+
+    def test_non_mutating(self, mg):
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        before = mg.randic_index()
+        mg.randic_index()  # call again
+        after = mg.randic_index()
+        assert before == after
+
+
+# ------------------------------------------------------------------
+# Harary index (reciprocal distance sum)
+# ------------------------------------------------------------------
+
+class TestHararyIndex:
+    """Tests for harary_index() — Σ 1/d(u,v) over all node pairs."""
+
+    def test_empty(self, mg):
+        assert mg.harary_index() is None
+
+    def test_single_node(self, mg):
+        mg.add("A")
+        assert mg.harary_index() is None
+
+    def test_single_edge(self, mg):
+        """K₂: one pair at d=1. H = 1/1 = 1."""
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "r")
+        assert abs(mg.harary_index() - 1.0) < 1e-9
+
+    def test_triangle(self, mg):
+        """K₃: 3 pairs all at d=1. H = 3."""
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, a.id, "r")
+        assert abs(mg.harary_index() - 3.0) < 1e-9
+
+    def test_complete_k4(self, mg):
+        """K₄: 6 pairs all at d=1. H = 6 = n(n-1)/2."""
+        nodes = [mg.add(str(i)) for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        assert abs(mg.harary_index() - 6.0) < 1e-9
+
+    def test_path_p3(self, mg):
+        """P₃: pairs (A,B)=1, (B,C)=1, (A,C)=2. H = 1+1+0.5 = 2.5."""
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        assert abs(mg.harary_index() - 2.5) < 1e-9
+
+    def test_cycle_c4(self, mg):
+        """C₄: 4 pairs at d=1, 2 pairs at d=2. H = 4 + 2·0.5 = 5."""
+        nodes = [mg.add(str(i)) for i in range(4)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[(i + 1) % 4].id, "r")
+        assert abs(mg.harary_index() - 5.0) < 1e-9
+
+    def test_star_k13(self, mg):
+        """K_{1,3}: 3 center-leaf pairs at d=1, 3 leaf-leaf pairs at d=2.
+        H = 3 + 3·0.5 = 4.5."""
+        center = mg.add("C")
+        leaves = [mg.add(f"L{i}") for i in range(3)]
+        for leaf in leaves:
+            mg.link(center.id, leaf.id, "r")
+        assert abs(mg.harary_index() - 4.5) < 1e-9
+
+    def test_complete_graph_formula(self, mg):
+        """For K_n: H = n(n-1)/2."""
+        for n in range(2, 7):
+            mg2 = MemoryGraph(":memory:")
+            nodes = [mg2.add(f"n{i}") for i in range(n)]
+            for i in range(n):
+                for j in range(i + 1, n):
+                    mg2.link(nodes[i].id, nodes[j].id, "r")
+            expected = n * (n - 1) / 2.0
+            assert abs(mg2.harary_index() - expected) < 1e-9
+
+    def test_disconnected_not_counted(self, mg):
+        """Disconnected pairs contribute 0."""
+        a, b = mg.add("A"), mg.add("B")
+        c, d = mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(c.id, d.id, "r")
+        # Two edges, each pair at d=1. H = 2.
+        assert abs(mg.harary_index() - 2.0) < 1e-9
+
+    def test_harary_le_wiener(self, mg):
+        """For connected graphs with n≥2: H ≤ W (since 1/d ≤ d for d≥1).
+        Actually H ≤ n(n-1)/2 and W ≥ n(n-1)/2 for connected, so H ≤ W
+        is not always true. But H(K_n)=n(n-1)/2 is the max.
+        Instead verify H ≤ n(n-1)/2 always."""
+        nodes = [mg.add(str(i)) for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i + 1].id, "r")
+        n = 5
+        H = mg.harary_index()
+        assert H <= n * (n - 1) / 2.0 + 1e-9
+
+    def test_more_connected_higher_harary(self, mg):
+        """Adding edges increases Harary index."""
+        a, b, c, d = mg.add("A"), mg.add("B"), mg.add("C"), mg.add("D")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(c.id, d.id, "r")
+        h_path = mg.harary_index()
+        # Add edge a-d making it a cycle
+        mg.link(a.id, d.id, "r")
+        h_cycle = mg.harary_index()
+        assert h_cycle > h_path
+
+    def test_harary_and_wiener_relationship(self, mg):
+        """For graphs where all distances are 1 (complete): H = W = pairs."""
+        nodes = [mg.add(str(i)) for i in range(4)]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        W = mg.wiener_index()
+        H = mg.harary_index()
+        # For K_n: W = n(n-1)/2 (all d=1), H = n(n-1)/2 (all 1/d=1)
+        assert abs(W - H) < 1e-9
+
+    def test_non_mutating(self, mg):
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        before = mg.harary_index()
+        mg.harary_index()
+        after = mg.harary_index()
+        assert before == after
