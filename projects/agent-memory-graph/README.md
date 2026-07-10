@@ -1916,6 +1916,72 @@ Personalized PageRank (PPR) — topic-sensitive PageRank 从 seed 节点传播�
 
 信息中心性 (Stephenson & Zelen 1989)。基于有效电阻：信息流 I(v,w) = 1/R(v,w)，中心性 C_I(v) = n / Σ_w R(v,w)。考虑所有路径（非仅最短路径）的信息流效率。惩罚长链末端的节点。
 
+### 电流中心性 (Cycles 214-218)
+
+#### `current_flow_betweenness(*, include_quarantined=False, normalized=True) -> dict[str, float]`
+
+电流介数中心性 (Brandes & Fleischer 2007)。又称随机游走介数。通过 Laplacian 伪逆计算电压差，测量流经每个节点的“电流”量。与经典介数（仅计最短路径）不同，电流介数考虑所有路径——每个节点按其在电流网络中承载的流量排名。O(n²m) 算法基于 Laplacian 伪逆基础设施 (Cycle 213)。
+
+#### `current_flow_closeness(*, include_quarantined=False) -> dict[str, float]`
+
+电流接近中心性 (Brandes & Fleischer 2007)。又称随机游走接近度。每个节点 v 的接近度为 C_CF(v) = n / Σ_w R(v,w)，其中 R(v,w) 是有效电阻。低电阻→高接近度。考虑全网连通性而非仅最短路径距离。
+
+#### `edge_current_flow_betweenness(*, include_quarantined=False, normalized=True) -> dict[frozenset[str], float]`
+
+边级电流介数中心性。对每条边 e=(v,w)，测量通过该边的电流流量。返回 frozenset{v,w} → score 字典。与节点级 current_flow_betweenness 互补，边级度量揭示哪些连接是信息流的瓶颈。graph_rerank 已集成此度量作为可选 centrality 维度。
+
+### 谱分析 (Cycles 215-217)
+
+#### `kirchhoff_index(*, include_quarantined=False) -> float`
+
+基尔霍夫指数（总有效电阻）。无序节点对有效电阻之和：Kf = Σ_{u<v} R(u,v)。基于 Matrix-Tree 定理和 Laplacian 伪逆恒等式计算。是全图连通性的标量度量——值越小表示连通性越好。完全图 K_n 的 Kirchhoff 指数为 n-1（最小可能值）。
+
+#### `spanning_tree_count(*, include_quarantined=False) -> int`
+
+生成树数量（Matrix-Tree 定理）。Laplacian 矩阵的任意余子式等于生成树数。利用 Laplacian 伪逆恒等式：τ(G) = det(L⁺) · n / Πλᵢ（非零特征值）。可用于量化网络的冗余连接程度。
+
+#### `spectral_gap(*, include_quarantined=False) -> float`
+
+谱隙 (Spectral Gap)。邻接矩阵两个最大特征值之差 δ = λ₁ − λ₂。较大的谱隙意味着随机游走更快混合、图更难切断。与代数连通度 (Fiedler value) 不同：谱隙基于邻接矩阵而非 Laplacian。
+
+#### `graph_energy(*, include_quarantined=False) -> float`
+
+图能量 (Gutman 1978)。邻接矩阵所有特征值绝对值之和：E(G) = Σ|λᵢ|。在化学图论中用作分子描述符，在网络科学中作为复杂度度量。与谱半径、代数连通度互补。
+
+#### `hyper_wiener_index() -> Optional[int]`
+
+超 Wiener 指数 (Randić 1993)。Wiener 指数的扩展，不仅考虑最短路径长度，还计及所有最短路径的条数：WW = ½ Σ_{u,v} (d(u,v) + d(u,v)²)。提供比经典 Wiener 指数更丰富的距离分布信息。
+
+#### `balaban_index() -> Optional[float]`
+
+Balaban J 指数 (Balaban 1982)。基于距离的拓扑描述符，被誉为“最相关的拓扑指数之一”：J = m / (m − n + 2) · Σ_{edges} (d_u · d_v)^{-½}，其中 d_u 是节点 u 到所有其他节点的距离和。对图的分支结构高度敏感。
+
+#### `randic_index() -> Optional[float]`
+
+Randić 连通性指数 (Kier & Hall 1976)。最被引用的分子描述符之一：R = Σ_{(u,v)∈E} 1/√(d_u · d_v)。连接度高的节点对的贡献被惩罚。与图的整体连通性负相关。
+
+#### `harary_index() -> Optional[float]`
+
+Harary 指数。成对距离倒数之和：H = Σ_{u<v} 1/d(u,v)。是 Wiener 指数的“倒数版本”——近距离节点对贡献更大。0 表示无连接的图，完全图 K_n 的 Harary 指数为 n(n-1)/2。
+
+### Phantom Commit Detector (Cycle 219)
+
+#### `scripts/phantom_check.py`
+
+Pre-commit 守卫脚本，防止类遮蔽 (class shadowing) 和幻影 API (phantom API) 问题。07-07 事故的教训：6 个 API 被提交但实际不存在于代码中，根因是重复类定义中第二个类静默覆盖第一个。
+
+功能：
+1. 检测同一文件内的重复类/函数定义（遮蔽）
+2. 解析 staged commit message 中的 API 名称，验证它们实际存在于代码
+3. 清晰报告违规项
+
+用法：
+```bash
+python3 scripts/phantom_check.py                        # 检查所有 .py 文件
+python3 scripts/phantom_check.py memory_graph.py        # 检查特定文件
+python3 scripts/phantom_check.py --commit-msg COMMIT_MSG # 验证 commit 中的 API
+```
+
 ---
 
 ### 自适应检索 (QDAP-v2 + SkewRoute)
@@ -1975,7 +2041,7 @@ CPM (Clique Percolation Method) 重叠社区检测 (Palla et al. 2005)。两个 
 python3 -m pytest test_memory_graph.py -q
 ```
 
-2288 个测试覆盖所有 API（213 个 cycle，197 天零回滚）。
+2407 个测试覆盖所有 API（220 个 cycle，204 天零回滚）。
 
 ## 设计思路
 
@@ -2013,8 +2079,9 @@ python3 -m pytest test_memory_graph.py -q
 32. **图序列化** — to_dict/from_dict 提供 JSON 安全的图序列化方案，支持快照恢复、API 响应和跨 Agent 记忆传输
 33. **自适应检索 (QDAP-v2 + SkewRoute)** — 6 类查询分类器 + 连续权重插值 + 分数偏度分析 + 熵修正，per-query 动态调整 BM25/Vector/Graph 三路融合权重。trivial 查询跳过检索，relational 查询图主导，exact 查询 BM25 主导——让问题自己说话
 34. **图拓扑与团分析** — find_cycle (DFS 环路检测) + graph_periphery (最远节点) + maximal_cliques (Bron-Kerbosch 极大团) + clique_overlap_matrix (团间共享节点) + k_clique_communities (CPM 重叠社区发现，节点可属多社区)
-35. **高级中心性** — katz_centrality (衰减路径求和中心性) + subgraph_centrality (闭合游走参与度) + laplacian_centrality (网络中断潜力，Laplacian 能量下降) + estrada_index (全图连通性指数) + communicability (节点对信息流便捷度) + natural_connectivity (尺寸归一化鲁棒性) + effective_resistance (电路 analogy 节点对连通性) + information_centrality (Stephenson-Zelen 信息流效率) 提供 14 种中心性/连通性度量，覆盖从节点级到图级别的多维度重要性分析
+35. **高级中心性** — katz_centrality (衰减路径求和中心性) + subgraph_centrality (闭合游走参与度) + laplacian_centrality (网络中断潜力，Laplacian 能量下降) + estrada_index (全图连通性指数) + communicability (节点对信息流便捷度) + natural_connectivity (尺寸归一化鲁棒性) + effective_resistance (电路 analogy 节点对连通性) + information_centrality (Stephenson-Zelen 信息流效率) 提供 14 种经典中心性/连通性度量，覆盖从节点级到图级别的多维度重要性分析
 36. **GraphRAG 检索管线** — personalized_pagerank (HippoRAG 核心 PPR 从 seed 节点传播相关性) + ppr_retrieve (关键词→seed→PPR 两阶段检索) + compute_graph_activity/auto_forget (FOREVER 模型：活跃图忘记更少，沉寂图加速遗忘) + hybrid_retrieve (RRF 融合 keyword+PPR+tag 三路信号) + graph_rerank (中心性加权重排序) + retrieve() 统一四阶段管线编排器 (keyword→PPR→hybrid→rerank)
+37. **电流中心性与谱分析** — current_flow_betweenness/current_flow_closeness/edge_current_flow_betweenness (Brandes & Fleischer 2007 电流类比随机游走中心性) + kirchhoff_index/spanning_tree_count (Matrix-Tree 定理全图连通性) + spectral_gap/graph_energy (邻接矩阵谱特性) + hyper_wiener_index/balaban_index/randic_index/harary_index (化学图论距离描述符) + phantom_check.py (Cycle 219 pre-commit 守卫，防止类遮蔽和幻影 API)。总计 20 种中心性/连通性/谱/拓扑度量
 
 ## 许可
 
