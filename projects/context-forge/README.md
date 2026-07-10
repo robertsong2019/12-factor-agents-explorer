@@ -452,6 +452,90 @@ console.log(formatDeadCodeReport(result))
 
 ---
 
+## File Size Analysis (F39)
+
+Analyze file size distribution across the project — identify outliers, large files, and per-extension breakdown.
+
+```javascript
+import { analyzeFileSizes, formatFileSizeReport } from './context-forge.mjs'
+
+const analysis = await analyzeFileSizes('./src', { maxDepth: 5, maxFiles: 10000 })
+console.log(formatFileSizeReport(analysis))
+// 📁 File Size Analysis: 142 files, 892.5 KB total
+// Mean: 6.28 KB | Median: 3.10 KB | Std Dev: 12.4 KB
+// P90: 15.2 KB | P95: 22.8 KB | P99: 48.1 KB
+//
+// ### Largest Files
+// | File | Size |
+// |------|------|
+// | src/index.mjs | 45.2 KB |
+// | src/scanner.mjs | 38.7 KB |
+// ...
+//
+// ### Outliers (> P95)
+// ⚠️ src/index.mjs (45.2 KB) — 3.6σ above mean
+//
+// ### By Extension
+// | Ext | Count | Total KB | Avg KB |
+// |-----|-------|----------|--------|
+// | .mjs | 95 | 720.3 | 7.6 |
+// | .json | 47 | 172.2 | 3.7 |
+```
+
+**Options:** `{ maxDepth, maxFiles, ignorePatterns }
+
+**Returns:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `totalFiles` | `number` | Files analyzed |
+| `totalSizeKB` | `number` | Total size in KB |
+| `avgSizeKB` / `medianSizeKB` | `number` | Central tendency |
+| `p90/p95/p99SizeKB` | `number` | Percentile thresholds |
+| `stdDev` | `number` | Standard deviation |
+| `largest` | `Array<{file, sizeKB}>` | Top 10 largest files |
+| `outliers` | `Array<{file, sizeKB, sigma}>` | Files > P95 |
+| `byExtension` | `Array<{ext, count, totalKB, avgKB}>` | Per-extension stats |
+
+---
+
+## Naming Convention Detection (F40)
+
+Detect naming conventions (camelCase, snake_case, kebab-case, PascalCase, CONST_CASE) for files and report inconsistencies.
+
+```javascript
+import { detectNamingConventions, formatNamingReport } from './context-forge.mjs'
+
+const analysis = await detectNamingConventions('./src', { maxDepth: 5 })
+console.log(formatNamingReport(analysis))
+// 📛 Naming Convention Analysis: 142 files
+//
+// ### Detected Conventions
+// | Convention | Count | Example |
+//|------------|-------|---------|
+// | kebab-case | 89 | src/agent-memory-graph.mjs |
+// | camelCase  | 38 | src/utils/formatReport.mjs |
+// | snake_case | 12 | src/legacy/old_module.mjs |
+// | PascalCase | 3 | src/components/DataTable.mjs |
+//
+// ⚠️ Inconsistencies Detected:
+//   src/legacy/ uses snake_case (project standard: kebab-case)
+//   12 files affected
+```
+
+**Options:** `{ maxDepth, ignorePatterns }
+
+**Returns:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `totalFiles` | `number` | Files analyzed |
+| `conventions` | `Array<{convention, count, example}>` | Per-convention stats |
+| `inconsistencies` | `Array<{dir, expected, found, files}>` | Mismatched directories |
+| `byDirectory` | `Array<{dir, conventions}>` | Per-directory breakdown |
+
+---
+
 ## How It Works
 
 ```
