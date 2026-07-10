@@ -5045,6 +5045,84 @@ class MemoryGraph:
                     total += d
         return total
 
+    def hyper_wiener_index(self) -> Optional[int]:
+        """Hyper-Wiener index (Randic 1993).
+
+        Extension of the Wiener index that also accounts for **all**
+        shortest paths, not just their lengths::
+
+            WW(G) = \u00bd \u00b7 \u03a3_{u<v} [ d(u,v)\u00b2 + d(u,v) ]
+
+        where ``d(u, v)`` is the shortest-path distance.
+
+        For unreachable pairs the contribution is zero (same convention
+        as ``wiener_index``).
+
+        Returns:
+            Hyper-Wiener index (int), or ``None`` for < 2 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        total = 0
+        for i, nid in enumerate(node_ids):
+            dists = self._bfs_distances(nid)
+            for other in node_ids[i + 1:]:
+                d = dists.get(other)
+                if d and d > 0:
+                    total += d * d + d
+        return total // 2
+
+    def balaban_index(self) -> Optional[float]:
+        """Balaban J index (Balaban 1982).
+
+        A distance-based topological descriptor widely used in chemical
+        graph theory::
+
+            J = [ m / (m - n + 2) ] \u00b7 \u03a3_{(u,v) \u2208 E} 1 / \u221a(d_u \u00b7 d_v)
+
+        where *m* is the number of edges, *n* the number of nodes, and
+        ``d_u`` is the sum of shortest-path distances from *u* to all
+        other reachable nodes (the *transmission* of *u*).
+
+        Returns:
+            Balaban J index (float), or ``None`` for disconnected graphs
+            with ``m \u2264 n - 2`` (undefined cyclomatic number).
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        n = len(rows)
+        if n < 2:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+
+        # Count edges
+        m = self.conn.execute("SELECT COUNT(*) AS c FROM edges").fetchone()["c"]
+        if m == 0:
+            return 0.0
+
+        cycle_rank = m - n + 2  # cyclomatic number + 1
+        if cycle_rank <= 0:
+            return None
+
+        # Compute transmissions
+        transmission: dict[str, int] = {}
+        for nid in node_ids:
+            dists = self._bfs_distances(nid)
+            transmission[nid] = sum(d for d in dists.values() if d > 0)
+
+        # Sum over edges
+        total = 0.0
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        for r in edges:
+            s, t = r["source"], r["target"]
+            ds = transmission.get(s, 0)
+            dt = transmission.get(t, 0)
+            if ds > 0 and dt > 0:
+                total += 1.0 / math.sqrt(ds * dt)
+
+        return (m / cycle_rank) * total
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 

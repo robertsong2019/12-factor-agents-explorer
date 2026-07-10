@@ -226,3 +226,5 @@ timestamp	commit	metric	value	status	description
 2026-07-10T21:10:00+08:00	a637702	test_pass_rate	100%	keep	All 2273 passing, 0 regressions, 15.80s
 2026-07-10T21:25:00+08:00	55d8839	test_count	2273→2289	keep	Cycle 215: kirchhoff_index (n·tr(L⁺)) + spanning_tree_count (Matrix-Tree cofactor via LU). K_n verified against Cayley n^(n-2). +16 tests. Zero regressions. 209th consecutive day.
 2026-07-10T21:25:00+08:00	55d8839	test_pass_rate	100%	keep	All 2289 passing, 0 regressions, 16.05s
+2026-07-10T21:40:00+08:00	5d1eef8	test_count	2289→2306	keep	Cycle 216: spectral_gap (λ₁-λ₂ adjacency) + graph_energy (Σ|λᵢ|, Gutman 1978). K_n/P_n/C_n verified. Lower bound 2√m confirmed. +17 tests. Zero regressions. 210th consecutive day.
+2026-07-10T21:40:00+08:00	5d1eef8	test_pass_rate	100%	keep	All 2306 passing, 0 regressions, 15.89s
