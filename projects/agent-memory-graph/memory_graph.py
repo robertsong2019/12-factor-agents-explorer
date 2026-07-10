@@ -18726,6 +18726,113 @@ class MemoryGraph:
 
         return scores
 
+    def edge_current_flow_betweenness(
+        self,
+        *,
+        include_quarantined: bool = False,
+        normalized: bool = True,
+    ) -> dict[frozenset[str], float]:
+        r"""Edge current-flow betweenness centrality.
+
+        For each edge *e = (v, w)*, measures how much electrical current
+        flows through that edge when unit current is injected at *s* and
+        extracted at *t*, summed over all source-target pairs (s, t)::
+
+            c_f(e) = \u03a3_{s < t} |V\u2076\u02e2\u1d57 \u2212 V\u1d65\u02e2\u1d57|
+
+        where ``V\u1d64\u02e2\u1d57 = L\u207a_us \u2212 L\u207a_ut``  is the voltage at
+        node *u* for the (s, t) pair.
+
+        Uses the **sorted absolute difference identity** for O(n\u00b2 log n)
+        computation instead of the brute-force O(n\u2074):
+
+        For each edge (v, w), compute the transfer-admittance vector
+        ``T[j] = L\u207a[v][j] \u2212 L\u207a[w][j]``,  sort it, then apply:
+
+            \u03a3_{s<t} |T[s] \u2212 T[t]| = \u03a3_k T_sorted[k] \u00b7 (2k \u2212 n + 1)
+
+        Edges with high CF-betweenness are **information bottlenecks**
+        \u2014 their removal most disrupts information flow in the graph.
+
+        Args:
+            include_quarantined: If ``True``, include quarantined nodes
+                                 and their edges.
+            normalized:          If ``True``, normalise by ``(n\u22121)(n\u22122)/2``.
+
+        Returns:
+            ``{frozenset({source_id, target_id}): score}``.
+
+        Raises:
+            ValueError: If the graph has fewer than 3 nodes.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        node_ids.sort()
+        n = len(node_ids)
+
+        if n == 0:
+            return {}
+
+        if n < 3:
+            raise ValueError(
+                "edge_current_flow_betweenness requires >= 3 nodes, got %d" % n
+            )
+
+        node_set = set(node_ids)
+        L_plus = self._laplacian_pseudoinverse(node_ids, node_set)
+        if L_plus is None:
+            return {}
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+
+        # Collect unique undirected edges within the subgraph
+        edges: list[tuple[int, int]] = []
+        seen_pairs: set[frozenset] = set()
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s_id, t_id = r["source"], r["target"]
+            if s_id in node_set and t_id in node_set:
+                pair = frozenset({s_id, t_id})
+                if pair not in seen_pairs and s_id != t_id:
+                    seen_pairs.add(pair)
+                    edges.append((idx[s_id], idx[t_id]))
+
+        scores: dict[frozenset[str], float] = {}
+
+        for vi, wi in edges:
+            # Transfer admittance vector: T[j] = L+[v][j] - L+[w][j]
+            T = sorted(L_plus[vi][j] - L_plus[wi][j] for j in range(n))
+
+            # Sorted absolute difference identity:
+            # sum_{s<t} |T[s]-T[t]| = sum_k T_sorted[k] * (2k - n + 1)
+            raw = 0.0
+            for k in range(n):
+                raw += T[k] * (2 * k - n + 1)
+
+            # raw is sum of |T[s]-T[t]| over all s<t pairs
+            # (the identity gives the exact sum of absolute differences)
+            # But since current through the edge for pair (s,t) =
+            # |V_v - V_w| = |T[s] - T[t]|, we need the raw sum.
+            # The identity gives Σ_{s<t} |a_s - a_t| directly.
+            # No extra 1/2 factor for edges (unlike nodes).
+
+            key = frozenset({node_ids[vi], node_ids[wi]})
+            scores[key] = raw
+
+        if normalized:
+            norm = (n - 1) * (n - 2) / 2.0
+            if norm > 0:
+                scores = {k: v / norm for k, v in scores.items()}
+
+        return scores
+
     def kirchhoff_index(self, *, include_quarantined: bool = False) -> float:
         r"""Kirchhoff index (total effective resistance) of the graph.
 
@@ -19204,7 +19311,8 @@ class MemoryGraph:
                          ``0`` = pure retrieval, ``1`` = pure centrality.
             centrality:  Centrality measure to use —
                          ``"degree"``, ``"eigenvector"``, ``"pagerank"``,
-                         ``"betweenness"``, or ``"closeness"``.
+                         ``"betweenness"``, ``"closeness"``, or
+                         ``"current_flow_betweenness"``.
 
         Returns:
             List of dicts sorted by ``combined_score`` descending::
@@ -19267,6 +19375,14 @@ class MemoryGraph:
             except Exception:
                 method = "degree"
 
+        if method == "current_flow_betweenness":
+            try:
+                cfb = self.current_flow_betweenness(normalized=True)
+                for nid in unique_ids:
+                    centrality_scores[nid] = cfb.get(nid, 0.0)
+            except Exception:
+                method = "degree"
+
         if method == "closeness":
             try:
                 cc = self.closeness_all(normalized=True)
@@ -19275,7 +19391,8 @@ class MemoryGraph:
             except Exception:
                 method = "degree"
 
-        if method not in ("eigenvector", "pagerank", "betweenness", "closeness"):
+        if method not in ("eigenvector", "pagerank", "betweenness",
+                           "closeness", "current_flow_betweenness"):
             # Degree centrality (default / fallback)
             for nid in unique_ids:
                 centrality_scores[nid] = self.degree_centrality(nid)
