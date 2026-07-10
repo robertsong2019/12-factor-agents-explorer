@@ -41,6 +41,10 @@
 - [x] **F17**: Performance benchmarks on large repos — benchmarkAnalysis + formatBenchmarkReport ✅ 2026-07-07
 - [x] **F18**: Documentation examples for each generated file type ✅ 2026-07-07
 
+### File Analysis
+- [x] **F39**: File size analysis — distribution, percentiles, outliers, by-extension breakdown ✅ 2026-07-10
+- [x] **F40**: Naming convention detection — camelCase/snake_case/kebab_case/PascalCase/CONST_CASE detection with inconsistency reporting ✅ 2026-07-10
+
 ### Security & Quality
 - [x] **F32**: Secret detection — scan source for API keys, tokens, passwords ✅ 2026-06-23
 - [x] **F33**: Documentation readability analysis — A-F scoring with 15+ metrics ✅ 2026-06-23

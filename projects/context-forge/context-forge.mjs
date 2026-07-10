@@ -3545,6 +3545,270 @@ export function formatGitHotspotsReport(result) {
   return lines.join('\n');
 }
 
+// ─── F39: File Size Analysis ──────────────────────────────────────────
+
+/**
+ * Analyze file size distribution across the project.
+ * Finds outlier files, computes percentiles, and groups by extension.
+ *
+ * @param {string} root — Project root path
+ * @param {{ maxDepth?: number, gitignore?: string[], maxFileSize?: number }} opts
+ * @returns {Promise<{
+ *   totalFiles: number,
+ *   totalSizeKB: number,
+ *   avgSizeKB: number,
+ *   medianSizeKB: number,
+ *   p90SizeKB: number,
+ *   p95SizeKB: number,
+ *   p99SizeKB: number,
+ *   largest: Array<{ file: string, sizeKB: number }>,
+ *   byExtension: Array<{ ext: string, count: number, totalKB: number, avgKB: number }>,
+ *   outliers: Array<{ file: string, sizeKB: number, zScore: number }>
+ * }>}
+ */
+export async function analyzeFileSizes(root, opts = {}) {
+  const { maxDepth = 4, gitignore = [], maxFileSize = 2 * 1024 * 1024 } = opts;
+  const { readdir, stat } = await import('node:fs/promises');
+  const { join, relative, extname } = await import('node:path');
+
+  const files = [];
+
+  async function walk(dir, depth) {
+    if (depth > maxDepth) return;
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); }
+    catch { return; }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      const fullPath = join(dir, entry.name);
+      const relPath = relative(root, fullPath);
+      if (isIgnored(relPath, gitignore)) continue;
+      if (entry.isDirectory()) {
+        await walk(fullPath, depth + 1);
+      } else if (entry.isFile()) {
+        try {
+          const s = await stat(fullPath);
+          if (s.size <= maxFileSize) {
+            files.push({ file: relPath, sizeKB: +(s.size / 1024).toFixed(2), ext: extname(entry.name) || '(no ext)' });
+          }
+        } catch { /* skip */ }
+      }
+    }
+  }
+
+  await walk(root, 0);
+
+  if (files.length === 0) {
+    return { totalFiles: 0, totalSizeKB: 0, avgSizeKB: 0, medianSizeKB: 0, p90SizeKB: 0, p95SizeKB: 0, p99SizeKB: 0, largest: [], byExtension: [], outliers: [] };
+  }
+
+  const sizes = files.map(f => f.sizeKB).sort((a, b) => a - b);
+  const totalSizeKB = +sizes.reduce((a, b) => a + b, 0).toFixed(2);
+  const avgSizeKB = +(totalSizeKB / files.length).toFixed(2);
+
+  const percentile = (arr, p) => {
+    const idx = Math.min(Math.floor((p / 100) * arr.length), arr.length - 1);
+    return +arr[idx].toFixed(2);
+  };
+
+  const medianSizeKB = percentile(sizes, 50);
+  const p90SizeKB = percentile(sizes, 90);
+  const p95SizeKB = percentile(sizes, 95);
+  const p99SizeKB = percentile(sizes, 99);
+
+  // Std deviation for z-score
+  const variance = sizes.reduce((sum, s) => sum + (s - avgSizeKB) ** 2, 0) / files.length;
+  const stdDev = Math.sqrt(variance) || 1;
+
+  const outliers = files
+    .map(f => ({ ...f, zScore: +((f.sizeKB - avgSizeKB) / stdDev).toFixed(2) }))
+    .filter(f => f.zScore > 2)
+    .sort((a, b) => b.sizeKB - a.sizeKB)
+    .slice(0, 10);
+
+  const largest = [...files].sort((a, b) => b.sizeKB - a.sizeKB).slice(0, 10).map(f => ({ file: f.file, sizeKB: f.sizeKB }));
+
+  // Group by extension
+  const extMap = new Map();
+  for (const f of files) {
+    if (!extMap.has(f.ext)) extMap.set(f.ext, { count: 0, totalKB: 0 });
+    const e = extMap.get(f.ext);
+    e.count++;
+    e.totalKB += f.sizeKB;
+  }
+  const byExtension = [...extMap.entries()]
+    .map(([ext, v]) => ({ ext, count: v.count, totalKB: +v.totalKB.toFixed(2), avgKB: +(v.totalKB / v.count).toFixed(2) }))
+    .sort((a, b) => b.totalKB - a.totalKB);
+
+  return { totalFiles: files.length, totalSizeKB, avgSizeKB, medianSizeKB, p90SizeKB, p95SizeKB, p99SizeKB, largest, byExtension, outliers };
+}
+
+/**
+ * Format file size analysis as a human-readable report.
+ */
+export function formatFileSizeReport(analysis) {
+  if (analysis.totalFiles === 0) return 'No files found for size analysis.';
+  const lines = [
+    '## File Size Analysis',
+    '',
+    `| Metric | Value |`,
+    `|--------|-------|`,
+    `| Total files | ${analysis.totalFiles} |`,
+    `| Total size | ${analysis.totalSizeKB.toFixed(1)} KB (${(analysis.totalSizeKB / 1024).toFixed(1)} MB) |`,
+    `| Average | ${analysis.avgSizeKB} KB |`,
+    `| Median | ${analysis.medianSizeKB} KB |`,
+    `| P90 | ${analysis.p90SizeKB} KB |`,
+    `| P95 | ${analysis.p95SizeKB} KB |`,
+    `| P99 | ${analysis.p99SizeKB} KB |`,
+    '',
+    '### Largest Files',
+  ];
+  for (const f of analysis.largest) {
+    lines.push(`- ${f.sizeKB} KB — \`${f.file}\``);
+  }
+  if (analysis.outliers.length > 0) {
+    lines.push('', '### Size Outliers (z-score > 2)');
+    for (const o of analysis.outliers) {
+      lines.push(`- z=${o.zScore} — ${o.sizeKB} KB — \`${o.file}\``);
+    }
+  }
+  lines.push('', '### By Extension');
+  lines.push('| Ext | Count | Total KB | Avg KB |');
+  lines.push('|-----|-------|----------|--------|');
+  for (const e of analysis.byExtension.slice(0, 10)) {
+    lines.push(`| ${e.ext} | ${e.count} | ${e.totalKB} | ${e.avgKB} |`);
+  }
+  return lines.join('\n');
+}
+
+// ─── F40: Naming Convention Detection ─────────────────────────────────
+
+const NAMING_PATTERNS = {
+  CONST_CASE: /^[A-Z][A-Z0-9_]+$/,
+  PascalCase: /^(?![A-Z0-9_]+$)[A-Z][a-zA-Z0-9]*$/,
+  camelCase: /^[a-z][a-zA-Z0-9]*$/,
+  snake_case: /^[a-z][a-z0-9_]+$/,
+  kebab_case: /^[a-z][a-z0-9-]+$/,
+};
+
+/**
+ * Detect naming conventions for files in the project.
+ * Reports which convention is dominant and any inconsistencies.
+ *
+ * @param {string} root — Project root path
+ * @param {{ maxDepth?: number, gitignore?: string[] }} opts
+ * @returns {Promise<{
+ *   totalFiles: number,
+ *   conventions: Array<{ convention: string, count: number, percentage: number, examples: string[] }>,
+ *   dominant: string,
+ *   inconsistencies: Array<{ file: string, convention: string }>,
+ *   byDirectory: Array<{ dir: string, convention: string, count: number }>
+ * }>}
+ */
+export async function detectNamingConventions(root, opts = {}) {
+  const { maxDepth = 4, gitignore = [] } = opts;
+  const { readdir } = await import('node:fs/promises');
+  const { join, relative, dirname, basename } = await import('node:path');
+
+  const files = [];
+
+  async function walk(dir, depth) {
+    if (depth > maxDepth) return;
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); }
+    catch { return; }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      const fullPath = join(dir, entry.name);
+      const relPath = relative(root, fullPath);
+      if (isIgnored(relPath, gitignore)) continue;
+      if (entry.isDirectory()) {
+        await walk(fullPath, depth + 1);
+      } else if (entry.isFile()) {
+        // Strip extension(s) for convention detection
+        const name = basename(entry.name).replace(/\.[^.]+$/, '');
+        if (name.length === 0) continue;
+        const matched = Object.entries(NAMING_PATTERNS).find(([, re]) => re.test(name));
+        const convention = matched ? matched[0] : 'mixed/other';
+        files.push({ file: relPath, dir: dirname(relPath), name, convention });
+      }
+    }
+  }
+
+  await walk(root, 0);
+
+  if (files.length === 0) {
+    return { totalFiles: 0, conventions: [], dominant: 'none', inconsistencies: [], byDirectory: [] };
+  }
+
+  // Count conventions
+  const convMap = new Map();
+  for (const f of files) {
+    if (!convMap.has(f.convention)) convMap.set(f.convention, { count: 0, examples: [] });
+    const c = convMap.get(f.convention);
+    c.count++;
+    if (c.examples.length < 3) c.examples.push(f.file);
+  }
+
+  const conventions = [...convMap.entries()]
+    .map(([conv, v]) => ({ convention: conv, count: v.count, percentage: +((v.count / files.length) * 100).toFixed(1), examples: v.examples }))
+    .sort((a, b) => b.count - a.count);
+
+  const dominant = conventions[0].convention;
+
+  // Find inconsistencies (files not following dominant convention)
+  const inconsistencies = files
+    .filter(f => f.convention !== dominant)
+    .map(f => ({ file: f.file, convention: f.convention }))
+    .sort((a, b) => a.file.localeCompare(b.file))
+    .slice(0, 20);
+
+  // By directory
+  const dirMap = new Map();
+  for (const f of files) {
+    if (!dirMap.has(f.dir)) dirMap.set(f.dir, new Map());
+    const dm = dirMap.get(f.dir);
+    dm.set(f.convention, (dm.get(f.convention) || 0) + 1);
+  }
+  const byDirectory = [...dirMap.entries()]
+    .map(([dir, convs]) => {
+      const sorted = [...convs.entries()].sort((a, b) => b[1] - a[1]);
+      return { dir, convention: sorted[0][0], count: sorted[0][1] };
+    })
+    .sort((a, b) => a.dir.localeCompare(b.dir))
+    .slice(0, 15);
+
+  return { totalFiles: files.length, conventions, dominant, inconsistencies, byDirectory };
+}
+
+/**
+ * Format naming convention analysis as a human-readable report.
+ */
+export function formatNamingReport(analysis) {
+  if (analysis.totalFiles === 0) return 'No files found for naming convention analysis.';
+  const lines = [
+    '## Naming Convention Analysis',
+    '',
+    `**Dominant convention:** \`${analysis.dominant}\``,
+    '',
+    '| Convention | Count | Percentage | Examples |',
+    '|-----------|-------|-----------|----------|',
+  ];
+  for (const c of analysis.conventions) {
+    lines.push(`| \`${c.convention}\` | ${c.count} | ${c.percentage}% | ${c.examples.map(e => `\`${e}\``).join(', ')} |`);
+  }
+  if (analysis.inconsistencies.length > 0) {
+    lines.push('', `### Inconsistencies (${analysis.inconsistencies.length} files not following \`${analysis.dominant}\`)`);
+    for (const inc of analysis.inconsistencies.slice(0, 10)) {
+      lines.push(`- \`${inc.file}\` → \`${inc.convention}\``);
+    }
+    if (analysis.inconsistencies.length > 10) {
+      lines.push(`- _...and ${analysis.inconsistencies.length - 10} more_`);
+    }
+  }
+  return lines.join('\n');
+}
+
 export function resolvePath(p) {
   return p.startsWith("/") ? p : join(process.cwd(), p);
 }
