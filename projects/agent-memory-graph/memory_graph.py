@@ -18785,6 +18785,93 @@ class MemoryGraph:
 
         return int(round(det))
 
+    def spectral_gap(self, *, include_quarantined: bool = False) -> float:
+        """Spectral gap: difference between the two largest adjacency eigenvalues.
+
+        The spectral gap ``\u03b4 = \u03bb_1 - \u03bb_2`` (where ``\u03bb_1 \u2265 \u03bb_2``
+        are the top eigenvalues of the adjacency matrix) measures how well
+        connected the graph is.  A larger gap implies faster mixing of random
+        walks and better expansion properties.
+
+        Uses ``_sym_eigenvalues`` (QR algorithm) on the adjacency matrix.
+
+        Returns:
+            Spectral gap (float).  ``0.0`` if < 2 nodes.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        node_ids.sort()
+        n = len(node_ids)
+        if n < 2:
+            return 0.0
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        node_set = set(node_ids)
+
+        A = [[0.0] * n for _ in range(n)]
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s_id, t_id = r["source"], r["target"]
+            if s_id in node_set and t_id in node_set:
+                si, ti = idx[s_id], idx[t_id]
+                A[si][ti] = 1.0
+                A[ti][si] = 1.0
+
+        eigvals = self._sym_eigenvalues(A)
+        eigvals.sort(reverse=True)
+        return eigvals[0] - eigvals[1] if len(eigvals) >= 2 else 0.0
+
+    def graph_energy(self, *, include_quarantined: bool = False) -> float:
+        """Graph energy: sum of absolute values of adjacency eigenvalues.
+
+        The energy ``E(G) = \u03a3 |\u03bb_i|`` was introduced by Gutman (1978)
+        and is a molecular descriptor in chemistry and a complexity
+        measure in network science.
+
+        Bounds:  ``2\u221am \u2264 E(G) \u2264 2n``  for simple graphs with
+        *m* edges and *n* nodes.
+
+        Returns:
+            Graph energy (float).  ``0.0`` if no nodes.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        node_ids.sort()
+        n = len(node_ids)
+        if n == 0:
+            return 0.0
+        if n == 1:
+            return 0.0  # Single eigenvalue is 0
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        node_set = set(node_ids)
+
+        A = [[0.0] * n for _ in range(n)]
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s_id, t_id = r["source"], r["target"]
+            if s_id in node_set and t_id in node_set:
+                si, ti = idx[s_id], idx[t_id]
+                A[si][ti] = 1.0
+                A[ti][si] = 1.0
+
+        eigvals = self._sym_eigenvalues(A)
+        return sum(abs(ev) for ev in eigvals)
+
     # ------------------------------------------------------------------
     # Personalized PageRank (HippoRAG core algorithm)
     # ------------------------------------------------------------------
