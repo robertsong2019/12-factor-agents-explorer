@@ -18648,6 +18648,143 @@ class MemoryGraph:
 
         return scores
 
+    def kirchhoff_index(self, *, include_quarantined: bool = False) -> float:
+        r"""Kirchhoff index (total effective resistance) of the graph.
+
+        The Kirchhoff index is the sum of effective resistances over all
+        unordered pairs::
+
+            Kf(G) = \u03a3_{i<j} R(i, j)
+
+        where ``R(i, j) = L\u207a_ii + L\u207a_jj \u2212 2\u00b7L\u207a_ij``.
+
+        Using the identity ``\u03a3_{i<j} R(i,j) = n \u00b7 tr(L\u207a)``:
+
+        .. math::
+
+            K_f = n \cdot \text{tr}(L^+)
+
+        Complexity: ``O(n\u00b2)`` (dominated by pseudoinverse).
+
+        Returns:
+            Kirchhoff index (float).  ``0.0`` if < 2 nodes.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        node_ids.sort()
+        n = len(node_ids)
+        if n < 2:
+            return 0.0
+
+        node_set = set(node_ids)
+        L_plus = self._laplacian_pseudoinverse(node_ids, node_set)
+        if L_plus is None:
+            return 0.0
+
+        trace = sum(L_plus[i][i] for i in range(n))
+        return n * trace
+
+    def spanning_tree_count(self, *, include_quarantined: bool = False) -> int:
+        r"""Number of spanning trees via Kirchhoff's Matrix-Tree Theorem.
+
+        Any cofactor of the Laplacian matrix equals the number of spanning
+        trees.  Using the Laplacian pseudoinverse identity for connected
+        graphs::
+
+            \u03c4(G) = (1/n\u00b2) \u00b7 \u220f_{i=1}^{n-1} \u03bb_i
+
+        where ``\u03bb_i`` are the non-zero eigenvalues of *L*.
+
+        Alternatively, ``\u03c4 = (1/n) \u00b7 1/trace(L\u207a)`` for the special
+        case of computing the (0,0) cofactor from ``L\u207a``:
+
+        .. math::
+
+            \tau(G) = \frac{(-1)^{i+j} M_{ij}}{1}
+
+        where ``M_{ij}`` is computed from ``L`` (delete row i, col j,
+        take determinant).  We use the pseudoinverse shortcut:
+
+        .. math:: \tau(G) = \frac{n}{\prod ...}
+
+        For practical purposes we compute ``\det(L_{sub})`` where
+        ``L_{sub}`` is L with one row and column removed.
+
+        Returns:
+            Number of spanning trees (int).  ``0`` if < 2 nodes or
+            disconnected.
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        node_ids.sort()
+        n = len(node_ids)
+        if n < 2:
+            return 0
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        node_set = set(node_ids)
+
+        # Build Laplacian L = D - A
+        L = [[0.0] * n for _ in range(n)]
+        degrees = [0] * n
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s_id, t_id = r["source"], r["target"]
+            if s_id in node_set and t_id in node_set:
+                si, ti = idx[s_id], idx[t_id]
+                L[si][ti] -= 1.0
+                L[ti][si] -= 1.0
+                degrees[si] += 1
+                degrees[ti] += 1
+        for i in range(n):
+            L[i][i] = float(degrees[i])
+
+        # Matrix-Tree theorem: any cofactor of L = number of spanning trees
+        # Remove last row and column, take determinant
+        m = n - 1
+        if m == 0:
+            return 0
+        sub = [[L[i][j] for j in range(m)] for i in range(m)]
+
+        # Determinant via LU decomposition with partial pivoting
+        det = 1.0
+        for col in range(m):
+            # Partial pivot
+            pivot_row = col
+            max_val = abs(sub[col][col])
+            for row in range(col + 1, m):
+                if abs(sub[row][col]) > max_val:
+                    max_val = abs(sub[row][col])
+                    pivot_row = row
+            if max_val < 1e-14:
+                return 0  # Singular → disconnected or no spanning tree
+            if pivot_row != col:
+                sub[col], sub[pivot_row] = sub[pivot_row], sub[col]
+                det = -det
+            pivot = sub[col][col]
+            det *= pivot
+            inv_pivot = 1.0 / pivot
+            for row in range(col + 1, m):
+                factor = sub[row][col] * inv_pivot
+                if factor != 0.0:
+                    for j in range(col, m):
+                        sub[row][j] -= factor * sub[col][j]
+
+        return int(round(det))
+
     # ------------------------------------------------------------------
     # Personalized PageRank (HippoRAG core algorithm)
     # ------------------------------------------------------------------
