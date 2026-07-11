@@ -6404,7 +6404,7 @@ class MemoryGraph:
     def closeness_vitality(self, node_id: str) -> float | None:
         """计算节点删除后 Wiener 指数的变化量。
 
-        closeness_vitality = W(G\{v}) - W(G)
+        closeness_vitality = W(G\\{v}) - W(G)
         正值表示该节点对图连通性重要（删除后距离增加），
         负值表示该节点是瓶颈（删除后图更紧凑或断裂）。
 
