@@ -4135,6 +4135,170 @@ export function formatDocExamples(examples) {
   return lines.join('\n');
 }
 
+/**
+ * F42: Detect API routes — scan for REST endpoints in Express/Fastify/Koa/Flask/FastAPI/Django.
+ *
+ * @param {string} root - Project root directory
+ * @param {object} opts - { maxDepth=3, maxFileSize, gitignore=[] }
+ * @returns {Promise<{routes: Array, frameworks: string[], count: number, byMethod: object}>}
+ */
+export async function detectApiRoutes(root, opts = {}) {
+  const maxDepth = opts.maxDepth ?? 3;
+  const maxFileSize = opts.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
+  const gitignore = opts.gitignore ?? [];
+  const routes = [];
+  const frameworks = new Set();
+
+  const ROUTE_PATTERNS = {
+    // Express/Fastify/Koa: app.METHOD(path), router.METHOD(path)
+    javascript: [
+      // Express/Fastify/Koa: app.METHOD(path), router.METHOD(path)
+      { regex: /(?:app|fastify|server|router)\s*\.\s*(get|post|put|delete|patch|all|head|options)\s*\(\s*['"`]([^'"`]+)['"`]/gi, framework: 'express' },
+    ],
+    typescript: [
+      { regex: /(?:app|fastify|server|router)\s*\.\s*(get|post|put|delete|patch|all|head|options)\s*[<(]\s*['"`]([^'"`]+)['"`]/gi, framework: 'express' },
+    ],
+    python: [
+      // Flask/FastAPI: @app.route('/path') or @app.get('/path')
+      { regex: /@(?:app|router|api)\s*\.\s*(?:route\()?['"]([^'"]*)['"](?:,\s*methods\s*=\s*\[([^\]]+)\])?\)?/g, framework: 'flask' },
+      // FastAPI: @app.get('/path'), @router.post('/path')
+      { regex: /@(?:app|router|api)\s*\.\s*(get|post|put|delete|patch)\s*\(\s*['"]([^'"]+)['"]\s*\)/g, framework: 'fastapi' },
+      // Django: path('url/', view) — allow empty paths
+      { regex: /path\s*\(\s*['"]([^'"]*)['"]\s*,/g, framework: 'django' },
+    ],
+    go: [
+      { regex: /(?:mux|router|r|s)\s*\.\s*(HandleFunc|Get|Post|Put|Delete|Patch)\s*\(\s*['"]([^'"]+)['"]\s*,/g, framework: 'net/http' },
+      { regex: /(?:e|echo|g)\s*\.\s*(GET|POST|PUT|DELETE|PATCH)\s*\(\s*['"]([^'"]+)['"]\s*,/g, framework: 'echo' },
+    ],
+  };
+
+  const FILE_EXTENSIONS = {
+    '.js': 'javascript',
+    '.mjs': 'javascript',
+    '.cjs': 'javascript',
+    '.ts': 'typescript',
+    '.tsx': 'typescript',
+    '.py': 'python',
+    '.go': 'go',
+  };
+
+  async function scanDir(dir, depth) {
+    if (depth > maxDepth) return;
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+        const relPath = relative(root, fullPath);
+        if (isIgnored(relPath, gitignore)) continue;
+
+        if (entry.isDirectory() && !IGNORE_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
+          await scanDir(fullPath, depth + 1);
+        } else if (entry.isFile()) {
+          const ext = extname(entry.name);
+          const lang = FILE_EXTENSIONS[ext];
+          if (!lang) continue;
+
+          const fileStat = await stat(fullPath);
+          if (fileStat.size > maxFileSize) continue;
+
+          const content = await readFile(fullPath, 'utf8');
+          const lines = content.split('\n');
+          const patternSet = ROUTE_PATTERNS[lang] || [];
+
+          for (const { regex, framework } of patternSet) {
+            const re = new RegExp(regex.source, regex.flags);
+            let match;
+            while ((match = re.exec(content)) !== null) {
+              let method, path;
+              if (framework === 'flask' && match[1] && !match[2]) {
+                // @app.route('/path') without methods
+                method = 'GET';
+                path = match[1];
+              } else if (framework === 'flask' && match[2]) {
+                // @app.route('/path', methods=['GET','POST'])
+                method = match[2].replace(/[\[\]'"\s]/g, '').split(',')[0] || 'GET';
+                path = match[1];
+              } else if (framework === 'django') {
+                method = 'ANY';
+                path = match[1];
+              } else if (framework === 'fastapi') {
+                method = (match[1] || 'GET').toUpperCase();
+                path = match[2];
+              } else if (lang === 'go' && framework === 'net/http') {
+                method = match[1].includes('Get') ? 'GET' : match[1].includes('Post') ? 'POST' : match[1].includes('Put') ? 'PUT' : match[1].includes('Delete') ? 'DELETE' : 'ANY';
+                path = match[2];
+              } else {
+                method = (match[1] || 'GET').toUpperCase();
+                path = match[2] || match[1];
+              }
+
+              // Find line number
+              const offset = match.index;
+              const lineNum = content.substring(0, offset).split('\n').length;
+
+              routes.push({
+                file: relPath,
+                line: lineNum,
+                method: method.toUpperCase(),
+                path,
+                framework,
+              });
+              frameworks.add(framework);
+            }
+          }
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  await scanDir(root, 0);
+
+  // Build byMethod summary
+  const byMethod = {};
+  for (const r of routes) {
+    byMethod[r.method] = (byMethod[r.method] || 0) + 1;
+  }
+
+  return {
+    routes: routes.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line),
+    frameworks: [...frameworks].sort(),
+    count: routes.length,
+    byMethod,
+  };
+}
+
+/**
+ * F43: Format API routes report as markdown.
+ */
+export function formatApiRoutesReport(result) {
+  if (!result || !result.routes || result.routes.length === 0) {
+    return '## 🔌 API Routes\n\nNo API routes detected.\n';
+  }
+
+  const lines = [
+    '## 🔌 API Routes',
+    '',
+    `**Detected frameworks:** ${result.frameworks.join(', ')}`,
+    `**Total routes:** ${result.count}`,
+    '',
+    '### By Method',
+    '',
+    '| Method | Count |',
+    '|--------|-------|',
+  ];
+
+  for (const [method, count] of Object.entries(result.byMethod).sort((a, b) => b[1] - a[1])) {
+    lines.push(`| ${method} | ${count} |`);
+  }
+
+  lines.push('', '### Routes', '', '| Method | Path | File:Line | Framework |', '|--------|------|-----------|-----------|');
+  for (const r of result.routes) {
+    lines.push(`| ${r.method} | \`${r.path}\` | ${r.file}:${r.line} | ${r.framework} |`);
+  }
+
+  return lines.join('\n');
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
