@@ -19285,6 +19285,155 @@ class MemoryGraph:
             item["node"] = self.get_node(item["node_id"])
         return ranked[:limit]
 
+    def ppr_structured(
+        self,
+        seed_ids: list[str],
+        *,
+        damping: float = 0.85,
+        max_iter: int = 100,
+        tol: float = 1e-6,
+        gate: str = "degree",
+        gate_alpha: float = 0.5,
+    ) -> dict[str, float]:
+        """Structure-gated Personalized PageRank.
+
+        SAGE-inspired (2605.12061): propagation signal is modulated by
+        node centrality — structurally important nodes (bridges, hubs)
+        pass more signal than peripheral leaf nodes.
+
+        Update rule per node *v*::
+
+            gate_v = (1 − α) + α · centrality_norm(v)
+            score(v) ← (1 − damping) · teleport(v)
+                      + damping · gate_v · Σ_{u→v} score(u) / deg(u)
+
+        When ``gate_alpha = 0`` this degenerates to standard PPR.
+
+        Args:
+            seed_ids:   Seed nodes for the teleport vector.
+            damping:    ``1 − damping`` teleport probability.
+            max_iter:   Max power-iteration steps.
+            tol:        L1 convergence threshold.
+            gate:       Centrality metric used for gating —
+                        ``"degree"``, ``"betweenness"``, ``"closeness"``,
+                        ``"eigenvector"``, or ``"pagerank"``.
+            gate_alpha: Gating strength [0, 1].
+                        ``0`` = standard PPR (no gating),
+                        ``1`` = pure centrality-weighted propagation.
+
+        Returns:
+            ``{node_id: gated_ppr_score}`` — normalised to sum ≈ 1.0.
+        """
+        if not seed_ids:
+            return {}
+
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if not rows:
+            return {}
+        node_ids = [str(r["id"]) for r in rows]
+        id_set = set(node_ids)
+        seed_set = {s for s in seed_ids if s in id_set}
+        if not seed_set:
+            return {}
+
+        n = len(node_ids)
+
+        # --- Build adjacency ----------------------------------------
+        outbound: dict[str, list[str]] = {nid: [] for nid in node_ids}
+        for r in self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall():
+            s, t = str(r["source"]), str(r["target"])
+            if s in id_set and t in id_set:
+                outbound[s].append(t)
+
+        # --- Compute centrality gates -------------------------------
+        if gate_alpha <= 0:
+            gates = {nid: 1.0 for nid in node_ids}
+        else:
+            raw_cen: dict[str, float] = {}
+            g = gate.lower().strip()
+            if g == "degree":
+                for nid in node_ids:
+                    raw_cen[nid] = len(outbound[nid])
+            elif g == "pagerank":
+                raw_cen = self.pagerank()
+            elif g == "eigenvector":
+                try:
+                    raw_cen = self.eigenvector_all(normalized=True)
+                except Exception:
+                    raw_cen = {nid: float(len(outbound[nid])) for nid in node_ids}
+            elif g == "betweenness":
+                try:
+                    raw_cen = self.betweenness_all(normalized=True)
+                except Exception:
+                    raw_cen = {nid: float(len(outbound[nid])) for nid in node_ids}
+            elif g == "closeness":
+                try:
+                    raw_cen = self.closeness_all(normalized=True)
+                except Exception:
+                    raw_cen = {nid: float(len(outbound[nid])) for nid in node_ids}
+            else:
+                for nid in node_ids:
+                    raw_cen[nid] = len(outbound[nid])
+
+            # Normalise to [0, 1]
+            vals = list(raw_cen.values())
+            lo, hi = min(vals), max(vals)
+            rng = hi - lo
+            if rng < 1e-12:
+                norm_cen = {nid: 1.0 for nid in node_ids}
+            else:
+                norm_cen = {nid: (v - lo) / rng for nid, v in raw_cen.items()}
+
+            gates = {
+                nid: (1.0 - gate_alpha) + gate_alpha * norm_cen.get(nid, 0.0)
+                for nid in node_ids
+            }
+
+        # --- Initialise rank: uniform over seeds --------------------
+        teleport = {nid: (1.0 / len(seed_set) if nid in seed_set else 0.0)
+                    for nid in node_ids}
+        rank = dict(teleport)
+
+        # --- Power iteration with gating ----------------------------
+        for _ in range(max_iter):
+            new_rank = {nid: 0.0 for nid in node_ids}
+
+            for src in node_ids:
+                deg = len(outbound[src])
+                if deg > 0 and rank[src] > 0:
+                    share = rank[src] / deg
+                    for tgt in outbound[src]:
+                        new_rank[tgt] += share
+
+            # Dangling nodes: redistribute to seeds
+            dangling_sum = sum(
+                rank[nid] for nid in node_ids if not outbound[nid]
+            )
+            if dangling_sum > 0:
+                for nid in seed_set:
+                    new_rank[nid] += dangling_sum / len(seed_set)
+
+            # Apply gate + teleport
+            for nid in node_ids:
+                new_rank[nid] = (
+                    (1 - damping) * teleport.get(nid, 0.0)
+                    + damping * gates[nid] * new_rank[nid]
+                )
+
+            # Normalise to prevent drift from gating
+            total = sum(new_rank.values())
+            if total > 0:
+                new_rank = {nid: v / total for nid, v in new_rank.items()}
+
+            diff = sum(abs(new_rank[nid] - rank[nid]) for nid in node_ids)
+            rank = new_rank
+            if diff < tol:
+                break
+
+        return rank
+
     def hybrid_retrieve(
         self,
         query: str,

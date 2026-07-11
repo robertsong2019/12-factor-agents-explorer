@@ -236,3 +236,6 @@ timestamp	commit	metric	value	status	description
 2026-07-10T23:07:50+08:00	66e7895	test_pass_rate	100%	keep	All 2378 passing, 0 regressions, 18.32s
 2026-07-11T00:00:00+08:00	a378f54	test_count	2378→2407	keep	Cycle 220: randic_index (Kier-Hall 1976) + harary_index (reciprocal distance sum). Degree-based + distance-based topological indices. K_n/C_n/star verified analytically. +29 tests. Zero regressions. 213th consecutive day.
 2026-07-11T00:00:00+08:00	a378f54	test_pass_rate	100%	keep	All 2407 passing, 0 regressions, 18.86s
+2026-07-11T19:05:22+08:00\t72d3c06\ttest_pass_rate\t100%\tkeep\tFixed betweenness_centrality to use undirected paths, bridge nodes now correctly >0. All 2407 tests pass.
+2026-07-11T19:17:19+08:00\tcee4ce9\tnew_api\tcentrality_optimized\tkeep\tJoint betweenness+closeness in single Brandes pass. 77 lines added, 0 regressions.
+2026-07-11T19:20:09+08:00\tdf601bb\tdead_code_removed\t-25_lines\tkeep\tRemoved shadowed shortest_path() definition. Dead code eliminated, 2407 tests pass.
