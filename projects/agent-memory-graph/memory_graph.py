@@ -20002,6 +20002,114 @@ class MemoryGraph:
             return {"results": final, "explain": trace}
         return final
 
+    def retrieve_token_budgeted(
+        self,
+        query: str,
+        *,
+        token_budget: int = 2048,
+        chars_per_token: float = 4.0,
+        damping: float = 0.85,
+        rerank: bool = True,
+        rerank_centrality: str = "degree",
+    ) -> dict:
+        """Token-budgeted context generation — quantitative retrieval.
+
+        Mandol-inspired: produce a context window that fits within a
+        specified token budget, **without any LLM calls**. Nodes are
+        ranked by retrieval score, then greedily packed until the
+        budget is exhausted.
+
+        This is the production retrieval path for agent memory:
+        deterministic, fast, and cost-free.
+
+        Args:
+            query:            Search query.
+            token_budget:     Maximum tokens (approx).
+            chars_per_token:  Conversion ratio (default 4.0 chars/token).
+            damping:          PPR damping factor.
+            rerank:           Apply centrality re-ranking before packing.
+            rerank_centrality: Centrality metric for re-rank.
+
+        Returns:
+            Dict with::
+
+                context:     Formatted string ready for LLM prompt.
+                nodes:       List of included node dicts.
+                token_count: Estimated tokens used.
+                char_count:  Total characters.
+                truncated:   True if budget was exhausted.
+                budget:      The token budget.
+        """
+        char_budget = int(token_budget * chars_per_token)
+
+        # Retrieve candidates (unlimited to maximise pool)
+        candidates = self.retrieve(
+            query,
+            limit=100,
+            rerank=rerank,
+            rerank_centrality=rerank_centrality,
+            damping=damping,
+        )
+
+        if not candidates:
+            return {
+                "context": "",
+                "nodes": [],
+                "token_count": 0,
+                "char_count": 0,
+                "truncated": False,
+                "budget": token_budget,
+            }
+
+        # Greedy pack by score order
+        packed = []
+        total_chars = 0
+        truncated = False
+
+        for item in candidates:
+            node = item.get("node")
+            if node is None:
+                continue
+            # Format node as context line
+            label = getattr(node, "label", "")
+            kind = getattr(node, "kind", "")
+            data = getattr(node, "data", {})
+            score = item.get("score", item.get("rrf_score", 0.0))
+
+            line = f"[{kind}] {label}"
+            if data:
+                # Compact data rendering
+                data_str = ", ".join(f"{k}={v}" for k, v in data.items() if v)
+                if data_str:
+                    line += f" ({data_str})"
+            line += f" score={score:.3f}"
+            line += "\n"
+
+            if total_chars + len(line) > char_budget:
+                truncated = True
+                break
+
+            total_chars += len(line)
+            packed.append({
+                "node_id": item.get("node_id", ""),
+                "label": label,
+                "kind": kind,
+                "score": score,
+                "line": line.rstrip(),
+            })
+
+        context = "".join(p["line"] + "\n" for p in packed)
+        token_count = int(total_chars / chars_per_token)
+
+        return {
+            "context": context,
+            "nodes": packed,
+            "token_count": token_count,
+            "char_count": total_chars,
+            "truncated": truncated,
+            "budget": token_budget,
+        }
+
     def centrality_optimized(self, normalized: bool = True, 
                             include_quarantined: bool = False) -> tuple[dict[str, float], dict[str, float]]:
         """Optimized joint computation of betweenness and closeness centrality.

@@ -241,3 +241,5 @@ timestamp	commit	metric	value	status	description
 2026-07-11T19:20:09+08:00\tdf601bb\tdead_code_removed\t-25_lines\tkeep\tRemoved shadowed shortest_path() definition. Dead code eliminated, 2407 tests pass.
 2026-07-11T21:10:00+08:00	51e1aec	test_count	2407→2438	keep	Cycle 221: ppr_structured() — SAGE-inspired structure-gated PPR. Centrality modulates propagation: degree/betweenness/closeness/eigenvector/pagerank gates. gate_alpha controls strength. +31 tests. 214th consecutive day.
 2026-07-11T21:10:00+08:00	51e1aec	test_pass_rate	100%	keep	All 2438 passing, 0 regressions, 18.98s
+2026-07-11T21:20:00+08:00	aa1ba29	test_count	2438→2461	keep	Cycle 222: retrieval-failure logging — SAGE reader-writer feedback loop. log/get/analyse/clear + severity scoring + node suggestions. +23 tests. 215th day.
+2026-07-11T21:20:00+08:00	aa1ba29	test_pass_rate	100%	keep	All 2461 passing, 0 regressions, 18.52s
