@@ -5217,6 +5217,113 @@ class MemoryGraph:
                     total += 1.0 / d
         return total
 
+    def szeged_index(self) -> Optional[int]:
+        """Szeged index — edge-partition-based topological index.
+
+        For each edge (u, v), count nodes closer to u than v (n_u)
+        and nodes closer to v than u (n_v), then sum the products::
+
+            Sz(G) = \u03a3_{(u,v) \u2208 E} n_u \u00b7 n_v
+
+        where n_u = |{w : d(w,u) < d(w,v)}| and n_v = |{w : d(w,v) < d(w,u)}|.
+        Nodes equidistant to both endpoints contribute to neither count.
+
+        **Properties:**
+        - For trees: Sz = Wiener index (Gutman 1994 proved this equivalence)
+        - For complete K\u2099: each edge splits remaining n-2 nodes equally,
+          so n_u = n_v = (n-2)/2 for n even; Sz = m \u00b7 ((n-2)/2)\u00b2
+        - For cycles C\u2099 with even n: n_u = n_v = (n-2)/2 per edge
+        - For paths P\u2099: Sz = W (same as Wiener for trees)
+        - Adding edges generally increases Sz
+
+        References:
+            Gutman, I. (1994). "A formula for the Wiener number of trees
+            and its extension to graphs with cycles." Graph Theory Notes
+            of New York, 27, 9-15.
+            Original: Khadikar, P.V. et al. (1995).
+
+        Returns:
+            Szeged index (int), or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        # Precompute BFS distances from every node
+        all_dists: dict[str, dict[str, int]] = {}
+        for nid in node_ids:
+            all_dists[nid] = self._bfs_distances(nid)
+        total = 0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            n_u = 0  # nodes closer to s (including s itself)
+            n_v = 0  # nodes closer to t (including t itself)
+            ds_map = all_dists.get(s, {})
+            dt_map = all_dists.get(t, {})
+            for w in node_ids:
+                dw_s = ds_map.get(w)
+                dw_t = dt_map.get(w)
+                if dw_s is None or dw_t is None:
+                    continue  # unreachable, doesn't count
+                if dw_s < dw_t:
+                    n_u += 1
+                elif dw_t < dw_s:
+                    n_v += 1
+                # equidistant nodes contribute to neither
+            total += n_u * n_v
+        return total
+
+    def gutman_index(self) -> Optional[int]:
+        """Gutman index (Gutman 1994) — degree-weighted Wiener index.
+
+        Sum of degree-product-weighted pairwise distances::
+
+            Gut(G) = \u03a3_{u<v} d_u \u00b7 d_v \u00b7 d(u, v)
+
+        where d_u is the degree of node u and d(u,v) is the shortest-path
+        distance. Unreachable pairs contribute zero.
+
+        **Properties:**
+        - For regular graphs (all same degree k): Gut = k\u00b2 \u00b7 W
+        - For paths P\u2099: endpoints (degree 1) reduce contribution vs Wiener
+        - For complete K\u2099: Gut = n(n-1)\u00b2/2 (all degree n-1, all dist 1)
+        - For star K_{1,n-1}: Gut = (n-1)\u00b3 + (n-1)(n-2)/2
+        - Always \u2265 Wiener index for graphs with min degree \u2265 2
+
+        Relationship to Schultz index (which uses d_u + d_v instead of
+        d_u \u00b7 d_v): Gutman tends to penalize low-degree nodes more heavily.
+
+        References:
+            Gutman, I. (1994). "Selected properties of the Schultz
+            molecular topological index." J. Chem. Inf. Comput. Sci.,
+            34, 1087-1089.
+
+        Returns:
+            Gutman index (int), or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edge_count = self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        if edge_count == 0:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        # Build degree map
+        deg: dict[str, int] = {}
+        for nid in node_ids:
+            deg[nid] = self.degree(nid)
+        total = 0
+        for i, nid in enumerate(node_ids):
+            dists = self._bfs_distances(nid)
+            for other in node_ids[i + 1:]:
+                d = dists.get(other)
+                if d and d > 0:
+                    total += deg[nid] * deg[other] * d
+        return total
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
