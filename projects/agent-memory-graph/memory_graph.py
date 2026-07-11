@@ -439,28 +439,6 @@ class MemoryGraph:
         return Node(row["id"], row["label"], row["kind"],
                     json.loads(row["data"]), row["created"], row["accessed"], row["weight"])
 
-    def shortest_path(self, start_id: str, end_id: str) -> Optional[list[str]]:
-        """BFS shortest path between two nodes. Returns list of node ids or None."""
-        if start_id == end_id:
-            return [start_id]
-        visited = {start_id}
-        queue = [(start_id, [start_id])]
-        while queue:
-            current, path = queue.pop(0)
-            neighbors = self.conn.execute(
-                "SELECT target FROM edges WHERE source=?", (current,)
-            ).fetchall()
-            for n in neighbors:
-                nid = n["target"]
-                if nid in visited:
-                    continue
-                visited.add(nid)
-                new_path = path + [nid]
-                if nid == end_id:
-                    return new_path
-                queue.append((nid, new_path))
-        return None
-
     def export_json(self) -> dict:
         """Export entire graph as a JSON-serializable dict."""
         nodes = []

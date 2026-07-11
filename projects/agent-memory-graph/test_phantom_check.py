@@ -384,7 +384,6 @@ class TestRealProjectFiles(unittest.TestCase):
 
     # Known shadowing in memory_graph.py (methods re-implemented, old not removed)
     KNOWN_SHADOWING = {
-        "MemoryGraph.shortest_path",
         "MemoryGraph.find_roots",
         "MemoryGraph.find_leaves",
         "MemoryGraph.eigenvector_centrality",
