@@ -2033,6 +2033,55 @@ SkewRoute 检索后分数分布偏度分析。分析每路检索结果的分数�
 
 CPM (Clique Percolation Method) 重叠社区检测 (Palla et al. 2005)。两个 k-clique 共享 k-1 节点时视为相邻，团邻接图的连通分量即为社区。与 LPA/Leiden 不同，节点可同时属于多个社区。返回按大小降序排列的社区列表。k 必须 ≥ 2。隔离节点排除。
 
+#### `szeged_index() -> int | None`
+
+Szeged 指数 — 边分割拓扑描述符。对每条边 (u,v)，统计更靠近 u 的节点数 n_u 和更靠近 v 的节点数 n_v，求和 ∏(n_u · n_v)。对树等价于 Wiener 指数 (Gutman 1994 定理)。返回 int 或 None（无边时）。
+
+#### `gutman_index() -> int | None`
+
+Gutman 指数 (Gutman 1994) — 度加权 Wiener 指数。∑_{u<v} d_u · d_v · d(u,v)，d_u 为节点度数。对正则图 k²·W。返回 int 或 None（无边时）。
+
+#### `ppr_structured(seed_ids, *, damping=0.85, max_iter=100, tol=1e-6, gate="degree", gate_alpha=0.5) -> dict[str, float]`
+
+SAGE 启发的结构门控 Personalized PageRank。传播信号由节点中心性调制——结构重要的节点（桥节点、枢纽）传递更多信号。gate_alpha=0 时退化为标准 PPR。gate 支持 degree/betweenness/closeness/eigenvector/pagerank 五种中心性度量。
+
+#### `log_retrieval_failure(query, result_count=0, top_score=0.0, stage="recall") -> int`
+
+记录检索失败。SAGE reader-writer 反馈环路：当检索返回少量/零结果或低置信度命中时，记录查询供后续分析。返回自增行 ID。
+
+#### `get_retrieval_failures(*, since=None, stage=None, analysed_only=False, limit=100) -> list[dict]`
+
+查询检索失败日志。支持按时间、阶段、是否已分析过滤，返回失败字典列表（最新优先）。
+
+#### `analyse_retrieval_failures(*, min_failures=3, since_hours=24.0) -> list[dict]`
+
+分析检索失败以发现缺失的图连接。按归一化查询分组，识别反复失败的查询，检查是否存在部分标签匹配但未被关键词召回命中的节点（SAGE writer 反馈循环）。返回 `[{query, failure_count, suggested_nodes, severity}]` 列表。
+
+#### `clear_retrieval_failures(older_than_hours=None) -> int`
+
+清除检索失败日志。older_than_hours 指定时仅清除更早的条目。返回删除行数。
+
+#### `centrality_optimized(normalized=True, include_quarantined=False) -> tuple[dict, dict]`
+
+联合计算 betweenness 和 closeness 中心性，避免重复邻接表构建和 BFS 遍历。返回 `(betweenness_dict, closeness_dict)`。
+
+#### `retrieve_token_budgeted(query, *, token_budget=2048, chars_per_token=4.0, damping=0.85, rerank=True, rerank_centrality="degree") -> dict`
+
+Token 预算上下文生成 — Mandol 启发的定量检索。在指定 token 预算内贪心打包检索结果，**无需任何 LLM 调用**。返回 `{context, nodes, token_count, char_count, truncated, budget}`。
+
+#### `select_governed(query, *, limit=10, min_confidence=0.0, kinds=None, require_tags=None, rerank=True, rerank_centrality="degree", explain=False) -> list[dict] | dict`
+
+MRMS 三阶段治理选择管线 (arXiv:2607.04617)：
+- **阶段 1 — 结构门控**：过滤隔离/过期/低置信度节点
+- **阶段 2 — 向量召回**：委托 retrieve() 混合检索
+- **阶段 3 — 图展开**：标注 evidence/conflicts/superseded_by，标记安全/不安全
+
+每个结果包包含 `node_id, claim, kind, score, confidence, is_safe, evidence, conflicts, superseded_by`。explain=True 时返回治理元数据。
+
+#### `retrieval_quality_eval(eval_cases, *, k=10, limit=None, rerank=True, rerank_centrality="degree", rerank_alpha=0.5) -> dict`
+
+评估检索质量 — 对比 ground-truth 相关集。每个评估用例为 `{query, relevant_ids}`。计算 6 项指标：precision@k、recall@k、F1@k、NDCG@k、MRR、hit@k。返回 `{overall, per_query, k, n_cases, n_evaluated}`。
+
 ---
 
 ## 测试
@@ -2041,7 +2090,7 @@ CPM (Clique Percolation Method) 重叠社区检测 (Palla et al. 2005)。两个 
 python3 -m pytest test_memory_graph.py -q
 ```
 
-2407 个测试覆盖所有 API（220 个 cycle，204 天零回滚）。
+2568 个测试覆盖所有 API（225 个 cycle，209 天零回滚）。
 
 ## 设计思路
 
@@ -2082,6 +2131,7 @@ python3 -m pytest test_memory_graph.py -q
 35. **高级中心性** — katz_centrality (衰减路径求和中心性) + subgraph_centrality (闭合游走参与度) + laplacian_centrality (网络中断潜力，Laplacian 能量下降) + estrada_index (全图连通性指数) + communicability (节点对信息流便捷度) + natural_connectivity (尺寸归一化鲁棒性) + effective_resistance (电路 analogy 节点对连通性) + information_centrality (Stephenson-Zelen 信息流效率) 提供 14 种经典中心性/连通性度量，覆盖从节点级到图级别的多维度重要性分析
 36. **GraphRAG 检索管线** — personalized_pagerank (HippoRAG 核心 PPR 从 seed 节点传播相关性) + ppr_retrieve (关键词→seed→PPR 两阶段检索) + compute_graph_activity/auto_forget (FOREVER 模型：活跃图忘记更少，沉寂图加速遗忘) + hybrid_retrieve (RRF 融合 keyword+PPR+tag 三路信号) + graph_rerank (中心性加权重排序) + retrieve() 统一四阶段管线编排器 (keyword→PPR→hybrid→rerank)
 37. **电流中心性与谱分析** — current_flow_betweenness/current_flow_closeness/edge_current_flow_betweenness (Brandes & Fleischer 2007 电流类比随机游走中心性) + kirchhoff_index/spanning_tree_count (Matrix-Tree 定理全图连通性) + spectral_gap/graph_energy (邻接矩阵谱特性) + hyper_wiener_index/balaban_index/randic_index/harary_index (化学图论距离描述符) + phantom_check.py (Cycle 219 pre-commit 守卫，防止类遮蔽和幻影 API)。总计 20 种中心性/连通性/谱/拓扑度量
+38. **SAGE 检索反馈与治理管线** — ppr_structured (SAGE 启发的结构门控 PPR：中心性高的节点传播更多信号) + log_retrieval_failure/get_retrieval_failures/analyse_retrieval_failures/clear_retrieval_failures (检索失败日志 + writer-reader 反馈环路：自动发现缺失边并建议图改进) + centrality_optimized (联合 betweenness+closeness 单次 BFS 计算) + retrieve_token_budgeted (Mandol 启发的 token 预算上下文生成：无 LLM 调用的确定性贪心打包) + select_governed (MRMS 三阶段治理选择管线：结构门控→向量召回→图展开) + retrieval_quality_eval (precision@k/recall@k/F1/NDCG/MRR/hit_rate 六指标评估) + szeged_index/gutman_index (化学图论距离描述符)。从检索质量评估到治理选择的完整 SAGE 闭环
 
 ## 许可
 
