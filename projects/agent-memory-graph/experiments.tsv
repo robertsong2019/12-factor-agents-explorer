@@ -232,3 +232,7 @@ timestamp	commit	metric	value	status	description
 2026-07-10T21:55:00+08:00	2f8f660	test_pass_rate	100%	keep	All 2320 passing, 0 regressions, 15.80s
 2026-07-10T22:35:00+08:00	1d9e68d	test_count	2320→2341	keep	Cycle 218: edge_current_flow_betweenness (Brandes & Fleischer 2005) using sorted-absolute-diff identity on L⁺ transfer admittance vectors, O(n²log n). Bridge edge detection verified on two-clique graph. graph_rerank() gains current_flow_betweenness as 6th centrality signal. +21 tests. Zero regressions.
 2026-07-10T22:35:00+08:00	1d9e68d	test_pass_rate	100%	keep	All 2341 passing, 0 regressions, 16.52s
+2026-07-10T23:07:50+08:00	66e7895	test_count	2341→2378	keep	Cycle 219: phantom_commit_detector (AST-based shadowing + phantom API detection). 37 tests. Detected 10 known shadowing issues in source. Verified all recent commit APIs exist. Addresses 07-07 incident. 212th consecutive day.
+2026-07-10T23:07:50+08:00	66e7895	test_pass_rate	100%	keep	All 2378 passing, 0 regressions, 18.32s
+2026-07-11T00:00:00+08:00	a378f54	test_count	2378→2407	keep	Cycle 220: randic_index (Kier-Hall 1976) + harary_index (reciprocal distance sum). Degree-based + distance-based topological indices. K_n/C_n/star verified analytically. +29 tests. Zero regressions. 213th consecutive day.
+2026-07-11T00:00:00+08:00	a378f54	test_pass_rate	100%	keep	All 2407 passing, 0 regressions, 18.86s

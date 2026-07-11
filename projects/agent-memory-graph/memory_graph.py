@@ -1111,8 +1111,33 @@ class MemoryGraph:
             frontier = next_frontier
         return None
 
+    def shortest_path_undirected(self, start_id: str, end_id: str) -> Optional[list[str]]:
+        """BFS shortest path between two nodes in undirected graph. Returns list of node ids or None."""
+        if start_id == end_id:
+            return [start_id]
+        visited = {start_id}
+        queue = [(start_id, [start_id])]
+        while queue:
+            current, path = queue.pop(0)
+            # Get neighbors in both directions (undirected)
+            neighbors = []
+            for row in self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+                (current, current)
+            ).fetchall():
+                neighbors.append(row[0])
+            for nid in neighbors:
+                if nid in visited:
+                    continue
+                visited.add(nid)
+                new_path = path + [nid]
+                if nid == end_id:
+                    return new_path
+                queue.append((nid, new_path))
+        return None
+
     def betweenness_centrality(self, node_id: str, samples: int = 50) -> float:
-        """Approximate betweenness centrality via random sampling of shortest paths."""
+        """Approximate betweenness centrality via random sampling of shortest paths (undirected)."""
         if not self.has_node(node_id):
             return 0.0
         all_ids = [r[0] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
@@ -1120,12 +1145,14 @@ class MemoryGraph:
             return 0.0
         import random
         count = 0
+        actual_samples = 0
         for _ in range(min(samples, len(all_ids) * (len(all_ids) - 1) // 2)):
             s, t = random.sample(all_ids, 2)
-            path = self.shortest_path(s, t)
+            path = self.shortest_path_undirected(s, t)
+            actual_samples += 1
             if path and node_id in path[1:-1]:  # exclude endpoints
                 count += 1
-        return count / max(samples, 1)
+        return count / max(actual_samples, 1)
 
     def community_detect(self, max_iter: int = 10) -> dict:
         """Label-propagation community detection. Returns {community_label: [node_ids]}."""
