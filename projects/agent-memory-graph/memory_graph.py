@@ -19696,6 +19696,83 @@ class MemoryGraph:
             return {"results": final, "explain": trace}
         return final
 
+    def centrality_optimized(self, normalized: bool = True, 
+                            include_quarantined: bool = False) -> tuple[dict[str, float], dict[str, float]]:
+        """Optimized joint computation of betweenness and closeness centrality.
+        
+        Avoids redundant adjacency list construction and BFS traversals.
+        Returns (betweenness_dict, closeness_dict).
+        """
+        if include_quarantined:
+            node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        else:
+            node_ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return (
+                {nid: 0.0 for nid in node_ids},
+                {nid: 1.0 if n == 1 else 0.0 for nid in node_ids}
+            )
+        
+        node_set = set(node_ids)
+        adj: dict[str, list[str]] = {nid: [] for nid in node_ids}
+        for r in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = r["source"], r["target"]
+            if s in node_set and t in node_set:
+                adj[s].append(t)
+                adj[t].append(s)
+        
+        betweenness = {nid: 0.0 for nid in node_ids}
+        closeness = {nid: 0.0 for nid in node_ids}
+        
+        for s in node_ids:
+            pred: dict[str, list[str]] = {nid: [] for nid in node_ids}
+            dist: dict[str, int] = {s: 0}
+            queue: list[str] = [s]
+            sigma: dict[str, float] = {nid: 0.0 for nid in node_ids}
+            sigma[s] = 1.0
+            
+            while queue:
+                v = queue.pop(0)
+                for w in adj[v]:
+                    if w not in dist:
+                        dist[w] = dist[v] + 1
+                        queue.append(w)
+                    if dist.get(w, float('inf')) == dist[v] + 1:
+                        sigma[w] += sigma[v]
+                        pred[w].append(v)
+            
+            delta: dict[str, float] = {nid: 0.0 for nid in node_ids}
+            total_dist = 0
+            reachable = 0
+            sorted_nodes = sorted(node_ids, key=lambda x: dist.get(x, float('inf')), reverse=True)
+            
+            for w in sorted_nodes:
+                if w == s:
+                    continue
+                for v in pred.get(w, []):
+                    delta[v] += (sigma[v] / sigma[w]) * (1 + delta[w])
+                if w in dist and dist[w] < float('inf'):
+                    total_dist += dist[w]
+                    reachable += 1
+            
+            betweenness[s] = delta[s]
+            if total_dist > 0:
+                cc = reachable / total_dist
+                if normalized:
+                    cc *= reachable / (n - 1)
+                closeness[s] = cc
+            else:
+                closeness[s] = 0.0
+        
+        if normalized and n > 2:
+            factor = 2.0 / ((n - 1) * (n - 2))
+            betweenness = {nid: score * factor for nid, score in betweenness.items()}
+        
+        return betweenness, closeness
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
