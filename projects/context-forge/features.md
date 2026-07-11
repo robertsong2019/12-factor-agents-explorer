@@ -48,6 +48,8 @@
 
 ### Output Formats (Route Reports)
 - [x] **F43**: formatApiRoutesReport() — markdown report with method summary and route detail table ✅ 2026-07-11
+- [x] **F44**: analyzeImportHealth() — unused deps, import frequency, diversity score ✅ 2026-07-11
+- [x] **F45**: formatImportHealthReport() — markdown report for import health ✅ 2026-07-11
 
 ### Security & Quality
 - [x] **F32**: Secret detection — scan source for API keys, tokens, passwords ✅ 2026-06-23
