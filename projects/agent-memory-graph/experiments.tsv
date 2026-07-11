@@ -245,3 +245,6 @@ timestamp	commit	metric	value	status	description
 2026-07-11T21:20:00+08:00	aa1ba29	test_pass_rate	100%	keep	All 2461 passing, 0 regressions, 18.52s
 2026-07-11T21:30:00+08:00	24599c9	test_count	2461→2485	keep	Cycle 223: retrieve_token_budgeted() — token-budget context generation. Greedy packing by score, no LLM calls. Mandol-inspired. +24 tests. 216th day.
 2026-07-11T21:30:00+08:00	24599c9	test_pass_rate	100%	keep	All 2485 passing, 0 regressions, 19.35s
+2026-07-11T21:35:00+08:00	9b28881	warnings	6→0	keep	Fix SyntaxWarning: invalid escape \{ in closeness_vitality docstring. Python 3.12 compatibility. 2485 tests pass, 0 warnings.
+2026-07-11T23:05:00+08:00	3543055	test_count	2506→2537	keep	Cycle 224: retrieval_quality_eval() — precision@k/recall@k/NDCG/MRR/F1/hit_rate. Standard IR eval harness for retrieval pipeline. +31 tests. 217th day.
+2026-07-11T23:05:00+08:00	3543055	test_pass_rate	100%	keep	All 2537 passing, 0 regressions, 19.72s
