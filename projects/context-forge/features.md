@@ -44,6 +44,10 @@
 ### File Analysis
 - [x] **F39**: File size analysis — distribution, percentiles, outliers, by-extension breakdown ✅ 2026-07-10
 - [x] **F40**: Naming convention detection — camelCase/snake_case/kebab_case/PascalCase/CONST_CASE detection with inconsistency reporting ✅ 2026-07-10
+- [x] **F42**: API route detection — scan Express/FastAPI/Flask/Django endpoints ✅ 2026-07-11
+
+### Output Formats (Route Reports)
+- [x] **F43**: formatApiRoutesReport() — markdown report with method summary and route detail table ✅ 2026-07-11
 
 ### Security & Quality
 - [x] **F32**: Secret detection — scan source for API keys, tokens, passwords ✅ 2026-06-23
