@@ -20425,6 +20425,157 @@ class MemoryGraph:
             return {"results": packets, "governance": trace}
         return packets
 
+    # ─────────────────────────────────────────────
+    # Cycle 224: Retrieval Quality Evaluation
+    # Building block for LoCoMo benchmark adapter.
+    # Computes precision@k, recall@k, F1, NDCG, MRR.
+    # ─────────────────────────────────────────────
+
+    def retrieval_quality_eval(
+        self,
+        eval_cases: list[dict],
+        *,
+        k: int = 10,
+        limit: int | None = None,
+        rerank: bool = True,
+        rerank_centrality: str = "degree",
+        rerank_alpha: float = 0.5,
+    ) -> dict:
+        """Evaluate retrieval quality against ground-truth relevant sets.
+
+        Each eval case is::
+
+            {"query": str, "relevant_ids": set[str] | list[str]}
+
+        Runs :meth:`retrieve` for each query and compares the top-*k*
+        results against ``relevant_ids``.
+
+        Metrics computed per-query and aggregated (macro-average):
+
+        - **precision@k** — fraction of retrieved items that are relevant
+        - **recall@k** — fraction of relevant items that are retrieved
+        - **f1@k** — harmonic mean of precision and recall
+        - **ndcg@k** — normalised discounted cumulative gain
+        - **mrr** — mean reciprocal rank of first relevant hit
+        - **hit@k** — 1 if at least one relevant item in top-*k*
+
+        Args:
+            eval_cases:         List of ``{query, relevant_ids}`` dicts.
+            k:                  Cutoff for top-k metrics.
+            limit:              Override retrieval limit (default = *k*).
+            rerank:             Pass through to :meth:`retrieve`.
+            rerank_centrality:  Pass through to :meth:`retrieve`.
+            rerank_alpha:       Pass through to :meth:`retrieve`.
+
+        Returns:
+            ``{overall: {precision, recall, f1, ndcg, mrr, hit_rate},
+             per_query: [...], k, n_cases}``
+        """
+        import math as _math
+
+        eff_limit = limit if limit is not None else k
+        per_query: list[dict] = []
+
+        # Aggregators
+        sum_p = sum_r = sum_f1 = sum_ndcg = sum_mrr = 0.0
+        hits = 0
+
+        for case in eval_cases:
+            query = case["query"]
+            relevant = set(case.get("relevant_ids", []))
+            if not relevant:
+                # No ground truth — skip but record
+                per_query.append({
+                    "query": query,
+                    "precision": 0.0, "recall": 0.0,
+                    "f1": 0.0, "ndcg": 0.0, "mrr": 0.0,
+                    "hit": False, "skipped": True,
+                })
+                continue
+
+            results = self.retrieve(
+                query,
+                limit=eff_limit,
+                rerank=rerank,
+                rerank_centrality=rerank_centrality,
+                rerank_alpha=rerank_alpha,
+            )
+
+            retrieved_ids = [r["node_id"] for r in results[:k]]
+            retrieved_set = set(retrieved_ids)
+
+            # Precision@k
+            tp = len(retrieved_set & relevant)
+            precision = tp / len(retrieved_ids) if retrieved_ids else 0.0
+
+            # Recall@k
+            recall = tp / len(relevant) if relevant else 0.0
+
+            # F1@k
+            f1 = (2 * precision * recall / (precision + recall)
+                  if (precision + recall) > 0 else 0.0)
+
+            # NDCG@k — binary relevance
+            dcg = 0.0
+            for i, rid in enumerate(retrieved_ids):
+                if rid in relevant:
+                    dcg += 1.0 / _math.log2(i + 2)  # rank starts at 1
+            # Ideal DCG
+            ideal_n = min(len(relevant), k)
+            idcg = sum(1.0 / _math.log2(i + 2) for i in range(ideal_n))
+            ndcg = dcg / idcg if idcg > 0 else 0.0
+
+            # MRR — reciprocal rank of first relevant hit
+            mrr = 0.0
+            for i, rid in enumerate(retrieved_ids):
+                if rid in relevant:
+                    mrr = 1.0 / (i + 1)
+                    break
+
+            hit = mrr > 0.0
+
+            per_query.append({
+                "query": query,
+                "precision": round(precision, 4),
+                "recall": round(recall, 4),
+                "f1": round(f1, 4),
+                "ndcg": round(ndcg, 4),
+                "mrr": round(mrr, 4),
+                "hit": hit,
+                "retrieved_count": len(retrieved_ids),
+                "relevant_count": len(relevant),
+                "tp": tp,
+            })
+
+            sum_p += precision
+            sum_r += recall
+            sum_f1 += f1
+            sum_ndcg += ndcg
+            sum_mrr += mrr
+            if hit:
+                hits += 1
+
+        evaluated_cases = [q for q in per_query if not q.get("skipped")]
+        n_evaluated = len(evaluated_cases)
+        divisor = n_evaluated if n_evaluated > 0 else 1
+
+        overall = {
+            "precision": round(sum_p / divisor, 4),
+            "recall": round(sum_r / divisor, 4),
+            "f1": round(sum_f1 / divisor, 4),
+            "ndcg": round(sum_ndcg / divisor, 4),
+            "mrr": round(sum_mrr / divisor, 4),
+            "hit_rate": round(hits / divisor, 4),
+        }
+
+        return {
+            "overall": overall,
+            "per_query": per_query,
+            "k": k,
+            "n_cases": len(eval_cases),
+            "n_evaluated": n_evaluated,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
