@@ -133,6 +133,21 @@ class MemoryGraph:
                 wall_time REAL
             )
         """)
+        # Retrieval failure log (SAGE reader-writer feedback)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS retrieval_failures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT NOT NULL,
+                result_count INTEGER DEFAULT 0,
+                top_score REAL DEFAULT 0.0,
+                stage TEXT DEFAULT 'recall',
+                timestamp REAL NOT NULL,
+                analysed INTEGER DEFAULT 0
+            )
+        """)
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rf_ts ON retrieval_failures(timestamp)"
+        )
 
     def add(self, label: str, kind: str = "fact", data: dict = None, tags: list[str] = None) -> Node:
         """添加一个记忆节点。"""
@@ -19284,6 +19299,170 @@ class MemoryGraph:
         for item in ranked[:limit]:
             item["node"] = self.get_node(item["node_id"])
         return ranked[:limit]
+
+    # ------------------------------------------------------------------
+    # Retrieval-failure logging (SAGE reader-writer feedback loop)
+    # ------------------------------------------------------------------
+
+    def log_retrieval_failure(
+        self,
+        query: str,
+        result_count: int = 0,
+        top_score: float = 0.0,
+        stage: str = "recall",
+    ) -> int:
+        """Log a retrieval failure for later analysis.
+
+        SAGE (2605.12061) reader-writer feedback: when retrieval returns
+        few/no results or low-confidence hits, log the query so that
+        :meth:`analyse_retrieval_failures` can identify missing edges
+        and suggest graph improvements.
+
+        Args:
+            query:        The query that produced poor results.
+            result_count: Number of results returned.
+            top_score:    Score of the top result (0 if none).
+            stage:        Retrieval stage (``recall``, ``ppr``, ``hybrid``).
+
+        Returns:
+            The auto-incremented failure-log row ID.
+        """
+        cur = self.conn.execute(
+            """INSERT INTO retrieval_failures
+               (query, result_count, top_score, stage, timestamp)
+               VALUES (?, ?, ?, ?, ?)""",
+            (query, result_count, top_score, stage, time.time()),
+        )
+        self.conn.commit()
+        return cur.lastrowid or 0
+
+    def get_retrieval_failures(
+        self,
+        *,
+        since: float | None = None,
+        stage: str | None = None,
+        analysed_only: bool = False,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Retrieve logged retrieval failures.
+
+        Args:
+            since:        Only failures after this Unix timestamp.
+            stage:        Filter by retrieval stage.
+            analysed_only: If ``True``, only return analysed entries.
+            limit:        Max rows.
+
+        Returns:
+            List of failure dicts sorted newest-first.
+        """
+        clauses = []
+        params: list = []
+        if since is not None:
+            clauses.append("timestamp >= ?")
+            params.append(since)
+        if stage is not None:
+            clauses.append("stage = ?")
+            params.append(stage)
+        if analysed_only:
+            clauses.append("analysed = 1")
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        rows = self.conn.execute(
+            f"""SELECT * FROM retrieval_failures{where}
+               ORDER BY timestamp DESC LIMIT ?""",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def analyse_retrieval_failures(
+        self,
+        *,
+        min_failures: int = 3,
+        since_hours: float = 24.0,
+    ) -> list[dict]:
+        """Analyse retrieval failures to find missing graph connections.
+
+        Groups failures by normalised query, identifies queries that
+        fail repeatedly, and checks whether existing nodes *should* have
+        matched (i.e. partial label overlap exists but exact keyword
+        recall missed them).
+
+        This implements the SAGE writer feedback loop: retrieval gaps
+        inform graph evolution.
+
+        Args:
+            min_failures: Minimum failures per query to flag.
+            since_hours:  Only consider failures within this time window.
+
+        Returns:
+            List of analysis dicts::
+
+                [{query, failure_count, suggested_nodes, severity}]
+        """
+        cutoff = time.time() - since_hours * 3600
+        rows = self.conn.execute(
+            """SELECT query, COUNT(*) as cnt, MAX(timestamp) as last_ts
+               FROM retrieval_failures
+               WHERE timestamp >= ?
+               GROUP BY query
+               HAVING cnt >= ?
+               ORDER BY cnt DESC""",
+            (cutoff, min_failures),
+        ).fetchall()
+
+        results = []
+        for r in rows:
+            query = r["query"]
+            # Look for nodes with partial label overlap
+            tokens = [t for t in query.lower().split() if len(t) > 2]
+            suggested = set()
+            for token in tokens:
+                node_rows = self.conn.execute(
+                    "SELECT id, label FROM nodes WHERE LOWER(label) LIKE ? LIMIT 5",
+                    (f"%{token}%",),
+                ).fetchall()
+                for nr in node_rows:
+                    suggested.add(nr["id"])
+
+            results.append({
+                "query": query,
+                "failure_count": r["cnt"],
+                "last_failure_ts": r["last_ts"],
+                "suggested_node_ids": list(suggested),
+                "suggestion_count": len(suggested),
+                "severity": "high" if r["cnt"] >= min_failures * 2 else "medium",
+            })
+
+            # Mark these failures as analysed
+            self.conn.execute(
+                """UPDATE retrieval_failures SET analysed=1
+                   WHERE query=? AND timestamp >= ?""",
+                (query, cutoff),
+            )
+
+        self.conn.commit()
+        return results
+
+    def clear_retrieval_failures(self, older_than_hours: float | None = None) -> int:
+        """Clear retrieval failure logs.
+
+        Args:
+            older_than_hours: If given, only clear entries older than this.
+                              If ``None``, clear all.
+
+        Returns:
+            Number of rows deleted.
+        """
+        if older_than_hours is not None:
+            cutoff = time.time() - older_than_hours * 3600
+            cur = self.conn.execute(
+                "DELETE FROM retrieval_failures WHERE timestamp < ?",
+                (cutoff,),
+            )
+        else:
+            cur = self.conn.execute("DELETE FROM retrieval_failures")
+        self.conn.commit()
+        return cur.rowcount
 
     def ppr_structured(
         self,
