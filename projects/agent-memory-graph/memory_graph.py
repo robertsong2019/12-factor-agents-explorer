@@ -20187,6 +20187,244 @@ class MemoryGraph:
         
         return betweenness, closeness
 
+    # ── Governed Selection Pipeline (MRMS-inspired) ─────────────
+
+    def select_governed(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        min_confidence: float = 0.0,
+        kinds: list[str] | None = None,
+        require_tags: list[str] | None = None,
+        rerank: bool = True,
+        rerank_centrality: str = "degree",
+        explain: bool = False,
+    ) -> list[dict] | dict:
+        """MRMS-style three-stage governed selection pipeline.
+
+        Pre-generation governance layer over the existing retrieve()
+        pipeline. Implements the synchronized structured-vector-graph
+        selection pattern from MRMS (arXiv:2607.04617):
+
+        **Stage 1 — Structured gates:** Filter out quarantined,
+        superseded, or low-confidence nodes before retrieval.
+
+        **Stage 2 — Vector recall:** Delegate to existing ``retrieve()``
+        for hybrid keyword + PPR + RRF + centrality rerank.
+
+        **Stage 3 — Graph expansion:** Annotate each result with
+        evidence (supports edges), conflicts (contradicts edges),
+        and superseded_by metadata. Tag each packet as safe/unsafe.
+
+        Args:
+            query:              Search query.
+            limit:              Max results.
+            min_confidence:     Minimum confidence score (0–1).
+            kinds:              Node kind whitelist.
+            require_tags:       Tags that must be present.
+            rerank:             Apply centrality rerank in recall.
+            rerank_centrality:  Centrality metric for rerank.
+            explain:            Return governance metadata.
+
+        Returns:
+            List of governed result packets, each containing::
+
+                node_id, claim, kind, score, confidence,
+                is_safe, evidence, conflicts, superseded_by
+
+            If *explain* is ``True``, returns::
+
+                {"results": [...], "governance": {...}}
+        """
+        import time
+
+        t0 = time.perf_counter()
+        trace = {
+            "query": query,
+            "stages": [],
+            "filters": {
+                "min_confidence": min_confidence,
+                "kinds": kinds,
+                "require_tags": require_tags,
+            },
+        }
+
+        # ── Stage 1: Structured gates ────────────────────────────
+        t1 = time.perf_counter()
+
+        # Build exclusion set from structured filters
+        excluded: set[str] = set()
+
+        # Quarantine gate
+        quarantined = {
+            row["id"] for row in self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined = 1"
+            ).fetchall()
+        }
+        excluded |= quarantined
+
+        # Superseded gate (valid_to is set and in the past)
+        now = time.time()
+        superseded_ids = {
+            row["id"] for row in self.conn.execute(
+                "SELECT id FROM nodes WHERE valid_to IS NOT NULL AND valid_to < ?",
+                (now,)
+            ).fetchall()
+        }
+        excluded |= superseded_ids
+
+        # Kind filter
+        if kinds:
+            kind_set = set(kinds)
+            kind_excluded = {
+                row["id"] for row in self.conn.execute(
+                    "SELECT id FROM nodes WHERE kind NOT IN (%s)"
+                    % ",".join("?" * len(kind_set)),
+                    tuple(kind_set),
+                ).fetchall()
+            }
+            excluded |= kind_excluded
+
+        # Tag filter
+        if require_tags:
+            import json as _json
+            required = set(require_tags)
+            all_nodes = self.conn.execute(
+                "SELECT id, tags FROM nodes"
+            ).fetchall()
+            for row in all_nodes:
+                node_tags = set(_json.loads(row["tags"]) if row["tags"] else [])
+                if not required.issubset(node_tags):
+                    excluded.add(row["id"])
+
+        gate_passed = set()
+        for row in self.conn.execute("SELECT id FROM nodes").fetchall():
+            if row["id"] not in excluded:
+                gate_passed.add(row["id"])
+
+        trace["stages"].append({
+            "name": "structured_gate",
+            "total_nodes": self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0],
+            "passed": len(gate_passed),
+            "excluded": len(excluded),
+            "quarantined": len(quarantined),
+            "superseded": len(superseded_ids),
+            "elapsed_ms": round((time.perf_counter() - t1) * 1000, 2),
+        })
+
+        # Early exit if nothing passes the gate
+        if not gate_passed:
+            trace["total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+            if explain:
+                return {"results": [], "governance": trace}
+            return []
+
+        # ── Stage 2: Vector recall (delegate to retrieve) ─────────
+        t2 = time.perf_counter()
+        candidates = self.retrieve(
+            query,
+            limit=max(limit * 3, 30),  # over-fetch for post-filtering
+            rerank=rerank,
+            rerank_centrality=rerank_centrality,
+        )
+
+        # Apply gate filter to retrieve results
+        gated_candidates = [
+            c for c in candidates if c.get("node_id") in gate_passed
+        ]
+
+        # Apply confidence filter
+        if min_confidence > 0:
+            gated_candidates = [
+                c for c in gated_candidates
+                if self.get_confidence(c.get("node_id", "")) >= min_confidence
+            ]
+
+        trace["stages"].append({
+            "name": "recall",
+            "candidates": len(gated_candidates),
+            "pre_gate": len(candidates),
+            "filtered_by_gate": len(candidates) - len(gated_candidates),
+            "elapsed_ms": round((time.perf_counter() - t2) * 1000, 2),
+        })
+
+        if not gated_candidates:
+            trace["total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+            if explain:
+                return {"results": [], "governance": trace}
+            return []
+
+        # ── Stage 3: Graph expansion + annotation ─────────────────
+        t3 = time.perf_counter()
+        packets: list[dict] = []
+
+        for cand in gated_candidates[:limit]:
+            nid = cand.get("node_id", "")
+            node = cand.get("node") or self.get_node(nid)
+            if not node:
+                continue
+
+            # Gather edges for annotation
+            evidence: list[dict] = []
+            conflicts: list[dict] = []
+            superseded_by: list[dict] = []
+
+            edge_rows = self.conn.execute(
+                "SELECT target, relation FROM edges WHERE source=? UNION "
+                "SELECT source AS target, relation FROM edges WHERE target=?",
+                (nid, nid),
+            ).fetchall()
+
+            for erow in edge_rows:
+                other_id = erow["target"]
+                rel = erow["relation"]
+                if other_id == nid:
+                    continue  # skip self-references
+                other = self.get_node(other_id)
+                if not other:
+                    continue
+                if other_id in excluded:
+                    continue
+
+                entry = {"id": other_id, "claim": other.label, "relation": rel}
+                if rel in ("supports", "supported_by", "corroborates"):
+                    evidence.append(entry)
+                elif rel in ("contradicts", "contradicted_by", "conflicts_with"):
+                    conflicts.append(entry)
+                elif rel in ("superseded_by", "replaces"):
+                    superseded_by.append(entry)
+
+            confidence = self.get_confidence(nid)
+            is_safe = len(conflicts) == 0 and len(superseded_by) == 0
+
+            packets.append({
+                "node_id": nid,
+                "claim": node.label,
+                "kind": node.kind,
+                "score": cand.get("score", cand.get("rrf_score", 0.0)),
+                "confidence": round(confidence, 4),
+                "is_safe": is_safe,
+                "evidence": evidence,
+                "conflicts": conflicts,
+                "superseded_by": superseded_by,
+            })
+
+        trace["stages"].append({
+            "name": "graph_expansion",
+            "annotated": len(packets),
+            "safe": sum(1 for p in packets if p["is_safe"]),
+            "conflicted": sum(1 for p in packets if not p["is_safe"]),
+            "elapsed_ms": round((time.perf_counter() - t3) * 1000, 2),
+        })
+
+        trace["total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+        trace["final_count"] = len(packets)
+
+        if explain:
+            return {"results": packets, "governance": trace}
+        return packets
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
@@ -20237,6 +20475,8 @@ def demo():
     mg.conn.commit()
     mg.decay_all()
     print(mg.visualize_ascii())
+
+
 
 
 if __name__ == "__main__":
