@@ -4299,6 +4299,101 @@ export function formatApiRoutesReport(result) {
   return lines.join('\n');
 }
 
+/**
+ * F44: Analyze import health — unused deps, most-imported, diversity score, fan-in.
+ *
+ * @param {object} info - Project info (from detectProject)
+ * @param {object} importData - Import data (from extractImports)
+ * @returns {{unusedDeps: string[], mostImported: Array, totalImports: number, uniqueImports: number, diversityScore: number, avgImportsPerFile: number}}
+ */
+export function analyzeImportHealth(info, importData) {
+  const allImports = importData.allImports || [];
+  const importsMap = importData.imports || new Map();
+
+  // Get declared dependencies from package.json
+  const declared = new Set();
+  const deps = info.pkg?.dependencies || {};
+  const devDeps = info.pkg?.devDependencies || {};
+  for (const k of Object.keys(deps)) declared.add(k);
+  for (const k of Object.keys(devDeps)) declared.add(k);
+
+  // Count import frequency
+  const importCounts = {};
+  for (const imp of allImports) {
+    // Normalize: strip scoped package subpaths
+    const base = imp.startsWith('@') ? imp.split('/').slice(0, 2).join('/') : imp.split('/')[0];
+    importCounts[base] = (importCounts[base] || 0) + 1;
+  }
+
+  // Find unused deps (declared but never imported)
+  const usedPackages = new Set(Object.keys(importCounts));
+  const unusedDeps = [...declared].filter(d => !usedPackages.has(d) && !d.startsWith('@types/'));
+
+  // Most imported packages (sorted by count)
+  const mostImported = Object.entries(importCounts)
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // Count files with imports
+  const filesWithImports = importsMap instanceof Map ? importsMap.size : Object.keys(importsMap).length;
+
+  // Diversity score: unique packages / total imports (0-1, higher = more diverse)
+  const uniqueImports = Object.keys(importCounts).length;
+  const totalImports = allImports.length;
+  const diversityScore = totalImports > 0 ? Math.round((uniqueImports / totalImports) * 100) / 100 : 0;
+
+  // Average imports per file
+  const avgImportsPerFile = filesWithImports > 0 ? Math.round((totalImports / filesWithImports) * 100) / 100 : 0;
+
+  return {
+    unusedDeps,
+    mostImported,
+    totalImports,
+    uniqueImports,
+    diversityScore,
+    avgImportsPerFile,
+    filesWithImports,
+    declaredCount: declared.size,
+  };
+}
+
+/**
+ * F45: Format import health report.
+ */
+export function formatImportHealthReport(result) {
+  if (!result) return '## 📦 Import Health\n\nNo import data available.\n';
+
+  const lines = [
+    '## 📦 Import Health',
+    '',
+    `**Total imports:** ${result.totalImports}`,
+    `**Unique packages:** ${result.uniqueImports}`,
+    `**Diversity score:** ${result.diversityScore} (0-1, higher = more diverse)`,
+    `**Avg imports/file:** ${result.avgImportsPerFile}`,
+    '',
+  ];
+
+  if (result.unusedDeps.length > 0) {
+    lines.push('### ⚠️ Potentially Unused Dependencies', '');
+    for (const dep of result.unusedDeps) {
+      lines.push(`- \`${dep}\``);
+    }
+    lines.push('');
+  } else {
+    lines.push('### ✅ All dependencies are used', '');
+  }
+
+  if (result.mostImported.length > 0) {
+    lines.push('### Top Imported Packages', '', '| Package | Import Count |', '|---------|-------------|');
+    for (const { name, count } of result.mostImported.slice(0, 10)) {
+      lines.push(`| \`${name}\` | ${count} |`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
