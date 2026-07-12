@@ -5324,6 +5324,95 @@ class MemoryGraph:
                     total += deg[nid] * deg[other] * d
         return total
 
+    def schultz_index(self) -> Optional[int]:
+        """Schultz molecular topological index (Schultz 1989).
+
+        Sum of degree-sum-weighted pairwise distances::
+
+            S(G) = \u03a3_{u<v} (d_u + d_v) \u00b7 d(u, v)
+
+        where *d_u* is the degree of node *u* and *d(u, v)* is the
+        shortest-path distance. Unreachable pairs contribute zero.
+
+        **Properties:**
+        - For regular graphs (all same degree k): S = 2k \u00b7 W
+        - For paths P\u2099: S = 2 \u00b7 W + 2 \u00b7 \u03a3 d(u,v)\u00b7(positional correction)
+        - For complete K\u2099: S = n(n-1)\u00b2 (all degree n-1, all dist 1, degree-sum=2(n-1))
+        - Relationship to Gutman index: Schultz uses d_u + d_v while
+          Gutman uses d_u \u00b7 d_v. For regular graphs both reduce to
+          a constant multiple of the Wiener index.
+        - Schultz \u2264 Gutman when all degrees \u2265 2 (AM-GM inequality:
+          d_u + d_v \u2264 d_u \u00b7 d_v for integers \u2265 2)
+
+        References:
+            Schultz, H.P. (1989). "Topological organic chemistry. 1.
+            Graph theory and topological indices of molecular graphs."
+            J. Chem. Inf. Comput. Sci., 29, 227-228.
+
+        Returns:
+            Schultz index (int), or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edge_count = self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        if edge_count == 0:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        deg: dict[str, int] = {}
+        for nid in node_ids:
+            deg[nid] = self.degree(nid)
+        total = 0
+        for i, nid in enumerate(node_ids):
+            dists = self._bfs_distances(nid)
+            for other in node_ids[i + 1:]:
+                d = dists.get(other)
+                if d and d > 0:
+                    total += (deg[nid] + deg[other]) * d
+        return total
+
+    def modified_wiener_index(self, lam: float = -1) -> Optional[float]:
+        """Modified Wiener index (Nikoli\u0107, Trinajsti\u0107, Randi\u0107 1994).
+
+        Generalized distance sum with exponent::
+
+            W\u1d65(G) = \u03a3_{u<v} d(u, v)\u1d65
+
+        For *\u03bb* = 1 this reduces to the classic Wiener index.
+        For *\u03bb* = -1 (default): inverse-distance weighting,
+        emphasising nearby pairs. For *\u03bb* = 2: quadratic distance
+        penalty, emphasising far-apart pairs. For *\u03bb* = 3: cubic.
+
+        **Properties:**
+        - P\u2099 W\u208b\u2081: decreasing with length, dominated by
+          directly-connected pairs (d=1 contributes 1 each)
+        - K\u2099 W\u208b\u2081 = n(n-1)/2 (all pairs at d=1, 1\u00b9=1)
+        - W\u2082: highlights graph diameter and sparsity
+        - For disconnected graphs: unreachable pairs excluded
+
+        References:
+            Nikoli\u0107, S., Trinajsti\u0107, N., Randi\u0107, M. (1994).
+            "Wiener index revisited." Chem. Phys. Lett., 199, 225-229.
+
+        Args:
+            lam: Exponent \u03bb (default -1 for inverse-distance variant).
+
+        Returns:
+            Modified Wiener index (float), or ``None`` for < 2 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        total = 0.0
+        for i, nid in enumerate(node_ids):
+            dists = self._bfs_distances(nid)
+            for other in node_ids[i + 1:]:
+                d = dists.get(other)
+                if d and d > 0:
+                    total += d ** lam
+        return total
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
