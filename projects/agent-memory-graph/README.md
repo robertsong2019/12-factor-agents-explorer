@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-2122-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-2813-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -2082,6 +2082,50 @@ MRMS 三阶段治理选择管线 (arXiv:2607.04617)：
 
 评估检索质量 — 对比 ground-truth 相关集。每个评估用例为 `{query, relevant_ids}`。计算 6 项指标：precision@k、recall@k、F1@k、NDCG@k、MRR、hit@k。返回 `{overall, per_query, k, n_cases, n_evaluated}`。
 
+#### `add_with_entropy_filter(label, kind="fact", data=None, tags=None, threshold=0.3) -> Node | None`
+
+SimpleMem (ICML 2026) 启发的写入时熵过滤。计算信息密度综合分数（词汇多样性 + 长度因子 + 与现有节点的 Jaccard 新颖度），低于 threshold 的内容直接拒绝写入。score ∈ [0, 1]，默认阈值 0.3 过滤低质量重复内容。返回创建的 Node 或 None（被过滤）。
+
+#### `subgraph_by_edge_type(relation, include_isolated=False) -> dict`
+
+MAGMA (ACL 2026) 启发的正交多图视图。提取仅包含指定 relation 类型的子图（节点+边+统计信息）。返回 `{nodes, edges, relation, stats}` 字典，可通过 `import_json()` 导入为独立图。适用于因果、时序、层次等不同语义维度的隔离分析。
+
+#### `add_causal_edge(source_id, target_id, relation, confidence=1.0, evidence=None, note=None) -> dict`
+
+ActMem (arXiv:2603.00026) 启发的因果边层。五种有类型关系：`causes`（导致）、`prevents`（阻止）、`conflicts_with`（冲突）、`enables`（使能）、`depends_on`（依赖）。每条边携带 confidence ∈ [0,1]、evidence 节点 ID 列表和可选 note。返回创建边的摘要字典。
+
+#### `get_causal_edges(node_id, direction="both", relation=None) -> list[dict]`
+
+查询节点的因果边。direction 支持 `outgoing`/`incoming`/`both`，可按 relation 过滤。返回边字典列表，含 `source, target, relation, weight, confidence, evidence, note, created_at`。
+
+#### `trace_causal_chain(node_id, max_depth=10, direction="forward") -> list[list[dict]]`
+
+BFS 遍历因果链。`forward` 方向跟随 causes→effects（向外追踪后果），`backward` 方向追溯到根因。Cycle-safe（visited 集合防止环路）。返回链列表，每条链为边字典列表，按长度降序、总置信度降序排列。
+
+#### `trace_decision_chain(topic=None, node_id=None) -> list[dict]`
+
+TokenMizer 启发的决策/ supersede 链追踪。对每个 hop 报告 trigger（supersede/conflict_resolve/unknown）、reason 文本和 evidence 节点列表，回答"为什么这个事实从 A 变成了 B？"。通过 topic（标签模糊搜索最老节点）或 node_id 起始，按时间顺序返回 hop 字典列表。
+
+#### `spread_activation(seed_ids, *, decay_factor=0.5, threshold=0.1, max_hops=3, include_quarantined=False, edge_weight_factor=True) -> dict[str, float]`
+
+Collins & Loftus (1975) 扩散激活检索。从 seed 节点出发沿边传播激活值，每跳乘以 decay_factor。返回 `{node_id: activation}` 字典（≥ threshold 的节点）。支持多 seed、隔离节点跳过、边权重调制。
+
+#### `schultz_index() -> int | None`
+
+Schultz 分子拓扑指数 (Schultz 1989)。∑_{u<v} (d_u + d_v) · d(u,v)，d_u 为节点度数。与 Gutman 指数的关系：Schultz 用度之和，Gutman 用度之积。对正则图退化为 Wiener 指标的常数倍。返回 int 或 None（<2 节点或无边时）。
+
+#### `modified_wiener_index(lam=-1) -> float | None`
+
+Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^λ。λ=1 为经典 Wiener 指数；λ=-1（默认）逆距离加权，强调近邻；λ=2 二次距离惩罚，强调远端。不连通对的距离不计。返回 float 或 None。
+
+#### `generalized_randic_index(alpha=-0.5) -> float | None`
+
+广义 Randić 指数 R_α (Bollobás & Erdős 1998)。∑_{(u,v)∈E} (d_u · d_v)^α。α=-1/2（默认）为经典 Randić 连接性指数；α=0 为边数 m；α=+1 为第二 Zagreb M₂ 指数。参数化族统一了多个度描述符。
+
+#### `zagreb_indices() -> dict | None`
+
+第一和第二 Zagreb 指数 (Gutman & Trinajstić 1972)。M₁ = ∑ d_v²（度平方和），M₂ = ∑_{(u,v)∈E} d_u · d_v（边上度积之和）。返回 `{first, second, difference, ratio}` 字典或 None。
+
 ---
 
 ## 测试
@@ -2090,7 +2134,7 @@ MRMS 三阶段治理选择管线 (arXiv:2607.04617)：
 python3 -m pytest test_memory_graph.py -q
 ```
 
-2568 个测试覆盖所有 API（225 个 cycle，209 天零回滚）。
+2813 个测试覆盖所有 API（232 个 cycle，225 天零回滚）。
 
 ## 设计思路
 
@@ -2132,6 +2176,7 @@ python3 -m pytest test_memory_graph.py -q
 36. **GraphRAG 检索管线** — personalized_pagerank (HippoRAG 核心 PPR 从 seed 节点传播相关性) + ppr_retrieve (关键词→seed→PPR 两阶段检索) + compute_graph_activity/auto_forget (FOREVER 模型：活跃图忘记更少，沉寂图加速遗忘) + hybrid_retrieve (RRF 融合 keyword+PPR+tag 三路信号) + graph_rerank (中心性加权重排序) + retrieve() 统一四阶段管线编排器 (keyword→PPR→hybrid→rerank)
 37. **电流中心性与谱分析** — current_flow_betweenness/current_flow_closeness/edge_current_flow_betweenness (Brandes & Fleischer 2007 电流类比随机游走中心性) + kirchhoff_index/spanning_tree_count (Matrix-Tree 定理全图连通性) + spectral_gap/graph_energy (邻接矩阵谱特性) + hyper_wiener_index/balaban_index/randic_index/harary_index (化学图论距离描述符) + phantom_check.py (Cycle 219 pre-commit 守卫，防止类遮蔽和幻影 API)。总计 20 种中心性/连通性/谱/拓扑度量
 38. **SAGE 检索反馈与治理管线** — ppr_structured (SAGE 启发的结构门控 PPR：中心性高的节点传播更多信号) + log_retrieval_failure/get_retrieval_failures/analyse_retrieval_failures/clear_retrieval_failures (检索失败日志 + writer-reader 反馈环路：自动发现缺失边并建议图改进) + centrality_optimized (联合 betweenness+closeness 单次 BFS 计算) + retrieve_token_budgeted (Mandol 启发的 token 预算上下文生成：无 LLM 调用的确定性贪心打包) + select_governed (MRMS 三阶段治理选择管线：结构门控→向量召回→图展开) + retrieval_quality_eval (precision@k/recall@k/F1/NDCG/MRR/hit_rate 六指标评估) + szeged_index/gutman_index (化学图论距离描述符)。从检索质量评估到治理选择的完整 SAGE 闭环
+39. **写入过滤 + 因果推理 + 扩散激活** — add_with_entropy_filter (SimpleMem ICML 2026：写入时信息密度过滤，词汇多样性+长度+新颖度三因子) + subgraph_by_edge_type (MAGMA ACL 2026：正交多图视图，按关系类型隔离分析) + add_causal_edge/get_causal_edges/trace_causal_chain (ActMem 5 型因果边：causes/prevents/conflicts_with/enables/depends_on，confidence+evidence+BFS 链追踪) + trace_decision_chain (TokenMizer 启发：supersede 链 trigger/reason/evidence 决策审计) + spread_activation (Collins & Loftus 1975：扩散激活 BFS 传播，decay/threshold/max_hops 可控) + schultz_index/modified_wiener_index/generalized_randic_index/zagreb_indices (Schultz 1989/Nikolić 1994/Bollobás 1998/Gutman 1972：度加权距离描述符四族，拓扑指数扩展至十一族)
 
 ## 许可
 
