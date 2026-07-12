@@ -5568,6 +5568,98 @@ class MemoryGraph:
                     total += d ** lam
         return total
 
+    def generalized_randic_index(self, alpha: float = -0.5) -> Optional[float]:
+        """Generalized Randić index R_α (Bollobás & Erdős 1998).
+
+        The connectance index with configurable exponent::
+
+            R_α = Σ_{(u,v) ∈ E} (d_u · d_v)^α
+
+        For *α* = -1/2 (default) this reduces to the classic Randić
+        index (``randic_index()``).  Other useful values:
+
+        - *α* = -1:  R_{-1} = Σ 1/(d_u · d_v)  (sum of reciprocal degree products)
+        - *α* =  0:  R_0  = m  (number of edges)
+        - *α* = +1:  R_{+1} = Σ d_u · d_v  (= second Zagreb M₂ index)
+        - *α* = -1/2: classic Randić connectivity index
+
+        **Properties:**
+        - K_n (α=-1): n(n-1)/2 · 1/(n-1)² = n/(2(n-1))
+        - K_n (α=0):  n(n-1)/2 = m
+        - K_n (α=+1): n(n-1)/2 · (n-1)² = n(n-1)³/2
+        - C_n (α=-1/2): n/2 (classic Randić)
+        - Path P_n (α=-1): dominated by internal edges (d_u·d_v = 4)
+        - Star K_{1,k} (α=+1): k · (k·1) = k²
+
+        Args:
+            alpha: Exponent α (default -0.5 for classic Randić).
+
+        Returns:
+            Generalized Randić index (float), or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        total = 0.0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                total += (ds * dt) ** alpha
+        return total
+
+    def zagreb_indices(self) -> Optional[dict]:
+        """First and second Zagreb indices (Gutman & Trinajstić 1972).
+
+        Two of the oldest and most studied degree-based topological
+        descriptors::
+
+            M₁ = Σ_{v ∈ V} d_v² = Σ_{(u,v) ∈ E} (d_u + d_v)
+            M₂ = Σ_{(u,v) ∈ E} d_u · d_v
+
+        **Properties:**
+        - K_n:  M₁ = n(n-1)²,  M₂ = n(n-1)²·(n-1)/2 ... actually:
+          M₁ = n·(n-1)²,  M₂ = n(n-1)³/2
+        - Path P_n:  M₁ = (n-2)·4 + 2 = 4n-6,  M₂ = (n-2)·4 + 2 = 4n-6
+        - Cycle C_n:  M₁ = 4n,  M₂ = 4n  (all degrees = 2)
+        - Star K_{1,k}:  M₁ = k² + k,  M₂ = k²
+
+        Returns:
+            dict with keys ``first`` (M₁), ``second`` (M₂),
+            ``difference`` (M₁ - M₂), and ``ratio`` (M₂ / M₁).
+            ``None`` for < 2 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        # M₁ = Σ d_v²
+        m1 = sum(d * d for d in deg.values())
+        # M₂ = Σ_{(u,v)∈E} d_u · d_v
+        m2 = 0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            m2 += deg.get(s, 0) * deg.get(t, 0)
+        return {
+            "first": m1,
+            "second": m2,
+            "difference": m1 - m2,
+            "ratio": m2 / m1 if m1 > 0 else 0.0,
+        }
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
