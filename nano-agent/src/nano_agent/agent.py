@@ -168,6 +168,71 @@ class Agent:
         if self.verbose:
             print(message)
 
+    def run_batch(self, inputs: List[str], context: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        批量处理多个输入
+
+        Args:
+            inputs: 用户输入列表
+            context: 共享的额外上下文（可选）
+
+        Returns:
+            结果列表，每项包含 {input, response, success, error}
+        """
+        results: List[Dict[str, Any]] = []
+        for i, user_input in enumerate(inputs):
+            try:
+                response = self.run(user_input, context)
+                results.append({
+                    "input": user_input,
+                    "response": response,
+                    "success": True,
+                    "error": None
+                })
+            except Exception as e:
+                results.append({
+                    "input": user_input,
+                    "response": None,
+                    "success": False,
+                    "error": str(e)
+                })
+                self._log(f"⚠️ 输入 {i+1} 处理失败: {e}")
+        return results
+
+    def summary(self) -> Dict[str, Any]:
+        """
+        生成对话历史的摘要信息
+
+        Returns:
+            包含对话统计信息的字典
+        """
+        user_msgs = [m for m in self._conversation_history if m["role"] == "user"]
+        assistant_msgs = [m for m in self._conversation_history if m["role"] == "assistant"]
+
+        # 计算总字符数
+        total_chars = sum(len(m["content"]) for m in self._conversation_history)
+
+        # 最近几轮对话（简略）
+        recent = []
+        for m in self._conversation_history[-6:]:
+            content = m["content"]
+            recent.append({
+                "role": m["role"],
+                "preview": content[:80] + ("..." if len(content) > 80 else "")
+            })
+
+        return {
+            "agent_name": self.name,
+            "turn_count": len(user_msgs),
+            "total_messages": len(self._conversation_history),
+            "user_messages": len(user_msgs),
+            "assistant_messages": len(assistant_msgs),
+            "total_chars": total_chars,
+            "tool_count": len(self.tools),
+            "memory_count": self.memory.count(),
+            "recent": recent
+        }
+
     def reset(self) -> None:
         """重置对话历史"""
         self._conversation_history.clear()

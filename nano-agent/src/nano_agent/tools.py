@@ -129,3 +129,8 @@ def unregister_tool(name: str) -> bool:
         del _tools[name]
         return True
     return False
+
+
+def list_tools_by_prefix(prefix: str) -> List[Tool]:
+    """按名称前缀筛选工具"""
+    return [t for name, t in _tools.items() if name.startswith(prefix)]
