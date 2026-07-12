@@ -260,3 +260,5 @@ timestamp	commit	metric	value	status	description
 2026-07-12T21:40:00+08:00	63f377b	test_pass_rate	100%	keep	All 2663 passing, 0 regressions, 20.09s
 2026-07-12T22:25:00+08:00	baecdfb	test_count	2663→2718	keep	Cycle 230: add_causal_edge() + get_causal_edges() + trace_causal_chain(). ActMem-inspired causal edge layer. 5 typed relations (causes/prevents/conflicts_with/enables/depends_on) with confidence scoring, evidence, BFS traversal. +55 tests. 223rd consecutive day.
 2026-07-12T22:25:00+08:00	baecdfb	test_pass_rate	100%	keep	All 2718 passing, 0 regressions, 19.84s
+2026-07-12T23:00:00+08:00	c480152	test_count	2718→2754	keep	Cycle 231: spread_activation(). Collins & Loftus (1975) spreading activation retrieval. BFS propagation with decay, threshold, max_hops, edge weight modulation, multi-seed fusion, quarantine-aware. +36 tests. 224th consecutive day.
+2026-07-12T23:00:00+08:00	c480152	test_pass_rate	100%	keep	All 2754 passing, 0 regressions, 20.56s
