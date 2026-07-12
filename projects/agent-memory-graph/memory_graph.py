@@ -13787,6 +13787,120 @@ class MemoryGraph:
         chain = list(reversed(backward)) + chain
         return chain
 
+    def trace_decision_chain(self, topic: str = None,
+                             node_id: str = None) -> list[dict]:
+        """Trace the decision/supersession chain for a topic or node.
+
+        Inspired by TokenMizer's ``why_decision``: for each hop in the
+        supersession chain, report *trigger*, *reason*, and *evidence*
+        so the caller can answer "why did this fact change from A to B?".
+
+        Each returned dict contains:
+        - ``from_node``: node ID at this hop (or ``None`` for the origin)
+        - ``to_node``: successor node ID (or ``None`` for the latest)
+        - ``from_label`` / ``to_label``: human-readable labels
+        - ``trigger``: what caused the change — ``'supersede'``,
+          ``'conflict_resolve'``, or ``'unknown'``
+        - ``reason``: extracted reason text (from edge metadata,
+          conflict log, or node data)
+        - ``evidence``: list of supporting node IDs (edges pointing
+          to either node with evidence-type relations)
+        - ``timestamp``: when the transition happened (valid_to of
+          from_node)
+
+        Args:
+            topic: Label substring to search for (case-insensitive).
+                Finds the oldest matching node and traces forward.
+            node_id: Start from a specific node ID. Used if topic
+                is ``None``.
+
+        Returns:
+            List of hop dicts in chronological order. Empty list if
+            the topic/node is not found or has no supersession history.
+        """
+        # Resolve starting node
+        if node_id is None:
+            if topic is None:
+                return []
+            row = self.conn.execute(
+                "SELECT id FROM nodes WHERE label LIKE ? "
+                "ORDER BY created ASC LIMIT 1",
+                (f"%{topic}%",)
+            ).fetchone()
+            if not row:
+                return []
+            node_id = row["id"]
+
+        # Verify node exists
+        start = self.conn.execute(
+            "SELECT id, label FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not start:
+            return []
+
+        # Walk the full supersession chain from the oldest ancestor
+        chain = self.get_history(node_id)
+        if len(chain) < 2:
+            return []
+
+        # Check for conflict resolution logs
+        conflict_rows = self.conn.execute(
+            "SELECT kept, superseded, reason FROM _conflict_log"
+            if self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE "
+                "type='table' AND name='_conflict_log'"
+            ).fetchone()
+            else []
+        ).fetchall() if self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE "
+            "type='table' AND name='_conflict_log'"
+        ).fetchone() else []
+
+        conflict_map: dict[str, str] = {}
+        for cr in conflict_rows:
+            conflict_map[str(cr["superseded"])] = cr["reason"] or ""
+
+        hops: list[dict] = []
+        for i in range(len(chain) - 1):
+            cur = chain[i]
+            nxt = chain[i + 1]
+
+            # Determine trigger
+            edge = self.conn.execute(
+                "SELECT source, target, relation FROM edges "
+                "WHERE source=? AND target=? AND relation='superseded_by'",
+                (cur["node_id"], nxt["node_id"])
+            ).fetchone()
+
+            trigger = "unknown"
+            reason = ""
+            if edge:
+                trigger = "supersede"
+            if cur["node_id"] in conflict_map:
+                trigger = "conflict_resolve"
+                reason = conflict_map[cur["node_id"]]
+
+            # Gather evidence: edges with 'evidence' or 'supports' relations
+            evidence_rows = self.conn.execute(
+                "SELECT source FROM edges WHERE target=? "
+                "AND relation IN ('evidence', 'supports', 'proves')",
+                (nxt["node_id"],)
+            ).fetchall()
+            evidence = [str(r["source"]) for r in evidence_rows]
+
+            hops.append({
+                "from_node": cur["node_id"],
+                "to_node": nxt["node_id"],
+                "from_label": cur["label"],
+                "to_label": nxt["label"],
+                "trigger": trigger,
+                "reason": reason,
+                "evidence": evidence,
+                "timestamp": cur["valid_to"],
+            })
+
+        return hops
+
     # ------------------------------------------------------------------
     # Q-value scoring (RL-inspired retrieval feedback)
     # ------------------------------------------------------------------
