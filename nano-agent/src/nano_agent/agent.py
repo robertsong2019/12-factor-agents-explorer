@@ -239,6 +239,8 @@ class Agent:
 
     def history(self, limit: int = 10) -> List[Dict[str, str]]:
         """获取对话历史"""
+        if limit <= 0:
+            return []
         return self._conversation_history[-limit:]
 
     @property

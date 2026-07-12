@@ -79,6 +79,9 @@ def tool(func: Callable = None, *, name: str = None, description: str = None) ->
         for param_name, param in sig.parameters.items():
             if param_name == "self":
                 continue
+            # Skip *args and **kwargs
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
             # 类型推断
             type_map = {str: "string", int: "integer", float: "number", bool: "boolean", list: "array", dict: "object"}
             annotation = param.annotation if param.annotation != inspect.Parameter.empty else str
