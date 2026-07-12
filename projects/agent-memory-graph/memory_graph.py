@@ -789,6 +789,86 @@ class MemoryGraph:
 
         return {"center": node_id, "nodes": nodes, "edges": edges}
 
+    def subgraph_by_edge_type(self, relation: str,
+                               include_isolated: bool = False) -> dict:
+        """Extract a view containing only edges of a specific relation type.
+
+        Inspired by MAGMA (ACL 2026): orthogonal multi-graph views where
+        different edge types represent different semantic dimensions
+        (causal, temporal, hierarchical, etc.). This method lets callers
+        operate on one dimension at a time.
+
+        The returned dict has the same format as ``subgraph()`` and can
+        be passed to ``import_json()`` for a standalone graph:
+        - ``nodes``: nodes that participate in at least one edge of the
+          given relation (unless *include_isolated* is True).
+        - ``edges``: all edges matching *relation*.
+        - ``relation``: the relation type.
+        - ``stats``: ``{node_count, edge_count, density}``
+
+        Args:
+            relation: Edge relation to filter on (e.g. ``'causes'``).
+            include_isolated: If True, include all nodes from the host
+                graph even if they have no edges of this type.
+
+        Returns:
+            Dict with nodes, edges, and stats. Empty nodes/edges if no
+            matching edges exist.
+        """
+        edges = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges WHERE relation=?",
+            (relation,)
+        ).fetchall()
+
+        if include_isolated:
+            node_rows = self.conn.execute("SELECT * FROM nodes").fetchall()
+            node_ids = {r["id"] for r in node_rows}
+        else:
+            node_ids = set()
+            for r in edges:
+                node_ids.add(r["source"])
+                node_ids.add(r["target"])
+            if not node_ids:
+                return {
+                    "nodes": [], "edges": [], "relation": relation,
+                    "stats": {"node_count": 0, "edge_count": 0, "density": 0.0}
+                }
+            node_rows = self.conn.execute(
+                f"SELECT * FROM nodes WHERE id IN ({','.join('?' for _ in node_ids)})",
+                list(node_ids)
+            ).fetchall()
+
+        nodes = []
+        for r in node_rows:
+            nodes.append({
+                "id": r["id"], "label": r["label"], "kind": r["kind"],
+                "data": json.loads(r["data"]), "created": r["created"],
+                "accessed": r["accessed"], "weight": r["weight"],
+                "tags": json.loads(r["tags"])
+            })
+
+        edge_list = [
+            {"source": r["source"], "target": r["target"],
+             "relation": r["relation"], "weight": r["weight"]}
+            for r in edges
+        ]
+
+        n = len(nodes)
+        m = len(edge_list)
+        max_edges = n * (n - 1) if n > 1 else 1
+        density = m / max_edges if max_edges > 0 else 0.0
+
+        return {
+            "nodes": nodes,
+            "edges": edge_list,
+            "relation": relation,
+            "stats": {
+                "node_count": n,
+                "edge_count": m,
+                "density": round(density, 4),
+            }
+        }
+
     def prune(self, min_weight: float = 0.1) -> dict:
         """Remove nodes below min_weight and their orphaned edges.
 
