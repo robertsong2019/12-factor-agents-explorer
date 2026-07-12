@@ -1,6 +1,6 @@
 {
-  "lastUpdated": "2026-07-11T22:00:00Z",
-  "generatedAt": "2026-07-12 06:00 CST",
+  "lastUpdated": "2026-07-12T22:00:00Z",
+  "generatedAt": "2026-07-13 06:00 CST",
   "actionRequired": [],
   "activeNow": [
     {
@@ -13,8 +13,8 @@
       "name": "dashboard-update-morning",
       "schedule": "6:00 AM daily",
       "id": "f38e0365",
-      "lastRun": "2026-07-11T22:00:00Z",
-      "nextRun": "2026-07-12T22:00:00Z",
+      "lastRun": "2026-07-12T22:00:00Z",
+      "nextRun": "2026-07-13T22:00:00Z",
       "status": "running",
       "errors": 0
     },
@@ -155,21 +155,37 @@
     }
   ],
   "sessions": {
-    "totalRecentSessions": 17,
-    "activeInLast24h": 17,
+    "totalRecentSessions": 56,
+    "uniqueSessions": 35,
+    "activeInLast24h": 22,
+    "activeInLast1h": 3,
     "recentSessions": [
       {
         "key": "cron:dashboard-update-morning",
         "age": "0.0h",
         "model": "glm-5.1",
-        "ctxPercent": 17,
+        "ctxPercent": 16,
         "kind": "cron"
+      },
+      {
+        "key": "main",
+        "age": "0.2h",
+        "model": "glm-5-turbo",
+        "ctxPercent": 39,
+        "kind": "direct"
       },
       {
         "key": "cron:essay-generation-morning (CST)",
         "age": "0.9h",
         "model": "glm-5.1",
-        "ctxPercent": 28,
+        "ctxPercent": 32,
+        "kind": "cron"
+      },
+      {
+        "key": "cron:essay-generation-morning",
+        "age": "1.0h",
+        "model": "glm-5.1",
+        "ctxPercent": 27,
         "kind": "cron"
       },
       {
@@ -190,21 +206,21 @@
         "key": "cron:key-development-3",
         "age": "5.0h",
         "model": "glm-5.1",
-        "ctxPercent": 32,
+        "ctxPercent": 25,
         "kind": "cron"
       },
       {
         "key": "cron:key-development-2",
         "age": "6.0h",
         "model": "glm-5.1",
-        "ctxPercent": 25,
+        "ctxPercent": 31,
         "kind": "cron"
       },
       {
         "key": "cron:key-development-1",
         "age": "7.0h",
         "model": "glm-5.1",
-        "ctxPercent": 29,
+        "ctxPercent": 33,
         "kind": "cron"
       },
       {
@@ -213,27 +229,6 @@
         "model": "glm-5.1",
         "ctxPercent": 36,
         "kind": "cron"
-      },
-      {
-        "key": "cron:code-lab-evening",
-        "age": "9.0h",
-        "model": "glm-5.1",
-        "ctxPercent": 39,
-        "kind": "cron"
-      },
-      {
-        "key": "cron:deep-exploration-evening",
-        "age": "10h",
-        "model": "glm-5.1",
-        "ctxPercent": 33,
-        "kind": "cron"
-      },
-      {
-        "key": "cron:github-creative-evening",
-        "age": "11h",
-        "model": "glm-5.1",
-        "ctxPercent": 29,
-        "kind": "cron"
       }
     ]
   },
@@ -241,15 +236,14 @@
     "model": "glm-5.1",
     "cronJobs": 19,
     "allCronsHealthy": true,
-    "uptime": "11 weeks, 3 days",
+    "uptime": "82 days (since 2026-04-22)",
     "errorsToday": 0,
-    "memoryUsage": "1.2Gi / 1.9Gi",
+    "memoryUsage": "1.0Gi / 1.9Gi",
     "diskUsage": "84%"
   },
   "projectStats": {
-    "lastWorkspaceCommit": "ee8f9c4 docs: documentation improvement report 2026-07-12",
-    "lastBlogCommit": "1e556e8 post: matrix exponential toolkit — three graph metrics from one e^A",
-    "memoryUsage": "1.2Gi / 1.9Gi",
+    "lastWorkspaceCommit": "4981765 docs: documentation improvement report 2026-07-13",
+    "memoryUsage": "1.0Gi / 1.9Gi",
     "diskUsage": "84%"
   }
 }
