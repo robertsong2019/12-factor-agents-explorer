@@ -21278,6 +21278,125 @@ class MemoryGraph:
         results.sort(key=lambda c: (-len(c), -sum(e["confidence"] for e in c)))
         return results
 
+    # ── Spreading Activation (Collins & Loftus 1975) ─────────────
+    def spread_activation(
+        self,
+        seed_ids: list[str],
+        *,
+        decay_factor: float = 0.5,
+        threshold: float = 0.1,
+        max_hops: int = 3,
+        include_quarantined: bool = False,
+        edge_weight_factor: bool = True,
+    ) -> dict[str, float]:
+        """Collins & Loftus (1975) spreading activation retrieval.
+
+        Starts from *seed_ids* and propagates activation along edges,
+        decaying by ``decay_factor`` per hop. Returns a dict mapping
+        node_id → activation level (sorted descending by caller).
+
+        Parameters
+        ----------
+        seed_ids
+            Starting node IDs (must exist).
+        decay_factor
+            Multiplicative decay per hop (0–1).  Lower = more local.
+        threshold
+            Minimum activation to include in results.
+        max_hops
+            Maximum propagation distance from any seed.
+        include_quarantined
+            If False, quarantined nodes are skipped.
+        edge_weight_factor
+            If True, activation is multiplied by edge weight.
+
+        Returns
+        -------
+        dict[str, float]
+            ``{node_id: activation}`` for all nodes ≥ *threshold*.
+            Seed nodes get activation 1.0.
+
+        Raises
+        ------
+        ValueError
+            If *seed_ids* is empty, *decay_factor* not in (0, 1],
+            *threshold* < 0, or *max_hops* < 1.
+        KeyError
+            If any seed node does not exist.
+        """
+        if not seed_ids:
+            raise ValueError("seed_ids must not be empty")
+        if not (0 < decay_factor <= 1):
+            raise ValueError(f"decay_factor must be in (0, 1], got {decay_factor}")
+        if threshold < 0:
+            raise ValueError(f"threshold must be ≥ 0, got {threshold}")
+        if max_hops < 1:
+            raise ValueError(f"max_hops must be ≥ 1, got {max_hops}")
+
+        # Validate seeds exist
+        for sid in seed_ids:
+            row = self.conn.execute(
+                "SELECT id FROM nodes WHERE id=?", (sid,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Seed node not found: {sid}")
+
+        # BFS-based spreading activation
+        activation: dict[str, float] = {}
+        for sid in seed_ids:
+            activation[sid] = max(activation.get(sid, 0.0), 1.0)
+
+        frontier = list(seed_ids)
+        visited = set(seed_ids)
+
+        for hop in range(max_hops):
+            if not frontier:
+                break
+            next_frontier: list[str] = []
+            for nid in frontier:
+                current_act = activation.get(nid, 0.0)
+                if current_act < threshold:
+                    continue
+
+                # Get all neighbours (both directions)
+                rows = self.conn.execute(
+                    """
+                    SELECT target AS nbr, weight FROM edges WHERE source=?
+                    UNION
+                    SELECT source AS nbr, weight FROM edges WHERE target=?
+                    """,
+                    (nid, nid),
+                ).fetchall()
+
+                for r in rows:
+                    nbr_id = r["nbr"]
+                    edge_w = r["weight"] if edge_weight_factor else 1.0
+
+                    # Apply decay + edge weight
+                    propagated = current_act * decay_factor * edge_w
+
+                    if propagated < threshold:
+                        continue
+
+                    # Skip quarantined
+                    if not include_quarantined:
+                        nq = self.conn.execute(
+                            "SELECT quarantined FROM nodes WHERE id=?", (nbr_id,)
+                        ).fetchone()
+                        if nq and nq["quarantined"]:
+                            continue
+
+                    if nbr_id not in activation or propagated > activation[nbr_id]:
+                        activation[nbr_id] = propagated
+                        if nbr_id not in visited:
+                            visited.add(nbr_id)
+                            next_frontier.append(nbr_id)
+
+            frontier = next_frontier
+
+        # Filter by threshold and return
+        return {nid: act for nid, act in activation.items() if act >= threshold}
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
