@@ -21041,6 +21041,243 @@ class MemoryGraph:
             "n_evaluated": n_evaluated,
         }
 
+    # ────────────────────────────────────────────────────────────
+    # Causal edges — ActMem-inspired (arXiv:2603.00026)
+    # ────────────────────────────────────────────────────────────
+    _CAUSAL_RELATIONS = frozenset({
+        "causes", "prevents", "conflicts_with", "enables", "depends_on",
+    })
+
+    def add_causal_edge(self, source_id: str, target_id: str,
+                        relation: str, confidence: float = 1.0,
+                        evidence: list[str] | None = None,
+                        note: str | None = None) -> dict:
+        """Add a typed causal edge between two nodes.
+
+        Inspired by ActMem (arXiv:2603.00026): causal edges let a memory
+        graph answer "what are the consequences of X?" rather than only
+        "what is related to X?".
+
+        Five relation types are supported:
+        - ``causes``: source directly causes the target event/state.
+        - ``prevents``: source stops or inhibits the target.
+        - ``conflicts_with``: source and target cannot both hold.
+        - ``enables``: source is a prerequisite for target.
+        - ``depends_on``: source requires target to be true.
+
+        The edge is stored via the regular ``link()`` mechanism with
+        the relation as the edge type, and rich metadata (confidence,
+        evidence list, note, timestamp) is saved into ``edge_props``.
+
+        Args:
+            source_id: ID of the cause / enabler / depender node.
+            target_id: ID of the effect / prevented / dependent node.
+            relation: One of the five causal relation types.
+            confidence: Float in ``[0, 1]`` — how certain is this
+                causal link? Defaults to ``1.0`` (certain).
+            evidence: Optional list of node IDs that serve as
+                supporting evidence for this causal claim.
+            note: Optional human-readable explanation.
+
+        Returns:
+            Dict summarising the created edge:
+            ``{source, target, relation, confidence, evidence, note, created_at}``.
+
+        Raises:
+            ValueError: If *relation* is not one of the five causal
+                types, or if *confidence* is outside ``[0, 1]``, or
+                if either node does not exist.
+        """
+        if relation not in self._CAUSAL_RELATIONS:
+            raise ValueError(
+                f"Unknown causal relation {relation!r}. "
+                f"Must be one of {sorted(self._CAUSAL_RELATIONS)}."
+            )
+        if not 0 <= confidence <= 1:
+            raise ValueError(
+                f"confidence must be in [0, 1], got {confidence}."
+            )
+        for nid, label in ((source_id, "source"), (target_id, "target")):
+            if not self.conn.execute(
+                "SELECT 1 FROM nodes WHERE id=?", (nid,)
+            ).fetchone():
+                raise ValueError(f"{label} node {nid!r} not found")
+
+        # Create the edge with confidence as weight
+        self.link(source_id, target_id, relation, weight=confidence)
+
+        # Store rich metadata in edge_props
+        import time as _t
+        created_at = _t.time()
+        props = {
+            "confidence": confidence,
+            "evidence": evidence or [],
+            "note": note or "",
+            "created_at": created_at,
+            "causal": True,
+        }
+        self.conn.execute(
+            "INSERT OR REPLACE INTO edge_props "
+            "(source, target, relation, properties) VALUES (?, ?, ?, ?)",
+            (source_id, target_id, relation, json.dumps(props)),
+        )
+        self.conn.commit()
+
+        return {
+            "source": source_id,
+            "target": target_id,
+            "relation": relation,
+            "confidence": confidence,
+            "evidence": evidence or [],
+            "note": note or "",
+            "created_at": created_at,
+        }
+
+    def get_causal_edges(self, node_id: str,
+                         direction: str = "both",
+                         relation: str | None = None) -> list[dict]:
+        """Retrieve causal edges connected to a node.
+
+        Args:
+            node_id: The node to query.
+            direction: ``'outgoing'`` (edges from *node_id*),
+                      ``'incoming'`` (edges to *node_id*), or
+                      ``'both'`` (default).
+            relation: Optional filter to a specific causal relation.
+
+        Returns:
+            List of edge dicts with keys: ``source``, ``target``,
+            ``relation``, ``weight``, ``confidence``, ``evidence``,
+            ``note``, ``created_at``.
+        """
+        if direction not in ("outgoing", "incoming", "both"):
+            raise ValueError(
+                f"direction must be outgoing/incoming/both, got {direction!r}"
+            )
+
+        relations = (
+            {relation} if relation else set(self._CAUSAL_RELATIONS)
+        )
+        placeholders = ",".join("?" for _ in relations)
+        params: list = list(relations)
+
+        clauses = []
+        if direction in ("outgoing", "both"):
+            clauses.append(f"source=? AND relation IN ({placeholders})")
+        if direction in ("incoming", "both"):
+            clauses.append(f"target=? AND relation IN ({placeholders})")
+
+        if direction == "both":
+            where = f"({clauses[0]} OR {clauses[1]})"
+            sql_params = [node_id] + params + [node_id] + params
+        elif direction == "outgoing":
+            where = clauses[0]
+            sql_params = [node_id] + params
+        else:
+            where = clauses[0]
+            sql_params = [node_id] + params
+
+        rows = self.conn.execute(
+            f"SELECT source, target, relation, weight "
+            f"FROM edges WHERE {where}",
+            sql_params,
+        ).fetchall()
+
+        results: list[dict] = []
+        for r in rows:
+            entry = {
+                "source": r["source"],
+                "target": r["target"],
+                "relation": r["relation"],
+                "weight": r["weight"],
+                "confidence": r["weight"],
+                "evidence": [],
+                "note": "",
+                "created_at": None,
+            }
+            # Enrich from edge_props if available
+            prop_row = self.conn.execute(
+                "SELECT properties FROM edge_props "
+                "WHERE source=? AND target=? AND relation=?",
+                (r["source"], r["target"], r["relation"]),
+            ).fetchone()
+            if prop_row:
+                p = json.loads(prop_row["properties"])
+                entry["confidence"] = p.get("confidence", r["weight"])
+                entry["evidence"] = p.get("evidence", [])
+                entry["note"] = p.get("note", "")
+                entry["created_at"] = p.get("created_at")
+            results.append(entry)
+        return results
+
+    def trace_causal_chain(self, node_id: str,
+                           max_depth: int = 10,
+                           direction: str = "forward") -> list[list[dict]]:
+        """Trace causal chains emanating from or converging on a node.
+
+        Performs BFS traversal following only causal edges, building
+        complete cause→effect (or effect→cause) paths.
+
+        Args:
+            node_id: Starting node.
+            max_depth: Maximum chain length (default 10 hops).
+            direction: ``'forward'`` — follow causes to their effects
+                      (outgoing edges); ``'backward'`` — trace effects
+                      back to their root causes (incoming edges).
+
+        Returns:
+            List of chains, where each chain is a list of edge dicts
+            (``source``, ``target``, ``relation``, ``confidence``).
+            Chains are sorted longest-first.
+        """
+        if direction not in ("forward", "backward"):
+            raise ValueError(
+                f"direction must be forward/backward, got {direction!r}"
+            )
+
+        visit_field = "target" if direction == "forward" else "source"
+        next_field = "source" if direction == "forward" else "target"
+
+        results: list[list[dict]] = []
+        queue: list[tuple[str, list[dict], set]] = [
+            (node_id, [], {node_id})
+        ]
+
+        while queue:
+            current, path, visited = queue.pop(0)
+            if len(path) >= max_depth:
+                results.append(path)
+                continue
+
+            edges = self.get_causal_edges(
+                current,
+                direction="outgoing" if direction == "forward" else "incoming",
+            )
+
+            had_next = False
+            for e in edges:
+                nxt = e[visit_field] if e["source"] == current else e[next_field]
+                # For forward: next is target; for backward: next is source
+                nxt = e["target"] if direction == "forward" else e["source"]
+                if nxt in visited:
+                    continue
+                had_next = True
+                new_path = path + [{
+                    "source": e["source"],
+                    "target": e["target"],
+                    "relation": e["relation"],
+                    "confidence": e["confidence"],
+                }]
+                new_visited = visited | {nxt}
+                queue.append((nxt, new_path, new_visited))
+
+            if not had_next and path:
+                results.append(path)
+
+        # Sort: longest chains first, then by total confidence
+        results.sort(key=lambda c: (-len(c), -sum(e["confidence"] for e in c)))
+        return results
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
