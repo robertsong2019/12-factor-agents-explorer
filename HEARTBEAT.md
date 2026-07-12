@@ -18,16 +18,17 @@
 - [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
 
 ## 系统状态
-- **agent-memory-graph**: **2718 tests** — 590+ APIs。四十三合一。全检索管线 ✅ + 17 centrality + 拓扑指数八族(distance/degree/spectral/Laplacian/walk/edge-partition/degree-distance) + structure-gated PPR + retrieval-failure logging + token-budget context + IR quality eval (precision@k/NDCG/MRR) + governed selection (MRMS three-stage) + phantom detection + bi-temporal + Q-value + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community + bridge nodes + cache temp + memorywire + staleness + RRF fusion + sleep consolidate + episodic replay + graph analytics + Bron-Kerbosch + CPM + QDAP-v2 + SkewRoute + memory maturation + confidence + forgetting curve + causal edges (ActMem 5-type)
+- **agent-memory-graph**: **2754 tests** — 595+ APIs。四十四合一。全检索管线 ✅ + 17 centrality + 拓扑指数八族(distance/degree/spectral/Laplacian/walk/edge-partition/degree-distance) + structure-gated PPR + retrieval-failure logging + token-budget context + IR quality eval (precision@k/NDCG/MRR) + governed selection (MRMS three-stage) + phantom detection + bi-temporal + Q-value + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community + bridge nodes + cache temp + memorywire + staleness + RRF fusion + sleep consolidate + episodic replay + graph analytics + Bron-Kerbosch + CPM + QDAP-v2 + SkewRoute + memory maturation + confidence + forgetting curve + causal edges (ActMem 5-type) + spreading activation (Collins & Loftus 1975)
 - **agent-context-store**: **2526 tests** — 510+ APIs。全分析闭环: health_check → snapshot_diff → velocity_tracker → health_forecast → **mutation_impact** (prescriptive) / benchmark → cohort_analysis → **heatmap** (diagnostic)
 - **structured-output-toolkit**: **561 tests**
 - **agent-task-cli**: **1222 tests** (+ ConcurrencyManager)
 - **context-forge**: **613 tests** (+ API route detection + import health)
-- **四项目总计**: 7027 tests ✅
-- **amg 218天 / acs 188天 🏆**
-- **零回滚率**: amg 223天 / acs 188天 🏆
+- **四项目总计**: 7063 tests ✅
+- **amg 219天 / acs 188天 🏆**
+- **零回滚率**: amg 224天 / acs 188天 🏆
 
 ## 近期活动 (07-11 ~ 07-12)
+- **Key Dev 1** ✅ (07-12 23:00): amg cycle 231 — spread_activation() Collins & Loftus (1975) (+36 tests, 2718→2754). BFS activation propagation with decay/threshold/max_hops/edge-weight/multi-seed. 224th consecutive day.
 - **Key Dev 2** ✅ (07-12 00:00): amg cycle 225 — szeged_index + gutman_index (+31 tests, 2537→2568). Edge-partition + degree-distance topological sub-families. 218th consecutive day.
 - **Key Dev 3** ✅ (07-12 01:00): acs cycle 188 — quality_heatmap + store_health_mutation_impact (+28 tests, 2498→2526). Diagnostic + prescriptive analytics layers. 188th consecutive day.
 - **Evening Dev** ✅ (07-12 22:25): amg cycle 230 — add_causal_edge() + get_causal_edges() + trace_causal_chain() (+55 tests, 2663→2718). ActMem 5-type causal relations + BFS traversal. 223rd consecutive day.
@@ -55,6 +56,7 @@
 12. ⬜ README(agent-task-cli) → npm publish
 
 ## 上次检查
+- **Key Dev 1: 2026-07-12 23:00** — amg cycle 231, spread_activation() Collins & Loftus 1975 (+36 tests, 2718→2754)
 - **知识组织: 2026-07-12 02:03** — 所有测试计数已验证 (amg 2568 ✅, acs 2526 ✅, atc 1222 ✅, sot 561 ✅ via tsx). experiments.tsv 已补充 13 条历史记录。
 - **Key Dev 2: 2026-07-12 00:00** — amg cycle 225, szeged+gutman indices (+31 tests, 2537→2568)
 - **Key Dev 3: 2026-07-12 01:00** — acs cycle 188, heatmap+mutation_impact (+28 tests, 2498→2526)
