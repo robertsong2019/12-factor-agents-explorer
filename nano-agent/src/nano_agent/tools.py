@@ -15,13 +15,22 @@ class Tool:
     func: Callable
     parameters: Dict[str, Any] = field(default_factory=dict)
 
-    def validate_args(self, **kwargs) -> List[str]:
-        """验证参数，返回错误列表（空=有效）"""
+    def validate_args(self, strict: bool = False, **kwargs) -> List[str]:
+        """验证参数，返回错误列表（空=有效）
+
+        Args:
+            strict: 严格模式下，拒绝未定义的参数
+        """
         errors = []
         required = [n for n, p in self.parameters.items() if "default" not in p]
         for name in required:
             if name not in kwargs:
                 errors.append(f"缺少必要参数: {name}")
+        if strict:
+            known = set(self.parameters.keys())
+            for key in kwargs:
+                if key not in known:
+                    errors.append(f"未知参数: {key}")
         return errors
 
     def execute(self, **kwargs) -> Any:
