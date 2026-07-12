@@ -22,25 +22,26 @@ Autoresearch 方法论实践 — amg **连续222天零回滚率** 🏆。
 ### 项目测试总量 (07-12 晚间快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
-| agent-memory-graph | **2663** | 575+ | 四十三合一: 全检索管线 + 17 centrality + 拓扑指数八族(distance/degree/spectral/Laplacian/walk/edge-partition/degree-distance/Schultz+Modified-Wiener) + structure-gated PPR + retrieval-failure logging + token-budgeted context + IR quality eval + governed selection + Laplacian pseudoinverse + phantom detection + auto_forget + bi-temporal + Q-value + CRDT + community + decision-chain + entropy-filter + subgraph-by-edge-type + ... |
+| agent-memory-graph | **2718** | 590+ | 四十三合一: 全检索管线 + 17 centrality + 拓扑指数八族(distance/degree/spectral/Laplacian/walk/edge-partition/degree-distance/Schultz+Modified-Wiener) + structure-gated PPR + retrieval-failure logging + token-budgeted context + IR quality eval + governed selection + Laplacian pseudoinverse + phantom detection + auto_forget + bi-temporal + Q-value + CRDT + community + decision-chain + entropy-filter + subgraph-by-edge-type + causal-edges(ActMem 5-type) + ... |
 | agent-context-store | **2526** | 510+ | 三大管线完整+全分析闭环: Graph 12 / Quality 12 (action+velocity+cohort+heatmap) / Store 14 (longitudinal+predictive+prescriptive mutation-impact) |
 | structured-output-toolkit | **561** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
 | agent-task-cli | **1222** | 190+ features | Cache+Storage+EventBus+ConcurrencyManager+merge |
-| **四项目总计** | **6972** | — | — |
+| **四项目总计** | **7027** | — | — |
 
 其他: openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / context-forge 613 / nano-agent 314 / AMS v1.0-dev 645 / prompt-router 258
 
-**全项目总计**: 7586+ tests (四核心 6972 + context-forge 613)
+**全项目总计**: 7641+ tests (四核心 7027 + context-forge 613)
 
 ### 最高优先级
 **README → npm publish** (四项目)。这是当前最大未交付价值。amg 定位: "beyond recall — agency-grade graph memory"。6877 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，竞争窗口收紧。
 
-### 07-12 晚间开发 (amg cycles 226-229)
+### 07-12 晚间开发 (amg cycles 226-230)
 - **Cycle 226: Schultz + Modified Wiener Indices** — degree-sum-weighted distances + generalized W_λ exponent (default λ=-1)，+31 tests
 - **Cycle 227: trace_decision_chain()** — TokenMizer-inspired supersede chain traversal with trigger/reason/evidence/timestamp per hop，+21 tests
 - **Cycle 228: add_with_entropy_filter()** — SimpleMem-inspired write-time filtering (lexical diversity + length + novelty Jaccard)，+25 tests
 - **Cycle 229: subgraph_by_edge_type()** — MAGMA-inspired orthogonal multi-graph view per relation type，+18 tests
-- **amg 2568→2663 (+95 tests), 222nd consecutive day without rollback**
+- **Cycle 230: add_causal_edge() + get_causal_edges() + trace_causal_chain()** — ActMem-inspired causal edge layer. 5 typed relations (causes/prevents/conflicts_with/enables/depends_on), confidence scoring, evidence lists, BFS traversal forward/backward, cycle-safe. +55 tests
+- **amg 2568→2718 (+150 tests), 223rd consecutive day without rollback**
 
 ### 07-11~07-12 开发 (amg cycles 221-225, acs cycle 188)
 - **Cycle 221: Structure-Gated PPR** — SAGE-inspired propagation gating: centrality modulates signal flow (degree/betweenness/closeness/eigenvector/pagerank gates)，+31 tests
@@ -197,10 +198,10 @@ Autoresearch 方法论实践 — amg **连续222天零回滚率** 🏆。
 - [ ] **amg README: 竞品对比表** — LoCoMo leaderboard (Mem0/Zep/MemOS/EverMemOS/Mandol/Engram), 定位 "beyond recall — agency-grade graph memory"
 
 ### 07-12 深度研究 #005 驱动的新任务
-- [ ] **agent-memory-graph: `add_causal_edge(from, to, relation, confidence)` API** — ~60行src+30行tests。5种关系(causes/prevents/conflicts_with/enables/depends_on)。对标 ActMem (arXiv:2603.00026)。ActMemEval benchmark 评估冲突检测率。
-- [x] agent-memory-graph: `add_with_entropy_filter()` ✅ (cycle 228: SimpleMem-inspired, lexical+novelty composite score, +25 tests)
-- [x] agent-memory-graph: `subgraph_by_edge_type(type)` ✅ (cycle 229: MAGMA orthogonal view, +18 tests)
-- [ ] agent-memory-graph: `reasoning_quality_eval()` API — 评估冲突检测率/因果链完整度。扩展 IR eval。
+- [x] agent-memory-graph: add_causal_edge() ✅ (cycle 230: ActMem 5-type causal edges + BFS traversal, +55 tests)
+- [x] agent-memory-graph: add_with_entropy_filter() ✅ (cycle 228: SimpleMem-inspired, +25 tests)
+- [x] agent-memory-graph: subgraph_by_edge_type() ✅ (cycle 229: MAGMA orthogonal view, +18 tests)
+- [ ] agent-memory-graph: reasoning_quality_eval() API — 评估冲突检测率/因果链完整度。扩展 IR eval。
 - [ ] agent-memory-graph: `trace_decision_chain(topic)` API — 遍历 supersede 链输出 trigger+reason+evidence per hop, 对标 TokenMizer why_decision, ~50行src+~20行tests
 - [ ] agent-memory-graph: fact-level evaluation metrics (不止 IR, 还有 fact correctness), 参考 Engram per-category breakdown
 - [ ] agent-memory-graph: context engineering layer (检索结果 → 最优上下文组织), 参考 TokenMizer 14-node-type serialization
