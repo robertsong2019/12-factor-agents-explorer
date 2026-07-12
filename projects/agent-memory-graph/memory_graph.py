@@ -167,6 +167,81 @@ class MemoryGraph:
         self._tick("add", node.id, {"label": label, "kind": kind})
         return node
 
+    def add_with_entropy_filter(self, label: str, kind: str = "fact",
+                                data: dict = None, tags: list[str] = None,
+                                threshold: float = 0.3) -> Optional[Node]:
+        """Add a node only if its information density exceeds *threshold*.
+
+        Inspired by SimpleMem (ICML 2026): entropy-aware filtering at write
+        time discards low-value content before it enters the graph, saving
+        downstream retrieval and storage costs.
+
+        The entropy score is a normalised composite of:
+        - **Lexical diversity** — unique words / total words (type-token ratio).
+        - **Length factor** — penalises very short inputs (< 5 chars).
+        - **Novelty** — Jaccard distance vs the most similar existing node.
+          Completely duplicated content gets novelty = 0.
+
+        Score range is [0, 1]. Default threshold 0.3 filters out trivial
+        duplicates and near-empty strings while accepting genuinely new
+        information.
+
+        Args:
+            label: Text content for the node.
+            kind: Node kind (default ``'fact'``).
+            data: Optional metadata dict.
+            tags: Optional tag list.
+            threshold: Minimum entropy score to accept. ``0.0`` accepts all.
+
+        Returns:
+            The created ``Node`` if accepted, or ``None`` if filtered.
+        """
+        score = self._entropy_score(label)
+        if score < threshold:
+            return None
+        return self.add(label, kind, data, tags)
+
+    def _entropy_score(self, text: str) -> float:
+        """Compute normalised information density score for *text*.
+
+        Returns a float in [0, 1]. See ``add_with_entropy_filter`` for
+        the composite formula.
+        """
+        text = text.strip()
+        if len(text) < 5:
+            return 0.0
+        words = text.lower().split()
+        if not words:
+            return 0.0
+        # Lexical diversity (type-token ratio)
+        unique = set(words)
+        ttr = len(unique) / len(words)
+        # Length factor: full credit above 20 chars, linear below
+        length_factor = min(1.0, len(text) / 20.0)
+        # Novelty: Jaccard distance to nearest existing node label
+        novelty = 1.0  # default if no existing nodes
+        existing = self.conn.execute(
+            "SELECT label FROM nodes LIMIT 500"
+        ).fetchall()
+        if existing:
+            text_set = unique
+            best_sim = 0.0
+            for r in existing:
+                other_set = set(r["label"].lower().split())
+                if not other_set:
+                    continue
+                union = text_set | other_set
+                if union:
+                    sim = len(text_set & other_set) / len(union)
+                    if sim > best_sim:
+                        best_sim = sim
+            novelty = 1.0 - best_sim
+        # Composite: weighted geometric mean
+        # Weights: novelty 50%, lexical diversity 30%, length 20%
+        import math
+        score = (novelty ** 0.5) * (ttr ** 0.3) * (length_factor ** 0.2)
+        return round(score, 4)
+
     def get_node(self, node_id: str) -> Optional[Node]:
         """Retrieve a single node by ID. Returns None if not found."""
         row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
