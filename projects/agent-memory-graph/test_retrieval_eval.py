@@ -359,3 +359,140 @@ class TestEdgeCases:
         stats_after = populated_graph.stats()
         assert stats_before["nodes"] == stats_after["nodes"]
         assert stats_before["edges"] == stats_after["edges"]
+
+
+class TestUtilizationRate:
+    """Utilization rate metric — ACL 2026 GEM insight.
+
+    Measures the fraction of retrieved items actually cited/used by the
+    downstream model, exposing the retrieval-generation gap.
+    """
+
+    def test_utilization_none_when_no_cited_ids(self, populated_graph):
+        """utilization_rate should be None when cited_ids not provided."""
+        results = populated_graph.recall("Python", limit=10)
+        python_ids = [n.id for n in results]
+        result = populated_graph.retrieval_quality_eval(
+            [{"query": "Python", "relevant_ids": python_ids}], k=5
+        )
+        assert result["per_query"][0]["utilization_rate"] is None
+        assert result["overall"]["utilization_rate"] is None
+
+    def test_full_utilization(self, populated_graph):
+        """When all retrieved items are cited, utilization = 1.0."""
+        results = populated_graph.recall("Python", limit=10)
+        retrieved = populated_graph.retrieve("Python", limit=5)
+        retrieved_ids = [r["node_id"] for r in retrieved]
+        result = populated_graph.retrieval_quality_eval(
+            [{"query": "Python",
+              "relevant_ids": [n.id for n in results],
+              "cited_ids": retrieved_ids}], k=5
+        )
+        # All retrieved items are cited
+        assert result["per_query"][0]["utilization_rate"] == 1.0
+        assert result["overall"]["utilization_rate"] == 1.0
+
+    def test_zero_utilization(self, populated_graph):
+        """When none of the retrieved items are cited, utilization = 0.0."""
+        results = populated_graph.recall("Python", limit=10)
+        python_ids = [n.id for n in results]
+        # Cited IDs are completely different from what will be retrieved
+        result = populated_graph.retrieval_quality_eval(
+            [{"query": "Python",
+              "relevant_ids": python_ids,
+              "cited_ids": ["totally_fake_id"]}], k=5
+        )
+        assert result["per_query"][0]["utilization_rate"] == 0.0
+        assert result["overall"]["utilization_rate"] == 0.0
+
+    def test_partial_utilization(self, populated_graph):
+        """Half of retrieved items cited → utilization ~0.5."""
+        retrieved = populated_graph.retrieve("Python", limit=4)
+        retrieved_ids = [r["node_id"] for r in retrieved]
+        # Cite only half of retrieved items
+        cited_half = retrieved_ids[:2]
+        result = populated_graph.retrieval_quality_eval(
+            [{"query": "Python",
+              "relevant_ids": retrieved_ids,
+              "cited_ids": cited_half}], k=4
+        )
+        ur = result["per_query"][0]["utilization_rate"]
+        assert ur is not None
+        assert 0.4 <= ur <= 0.6  # roughly 0.5
+
+    def test_utilization_rate_range(self, populated_graph):
+        """Utilization rate must be in [0, 1] or None."""
+        results = populated_graph.recall("Python", limit=10)
+        python_ids = [n.id for n in results]
+        cited = python_ids[:3]
+        result = populated_graph.retrieval_quality_eval(
+            [{"query": "Python",
+              "relevant_ids": python_ids,
+              "cited_ids": cited}], k=5
+        )
+        ur = result["overall"]["utilization_rate"]
+        assert ur is None or 0.0 <= ur <= 1.0
+
+    def test_mixed_cases_some_with_cited(self, populated_graph):
+        """Mix of cases with and without cited_ids."""
+        results = populated_graph.recall("Python", limit=10)
+        python_ids = [n.id for n in results]
+        retrieved = populated_graph.retrieve("Python", limit=5)
+        retrieved_ids = [r["node_id"] for r in retrieved]
+
+        cases = [
+            {"query": "Python",
+             "relevant_ids": python_ids,
+             "cited_ids": retrieved_ids[:2]},  # has cited
+            {"query": "Python", "relevant_ids": python_ids},  # no cited
+        ]
+        result = populated_graph.retrieval_quality_eval(cases, k=5)
+        pq = result["per_query"]
+        assert pq[0]["utilization_rate"] is not None
+        assert pq[1]["utilization_rate"] is None
+        # Overall only averages cases with cited_ids
+        assert result["overall"]["utilization_rate"] is not None
+
+    def test_utilization_in_skipped_case(self, populated_graph):
+        """Skipped cases should have utilization_rate = None."""
+        result = populated_graph.retrieval_quality_eval(
+            [{"query": "Python", "relevant_ids": [],
+              "cited_ids": ["some_id"]}], k=5
+        )
+        assert result["per_query"][0]["utilization_rate"] is None
+
+    def test_cited_ids_as_set(self, populated_graph):
+        """cited_ids should accept sets too."""
+        results = populated_graph.recall("Python", limit=10)
+        python_ids = [n.id for n in results]
+        retrieved = populated_graph.retrieve("Python", limit=5)
+        retrieved_set = {r["node_id"] for r in retrieved}
+
+        result = populated_graph.retrieval_quality_eval(
+            [{"query": "Python",
+              "relevant_ids": python_ids,
+              "cited_ids": retrieved_set}], k=5
+        )
+        assert result["per_query"][0]["utilization_rate"] is not None
+
+    def test_overall_utilization_only_averages_with_cited(self, populated_graph):
+        """Overall utilization_rate is macro-average over cases with cited_ids only."""
+        results = populated_graph.recall("Python", limit=10)
+        python_ids = [n.id for n in results]
+        retrieved = populated_graph.retrieve("Python", limit=5)
+        retrieved_ids = [r["node_id"] for r in retrieved]
+
+        # Case 1: full utilization
+        # Case 2: zero utilization
+        cases = [
+            {"query": "Python",
+             "relevant_ids": python_ids,
+             "cited_ids": retrieved_ids},  # all cited
+            {"query": "Python",
+             "relevant_ids": python_ids,
+             "cited_ids": ["nonexistent"]},  # none cited
+        ]
+        result = populated_graph.retrieval_quality_eval(cases, k=5)
+        overall_ur = result["overall"]["utilization_rate"]
+        assert overall_ur is not None
+        assert 0.4 <= overall_ur <= 0.6  # average of 1.0 and 0.0

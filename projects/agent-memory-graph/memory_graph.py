@@ -21015,9 +21015,14 @@ class MemoryGraph:
         - **ndcg@k** — normalised discounted cumulative gain
         - **mrr** — mean reciprocal rank of first relevant hit
         - **hit@k** — 1 if at least one relevant item in top-*k*
+        - **utilization_rate** — fraction of retrieved items actually cited
+          by the downstream model (ACL 2026 GEM).  Only computed when
+          eval cases include ``cited_ids``.
 
         Args:
             eval_cases:         List of ``{query, relevant_ids}`` dicts.
+                                Optionally include ``cited_ids`` for
+                                utilization_rate computation.
             k:                  Cutoff for top-k metrics.
             limit:              Override retrieval limit (default = *k*).
             rerank:             Pass through to :meth:`retrieve`.
@@ -21025,7 +21030,8 @@ class MemoryGraph:
             rerank_alpha:       Pass through to :meth:`retrieve`.
 
         Returns:
-            ``{overall: {precision, recall, f1, ndcg, mrr, hit_rate},
+            ``{overall: {precision, recall, f1, ndcg, mrr, hit_rate,
+              utilization_rate},
              per_query: [...], k, n_cases}``
         """
         import math as _math
@@ -21035,6 +21041,8 @@ class MemoryGraph:
 
         # Aggregators
         sum_p = sum_r = sum_f1 = sum_ndcg = sum_mrr = 0.0
+        sum_util = 0.0
+        util_count = 0
         hits = 0
 
         for case in eval_cases:
@@ -21046,7 +21054,8 @@ class MemoryGraph:
                     "query": query,
                     "precision": 0.0, "recall": 0.0,
                     "f1": 0.0, "ndcg": 0.0, "mrr": 0.0,
-                    "hit": False, "skipped": True,
+                    "hit": False, "utilization_rate": None,
+                    "skipped": True,
                 })
                 continue
 
@@ -21091,6 +21100,16 @@ class MemoryGraph:
 
             hit = mrr > 0.0
 
+            # Utilization rate — ACL 2026 GEM insight
+            cited = set(case.get("cited_ids", []))
+            if cited:
+                utilized = len(retrieved_set & cited)
+                utilization = utilized / len(retrieved_ids) if retrieved_ids else 0.0
+                sum_util += utilization
+                util_count += 1
+            else:
+                utilization = None
+
             per_query.append({
                 "query": query,
                 "precision": round(precision, 4),
@@ -21099,6 +21118,7 @@ class MemoryGraph:
                 "ndcg": round(ndcg, 4),
                 "mrr": round(mrr, 4),
                 "hit": hit,
+                "utilization_rate": round(utilization, 4) if utilization is not None else None,
                 "retrieved_count": len(retrieved_ids),
                 "relevant_count": len(relevant),
                 "tp": tp,
@@ -21123,6 +21143,7 @@ class MemoryGraph:
             "ndcg": round(sum_ndcg / divisor, 4),
             "mrr": round(sum_mrr / divisor, 4),
             "hit_rate": round(hits / divisor, 4),
+            "utilization_rate": round(sum_util / util_count, 4) if util_count > 0 else None,
         }
 
         return {
