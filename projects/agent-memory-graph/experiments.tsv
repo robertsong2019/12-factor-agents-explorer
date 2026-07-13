@@ -267,3 +267,5 @@ timestamp	commit	metric	value	status	description
 2026-07-13T21:00	b18e8ab	test_pass_rate	100%	keep	Cycle 233: retrieval_quality_eval utilization_rate (2813→2822, +9)
 2026-07-13T21:10	22bb2ad	test_pass_rate	100%	keep	Cycle 234: temporal_score() RoMem continuous decay (2822→2843, +21)
 2026-07-13T21:20	69c806a	test_pass_rate	100%	keep	Cycle 235: crystallize_intents() CogniFold density (2843→2860, +17)
+2026-07-13T22:10	ca0f74d	test_count	2880	keep	+20 tests: invalidate_cascade (PLACEMEM) + add(category=) + search_by_category (Apple Selective Memory)
+2026-07-13T22:10	ca0f74d	test_pass_rate	100%	keep	All 2880 passing, 0 regressions, 22.1s
