@@ -15389,6 +15389,167 @@ class MemoryGraph:
             "total_communities": len(communities),
         }
 
+    # ─── Proactive Context (CogniFold) ─────────────────────────────────
+    # Instead of waiting for a query, use crystallized intent nodes to
+    # proactively surface relevant memory.  CogniFold (2605.13438) showed
+    # that goal-directed context assembly outperforms reactive retrieval.
+
+    def read_proactive_context(
+        self,
+        *,
+        active_intents: list[str] | None = None,
+        top_k: int = 10,
+        min_temperature: float = 0.1,
+        include_intents: bool = True,
+    ) -> dict:
+        """Proactively surface memory relevant to current active intents.
+
+        CogniFold-inspired (2605.13438): instead of reactive retrieval
+        (waiting for a user query), the graph *pushes* context that is
+        likely relevant given the currently crystallized intent nodes.
+
+        Pipeline:
+            1. Identify intent nodes (kind='intent').
+            2. If *active_intents* is given, filter / rank to those.
+            3. For each intent, gather abstracted member nodes.
+            4. Score members by cache_temperature + weight.
+            5. Deduplicate, return top-k as a context bundle.
+
+        Args:
+            active_intents:   Optional list of intent node IDs or label
+                              substrings to focus on.  If ``None``, all
+                              intent nodes are considered.
+            top_k:            Maximum member nodes to return.
+            min_temperature:  Exclude nodes below this temperature.
+            include_intents:  Include intent node metadata in output.
+
+        Returns:
+            ``{contexts: [{intent_id, label, density, members: [...]}],
+                         total_intents: int, total_nodes: int}``
+        """
+        # 1. Gather intent nodes
+        intent_rows = self.conn.execute(
+            "SELECT id, label, data FROM nodes WHERE kind='intent' AND quarantined = 0"
+        ).fetchall()
+        if not intent_rows or top_k <= 0:
+            return {"contexts": [], "total_intents": 0, "total_nodes": 0}
+
+        # 2. Filter by active_intents if provided
+        if active_intents:
+            filtered = []
+            intent_ids_set = set()
+            for spec in active_intents:
+                # Could be an exact node ID or a label substring
+                matches = self.conn.execute(
+                    "SELECT id, label, data FROM nodes WHERE kind='intent' "
+                    "AND (id = ? OR label LIKE ?) AND quarantined = 0",
+                    (spec, f"%{spec}%"),
+                ).fetchall()
+                for m in matches:
+                    if m["id"] not in intent_ids_set:
+                        filtered.append(m)
+                        intent_ids_set.add(m["id"])
+            intent_rows = filtered
+            if not intent_rows:
+                return {"contexts": [], "total_intents": 0, "total_nodes": 0}
+
+        # 3. For each intent, gather members via 'abstracts' edges
+        scored: list[tuple[float, str, str, str, float]] = []
+        # (temperature, node_id, label, kind, intent_id) — sorted later
+        intent_meta: dict[str, dict] = {}
+
+        for ir in intent_rows:
+            intent_id = ir["id"]
+            data = json.loads(ir["data"]) if ir["data"] else {}
+            intent_meta[intent_id] = {
+                "intent_id": intent_id,
+                "label": ir["label"],
+                "density": data.get("density", 0.0),
+                "member_count": data.get("member_count", 0),
+            }
+
+            # Find members linked via 'abstracts'
+            member_rows = self.conn.execute(
+                "SELECT target FROM edges WHERE source = ? AND relation = 'abstracts'",
+                (intent_id,),
+            ).fetchall()
+            seen = set()
+            for mr in member_rows:
+                mid = mr["target"]
+                if mid in seen or mid == intent_id:
+                    continue
+                seen.add(mid)
+                node_row = self.conn.execute(
+                    "SELECT id, label, kind, weight, accessed, q_value, quarantined "
+                    "FROM nodes WHERE id = ?",
+                    (mid,),
+                ).fetchone()
+                if node_row is None or node_row["quarantined"]:
+                    continue
+                # Compute temperature inline (avoid extra call overhead)
+                now = time.time()
+                age = max(now - (node_row["accessed"] or now), 0)
+                recency = math.exp(-age / 604800.0)
+                weight_n = min(max(node_row["weight"] or 0.0, 0.0), 2.0) / 2.0
+                q_norm = max(0.0, min(1.0, (node_row["q_value"] or 0.0)))
+                temp = round(recency * 0.5 + weight_n * 0.3 + q_norm * 0.2, 4)
+                if temp < min_temperature:
+                    continue
+                scored.append(
+                    (temp, mid, node_row["label"], node_row["kind"] or "unknown", intent_id)
+                )
+
+        # 4. Sort by temperature descending, deduplicate node_ids
+        scored.sort(key=lambda t: t[0], reverse=True)
+        seen_ids: set[str] = set()
+        top_members: list[dict] = []
+        member_to_intents: dict[str, list[str]] = defaultdict(list)
+
+        for temp, nid, label, kind, iid in scored:
+            member_to_intents[nid].append(iid)
+            if nid in seen_ids:
+                continue
+            seen_ids.add(nid)
+            top_members.append({
+                "node_id": nid,
+                "label": label,
+                "kind": kind,
+                "temperature": temp,
+                "linked_intents": member_to_intents[nid],
+            })
+            if len(top_members) >= top_k:
+                break
+
+        # 5. Build per-intent context groups
+        contexts = []
+        for iid, meta in intent_meta.items():
+            members = [m for m in top_members if iid in m["linked_intents"]]
+            if not members and not include_intents:
+                continue
+            entry = {
+                "intent_id": iid,
+                "label": meta["label"],
+                "density": meta["density"],
+                "member_count": meta["member_count"],
+                "members": members,
+            }
+            contexts.append(entry)
+
+        # Sort contexts by number of surfaced members (most useful first)
+        contexts.sort(key=lambda c: len(c["members"]), reverse=True)
+
+        if not include_intents:
+            # Strip member metadata, just return nodes
+            for c in contexts:
+                c.pop("density", None)
+                c.pop("member_count", None)
+
+        return {
+            "contexts": contexts,
+            "total_intents": len(intent_meta),
+            "total_nodes": len(top_members),
+        }
+
     # ─── Cache Temperature ─────────────────────────────────────────────
     # CPU-cache-inspired memory temperature: hot/warm/cold zones.
     # Temperature = f(recency, access_count, weight, q_value)
