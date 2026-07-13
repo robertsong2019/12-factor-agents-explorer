@@ -15504,6 +15504,88 @@ class MemoryGraph:
         self._tick("update", node_id, {"action": "refresh"})
         return True
 
+    def temporal_score(self, node_id: str, *, query_time: float | None = None,
+                       alpha: float = 0.5, half_life_days: float = 30.0) -> dict:
+        """Continuous temporal relevance score inspired by RoMem (2026).
+
+        Instead of binary stale/fresh, models temporal relevance as a
+        continuous score in [0, 1] using an exponential decay function.
+
+        The ``alpha`` parameter controls the sharpness of decay:
+        - ``alpha ≈ 0``: nearly flat — temporal info barely matters
+        - ``alpha ≈ 0.5``: moderate decay (default)
+        - ``alpha ≈ 1.0``: aggressive decay — old items rapidly irrelevant
+
+        This mirrors RoMem's insight that different relationship types have
+        different volatility: static facts (α≈0) never decay, while volatile
+        facts (α≈0.85) rotate out of phase quickly.
+
+        Returns a dict with:
+        - ``temporal_score``: composite score [0, 1] (1 = perfectly timely)
+        - ``age_component``: exponential age decay
+        - ``access_component``: access recency decay
+        - ``validity_component``: bi-temporal validity factor
+        - ``alpha``: the sharpness parameter used
+        - ``age_days``: age of the node in days
+
+        Args:
+            node_id:       Node to score.
+            query_time:    Reference timestamp (default: now).
+            alpha:         Decay sharpness [0, 1].
+            half_life_days: Half-life for age decay in days.
+
+        Returns:
+            Dict with temporal scoring breakdown, or ``{"temporal_score": 0.0}``
+            if node not found.
+        """
+        row = self.conn.execute(
+            "SELECT created, accessed, valid_from, valid_to FROM nodes WHERE id=?",
+            (node_id,)
+        ).fetchone()
+        if row is None:
+            return {"temporal_score": 0.0, "not_found": True}
+
+        now = query_time if query_time is not None else time.time()
+        half_life_seconds = half_life_days * 86400.0
+
+        # Age component: exponential decay with configurable half-life
+        age_seconds = max(now - (row["created"] or now), 0)
+        age_component = math.exp(-alpha * age_seconds / half_life_seconds)
+
+        # Access recency: 7-day half-life, scaled by alpha
+        access_age = max(now - (row["accessed"] or row["created"] or now), 0)
+        access_component = math.exp(-alpha * access_age / 604800.0)
+
+        # Validity component: bi-temporal window
+        validity_component = 1.0
+        if row["valid_to"] is not None:
+            vt = row["valid_to"]
+            if isinstance(vt, str):
+                from datetime import datetime as _dt
+                vt = _dt.fromisoformat(vt.replace("Z", "+00:00")).timestamp()
+            if vt < now:
+                validity_component = 0.0  # expired
+            else:
+                time_left = vt - now
+                if time_left < 604800:  # within 7 days of expiry
+                    validity_component = time_left / 604800.0
+
+        # Composite: weighted geometric-ish mean
+        composite = (
+            age_component ** 0.40 *
+            access_component ** 0.35 *
+            validity_component ** 0.25
+        )
+
+        return {
+            "temporal_score": round(composite, 4),
+            "age_component": round(age_component, 4),
+            "access_component": round(access_component, 4),
+            "validity_component": round(validity_component, 4),
+            "alpha": alpha,
+            "age_days": round(age_seconds / 86400.0, 2),
+        }
+
     # ─── Multi-Path Retrieval Fusion ───────────────────────────────────
 
     def search_multi(self, query: str, limit: int = 10,
