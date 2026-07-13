@@ -17,7 +17,7 @@
 - [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
 
 ## 系统状态
-- **agent-memory-graph**: **2880 tests** — 600+ APIs。四十五合一。全检索管线 ✅ + 17 centrality + 拓扑指数十族(distance/degree/spectral/Laplacian/walk/edge-partition/degree-distance/Schultz/Modified-Wiener/generalized-Randić/Zagreb) + structure-gated PPR + retrieval-failure logging + token-budget context + IR quality eval + governed selection + phantom detection + bi-temporal + Q-value + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community + bridge nodes + cache temp + memorywire + staleness + RRF fusion + sleep consolidate + episodic replay + graph analytics + Bron-Kerbosch + CPM + QDAP-v2 + SkewRoute + memory maturation + confidence + forgetting curve + causal edges (ActMem 5-type) + spreading activation (Collins & Loftus 1975) + entropy filter + subgraph by edge type + decision chain + cascade invalidation (PLACEMEM) + category-aware retrieval (Apple Selective Memory)
+- **agent-memory-graph**: **2904 tests** — 600+ APIs。四十六合一。全检索管线 ✅ + 17 centrality + 拓扑指数十族(distance/degree/spectral/Laplacian/walk/edge-partition/degree-distance/Schultz/Modified-Wiener/generalized-Randić/Zagreb) + structure-gated PPR + retrieval-failure logging + token-budget context + IR quality eval + governed selection + phantom detection + bi-temporal + Q-value + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community + bridge nodes + cache temp + memorywire + staleness + RRF fusion + sleep consolidate + episodic replay + graph analytics + Bron-Kerbosch + CPM + QDAP-v2 + SkewRoute + memory maturation + confidence + forgetting curve + causal edges (ActMem 5-type) + spreading activation (Collins & Loftus 1975) + entropy filter + subgraph by edge type + decision chain + cascade invalidation (PLACEMEM) + category-aware retrieval (Apple Selective Memory)
 - **agent-context-store**: **2557 tests** — 520+ APIs。全分析闭环: health_check → snapshot_diff → velocity_tracker → health_forecast → mutation_impact → **improvement_tracker** (feedback) / **alert_config** (monitoring) / heatmap (diagnostic)
 - **structured-output-toolkit**: **561 tests**
 - **agent-task-cli**: **1222 tests** (+ ConcurrencyManager)
@@ -28,6 +28,7 @@
 - **零回滚率**: amg 225天 / acs 189天 🏆
 
 ## 近期活动 (07-12 ~ 07-13)
+- **Key Dev 1** ✅ (07-13 23:00): amg cycle 237 — read_proactive_context() CogniFold proactive context assembly (+24 tests, 2880→2904). Completes proactive trilogy: crystallize_intents→read_proactive_context. 228th consecutive day.
 - **Evening Dev** ✅ (07-13 22:10): amg cycle 236 — invalidate_cascade() PLACEMEM + add(category=) Apple Selective Memory (+20 tests, 2860→2880). 227th consecutive day.
 - **Key Dev 2** ✅ (07-13 00:12): amg cycle 232 — generalized_randic_index(α) + zagreb_indices() (+59 tests, 2754→2813). Parametric R_α family unifying Randić+Zagreb. Cross-relationship R₁=M₂ verified. 225th consecutive day.
 - **Key Dev 3** ✅ (07-13 01:05): acs cycle 189 — store_health_alert_config + quality_improvement_tracker (+31 tests, 2526→2557). Completes analytics pipeline: +feedback +monitoring layers. 189th consecutive day.
@@ -55,6 +56,7 @@
 14. ⬜ README(agent-task-cli) → npm publish
 
 ## 上次检查
+- **Key Dev 1: 2026-07-13 23:00** — amg cycle 237, read_proactive_context() (+24 tests, 2880→2904). CogniFold proactive context. 228th consecutive day.
 - **Evening Dev: 2026-07-13 22:10** — amg cycle 236, invalidate_cascade() (PLACEMEM) + add(category=) + search_by_category() (Apple Selective Memory) (+20 tests, 2860→2880). 227th consecutive day.
 - **Key Dev 2: 2026-07-13 00:12** — amg cycle 232, generalized_randic_index(α) + zagreb_indices() (+59 tests, 2754→2813)
 - **Key Dev 3: 2026-07-13 01:05** — acs cycle 189, alert_config + improvement_tracker (+31 tests, 2526→2557)
