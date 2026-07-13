@@ -15146,6 +15146,136 @@ class MemoryGraph:
         bridges.sort(key=lambda b: b["external_edges"], reverse=True)
         return bridges
 
+    def crystallize_intents(self, *, density_threshold: float = 0.5,
+                           min_community_size: int = 3,
+                           algorithm: str = "leiden") -> dict:
+        """Crystallize implicit intents from community structure.
+
+        Inspired by CogniFold (2026): when concept clusters reach sufficient
+        density, they "crystallize" into explicit intent nodes. This creates
+        a higher-level abstraction layer without manual labeling.
+
+        For each community that exceeds ``density_threshold`` (internal
+        edge density), creates an ``intent`` node linked to all member
+        nodes via ``"abstracts"`` edges.
+
+        Density = 2 * internal_edges / (size * (size - 1))
+
+        Args:
+            density_threshold:  Minimum internal density [0, 1] to crystallize.
+            min_community_size: Minimum members to consider.
+            algorithm:          Community detection algorithm.
+
+        Returns:
+            ``{crystallized: [...], skipped: [...], total_communities: int}``
+            Each crystallized entry: ``{intent_id, label, community_id,
+            size, density, dominant_kind, members}``
+        """
+        # Detect communities
+        comm_result = self.community_detect()
+        if not comm_result:
+            return {"crystallized": [], "skipped": [], "total_communities": 0}
+
+        # comm_result is {community_id: [member_ids]}
+        communities = comm_result
+
+        crystallized = []
+        skipped = []
+
+        for comm_id, members in communities.items():
+            if len(members) < min_community_size:
+                skipped.append({
+                    "community_id": comm_id,
+                    "size": len(members),
+                    "reason": "too_small",
+                })
+                continue
+
+            member_set = set(members)
+
+            # Count internal edges
+            placeholders = ",".join("?" * len(members))
+            edge_rows = self.conn.execute(
+                f"SELECT source, target FROM edges WHERE source IN ({placeholders}) "
+                f"AND target IN ({placeholders})",
+                members + members
+            ).fetchall()
+            internal_edges = len(edge_rows)
+            size = len(members)
+            max_possible = size * (size - 1)
+            density = (2.0 * internal_edges / max_possible) if max_possible > 0 else 0.0
+
+            if density < density_threshold:
+                skipped.append({
+                    "community_id": comm_id,
+                    "size": size,
+                    "density": round(density, 4),
+                    "reason": "low_density",
+                })
+                continue
+
+            # Get dominant kind and representative label
+            node_rows = self.conn.execute(
+                f"SELECT id, label, kind FROM nodes WHERE id IN ({placeholders})",
+                members
+            ).fetchall()
+            kind_counts: dict[str, int] = defaultdict(int)
+            labels = []
+            non_intent_members = []
+            for r in node_rows:
+                kind_counts[r["kind"] or "unknown"] += 1
+                if r["kind"] != "intent":
+                    labels.append(r["label"])
+                    non_intent_members.append(r["id"])
+            dominant_kind = max(kind_counts.items(), key=lambda x: x[1])[0] if kind_counts else "unknown"
+
+            # Create intent node
+            # Label: combine top member labels
+            top_labels = sorted(set(labels))[:3]
+            intent_label = f"Intent: {', '.join(top_labels)}"
+
+            # Check if we already crystallized this exact member set
+            existing = self.conn.execute(
+                "SELECT id FROM nodes WHERE kind='intent' AND label=?",
+                (intent_label,)
+            ).fetchone()
+            if existing:
+                skipped.append({
+                    "community_id": comm_id,
+                    "size": size,
+                    "density": round(density, 4),
+                    "reason": "already_crystallized",
+                    "existing_intent": existing["id"],
+                })
+                continue
+
+            intent_id = self.add(intent_label, "intent", {
+                "source": "crystallize_intents",
+                "community_id": str(comm_id),
+                "density": round(density, 4),
+                "member_count": size,
+            }).id
+
+            # Link intent to members
+            for member_id in members:
+                self.link(intent_id, member_id, "abstracts")
+
+            crystallized.append({
+                "intent_id": intent_id,
+                "label": intent_label,
+                "community_id": comm_id,
+                "size": size,
+                "density": round(density, 4),
+                "dominant_kind": dominant_kind,
+                "members": members,
+            })
+
+        return {
+            "crystallized": crystallized,
+            "skipped": skipped,
+            "total_communities": len(communities),
+        }
+
     # ─── Cache Temperature ─────────────────────────────────────────────
     # CPU-cache-inspired memory temperature: hot/warm/cold zones.
     # Temperature = f(recency, access_count, weight, q_value)
