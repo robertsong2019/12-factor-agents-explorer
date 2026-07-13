@@ -5696,6 +5696,132 @@ class MemoryGraph:
             "ratio": m2 / m1 if m1 > 0 else 0.0,
         }
 
+    def forgotten_index(self) -> Optional[int]:
+        """Forgotten topological index F (Fajtlowicz 1998).
+
+        Also known as the *third Zagreb index*::
+
+            F = Σ_{v ∈ V} d_v³ = Σ_{(u,v) ∈ E} (d_u² + d_v²)
+
+        Introduced alongside M₁ and M₂ in 1972 but largely ignored for
+        decades — hence the name "forgotten".  The two forms (vertex
+        sum of *d³* and edge sum of *d_u² + d_v²*) are algebraically
+        equivalent.
+
+        **Properties:**
+        - K_n:  F = n(n-1)³
+        - Path P_n (n≥3):  F = (n-2)·8 + 2 = 8n-14  … actually vertex form:
+          F = (n-2)·2³ + 2·1³ = 8(n-2)+2 = 8n-14
+        - Cycle C_n:  F = n·2³ = 8n
+        - Star K_{1,k}:  F = k³ + k·1³ = k³ + k
+        - Regular graph (degree *r*):  F = n·r³
+        - Relation to M₁:  F ≥ M₁  (since d³ ≥ d² for d ≥ 1)
+
+        Returns:
+            Forgotten index value (int), or ``None`` for < 2 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        # Vertex form: F = Σ d_v³
+        total = sum(d ** 3 for d in deg.values())
+        return total
+
+    def abc_index(self) -> Optional[float]:
+        """Atom-bond connectivity index (Estrada *et al.* 1998).
+
+        ABC = Σ_{(u,v) ∈ E} √((d_u + d_v - 2) / (d_u · d_v))
+
+        A second-generation degree-based descriptor that correlates
+        well with the heat of formation of alkanes.  More discriminating
+        than the Randić index for distinguishing graph structures.
+
+        **Properties:**
+        - K_n (n≥2):  ABC = m · √(2(n-2)/(n-1)²)  =  n(n-1)/2 · √(2(n-2)/(n-1)²)
+        - K_2:  ABC = 1 · √(0/1) = 0   (edge with both degree-1 endpoints)
+        - Path P_n (n≥3):  ABC = (n-2)·√(2/4) + 2·√(1/2) = (n-2)/√2 + √2 = (n-1)·√2/1  …
+          internal edges contribute √(1/2), endpoint edges contribute √(1/2),
+          so ABC(P_n) = (n-1)·√(1/2) for the endpoint edges plus (n-3)·√(1/2) for internal
+          wait: endpoint edge (1,2): √((1+2-2)/(1·2)) = √(1/2)
+          internal edge (2,2): √((2+2-2)/(2·2)) = √(1/2)
+          so every path edge gives √(1/2):  ABC(P_n) = (n-1)/√2
+        - Cycle C_n:  every edge (2,2): √(2/4) = √(1/2);  ABC = n/√2
+        - Star K_{1,k}:  every edge (1,k): √((1+k-2)/(1·k)) = √((k-1)/k)
+          ABC = k · √((k-1)/k)
+        - Isolated edges contribute 0 (degree-1 endpoints: d_u+d_v-2 = 0)
+
+        Returns:
+            ABC index value (float), or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        total = 0.0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                numerator = ds + dt - 2
+                denominator = ds * dt
+                if numerator > 0 and denominator > 0:
+                    total += (numerator / denominator) ** 0.5
+                # numerator == 0 contributes 0 (isolated edge)
+        return total
+
+    def sum_connectivity_index(self) -> Optional[float]:
+        """Sum-connectivity index (Zhou & Trinajstić 2009).
+
+        χ_S = Σ_{(u,v) ∈ E} 1 / (d_u + d_v)
+
+        The additive sibling of the Randić index (which uses the
+        multiplicative form 1/√(d_u·d_v)).  Designed to complement
+        Randić by weighting degree sums rather than products.
+
+        **Properties:**
+        - K_n:  χ_S = m / (2(n-1))  =  n(n-1) / (4(n-1))  =  n/4
+        - K_2:  χ_S = 1/2
+        - Path P_n:  χ_S = (n-3)/4 + 2·(1/3)  for n ≥ 3
+          endpoint edges (1,2): 1/3,  internal edges (2,2): 1/4
+          P_2: 1/2,  P_3: 2/3,  P_4: 1/3+1/4+1/3 = 11/12
+        - Cycle C_n:  χ_S = n · 1/4  =  n/4
+        - Star K_{1,k}:  χ_S = k / (k+1)
+        - For regular graphs (degree *r*):  χ_S = m / (2r)
+
+        Returns:
+            Sum-connectivity index (float), or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        total = 0.0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                total += 1.0 / (ds + dt)
+        return total
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
