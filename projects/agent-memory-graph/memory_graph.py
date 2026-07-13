@@ -109,6 +109,7 @@ class MemoryGraph:
             ("activation", "REAL DEFAULT 0.0"),
             ("transform_count", "INTEGER DEFAULT 0"),
             ("confidence", "REAL DEFAULT 0.5"),
+            ("category", "TEXT DEFAULT NULL"),
         ]
         for col, typedef in migrations:
             if col not in existing_cols:
@@ -149,8 +150,21 @@ class MemoryGraph:
             "CREATE INDEX IF NOT EXISTS idx_rf_ts ON retrieval_failures(timestamp)"
         )
 
-    def add(self, label: str, kind: str = "fact", data: dict = None, tags: list[str] = None) -> Node:
-        """添加一个记忆节点。"""
+    def add(self, label: str, kind: str = "fact", data: dict = None,
+            tags: list[str] = None, category: str = None) -> Node:
+        """添加一个记忆节点。
+
+        Args:
+            label: Short description of the memory.
+            kind: Semantic type (fact|event|person|concept|skill).
+            data: Arbitrary metadata dict.
+            tags: List of string tags for filtering.
+            category: Optional category for selective retrieval
+                (Apple Shared Selective Memory, 2607.09493).
+                Common values: 'preference', 'protocol', 'episodic',
+                'reference', 'skill'. Enables category-aware filtering
+                in recall and retrieval pipelines.
+        """
         node = Node(
             id=uuid.uuid4().hex[:12],
             label=label, kind=kind,
@@ -158,13 +172,15 @@ class MemoryGraph:
             created=time.time(), accessed=time.time(), weight=1.0
         )
         self.conn.execute(
-            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags,category) VALUES (?,?,?,?,?,?,?,?,?)",
             (node.id, node.label, node.kind, json.dumps(node.data),
-             node.created, node.accessed, node.weight, json.dumps(tags or []))
+             node.created, node.accessed, node.weight, json.dumps(tags or []),
+             category)
         )
         self._fts_sync_node(node.id)
         self.conn.commit()
-        self._tick("add", node.id, {"label": label, "kind": kind})
+        self._tick("add", node.id, {"label": label, "kind": kind,
+                                     "category": category})
         return node
 
     def add_with_entropy_filter(self, label: str, kind: str = "fact",
@@ -369,6 +385,26 @@ class MemoryGraph:
                     json.loads(r["data"]), r["created"], r["accessed"], r["weight"]
                 ))
         return results
+
+    def search_by_category(self, category: str) -> list[Node]:
+        """Return all nodes in a given category.
+
+        Categories enable selective memory retrieval (Apple Shared
+        Selective Memory, 2607.09493): instead of searching all
+        memories, filter to a relevant slice (e.g., 'preference',
+        'protocol') for higher signal-to-noise ratio.
+
+        Excludes quarantined nodes.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE category=? AND quarantined = 0",
+            (category,)
+        ).fetchall()
+        return [
+            Node(r["id"], r["label"], r["kind"],
+                 json.loads(r["data"]), r["created"], r["accessed"], r["weight"])
+            for r in rows
+        ]
 
     def link(self, source_id: str, target_id: str, relation: str, weight: float = 1.0):
         """连接两个节点。"""
@@ -11803,6 +11839,83 @@ class MemoryGraph:
             (json.dumps(data), node_id))
         self.conn.commit()
         return data["_node_temporal"]
+
+    def invalidate_cascade(self, node_id: str, reason: str = None,
+                           invalidated_by: str = None,
+                           cascade_relations: list[str] = None,
+                           max_depth: int = 10) -> dict:
+        """Invalidate a node and cascade to dependent nodes.
+
+        Inspired by PLACEMEM (2607.04089): when a fact becomes invalid,
+        nodes that *depend on* or are *enabled by* it should also be
+        invalidated to prevent stale downstream reasoning.
+
+        Traverses causal edges (``depends_on``, ``enables`` by default)
+        via BFS, invalidating each reachable node. Cycle-safe via visited
+        set. Already-invalidated nodes are skipped (idempotent).
+
+        Args:
+            node_id: Root node to invalidate.
+            reason: Human-readable reason for invalidation.
+            invalidated_by: Identifier of the invalidating agent/process.
+            cascade_relations: Edge relations to follow for cascade.
+                Default: ``['depends_on', 'enables']``.
+            max_depth: Maximum BFS depth to prevent runaway cascades.
+
+        Returns:
+            Dict with ``root``, ``cascaded`` (list of node IDs),
+            ``depth_reached``, ``reason``.
+        """
+        if cascade_relations is None:
+            cascade_relations = ['depends_on', 'enables']
+        root_node = self.get_node(node_id)
+        if root_node is None:
+            return {"root": node_id, "cascaded": [], "count": 0,
+                    "depth_reached": 0, "reason": reason,
+                    "error": "root node not found"}
+        cascaded = []
+        visited = {node_id}
+        queue = [(node_id, 0)]
+        while queue:
+            current_id, depth = queue.pop(0)
+            if depth > max_depth:
+                continue
+            # Invalidate current node (idempotent)
+            result = self.node_invalidate(current_id, invalidated_by=invalidated_by)
+            if result:
+                cascaded.append(current_id)
+            # Find dependent nodes:
+            # - depends_on: A --depends_on--> current means A depends on current,
+            #   so invalidating current should cascade to A (reverse lookup).
+            # - enables: current --enables--> B means current enables B,
+            #   so invalidating current should cascade to B (forward lookup).
+            # For depends_on, find sources pointing to current
+            dep_rows = self.conn.execute(
+                "SELECT DISTINCT source FROM edges WHERE target=? AND relation='depends_on'",
+                (current_id,)
+            ).fetchall()
+            for row in dep_rows:
+                if row['source'] not in visited:
+                    visited.add(row['source'])
+                    queue.append((row['source'], depth + 1))
+            # For enables, find targets from current
+            placeholders = ','.join('?' * len(cascade_relations))
+            fwd_rows = self.conn.execute(
+                f"SELECT DISTINCT target FROM edges WHERE source=? AND relation IN ({placeholders})",
+                (current_id, *cascade_relations)
+            ).fetchall()
+            for row in fwd_rows:
+                if row['target'] not in visited:
+                    visited.add(row['target'])
+                    queue.append((row['target'], depth + 1))
+        return {
+            "root": node_id,
+            "cascaded": cascaded,
+            "count": len(cascaded),
+            "depth_reached": max(0, max((d for _, d in [(n, 0) for n in cascaded]), default=0)),
+            "reason": reason,
+            "invalidated_by": invalidated_by,
+        }
 
     def node_valid_at(self, node_id: str,
                       timestamp: float = None) -> bool:
