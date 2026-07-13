@@ -1,6 +1,6 @@
 {
-  "lastUpdated": "2026-07-12T22:00:00Z",
-  "generatedAt": "2026-07-13 06:00 CST",
+  "lastUpdated": "2026-07-13T22:00:00Z",
+  "generatedAt": "2026-07-14 06:00 CST",
   "actionRequired": [],
   "activeNow": [
     {
@@ -13,8 +13,8 @@
       "name": "dashboard-update-morning",
       "schedule": "6:00 AM daily",
       "id": "f38e0365",
-      "lastRun": "2026-07-12T22:00:00Z",
-      "nextRun": "2026-07-13T22:00:00Z",
+      "lastRun": "2026-07-13T22:00:00Z",
+      "nextRun": "2026-07-14T22:00:00Z",
       "status": "running",
       "errors": 0
     },
@@ -155,79 +155,16 @@
     }
   ],
   "sessions": {
-    "totalRecentSessions": 56,
-    "uniqueSessions": 35,
-    "activeInLast24h": 22,
-    "activeInLast1h": 3,
+    "totalRecentSessions": 1,
+    "uniqueSessions": 1,
+    "activeInLast24h": 1,
+    "activeInLast1h": 1,
     "recentSessions": [
       {
         "key": "cron:dashboard-update-morning",
         "age": "0.0h",
         "model": "glm-5.1",
         "ctxPercent": 16,
-        "kind": "cron"
-      },
-      {
-        "key": "main",
-        "age": "0.2h",
-        "model": "glm-5-turbo",
-        "ctxPercent": 39,
-        "kind": "direct"
-      },
-      {
-        "key": "cron:essay-generation-morning (CST)",
-        "age": "0.9h",
-        "model": "glm-5.1",
-        "ctxPercent": 32,
-        "kind": "cron"
-      },
-      {
-        "key": "cron:essay-generation-morning",
-        "age": "1.0h",
-        "model": "glm-5.1",
-        "ctxPercent": 27,
-        "kind": "cron"
-      },
-      {
-        "key": "cron:documentation-morning",
-        "age": "2.0h",
-        "model": "glm-5.1",
-        "ctxPercent": 28,
-        "kind": "cron"
-      },
-      {
-        "key": "cron:knowledge-organization (CST)",
-        "age": "4.0h",
-        "model": "glm-5.1",
-        "ctxPercent": 24,
-        "kind": "cron"
-      },
-      {
-        "key": "cron:key-development-3",
-        "age": "5.0h",
-        "model": "glm-5.1",
-        "ctxPercent": 25,
-        "kind": "cron"
-      },
-      {
-        "key": "cron:key-development-2",
-        "age": "6.0h",
-        "model": "glm-5.1",
-        "ctxPercent": 31,
-        "kind": "cron"
-      },
-      {
-        "key": "cron:key-development-1",
-        "age": "7.0h",
-        "model": "glm-5.1",
-        "ctxPercent": 33,
-        "kind": "cron"
-      },
-      {
-        "key": "cron:tool-development-evening (CST)",
-        "age": "8.0h",
-        "model": "glm-5.1",
-        "ctxPercent": 36,
         "kind": "cron"
       }
     ]
@@ -239,10 +176,11 @@
     "uptime": "82 days (since 2026-04-22)",
     "errorsToday": 0,
     "memoryUsage": "1.0Gi / 1.9Gi",
-    "diskUsage": "84%"
+    "diskUsage": "84%",
+    "loadAverage": "0.86, 0.30, 0.17"
   },
   "projectStats": {
-    "lastWorkspaceCommit": "4981765 docs: documentation improvement report 2026-07-13",
+    "lastWorkspaceCommit": "b4b2771 feat: forgotten_index() + abc_index() + sum_connectivity_index() — Cycle 238",
     "memoryUsage": "1.0Gi / 1.9Gi",
     "diskUsage": "84%"
   }
