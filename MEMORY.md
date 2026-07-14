@@ -14,26 +14,65 @@
 
 ---
 
-## Current Focus (2026-07-13)
+## Current Focus (2026-07-15)
 
 ### Active Theme
-Autoresearch 方法论实践 — amg **连续225天零回滚率** 🏆。
+Autoresearch 方法论实践 — amg **连续234天零回滚率** 🏆。
 
-### 项目测试总量 (07-13 凌晨快照)
+### 项目测试总量 (07-15 凌晨快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
-| agent-memory-graph | **2860** | 600+ | 四十六合一: 全检索管线 + 17 centrality + 拓扑指数十族(distance/degree/spectral/Laplacian/walk/edge-partition/degree-distance/Schultz+Modified-Wiener/generalized-Randić/Zagreb) + structure-gated PPR + retrieval-failure logging + token-budgeted context + IR quality eval (incl. utilization_rate) + governed selection + Laplacian pseudoinverse + phantom detection + auto_forget + bi-temporal + Q-value + CRDT + community + decision-chain + entropy-filter + subgraph-by-edge-type + causal-edges(ActMem 5-type) + spreading-activation + temporal_score + crystallize_intents + ... |
-| agent-context-store | **2557** | 520+ | 三大管线完整+全分析闭环: Graph 12 / Quality 12 (action+velocity+cohort+heatmap) / Store 14 (longitudinal+predictive+prescriptive+feedback+monitoring) |
+| agent-memory-graph | **3249** | 670+ | 五十五合一: 全检索管线 + 17 centrality + 拓扑指数十三族(distance/degree/spectral/Laplacian/walk/edge-partition/degree-distance/Schultz+Modified-Wiener/generalized-Randić/Zagreb/Forgotten/ABC/Sum-connectivity) + structure-gated PPR + retrieval-failure logging + token-budgeted context + IR quality eval (incl. utilization_rate) + governed selection + Laplacian pseudoinverse + phantom detection + auto_forget + bi-temporal + Q-value + CRDT + community + decision-chain + entropy-filter + subgraph-by-edge-type + causal-edges(ActMem 5-type) + spreading-activation + temporal_score + crystallize_intents + invalidate-cascade(PLACEMEM) + category-aware(Apple) + read-proactive-context(CogniFold) + immutable_store + grep + expand(LCM) + compact_node(三级升级) + serialize(token-budget) + RelationIntegrityChecker(ShadowMerge defense) + ... |
+| agent-context-store | **2636** | 526+ | 三大管线完整+全分析闭环: Graph 12 / Quality 12 (action+velocity+cohort+heatmap) / Store 17 (longitudinal+predictive+prescriptive+feedback+monitoring+dashboard+batch+alert-history) |
 | structured-output-toolkit | **561** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
 | agent-task-cli | **1222** | 190+ features | Cache+Storage+EventBus+ConcurrencyManager+merge |
-| **四项目总计** | **7200** | — | — |
+| **四项目总计** | **7668** | — | — |
 
-其他: openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / context-forge 613 / nano-agent 364 / AMS v1.0-dev 645 / prompt-router 258
+其他: openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / context-forge 613 / nano-agent 384 / AMS v1.0-dev 645 / prompt-router 258
 
-**全项目总计**: 7817+ tests (四核心 7200 + context-forge 613 + nano-agent 364)
+**全项目总计**: 10371+ tests (四核心 7668 + context-forge 613 + nano-agent 384 + 其他 1706)
 
 ### 最高优先级
-**README → npm publish** (四项目)。这是当前最大未交付价值。amg 定位: "beyond recall — agency-grade graph memory"。7153 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，竞争窗口收紧。
+**README → npm publish** (四项目)。这是当前最大未交付价值。amg 定位: "beyond recall — agency-grade graph memory — security-first"。7359 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，竞争窗口收紧。
+
+### 07-14 晚间开发 (amg cycles 239-242, code-lab-evening)
+- **Cycle 239: immutable_store + grep() + expand()** — LCM (arXiv:2605.04050) + Searchat 启发。append-only 不可变存储，add() 自动写入，确保数据在 compact/delete 后存活。grep() 全历史搜索（含已删节点），expand() 无损回溯（优先 live，fallback immutable）。+41 tests
+- **Cycle 240: compact_node() 三级升级** — LCM 启发。Level 0/1=LLM summarizer callback，Level 2=确定性截断（label ellipsis + data key/length 压缩）。自动降级：LLM 失败→level 2。compact_batch + compact_stats。原数据始终在 immutable_store 中保留。+34 tests
+- **Cycle 241: serialize() token-budget 序列化** — Searchat 启发。pointer-based 表示，最大化信息密度。weight 排序贪心打包，edge summary 共享预算。serialize_compact() 便捷方法（先自动 compact 低权重节点）。compacted node 检测。+34 tests
+- **Cycle 242: RelationIntegrityChecker** — ShadowMerge 防御 (arXiv:2605.09033，93.8% 攻击成功率)。三重检查：value_conflict/confidence_anomaly/origin_mismatch。integrity_quarantine() 自动隔离高严重性节点。integrity_score [0,1]。+36 tests
+- **amg 2983→3128 (+145 tests), 233rd consecutive day without rollback**
+- **Context Engineering Layer 完成 3/4**: immutable_store ✅ + compact ✅ + serialize ✅ + grep/expand ✅。仅剩 DAG 层级压缩未实现（低优先级）。
+
+### 07-14 晚间深度研究 #009: Context Engineering Layer Implementation (LCM + Distillation)
+- **LCM** (arXiv:2605.04050, Voltropy PBC) — Lossless Context Management。DAG 层级压缩 + 三级升级(LLM详细→LLM要点→确定性截断) + 零成本续行。OOLONG 基准超 Claude Code (32K-1M tokens)。核心洞察：让 LLM 管上下文 = GOTO，引擎确定性管理 = Structured Programming。
+- **Searchat** (GitHub开源) — Verbatim + Distilled 双层索引，实现 **11x token 缩减**且零数据丢失。Cross-layer ranking 统一排序。DuckDB 存储 + sentence-transformers embedding。搜索 <100ms。
+- **Aeon** (arXiv:2601) — 神经符号记忆，图结构 + 注意力优化解决 Lost-in-Middle。
+- **Active Context Compression** (arXiv:2601) — Agent 自主压缩解决 Context Bloat。
+- **关键实现路径**: (1) immutableStore 数据不丢失 (2) compact() 三级升级保证收敛 (3) serialize() token-budget + 指针 (4) expand() 无损回溯 (5) grep() 全历史搜索
+- **与 amg 关系**: retrieve() → 双层结果(distilled+verbatim pointers); sleep_consolidate() → 三级升级; add() → 大文件引用化
+- **Next: Cycle 239 候选新增**: ContextEngineeringLayer class — selectiveFilter + compact(三级) + serialize(token-budget) + expand + grep。预计 +60 tests。
+- **研究笔记**: [catalyst-research/exploration-notes/2026-07-14-context-engineering-layer-lcm-distillation.md](catalyst-research/exploration-notes/2026-07-14-context-engineering-layer-lcm-distillation.md)
+
+### 07-14 晚间深度研究 #008: Memory Security & Hybrid Architecture
+- **ShadowMerge** (arXiv:2605.09033) — 93.8% attack success rate against Mem0 graph memory via relation-channel conflicts。graph memory 安全面临新威胁。
+- **HMARS** (arXiv:2606.28349) — 证明 managed memory hierarchy 优于 flat retrieval，即使有 long context。外部 graph memory 仍然不可替代。
+- **OSL-MR** (arXiv:2606.10616) — 证明 memory retention 是 NP-hard。amg 的 heuristic 方法 (temporal_score, cache_temperature) 是正确路径。
+- **CoreMem** (arXiv:2606.18406) — Fisher-Rao metric 替代 cosine similarity，+4.5pp on LoCoMo。Mahalanobis distance 改进检索。
+- **Memory poisoning 爆发**: 2026年5-7月有 10+ 篇论文 (ShadowMerge/Trojan Hippo/Sleeper/Forensic Trajectory/Forged Reasoning...)。memory security 是研究前沿。
+- **amg 竞争定位**: "Security-first graph memory" — phantom detection + integrity checker + cascade invalidation 是 Mem0 没有的差异化。
+- **Next: Cycle 239 候选**: RelationIntegrityChecker (3 checks: value_conflict/confidence_anomaly/origin_mismatch + integrity_score)。~40 tests。已有 runnable TypeScript demo。
+- **研究笔记**: [catalyst-research/exploration-notes/2026-07-14-memory-security-hybrid-architecture.md](catalyst-research/exploration-notes/2026-07-14-memory-security-hybrid-architecture.md)
+
+### 07-15 凌晨开发 (amg Key Dev 2 + acs Key Dev 3)
+- **Key Dev 2 (amg cycle 239 key-dev-2): ga_index() + augmented_zagreb_index() + harmonic_index()** — 三新 degree-based 拓扑指数。GA = Σ 2√(d_u·d_v)/(d_u+d_v) (AM-GM bound: GA ≤ m)。AZI = Σ (d_u·d_v/(d_u+d_v-2))³ (最高判别力, K₂→0)。H = Σ 2/(d_u+d_v) = 2·χ_S (文献独立命名)。拓扑指数族→十六族。3165→3249 (+84 tests), commit 3a7a4c7
+- **Key Dev 3 (acs cycle 191): store_health_report_export() + quality_decay_model() + alert_correlation()** — 报告导出 (markdown/json/text, 8 section types) + 质量衰减预测 (urgency classification, earliest threshold crossing) + 告警因果分析 (mutation-alert temporal correlation)。分析管线扩展: +export +predictive-decay +causal。2593→2636 (+43 tests), commit dd3b8ad
+- **amg 3249 tests, 234th consecutive day without rollback**
+- **acs 2636 tests, 191st consecutive day without rollback**
+
+### 07-14 晚间开发 (amg cycles 239-244)
+- **Cycle 243: semantic_speed_gate() + selective_filter()** — RoMem-inspired edge volatility detection (speed/stability/velocity/verdict) + Context Engineering multi-criteria node pruning (weight/kind/quarantine/staleness/freshness)。+37 tests
+- **Cycle 244: immutable_store reimplementation** — LCM-inspired lossless history (append-only log auto-populated by add/update/delete + immutable_retrieve/history/count + grep + expand)。发现 cycles 239-243 logged 但代码 NOT in memory_graph.py (workspace-level phantom)，本 cycle 重新实现。+35 tests
+- Cycles 239-242 已在 MEMORY.md 记录 (immutable_store/compact_node/serialize/RelationIntegrityChecker)
 
 ### 07-13 晚间开发 (amg cycles 233-235)
 - **Cycle 233: retrieval_quality_eval utilization_rate** — ACL 2026 GEM 驱动。IR metrics 高估高级检索收益。cited_ids 可选字段, 计算 |retrieved ∩ cited|/|retrieved|。Per-query + macro-average。+9 tests
@@ -50,6 +89,14 @@ Autoresearch 方法论实践 — amg **连续225天零回滚率** 🏆。
 - **amg 2568→2813 (+245 tests), 225th consecutive day without rollback**
 - **acs Cycle 189: store_health_alert_config + quality_improvement_tracker** — Configurable per-dimension alert thresholds (set/list/check, severity classification) + closed-loop feedback tracking (record/summary/list, actual vs planned delta accuracy). Completes analytics pipeline: descriptive→diagnostic→predictive→prescriptive→**feedback+monitoring**. +31 tests
 - **acs 2526→2557 (+31 tests), 189th consecutive day**
+
+### 07-13 晚间~07-14 凌晨开发 (amg cycles 236-238, acs cycle 190)
+- **Cycle 236: invalidate_cascade() + add(category=) + search_by_category()** — PLACEMEM cascade invalidation (BFS over depends_on+enables, cycle-safe, idempotent) + Apple Selective Memory category parameter (backward-compatible column migration) + category-filtered search。+20 tests
+- **Cycle 237: read_proactive_context()** — CogniFold proactive context assembly。无 query 参数，基于 intent nodes 主动推送上下文。Pipeline: find intents → filter by active_intents → gather abstracted members → score by cache_temperature → deduplicate → per-intent context bundles。Completes proactive trilogy: crystallize_intents(c235) → read_proactive_context(c237)。+24 tests
+- **Cycle 238: forgotten_index() + abc_index() + sum_connectivity_index()** — 三个 degree-based 拓扑指数。F=Σd³ (forgotten Zagreb sibling), ABC=Σ√((d_u+d_v-2)/(d_u·d_v)) (Atom-Bond Connectivity, more discriminating than Randić), χ_S=Σ1/(d_u+d_v) (additive counterpart to Randić multiplicative)。拓扑指数族扩展至十三族。+79 tests
+- **amg 2860→2983 (+123 tests), 229th consecutive day without rollback**
+- **acs Cycle 190: store_health_dashboard() + quality_improvement_batch_tracker() + alert_history()** — Executive dashboard (composes 6 APIs into one call: gauge+alerts+heatmap+forecast+improvements+recommendations+interpretation) + batch tracker (prefix-scoped multi-entry improvement tracking with snapshot comparison) + alert history (time-series delta-only logging of alert state changes)。Analytics pipeline: +executive +batch +time-series layers。+36 tests
+- **acs 2557→2593 (+36 tests), 190th consecutive day**
 
 ### 07-11~07-12 开发 (amg cycles 221-225, acs cycle 188)
 - **Cycle 221: Structure-Gated PPR** — SAGE-inspired propagation gating: centrality modulates signal flow (degree/betweenness/closeness/eigenvector/pagerank gates)，+31 tests
@@ -169,6 +216,9 @@ Autoresearch 方法论实践 — amg **连续225天零回滚率** 🏆。
 31. **检索指标系统性高估高级检索收益 (ACL 2026 GEM)** — 扩展检索不会比例提升生成质量。IR metrics 高估。需要 generation-aligned metrics: utilization_rate (检索结果中被 LLM 实际选用的比例)。
 32. **时间是关系属性，不是全局属性 (RoMem 2026.04)** — 连续相位旋转在复向量空间中自动遮蔽过时事实。静态关系(α≈0)永不衰减，动态关系(α≈0.85)快速旋转出相位。append-only + 几何阴影 > 破坏性更新 + LLM 仲裁。
 33. **意图可以从拓扑结构中涌现 (CogniFold 2026.05)** — 扩展 CLS 三层(event→concept→intent)，概念簇密度超阈值时结晶意图。无需显式编程目标。"不完美即机制"——偏见和遗忘是主动记忆的机制而非缺陷。三层上下文窗口(immediate/working/background)无需查询即可读取。
+34. **Context Engineering 的核心分离原则 (LCM 2026.05)** — LLM 管上下文 = GOTO，确定性代码管状态 = Structured Programming。immutable_store (数据不丢) + compact() 三级升级 (保证收敛) + serialize() 指针化 (信息密度) + expand() (无损回溯) 是完整的上下文工程层。npm 生态零竞品。
+35. **Workspace-level phantom 是 cron 路径的系统性风险** — cycles 239-243 在 workspace 日志中记录但代码不在项目 repo 中。不同于 class shadowing（代码中有但被覆盖），这是「日志有但代码完全不存在」。防御：cron 模板必须包含 `cd repo && test` 验证步骤。
+36. **分析管线的终极形态是 causal 闭环** — acs 从 descriptive(184) 到 causal(191)，经历 diagnostic→predictive→prescriptive→feedback→monitoring→executive→batch→time-series→export→decay→correlation 十二层。report_export 让非技术干系人可访问，decay_model 实现预测性维护，alert_correlation 回答"为什么"。
 
 ---
 
@@ -176,7 +226,7 @@ Autoresearch 方法论实践 — amg **连续225天零回滚率** 🏆。
 
 ### 最高优先级: npm Publish (本周)
 - [ ] **agent-memory-graph: README + npm publish** — 2407 tests, 530+ APIs, 三十七合一 + 全检索管线 + 完整拓扑指数族 + phantom detection
-- [ ] **agent-context-store: README + npm publish** — 2498 tests, 500+ APIs, 37 层管线
+- [ ] **agent-context-store: README + npm publish** — 2636 tests, 526+ APIs, 全分析闭环+export+predictive decay+causal
 - [ ] **structured-output-toolkit: README + npm publish** — 561 tests, 4650+ lines
 - [ ] **agent-task-cli: README + npm publish** — 1167 tests
 
@@ -219,22 +269,28 @@ Autoresearch 方法论实践 — amg **连续225天零回滚率** 🏆。
 - [x] agent-memory-graph: add_with_entropy_filter() ✅ (cycle 228: SimpleMem-inspired, +25 tests)
 - [x] agent-memory-graph: subgraph_by_edge_type() ✅ (cycle 229: MAGMA orthogonal view, +18 tests)
 - [ ] agent-memory-graph: reasoning_quality_eval() API — 评估冲突检测率/因果链完整度。扩展 IR eval。
-- [ ] agent-memory-graph: `trace_decision_chain(topic)` API — 遍历 supersede 链输出 trigger+reason+evidence per hop, 对标 TokenMizer why_decision, ~50行src+~20行tests
+- [x] agent-memory-graph: `trace_decision_chain()` ✅ (cycle 227: TokenMizer-inspired supersede chain, already implemented)
 - [ ] agent-memory-graph: fact-level evaluation metrics (不止 IR, 还有 fact correctness), 参考 Engram per-category breakdown
-- [ ] agent-memory-graph: context engineering layer (检索结果 → 最优上下文组织), 参考 TokenMizer 14-node-type serialization
+- [x] agent-memory-graph: context engineering layer ✅ (cycles 239-244: immutable_store + compact_node + serialize + expand + grep. LCM/Searchat inspired.)
 - [ ] LoCoMo benchmark: 必须同时报告 full-context baseline (Engram 方法论: same answerer + same judge)
 
 ### 07-13 深度研究 #007 驱动的新任务
 - [ ] agent-memory-graph: Semantic Speed Gate — edge-level `volatility` 属性 + 预训练映射 + 简化版启发式. RoMem-inspired. ~40行src+30行tests
 - [x] agent-memory-graph: crystallize_intents() ✅ (cycle 235: CogniFold community density, +17 tests)
-- [ ] agent-memory-graph: `read_proactive_context()` API — 无 query 参数, 返回三层上下文 (immediate/working/background). 基于现有 PPR+recency+type. ~60行src+15行tests
+- [x] agent-memory-graph: `read_proactive_context()` ✅ (cycle 237: CogniFold proactive context assembly, intent-node-driven push, +24 tests)
 - [x] agent-memory-graph: temporal_score() ✅ (cycle 234: RoMem continuous decay, +21 tests)
 
 ### 07-13 深度研究 #006 驱动的新任务
-- [ ] agent-memory-graph: add() 增加 category 参数 — Apple 4-category selective persistence. reasoning_trace 自动短 TTL. ~40行src+30行tests
-- [ ] agent-memory-graph: invalidate(entryId) 级联失效 — PLACEMEM cascading invalidation. dependencies 边追踪. ~60行src+40行tests
+- [x] agent-memory-graph: add() 增加 category 参数 ✅ (cycle 236: Apple Selective Memory, backward-compatible column migration, +7 tests)
+- [x] agent-memory-graph: invalidate(entryId) 级联失效 ✅ (cycle 236: PLACEMEM invalidate_cascade, BFS depends_on+enables, +13 tests)
 - [x] agent-memory-graph: retrieval_quality_eval increase utilization_rate ✅ (cycle 233: ACL 2026 GEM cited_ids metric, +9 tests)
-- [ ] agent-memory-graph: context_engineering_layer — 检索结果→最优 LLM 上下文. selective filter + adaptive compress + token-efficient serialize. ~150行src+80行tests
+- [x] agent-memory-graph: context_engineering_layer ✅ (cycles 239-244: all 5 components done. See #009 research notes.)
+
+### 07-14 深度研究 #009 驱动的新任务
+- [x] agent-memory-graph: immutableStore ✅ (cycle 239/244: append-only log + immutable_retrieve/history/count)
+- [x] agent-memory-graph: compact() 三级升级 ✅ (cycle 240: LLM详细→LLM要点→确定性截断 + compact_batch/stats)
+- [x] agent-memory-graph: serialize() token-budget-aware ✅ (cycle 241: pointer-based + weight-ordered greedy packing + serialize_compact)
+- [x] agent-memory-graph: expand(id) + grep(pattern) ✅ (cycle 239/244: lossless recovery + full-history search)
 
 ### 中优先级
 - [ ] openclaw-langgraph-bridge: Supervisor 完善 — 261 tests, Gateway 集成测试
@@ -256,11 +312,11 @@ Autoresearch 方法论实践 — amg **连续225天零回滚率** 🏆。
 | # | 项目 | Tests | 状态 |
 |---|------|-------|------|
 | 1 | agent-task-cli | 1222 | ✅ npm ready |
-| 2 | agent-memory-graph | 2813 | ✅ npm ready, 四十五合一 + 全检索管线 + 拓扑指数十族 + IR eval + governed selection + phantom detection + spreading activation |
-| 3 | agent-context-store | 2557 | ✅ npm ready, 全分析闭环 (descriptive→diagnostic→predictive→prescriptive→feedback+monitoring) |
+| 2 | agent-memory-graph | 3249 | ✅ npm ready, 五十五合一 + 全检索管线 + 拓扑指数十六族 + IR eval + governed selection + phantom detection + spreading activation + proactive context + cascade invalidation + category-aware + immutable_store + compact_node + serialize + RelationIntegrityChecker + semantic_speed_gate + selective_filter + GA/AZI/Harmonic |
+| 3 | agent-context-store | 2636 | ✅ npm ready, 全分析闭环+export+predictive decay+causal (descriptive→diagnostic→predictive→prescriptive→feedback→monitoring→executive→batch→time-series→export→decay→correlation) |
 | 4 | structured-output-toolkit | 561 | ✅ npm ready |
 | 5 | openclaw-langgraph-bridge | 261 | 🔄 Supervisor 完善 |
-| 6 | context-forge | 513 | 🔄 继续 features |
+| 6 | context-forge | 613 | 🔄 继续 features |
 | 7 | lab/agent-observability | 166 | 🔄 OTel 集成 |
 | 8 | nano-agent | 314 | 🔄 Memory 扩展 |
 | 9 | Agent Memory Service | 645 | ✅ v1.0-dev |
