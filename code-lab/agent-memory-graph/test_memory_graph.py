@@ -20386,3 +20386,369 @@ class TestForgettingCurve:
         for key in ("node_id", "retention", "stability_hours",
                      "hours_since_access", "half_life_hours"):
             assert key in fc
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tests: Immutable Store — LCM-inspired lossless history (Cycle 244)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestImmutableStore:
+    """Immutable append-only log tests."""
+
+    def test_add_creates_immutable_record(self):
+        """add() should auto-record to the immutable log."""
+        mg = MemoryGraph()
+        n = mg.add("Python", "skill", {"level": "expert"})
+        assert mg.immutable_count() == 1
+        rec = mg.immutable_retrieve(n.id)
+        assert rec is not None
+        assert rec["op"] == "add"
+        assert rec["label"] == "Python"
+        assert rec["kind"] == "skill"
+        assert rec["data"] == {"level": "expert"}
+        assert rec["node_id"] == n.id
+
+    def test_delete_creates_immutable_record(self):
+        """delete_node() should record the deleted node's state."""
+        mg = MemoryGraph()
+        n = mg.add("TempNode", "fact", {"info": "will be deleted"})
+        assert mg.immutable_count() == 1
+        mg.delete_node(n.id)
+        assert mg.immutable_count() == 2
+        # The most recent record should be the delete
+        rec = mg.immutable_retrieve(n.id)
+        assert rec["op"] == "delete"
+        assert rec["label"] == "TempNode"
+        assert rec["data"] == {"info": "will be deleted"}
+
+    def test_update_creates_immutable_record(self):
+        """update_node() should record the new state."""
+        mg = MemoryGraph()
+        n = mg.add("Draft", "note", {"v": 1})
+        mg.update_node(n.id, label="Final", data={"v": 2})
+        assert mg.immutable_count() == 2
+        rec = mg.immutable_retrieve(n.id)
+        assert rec["op"] == "update"
+        assert rec["label"] == "Final"
+        assert rec["data"] == {"v": 2}
+
+    def test_immutable_count_after_multiple_ops(self):
+        """immutable_count should reflect total mutations."""
+        mg = MemoryGraph()
+        n1 = mg.add("A", "fact")
+        n2 = mg.add("B", "fact")
+        mg.update_node(n1.id, label="A2")
+        mg.delete_node(n2.id)
+        assert mg.immutable_count() == 4
+
+    def test_immutable_all_returns_records(self):
+        """immutable_all should return all records newest-first."""
+        mg = MemoryGraph()
+        n1 = mg.add("First", "fact")
+        n2 = mg.add("Second", "fact")
+        records = mg.immutable_all()
+        assert len(records) == 2
+        assert records[0]["label"] == "Second"
+        assert records[1]["label"] == "First"
+
+    def test_immutable_all_respects_limit(self):
+        """immutable_all should respect limit parameter."""
+        mg = MemoryGraph()
+        for i in range(10):
+            mg.add(f"Node{i}", "fact")
+        records = mg.immutable_all(limit=3)
+        assert len(records) == 3
+
+    def test_immutable_all_with_offset(self):
+        """immutable_all should support pagination via offset."""
+        mg = MemoryGraph()
+        for i in range(5):
+            mg.add(f"Node{i}", "fact")
+        page1 = mg.immutable_all(limit=2, offset=0)
+        page2 = mg.immutable_all(limit=2, offset=2)
+        assert page1[0]["seq"] != page2[0]["seq"]
+        assert len(page1) == 2
+        assert len(page2) == 2
+
+    def test_immutable_retrieve_nonexistent(self):
+        """immutable_retrieve returns None for unknown node_id."""
+        mg = MemoryGraph()
+        assert mg.immutable_retrieve("nonexistent") is None
+
+    def test_immutable_retrieve_by_seq(self):
+        """immutable_retrieve with seq returns specific revision."""
+        mg = MemoryGraph()
+        n = mg.add("Original", "fact")
+        mg.update_node(n.id, label="Updated")
+        history = mg.immutable_history(n.id)
+        assert len(history) == 2
+        seq0 = history[0]["seq"]
+        rec = mg.immutable_retrieve(n.id, seq=seq0)
+        assert rec["label"] == "Original"
+
+    def test_immutable_history_chronological(self):
+        """immutable_history returns oldest-first."""
+        mg = MemoryGraph()
+        n = mg.add("V1", "fact")
+        mg.update_node(n.id, label="V2")
+        mg.update_node(n.id, label="V3")
+        history = mg.immutable_history(n.id)
+        labels = [h["label"] for h in history]
+        assert labels == ["V1", "V2", "V3"]
+
+    def test_immutable_history_empty(self):
+        """immutable_history returns [] for unknown node."""
+        mg = MemoryGraph()
+        assert mg.immutable_history("ghost") == []
+
+
+class TestGrep:
+    """Full-text search across immutable records."""
+
+    def test_grep_finds_label(self):
+        """grep should find substrings in labels."""
+        mg = MemoryGraph()
+        mg.add("Python programming", "skill")
+        mg.add("Rust programming", "skill")
+        mg.add("Cooking", "hobby")
+        results = mg.grep("programming")
+        assert len(results) == 2
+        labels = [r["label"] for r in results]
+        assert "Python programming" in labels
+        assert "Rust programming" in labels
+
+    def test_grep_finds_data(self):
+        """grep should search inside JSON data."""
+        mg = MemoryGraph()
+        mg.add("Project A", "task", {"assignee": "Alice"})
+        mg.add("Project B", "task", {"assignee": "Bob"})
+        results = mg.grep("Alice")
+        assert len(results) == 1
+        assert results[0]["label"] == "Project A"
+
+    def test_grep_finds_kind(self):
+        """grep should search kind field."""
+        mg = MemoryGraph()
+        mg.add("Node1", "event")
+        mg.add("Node2", "concept")
+        results = mg.grep("event")
+        assert len(results) == 1
+        assert results[0]["label"] == "Node1"
+
+    def test_grep_case_insensitive(self):
+        """grep should be case-insensitive."""
+        mg = MemoryGraph()
+        mg.add("UPPERCASE Test", "fact")
+        results = mg.grep("uppercase")
+        assert len(results) == 1
+
+    def test_grep_finds_deleted_nodes(self):
+        """grep should find records of deleted nodes."""
+        mg = MemoryGraph()
+        n = mg.add("DeleteMe", "fact", {"important": "data"})
+        mg.delete_node(n.id)
+        results = mg.grep("DeleteMe")
+        assert len(results) >= 1
+        ops = [r["op"] for r in results]
+        assert "add" in ops
+        assert "delete" in ops
+
+    def test_grep_respects_limit(self):
+        """grep should respect limit parameter."""
+        mg = MemoryGraph()
+        for i in range(20):
+            mg.add(f"Match{i}", "fact")
+        results = mg.grep("Match", limit=5)
+        assert len(results) == 5
+
+    def test_grep_no_results(self):
+        """grep returns empty list for no matches."""
+        mg = MemoryGraph()
+        mg.add("Hello", "fact")
+        results = mg.grep("nonexistent_pattern")
+        assert results == []
+
+    def test_grep_returns_all_fields(self):
+        """grep results should include all expected fields."""
+        mg = MemoryGraph()
+        mg.add("FindMe", "skill", {"level": 5})
+        results = mg.grep("FindMe")
+        assert len(results) == 1
+        r = results[0]
+        assert "seq" in r
+        assert "op" in r
+        assert "node_id" in r
+        assert "label" in r
+        assert "kind" in r
+        assert "data" in r
+        assert "weight" in r
+        assert "timestamp" in r
+
+
+class TestExpand:
+    """Lossless recovery — live → immutable fallback."""
+
+    def test_expand_live_node(self):
+        """expand returns live data when node exists."""
+        mg = MemoryGraph()
+        n = mg.add("Alive", "fact", {"status": "active"})
+        result = mg.expand(n.id)
+        assert result is not None
+        assert result["source"] == "live"
+        assert result["label"] == "Alive"
+        assert result["data"] == {"status": "active"}
+
+    def test_expand_deleted_node(self):
+        """expand falls back to immutable for deleted nodes."""
+        mg = MemoryGraph()
+        n = mg.add("Ghost", "fact", {"secret": "data"})
+        mg.delete_node(n.id)
+        result = mg.expand(n.id)
+        assert result is not None
+        assert result["source"] == "immutable"
+        assert result["label"] == "Ghost"
+        # Most recent immutable record is the delete, which captured the old state
+        assert result["data"] == {"secret": "data"}
+
+    def test_expand_nonexistent_returns_none(self):
+        """expand returns None for truly unknown nodes."""
+        mg = MemoryGraph()
+        assert mg.expand("never_existed") is None
+
+    def test_expand_updated_node_returns_live(self):
+        """expand on an updated node returns current live state."""
+        mg = MemoryGraph()
+        n = mg.add("Original", "fact", {"v": 1})
+        mg.update_node(n.id, label="Updated", data={"v": 2})
+        result = mg.expand(n.id)
+        assert result["source"] == "live"
+        assert result["label"] == "Updated"
+        assert result["data"] == {"v": 2}
+
+    def test_expand_preserves_weight(self):
+        """expand should return weight information."""
+        mg = MemoryGraph()
+        n = mg.add("Weighted", "fact")
+        mg.update_node(n.id, weight=0.5)
+        result = mg.expand(n.id)
+        assert result["source"] == "live"
+        assert result["weight"] == 0.5
+
+    def test_expand_full_workflow(self):
+        """Full workflow: add → update → delete → expand recovers from immutable."""
+        mg = MemoryGraph()
+        n = mg.add("Workflow", "task", {"step": 1})
+        mg.update_node(n.id, label="Workflow v2", data={"step": 2})
+        mg.update_node(n.id, label="Workflow v3", data={"step": 3})
+        # Live state
+        live = mg.expand(n.id)
+        assert live["source"] == "live"
+        assert live["data"] == {"step": 3}
+        # Delete and recover
+        mg.delete_node(n.id)
+        recovered = mg.expand(n.id)
+        assert recovered["source"] == "immutable"
+        assert recovered["label"] == "Workflow v3"
+        assert recovered["data"] == {"step": 3}
+
+
+class TestImmutableStoreIntegration:
+    """Integration tests with the broader MemoryGraph."""
+
+    def test_immutable_log_persists_across_decay(self):
+        """Immutable records should not be affected by decay_all()."""
+        mg = MemoryGraph()
+        n = mg.add("Persistent", "fact", {"important": "value"})
+        old = time.time() - 500 * 3600
+        mg.conn.execute("UPDATE nodes SET accessed=? WHERE id=?", (old, n.id))
+        mg.conn.commit()
+        mg.decay_all()
+        rec = mg.immutable_retrieve(n.id)
+        assert rec is not None
+        assert rec["label"] == "Persistent"
+        assert rec["data"] == {"important": "value"}
+
+    def test_immutable_log_with_add_many(self):
+        """add_many should create immutable records for each node."""
+        mg = MemoryGraph()
+        nodes = mg.add_many([
+            {"label": "Batch1", "kind": "fact"},
+            {"label": "Batch2", "kind": "fact"},
+            {"label": "Batch3", "kind": "fact"},
+        ])
+        # add_many calls add() internally, so each should be logged
+        assert mg.immutable_count() == 3
+
+    def test_immutable_log_preserves_tags(self):
+        """Immutable records should preserve tag information."""
+        mg = MemoryGraph()
+        n = mg.add("Tagged", "fact", tags=["alpha", "beta"])
+        rec = mg.immutable_retrieve(n.id)
+        assert rec is not None
+        assert set(rec["tags"]) == {"alpha", "beta"}
+
+    def test_grep_after_compact(self):
+        """grep should still find records after compact operations."""
+        mg = MemoryGraph()
+        n1 = mg.add("Duplicate", "fact", {"v": 1})
+        n2 = mg.add("Duplicate", "fact", {"v": 2})
+        mg.link(n1.id, n2.id, "similar")
+        mg.compact(strategy="merge_similar")
+        results = mg.grep("Duplicate")
+        assert len(results) >= 2  # Both add records preserved
+
+    def test_immutable_count_starts_at_zero(self):
+        """New graph should have empty immutable log."""
+        mg = MemoryGraph()
+        assert mg.immutable_count() == 0
+
+    def test_multiple_graphs_have_separate_logs(self):
+        """Each MemoryGraph instance has its own immutable log."""
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        mg1.add("InGraph1", "fact")
+        assert mg1.immutable_count() == 1
+        assert mg2.immutable_count() == 0
+
+    def test_immutable_log_with_link_operations(self):
+        """Verify immutable log still works with link/unlink operations."""
+        mg = MemoryGraph()
+        n1 = mg.add("A", "fact")
+        n2 = mg.add("B", "fact")
+        mg.link(n1.id, n2.id, "connects")
+        mg.unlink(n1.id, n2.id, "connects")
+        # add + add = 2 immutable records (link/unlink currently not logged)
+        assert mg.immutable_count() == 2
+        # But grep should still find both nodes
+        results = mg.grep("A")
+        assert len(results) >= 1
+
+    def test_immutable_data_json_integrity(self):
+        """Data stored in immutable log should round-trip as valid JSON."""
+        mg = MemoryGraph()
+        complex_data = {"nested": {"deep": [1, 2, 3]}, "float": 3.14, "null": None}
+        n = mg.add("Complex", "fact", complex_data)
+        rec = mg.immutable_retrieve(n.id)
+        assert rec["data"] == complex_data
+
+    def test_immutable_store_performance(self):
+        """Immutable store should handle 100+ nodes efficiently."""
+        mg = MemoryGraph()
+        for i in range(100):
+            mg.add(f"Bulk{i}", "fact", {"index": i})
+        assert mg.immutable_count() == 100
+        results = mg.grep("Bulk", limit=10)
+        assert len(results) == 10
+
+    def test_immutable_seq_increments_monotonically(self):
+        """Sequence numbers should increase monotonically."""
+        mg = MemoryGraph()
+        n1 = mg.add("First", "fact")
+        n2 = mg.add("Second", "fact")
+        mg.update_node(n1.id, label="First Updated")
+        records = mg.immutable_all()
+        seqs = [r["seq"] for r in records]
+        # Newest first, so seqs should be descending
+        assert seqs == sorted(seqs, reverse=True)
+        # All unique
+        assert len(set(seqs)) == len(seqs)

@@ -130,6 +130,26 @@ class MemoryGraph:
                 wall_time REAL
             )
         """)
+        # Immutable append-only store — permanent record of all mutations (LCM-inspired)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS immutable_log (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                op TEXT NOT NULL,
+                node_id TEXT NOT NULL,
+                label TEXT,
+                kind TEXT,
+                data TEXT DEFAULT '{}',
+                weight REAL,
+                tags TEXT DEFAULT '[]',
+                timestamp REAL NOT NULL
+            )
+        """)
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_imm_node ON immutable_log(node_id)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_imm_op ON immutable_log(op)"
+        )
 
     def add(self, label: str, kind: str = "fact", data: dict = None, tags: list[str] = None) -> Node:
         """添加一个记忆节点。"""
@@ -145,6 +165,9 @@ class MemoryGraph:
              node.created, node.accessed, node.weight, json.dumps(tags or []))
         )
         self._fts_sync_node(node.id)
+        self._immutable_record("add", node.id, node.label, node.kind,
+                               json.dumps(node.data), node.weight,
+                               json.dumps(tags or []))
         self.conn.commit()
         self._tick("add", node.id, {"label": label, "kind": kind})
         return node
@@ -162,9 +185,16 @@ class MemoryGraph:
         row = self.conn.execute("SELECT id FROM nodes WHERE id=?", (node_id,)).fetchone()
         if not row:
             return False
+        # Capture snapshot before deletion for immutable store
+        old_row = self.conn.execute(
+            "SELECT label, kind, data, weight, tags FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
         self.conn.execute("DELETE FROM edges WHERE source=? OR target=?", (node_id, node_id))
         self._fts_delete_node(node_id)
         self.conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
+        if old_row:
+            self._immutable_record("delete", node_id, old_row["label"], old_row["kind"],
+                                   old_row["data"], old_row["weight"], old_row["tags"])
         self.conn.commit()
         self._tick("delete", node_id, {"node_id": node_id})
         return True
@@ -185,6 +215,8 @@ class MemoryGraph:
             (new_label, new_kind, new_data, new_weight, node_id)
         )
         self._fts_sync_node(node_id)
+        self._immutable_record("update", node_id, new_label, new_kind,
+                               new_data, new_weight, row["tags"] if "tags" in row.keys() else "[]")
         self.conn.commit()
         self._tick("update", node_id,
                    {"old_label": old_label, "new_label": new_label,
@@ -211,6 +243,9 @@ class MemoryGraph:
                  node.created, node.accessed, node.weight, json.dumps(tags))
             )
             self._fts_sync_node(node.id)
+            self._immutable_record("add", node.id, node.label, node.kind,
+                                   json.dumps(node.data), node.weight,
+                                   json.dumps(tags))
             nodes.append(node)
         self.conn.commit()
         return nodes
@@ -13829,6 +13864,129 @@ class MemoryGraph:
         ]
 
     # ── Vector Clock + Subscribe/Publish ──
+
+    # ── Immutable Store (LCM-inspired lossless history) ─────────────
+
+    def _immutable_record(self, op: str, node_id: str, label: str,
+                          kind: str, data: str, weight: float, tags: str):
+        """Append a record to the immutable log. Called automatically by mutations."""
+        self.conn.execute(
+            "INSERT INTO immutable_log (op, node_id, label, kind, data, weight, tags, timestamp) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (op, node_id, label, kind, data, weight, tags, time.time())
+        )
+
+    def immutable_retrieve(self, node_id: str, seq: int = None) -> Optional[dict]:
+        """Retrieve a node's historical state from the immutable log.
+
+        Args:
+            node_id: The node ID to look up.
+            seq: Optional sequence number for a specific revision.
+                 If None, returns the most recent record.
+
+        Returns:
+            Dict with keys: seq, op, node_id, label, kind, data, weight, tags, timestamp.
+            None if no records exist for the node.
+        """
+        if seq is not None:
+            row = self.conn.execute(
+                "SELECT * FROM immutable_log WHERE node_id=? AND seq=? ORDER BY seq DESC LIMIT 1",
+                (node_id, seq)
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT * FROM immutable_log WHERE node_id=? ORDER BY seq DESC LIMIT 1",
+                (node_id,)
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "seq": row["seq"], "op": row["op"], "node_id": row["node_id"],
+            "label": row["label"], "kind": row["kind"],
+            "data": json.loads(row["data"]), "weight": row["weight"],
+            "tags": json.loads(row["tags"]), "timestamp": row["timestamp"],
+        }
+
+    def immutable_all(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        """List immutable log records, newest first."""
+        rows = self.conn.execute(
+            "SELECT * FROM immutable_log ORDER BY seq DESC LIMIT ? OFFSET ?",
+            (limit, offset)
+        ).fetchall()
+        return [
+            {"seq": r["seq"], "op": r["op"], "node_id": r["node_id"],
+             "label": r["label"], "kind": r["kind"],
+             "data": json.loads(r["data"]), "weight": r["weight"],
+             "tags": json.loads(r["tags"]), "timestamp": r["timestamp"]}
+            for r in rows
+        ]
+
+    def immutable_count(self) -> int:
+        """Total number of records in the immutable log."""
+        return self.conn.execute("SELECT COUNT(*) FROM immutable_log").fetchone()[0]
+
+    def immutable_history(self, node_id: str) -> list[dict]:
+        """Full revision history for a node, oldest first."""
+        rows = self.conn.execute(
+            "SELECT * FROM immutable_log WHERE node_id=? ORDER BY seq ASC",
+            (node_id,)
+        ).fetchall()
+        return [
+            {"seq": r["seq"], "op": r["op"], "node_id": r["node_id"],
+             "label": r["label"], "kind": r["kind"],
+             "data": json.loads(r["data"]), "weight": r["weight"],
+             "tags": json.loads(r["tags"]), "timestamp": r["timestamp"]}
+            for r in rows
+        ]
+
+    def grep(self, pattern: str, limit: int = 50) -> list[dict]:
+        """Full-text search across ALL immutable records (including deleted/compacted nodes).
+
+        Searches label and JSON data fields. Returns matching records newest-first.
+
+        Args:
+            pattern: Substring to search for (case-insensitive).
+            limit: Maximum results.
+
+        Returns:
+            List of dicts with seq, op, node_id, label, kind, data, weight, timestamp.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM immutable_log "
+            "WHERE label LIKE ? OR data LIKE ? OR kind LIKE ? "
+            "ORDER BY seq DESC LIMIT ?",
+            (f"%{pattern}%", f"%{pattern}%", f"%{pattern}%", limit)
+        ).fetchall()
+        return [
+            {"seq": r["seq"], "op": r["op"], "node_id": r["node_id"],
+             "label": r["label"], "kind": r["kind"],
+             "data": json.loads(r["data"]), "weight": r["weight"],
+             "tags": json.loads(r["tags"]), "timestamp": r["timestamp"]}
+            for r in rows
+        ]
+
+    def expand(self, node_id: str) -> Optional[dict]:
+        """Lossless recovery — return the best available data for a node.
+
+        Priority: live node → most recent immutable record → None.
+        If the node exists in the live graph, return its current state.
+        Otherwise, fall back to the immutable log (e.g., for deleted nodes).
+
+        Returns:
+            Dict with node_id, label, kind, data, weight, tags, source ('live' or 'immutable').
+            None if no data exists anywhere.
+        """
+        live = self.get_node(node_id)
+        if live:
+            return {
+                "node_id": node_id, "label": live.label, "kind": live.kind,
+                "data": live.data, "weight": live.weight,
+                "tags": [], "source": "live",
+            }
+        record = self.immutable_retrieve(node_id)
+        if record:
+            return {**record, "source": "immutable"}
+        return None
 
     def _tick(self, op: str, node_id: str = None, details: dict = None):
         """Advance Lamport clock, log the event, and emit to subscribers."""
