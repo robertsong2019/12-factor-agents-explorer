@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-2813-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-3249-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -2134,7 +2134,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-2813 个测试覆盖所有 API（232 个 cycle，225 天零回滚）。
+3249 个测试覆盖所有 API（244 个 cycle，237 天零回滚）。
 
 ## 设计思路
 
@@ -2177,6 +2177,195 @@ python3 -m pytest test_memory_graph.py -q
 37. **电流中心性与谱分析** — current_flow_betweenness/current_flow_closeness/edge_current_flow_betweenness (Brandes & Fleischer 2007 电流类比随机游走中心性) + kirchhoff_index/spanning_tree_count (Matrix-Tree 定理全图连通性) + spectral_gap/graph_energy (邻接矩阵谱特性) + hyper_wiener_index/balaban_index/randic_index/harary_index (化学图论距离描述符) + phantom_check.py (Cycle 219 pre-commit 守卫，防止类遮蔽和幻影 API)。总计 20 种中心性/连通性/谱/拓扑度量
 38. **SAGE 检索反馈与治理管线** — ppr_structured (SAGE 启发的结构门控 PPR：中心性高的节点传播更多信号) + log_retrieval_failure/get_retrieval_failures/analyse_retrieval_failures/clear_retrieval_failures (检索失败日志 + writer-reader 反馈环路：自动发现缺失边并建议图改进) + centrality_optimized (联合 betweenness+closeness 单次 BFS 计算) + retrieve_token_budgeted (Mandol 启发的 token 预算上下文生成：无 LLM 调用的确定性贪心打包) + select_governed (MRMS 三阶段治理选择管线：结构门控→向量召回→图展开) + retrieval_quality_eval (precision@k/recall@k/F1/NDCG/MRR/hit_rate 六指标评估) + szeged_index/gutman_index (化学图论距离描述符)。从检索质量评估到治理选择的完整 SAGE 闭环
 39. **写入过滤 + 因果推理 + 扩散激活** — add_with_entropy_filter (SimpleMem ICML 2026：写入时信息密度过滤，词汇多样性+长度+新颖度三因子) + subgraph_by_edge_type (MAGMA ACL 2026：正交多图视图，按关系类型隔离分析) + add_causal_edge/get_causal_edges/trace_causal_chain (ActMem 5 型因果边：causes/prevents/conflicts_with/enables/depends_on，confidence+evidence+BFS 链追踪) + trace_decision_chain (TokenMizer 启发：supersede 链 trigger/reason/evidence 决策审计) + spread_activation (Collins & Loftus 1975：扩散激活 BFS 传播，decay/threshold/max_hops 可控) + schultz_index/modified_wiener_index/generalized_randic_index/zagreb_indices (Schultz 1989/Nikolić 1994/Bollobás 1998/Gutman 1972：度加权距离描述符四族，拓扑指数扩展至十一族)
+40. **级联失效 + 分类检索** — invalidate_cascade (PLACEM 启发：BFS 级联失效，depends_on 反向传播 + enables 正向传播，cycle-safe visited 集，max_depth 限制，幂等) + add(category=) + search_by_category (Apple Shared Selective Memory：preference/protocol/episodic/reference/skill 五类，selective retrieval)
+41. **主动上下文召回** — read_proactive_context 基于当前活跃意图主动推送相关记忆，结合温度（访问频率+时间衰减）和意图匹配，在 Agent 提问前预取上下文
+42. **拓扑指数扩展至十四族** — forgotten_index (Fajtlowicz 1998) + abc_index (Estrada 1998) + sum_connectivity_index (Zhou & Trinajstić 2009)，度描述符从十一族扩展至十四族
+43. **不可变记忆日志 + grep + 全息展开** — immutable_store 追加写入不可变历史 (node_id, label, kind, op, timestamp)，immutable_retrieve/immutable_all/immutable_count 完整查询接口，grep 跨全历史文本搜索，expand 从不可变存储无损恢复节点完整数据。审计级记忆版本控制
+44. **节点压缩 + 批量压缩** — compact_node 三级压缩 (level 0/1/2：截断→摘要→极致压缩) + compact_batch 批量压缩 + compact_stats 压缩统计。token 预算友好
+45. **Token 预算序列化** — serialize() 按指定 token 预算贪心打包节点为 LLM 可用格式 (include_edges/include_data 可选)，serialize_compact() 自动压缩+序列化一步到位
+46. **关系完整性校验** — check_relation_integrity 检测 relation channel 上的值冲突（矛盾数据/ dangling references/ type mismatches）+ integrity_quarantine 自动隔离高危节点。数据质量守卫
+47. **语义速度门控 + 选择性过滤** — semantic_speed_gate 测量节点邻域波动率（边增删频率），speed_gate_batch 批量门控，volatile_nodes 高波动节点排行 + selective_filter 多维度质量过滤（权重/kind/标签/隔离/完整度）+ selective_filter_report 过滤摘要报告。SSGM 启发的动态质量管控
+
+---
+
+### 级联失效与分类检索 (Cycle 236)
+
+#### `invalidate_cascade(node_id, reason=None, invalidated_by=None, cascade_relations=None, max_depth=10) -> dict`
+
+PLACEM (arXiv:2607.04089) 启发的级联失效。当节点被标记为失效时，BFS 遍历 `depends_on`（反向）和 `enables`（正向）边传播失效到依赖节点。Cycle-safe（visited 集合防止环路），max_depth 限制传播深度，幂等设计。
+
+```python
+result = mg.invalidate_cascade("fact:old_api", reason="API deprecated")
+# {'invalidated': ['fact:old_api', 'fact:usage_example', 'concept:wrapper'],
+#  'cascade_depth': 2, 'reason': 'API deprecated'}
+```
+
+#### `add(label, kind="fact", ..., category=None) -> Node`
+
+`add()` 方法新增 `category` 参数 (Apple Shared Selective Memory, arXiv:2607.09493)。支持五类记忆分类：`preference` / `protocol` / `episodic` / `reference` / `skill`。
+
+#### `search_by_category(category) -> list[Node]`
+
+按 category 检索节点，自动排除已隔离的节点。
+
+---
+
+### 主动上下文召回 (Cycle 237)
+
+#### `read_proactive_context(*, active_intents=None, top_k=10, min_temperature=0.1, include_inactive=False) -> list[dict]`
+
+基于当前活跃意图主动推送相关记忆。结合温度评分（访问频率 × 时间衰减）和意图关键词匹配，在 Agent 发起查询前预取最相关的上下文。适用于 proactive memory injection 场景。
+
+```python
+context = mg.read_proactive_context(
+    active_intents=["debug auth issue", "review PR"],
+    top_k=5
+)
+# [{'node_id': 'n42', 'label': 'Auth Module', 'temperature': 0.82,
+#   'matched_intents': ['debug auth issue'], ...}]
+```
+
+---
+
+### 拓扑指数扩展 (Cycle 238)
+
+#### `forgotten_index() -> int | None`
+
+Forgotten 拓扑指数 F (Fajtlowicz 1998)。基于度乘积的边和：F = Σ_{(u,v)∈E} (d_u · d_v)²。对高度节点间的连接给予指数级权重。
+
+#### `abc_index() -> float | None`
+
+Atom-bond 连通性指数 (Estrada et al. 1998)。ABC = Σ_{(u,v)∈E} √((d_u-1 + d_v-1) / (d_u·d_v))。与 Randić 指数负相关，对低度节点间的连接给予更高权重。
+
+#### `sum_connectivity_index() -> float | None`
+
+Sum-connectivity 指数 (Zhou & Trinajstić 2009)。⁰S = Σ_{(u,v)∈E} 1/(d_u + d_v)。Randić 指数的变体，使用度和的倒数而非积的平方根的倒数。
+
+---
+
+### 不可变记忆日志 (Cycles 239, 244)
+
+> 追加写入的不可变变更历史，支持审计、回溯和全文本搜索。
+
+#### `_immutable_log(node_id, label, kind, op, data=None)` *(internal)*
+
+记录不可变日志条目。每次节点变更（add/update/delete）自动调用。
+
+#### `immutable_retrieve(node_id) -> list[dict]`
+
+返回指定节点的所有不可变快照，按时间升序。每条含 `seq, node_id, label, kind, op, data, timestamp`。
+
+#### `immutable_all(limit=0) -> list[dict]`
+
+返回全量不可变历史。`limit=0` 不限制。
+
+#### `immutable_count() -> int`
+
+返回不可变日志总条目数。
+
+#### `grep(pattern, case_insensitive=True) -> list[dict]`
+
+跨所有不可变历史进行文本搜索（label + kind + data）。支持大小写敏感/不敏感模式。返回匹配条目列表。
+
+```python
+matches = mg.grep("auth", case_insensitive=True)
+# [{'seq': 42, 'node_id': 'n5', 'label': 'Auth Module', 'op': 'update', ...}]
+```
+
+#### `expand(node_id) -> dict | None`
+
+从不可变存储无损恢复节点的完整原始数据。合并所有历史条目的 data 字段，最新覆盖最旧。
+
+---
+
+### 节点压缩 (Cycle 240)
+
+#### `compact_node(node_id, max_label_len=80, level=0, summarizer=None) -> dict`
+
+压缩单个节点的表示，保留关键信息。三级压缩策略：
+
+| Level | 策略 | 效果 |
+|-------|------|------|
+| 0 | 截断标签 + 精简 data | ~30% token 减少 |
+| 1 | 摘要标签 + 关键字段保留 | ~50% token 减少 |
+| 2 | 极致压缩（仅保留核心字段） | ~70% token 减少 |
+
+`summarizer` 可选传入自定义摘要函数 `(text, max_len) -> str`。
+
+#### `compact_batch(node_ids, max_label_len=80, level=2, summarizer=None) -> dict`
+
+批量压缩多个节点。返回 `{compacted, skipped, stats}`。
+
+#### `compact_stats() -> dict`
+
+返回压缩统计：已压缩节点数、未压缩节点数、平均 token 节省比例。
+
+---
+
+### Token 预算序列化 (Cycle 241)
+
+#### `serialize(node_ids=None, token_budget=4096, include_edges=True, include_data=True, include_quarantined=False) -> dict`
+
+按 token 预算贪心打包节点为 LLM 可用的序列化格式。自动跳过隔离节点。返回 `{context, nodes_included, nodes_skipped, token_count, char_count, truncated}`。
+
+```python
+result = mg.serialize(
+    node_ids=mg.neighbors(center_id, depth=2),
+    token_budget=2048,
+    include_edges=True
+)
+# {'context': '## fact\n- **Auth Module** ...',
+#  'nodes_included': 12, 'token_count': 1923, 'truncated': True}
+```
+
+#### `serialize_compact(token_budget=2048) -> dict`
+
+便捷方法：自动压缩全图节点 + 序列化。一步到位生成极简 LLM 上下文。
+
+---
+
+### 关系完整性校验 (Cycle 242)
+
+#### `check_relation_integrity(node_id=None) -> dict`
+
+扫描 relation channel 上的数据完整性问题。检测三类问题：
+- **值冲突** — 同一节点对不同邻居声明矛盾数据（如 contradictory properties）
+- **悬挂引用** — 边指向不存在的节点
+- **类型不匹配** — relation 语义与节点 kind 不符
+
+`node_id=None` 扫描全图，指定则只检查单节点。返回 `{total_issues, by_type, issues}`。
+
+#### `integrity_quarantine(issues=None, severity_threshold='high') -> dict`
+
+自动隔离被标记为高危的节点。接受 `check_relation_integrity()` 的输出或自动扫描。severity_threshold 控制隔离门槛（high/medium/low）。返回 `{quarantined, reasons}`。
+
+---
+
+### 语义速度门控 (Cycle 243)
+
+> SSGM (Semantic Speed Gate Model) 启发的动态质量管控。
+
+#### `semantic_speed_gate(node_id, *, window_hours=24.0, query_time=None) -> dict`
+
+测量单节点邻域的波动率——在指定时间窗口内边的新增/删除频率。返回 `{node_id, speed, edge_changes, window_hours, verdict}`。verdict: `stable` / `moderate` / `volatile`。
+
+#### `speed_gate_batch(node_ids=None, *, window_hours=24.0, query_time=None, min_speed=0.0) -> list[dict]`
+
+批量速度门控。`node_ids=None` 扫描全图。`min_speed` 过滤低速度节点。
+
+#### `volatile_nodes(*, window_hours=24.0, min_speed=0.5, limit=20, query_time=None) -> list[dict]`
+
+返回最波动的节点排行。高 speed 值表示该节点邻域近期经历大量变更，可能是噪声记忆或活跃编辑区。
+
+#### `selective_filter(node_ids, *, max_weight=None, min_weight=None, kinds=None, tags=None, exclude_quarantined=True, exclude_compacted=False, min_integrity_score=None) -> list[str]`
+
+多维度质量过滤。从给定节点集合中按权重范围、kind、标签、隔离状态、压缩状态和完整性评分筛选。返回通过所有过滤的节点 ID 列表。
+
+#### `selective_filter_report(node_ids, **kwargs) -> dict`
+
+运行 `selective_filter` 并生成摘要报告：输入数、通过数、各维度淘汰数。
+
+---
 
 ## 许可
 
