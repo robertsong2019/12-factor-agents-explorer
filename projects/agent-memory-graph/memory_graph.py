@@ -56,6 +56,7 @@ class MemoryGraph:
         self._lamport_clock = 0
         self._typed_subscribers: dict[str, list[tuple[str, callable]]] = {}
         self._init_schema()
+        self._init_immutable_store()
 
     def _init_schema(self):
         self.conn.executescript("""
@@ -178,6 +179,8 @@ class MemoryGraph:
              category)
         )
         self._fts_sync_node(node.id)
+        self._immutable_log(node.id, node.label, node.kind, node.data,
+                            tags or [], category)
         self.conn.commit()
         self._tick("add", node.id, {"label": label, "kind": kind,
                                      "category": category})
@@ -22121,6 +22124,146 @@ class MemoryGraph:
 
         # Filter by threshold and return
         return {nid: act for nid, act in activation.items() if act >= threshold}
+
+    # ──────────────────────────────────────────────────────────────
+    # Context Engineering Layer (Cycle 239)
+    # Inspired by LCM (arXiv:2605.04050) + Searchat (dual-layer index).
+    # immutable_store ensures data survives compaction/deletion.
+    # ──────────────────────────────────────────────────────────────
+
+    def _init_immutable_store(self):
+        """Create the immutable_store table if not yet present.
+
+        The immutable store is an append-only log that captures every
+        ``add()`` call's原始 data.  It enables lossless recovery via
+        ``expand()`` and full-text search via ``grep()`` even after
+        nodes are compacted or deleted.
+
+        Schema:
+        - seq: auto-increment sequence number (monotonic).
+        - node_id: FK to nodes(id) at time of insertion.
+        - label, kind, data, tags, category: snapshot of node fields.
+        - timestamp: wall-clock at insertion.
+        """
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS immutable_store (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id TEXT NOT NULL,
+                label TEXT,
+                kind TEXT,
+                data TEXT DEFAULT '{}',
+                tags TEXT DEFAULT '[]',
+                category TEXT DEFAULT NULL,
+                timestamp REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_immut_node ON immutable_store(node_id);
+            CREATE INDEX IF NOT EXISTS idx_immut_kind ON immutable_store(kind);
+            CREATE INDEX IF NOT EXISTS idx_immut_ts ON immutable_store(timestamp);
+        """)
+
+    def _immutable_log(self, node_id: str, label: str, kind: str,
+                       data: dict, tags: list, category: str = None):
+        """Append a record to the immutable store.
+
+        Called automatically from ``add()``.  Also callable directly
+        for retroactive logging of pre-existing nodes.
+        """
+        self.conn.execute(
+            "INSERT INTO immutable_store (node_id,label,kind,data,tags,category,timestamp) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (node_id, label, kind, json.dumps(data or {}),
+             json.dumps(tags or []), category, time.time())
+        )
+
+    def immutable_retrieve(self, node_id: str) -> list[dict]:
+        """Return all immutable snapshots for *node_id*, oldest first.
+
+        Each record is a dict with keys: seq, node_id, label, kind,
+        data, tags, category, timestamp.
+
+        Returns an empty list if the node was never logged.
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM immutable_store WHERE node_id=? ORDER BY seq",
+            (node_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def immutable_all(self, limit: int = 0) -> list[dict]:
+        """Return immutable store records, newest first.
+
+        Args:
+            limit: Max records to return. ``0`` means all.
+        """
+        sql = "SELECT * FROM immutable_store ORDER BY seq DESC"
+        params = ()
+        if limit and limit > 0:
+            sql += " LIMIT ?"
+            params = (limit,)
+        return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
+
+    def immutable_count(self) -> int:
+        """Return total number of records in the immutable store."""
+        return self.conn.execute(
+            "SELECT COUNT(*) AS c FROM immutable_store"
+        ).fetchone()["c"]
+
+    def grep(self, pattern: str, case_insensitive: bool = True) -> list[dict]:
+        """Search across ALL immutable history for *pattern*.
+
+        Unlike ``search()`` which only sees current live nodes,
+        ``grep()`` scans the immutable store — including nodes that
+        were later compacted, superseded, or deleted.
+
+        Searches label and data fields (JSON string match).
+
+        Args:
+            pattern: Substring to search for.
+            case_insensitive: If True, performs case-insensitive search.
+
+        Returns:
+            List of matching records (dicts), newest first.
+        """
+        like_pattern = f"%{pattern}%"
+        if case_insensitive:
+            sql = ("SELECT * FROM immutable_store "
+                   "WHERE LOWER(label) LIKE LOWER(?) ESCAPE '\\' "
+                   "OR LOWER(data) LIKE LOWER(?) ESCAPE '\\' "
+                   "ORDER BY seq DESC")
+        else:
+            sql = ("SELECT * FROM immutable_store "
+                   "WHERE label GLOB ? OR data GLOB ? "
+                   "ORDER BY seq DESC")
+            # GLOB is case-sensitive in SQLite
+            glob_pattern = f"*{pattern}*"
+            rows = self.conn.execute(sql, (glob_pattern, glob_pattern)).fetchall()
+            return [dict(r) for r in rows]
+        rows = self.conn.execute(sql, (like_pattern, like_pattern)).fetchall()
+        return [dict(r) for r in rows]
+
+    def expand(self, node_id: str) -> Optional[dict]:
+        """Losslessly recover the original node data from immutable store.
+
+        If the node still exists in the live ``nodes`` table, returns
+        the current data.  If it has been deleted/compacted, falls back
+        to the most recent immutable snapshot.
+
+        Returns ``None`` if neither live nor immutable data exists.
+        """
+        # Try live node first
+        row = self.conn.execute(
+            "SELECT * FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if row:
+            return dict(row)
+        # Fall back to latest immutable snapshot
+        rows = self.conn.execute(
+            "SELECT * FROM immutable_store WHERE node_id=? ORDER BY seq DESC LIMIT 1",
+            (node_id,)
+        ).fetchall()
+        if rows:
+            return dict(rows[0])
+        return None
 
 
 def demo():
