@@ -22763,6 +22763,294 @@ class MemoryGraph:
 
 
 
+    # ------------------------------------------------------------------
+    # Cycle 243: Semantic Speed Gate (RoMem-inspired edge volatility)
+    # ------------------------------------------------------------------
+
+    def semantic_speed_gate(self, node_id: str, *, window_hours: float = 24.0,
+                            query_time: float | None = None) -> dict:
+        """Measure edge-neighborhood volatility for a single node.
+
+        Inspired by RoMem (2026): semantic speed captures how fast a node's
+        neighborhood is changing.  High speed → active learning / instability,
+        low speed → stable, settled knowledge.
+
+        Speed is computed as the fraction of edges (in + out) created or
+        modified within ``window_hours`` of ``query_time``, weighted by edge
+        weight so important new connections count more.
+
+        Returns a dict with:
+        - ``speed``: volatility score in [0, 1] (1 = all edges recent)
+        - ``edge_count``: total edges examined
+        - ``recent_edges``: edges within the window
+        - ``stability``: 1 - speed (convenience for sorting)
+        - ``velocity``: recent_edges per hour (raw rate)
+        - ``verdict``: 'volatile' | 'active' | 'stable'
+
+        Args:
+            node_id:     Node to examine.
+            window_hours: Time window in hours (default 24).
+            query_time:  Reference timestamp (default: now).
+
+        Returns:
+            Dict with speed breakdown, or ``{"speed": 0.0, "not_found": True}``.
+        """
+        now = query_time if query_time is not None else time.time()
+        window_seconds = window_hours * 3600.0
+
+        # Fetch edges for this node
+        rows = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges "
+            "WHERE source=? OR target=?",
+            (node_id, node_id)
+        ).fetchall()
+
+        if not rows:
+            # Check if node exists at all
+            exists = self.conn.execute(
+                "SELECT id FROM nodes WHERE id=?", (node_id,)
+            ).fetchone()
+            if exists is None:
+                return {"speed": 0.0, "not_found": True}
+            return {
+                "speed": 0.0, "edge_count": 0, "recent_edges": 0,
+                "stability": 1.0, "velocity": 0.0, "verdict": "stable",
+            }
+
+        # Build edge creation-time lookup from clock_log
+        edge_times: dict[tuple[str, str, str], float] = {}
+        log_rows = self.conn.execute(
+            "SELECT node_id, details, wall_time FROM clock_log WHERE op='link'"
+        ).fetchall()
+        for lr in log_rows:
+            try:
+                detail = json.loads(lr["details"])
+                key = (detail["source"], detail["target"], detail["relation"])
+                edge_times[key] = lr["wall_time"]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                continue
+
+        total_weight = 0.0
+        recent_weight = 0.0
+        recent_count = 0
+
+        for r in rows:
+            w = r["weight"] if r["weight"] is not None else 0.5
+            total_weight += w
+            # Look up creation time from clock_log; fallback to node created time
+            key = (r["source"], r["target"], r["relation"])
+            edge_created = edge_times.get(key)
+            if edge_created is None:
+                # Fallback: use the younger endpoint's created time as approximation
+                node_row = self.conn.execute(
+                    "SELECT created FROM nodes WHERE id=?", (r["source"],)
+                ).fetchone()
+                edge_created = node_row["created"] if node_row else now
+            age = now - (edge_created or now)
+            if age <= window_seconds:
+                recent_weight += w
+                recent_count += 1
+
+        if total_weight == 0:
+            speed = 0.0
+        else:
+            speed = recent_weight / total_weight
+
+        velocity = recent_count / window_hours if window_hours > 0 else 0.0
+
+        if speed >= 0.6:
+            verdict = "volatile"
+        elif speed >= 0.25:
+            verdict = "active"
+        else:
+            verdict = "stable"
+
+        return {
+            "speed": round(speed, 4),
+            "edge_count": len(rows),
+            "recent_edges": recent_count,
+            "stability": round(1.0 - speed, 4),
+            "velocity": round(velocity, 4),
+            "verdict": verdict,
+        }
+
+    def speed_gate_batch(self, node_ids: list[str] = None, *,
+                         window_hours: float = 24.0,
+                         query_time: float | None = None,
+                         min_speed: float = 0.0) -> list[dict]:
+        """Batch semantic speed gate for multiple (or all) nodes.
+
+        Args:
+            node_ids:  Nodes to check.  If None, checks all non-quarantined nodes.
+            window_hours: Time window for volatility.
+            query_time: Reference timestamp.
+            min_speed: Only return nodes with speed >= this value.
+
+        Returns:
+            List of dicts (node_id, label, kind, speed, stability, verdict)
+            sorted by speed descending.
+        """
+        if node_ids is None:
+            rows = self.conn.execute(
+                "SELECT id FROM nodes WHERE quarantined=0"
+            ).fetchall()
+            node_ids = [r["id"] for r in rows]
+
+        results = []
+        for nid in node_ids:
+            sg = self.semantic_speed_gate(
+                nid, window_hours=window_hours, query_time=query_time
+            )
+            if sg.get("not_found"):
+                continue
+            if sg["speed"] < min_speed:
+                continue
+            # Attach label/kind for convenience
+            node = self.conn.execute(
+                "SELECT label, kind FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            results.append({
+                "node_id": nid,
+                "label": node["label"] if node else "",
+                "kind": node["kind"] if node else "",
+                **{k: v for k, v in sg.items() if k != "not_found"},
+            })
+
+        results.sort(key=lambda x: x["speed"], reverse=True)
+        return results
+
+    def volatile_nodes(self, *, window_hours: float = 24.0,
+                       min_speed: float = 0.5, limit: int = 20,
+                       query_time: float | None = None) -> list[dict]:
+        """Shortcut: get the most volatile nodes (high edge turnover).
+
+        Useful for prioritising which nodes to consolidate or compact.
+
+        Args:
+            window_hours: Time window for speed calculation.
+            min_speed:    Minimum speed threshold.
+            limit:        Max results.
+            query_time:   Reference timestamp.
+
+        Returns:
+            List of speed-gate dicts, most volatile first.
+        """
+        batch = self.speed_gate_batch(
+            window_hours=window_hours,
+            query_time=query_time,
+            min_speed=min_speed,
+        )
+        return batch[:limit]
+
+    # ------------------------------------------------------------------
+    # Cycle 243: Selective Filter (Context Engineering Layer)
+    # ------------------------------------------------------------------
+
+    def selective_filter(self, node_ids: list[str], *,
+                         max_weight: float | None = None,
+                         min_weight: float | None = None,
+                         kinds: list[str] | None = None,
+                         exclude_kinds: list[str] | None = None,
+                         exclude_quarantined: bool = True,
+                         max_staleness: float | None = None,
+                         require_fresh: bool = False,
+                         limit: int | None = None) -> list[str]:
+        """Filter a set of node IDs by multiple quality criteria.
+
+        Inspired by Context Engineering's selective filtering stage:
+        before sending context to an LLM, prune nodes that are too stale,
+        too low-weight, wrong kind, or quarantined.
+
+        All filters are optional — pass only the ones you need.
+
+        Args:
+            node_ids:          Candidate node IDs.
+            max_weight:        Exclude nodes above this weight.
+            min_weight:        Exclude nodes below this weight.
+            kinds:             Whitelist of node kinds to keep.
+            exclude_kinds:     Blacklist of node kinds to drop.
+            exclude_quarantined: Drop quarantined nodes (default True).
+            max_staleness:     Drop nodes with staleness above this.
+            require_fresh:     Only keep nodes with staleness < 0.3.
+            limit:             Truncate to first N after filtering.
+
+        Returns:
+            Filtered list of node IDs (preserves input order).
+        """
+        if not node_ids:
+            return []
+
+        placeholders = ",".join("?" * len(node_ids))
+        rows = self.conn.execute(
+            f"SELECT id, label, kind, weight, quarantined, accessed "
+            f"FROM nodes WHERE id IN ({placeholders})",
+            node_ids
+        ).fetchall()
+
+        row_map = {r["id"]: r for r in rows}
+        result = []
+
+        for nid in node_ids:
+            r = row_map.get(nid)
+            if r is None:
+                continue  # doesn't exist
+
+            # Quarantine filter
+            if exclude_quarantined and r["quarantined"]:
+                continue
+
+            # Weight filters
+            w = r["weight"] if r["weight"] is not None else 0.5
+            if min_weight is not None and w < min_weight:
+                continue
+            if max_weight is not None and w > max_weight:
+                continue
+
+            # Kind filters
+            if kinds is not None and r["kind"] not in kinds:
+                continue
+            if exclude_kinds is not None and r["kind"] in exclude_kinds:
+                continue
+
+            # Staleness filters
+            if max_staleness is not None or require_fresh:
+                s = self.staleness_score(r["id"])
+                if max_staleness is not None and s > max_staleness:
+                    continue
+                if require_fresh and s >= 0.3:
+                    continue
+
+            result.append(nid)
+
+        if limit is not None:
+            result = result[:limit]
+        return result
+
+    def selective_filter_report(self, node_ids: list[str], **kwargs) -> dict:
+        """Run selective_filter and return a summary report.
+
+        Returns:
+            {
+                "input_count": N,
+                "output_count": M,
+                "dropped": N - M,
+                "drop_rate": float,
+                "filtered_ids": [...],
+            }
+        """
+        filtered = self.selective_filter(node_ids, **kwargs)
+        input_count = len(node_ids)
+        output_count = len(filtered)
+        dropped = input_count - output_count
+        return {
+            "input_count": input_count,
+            "output_count": output_count,
+            "dropped": dropped,
+            "drop_rate": round(dropped / input_count, 4) if input_count else 0.0,
+            "filtered_ids": filtered,
+        }
+
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
