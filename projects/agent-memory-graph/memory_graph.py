@@ -22265,6 +22265,157 @@ class MemoryGraph:
             return dict(rows[0])
         return None
 
+    # ──────────────────────────────────────────────────────────────
+    # compact() — three-level upgrade (Cycle 240)
+    # LCM-inspired: LLM-detailed → LLM-bullet → deterministic truncate
+    # ──────────────────────────────────────────────────────────────
+
+    def compact_node(self, node_id: str, max_label_len: int = 80,
+                level: int = 0,
+                summarizer=None) -> Optional[dict]:
+        """Compact a node's representation, preserving key info.
+
+        Three-level upgrade inspired by LCM (arXiv:2605.04050):
+        - **Level 2** (default): Deterministic truncation — truncate
+          label to *max_label_len* chars with ellipsis, compact data
+          by keeping only top-level keys.
+        - **Level 1**: LLM bullet summary — if *summarizer* callable is
+          provided, call ``summarizer(label, data)`` → bullet-point summary.
+        - **Level 0**: LLM detailed summary — if *summarizer* is provided
+          and level=0, call ``summarizer(label, data)`` → detailed paragraph.
+
+        The original data is ALWAYS preserved in the immutable store.
+        Only the live ``nodes`` row is updated.
+
+        Args:
+            node_id: Target node to compact.
+            max_label_len: Max characters for level-2 label truncation.
+            level: Compaction level (0=detailed, 1=bullet, 2=truncate).
+            summarizer: Optional callable(label:str, data:dict) → str.
+                If None and level < 2, falls back to level 2.
+
+        Returns:
+            Dict with keys: node_id, old_label, new_label, level,
+            old_data_len, new_data_len. Or ``None`` if node not found.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return None
+
+        old_label = row["label"]
+        old_data = json.loads(row["data"]) if row["data"] else {}
+        old_data_str = json.dumps(old_data)
+        old_len = len(old_data_str)
+
+        # Determine effective level
+        effective_level = level if (level < 2 and summarizer) else 2
+
+        if effective_level < 2 and summarizer:
+            # LLM-backed summarization
+            try:
+                summary = summarizer(old_label, old_data)
+                if summary and isinstance(summary, str):
+                    new_label = summary[:max_label_len * 3]  # allow longer for LLM
+                    new_data = {"_compacted": True, "_level": effective_level,
+                                "_summary": summary,
+                                "_orig_label_len": len(old_label)}
+                else:
+                    effective_level = 2
+                    new_label = old_label[:max_label_len]
+                    new_data = self._compact_data(old_data)
+            except Exception:
+                effective_level = 2
+                new_label = old_label[:max_label_len]
+                new_data = self._compact_data(old_data)
+        else:
+            # Level 2: deterministic truncation
+            new_label = old_label[:max_label_len]
+            if len(old_label) > max_label_len:
+                new_label = new_label[:-3] + "..."
+            new_data = self._compact_data(old_data)
+
+        new_data_str = json.dumps(new_data)
+        new_len = len(new_data_str)
+
+        # Update live node
+        self.conn.execute(
+            "UPDATE nodes SET label=?, data=? WHERE id=?",
+            (new_label, new_data_str, node_id)
+        )
+        self._fts_sync_node(node_id)
+        self.conn.commit()
+        self._tick("compact", node_id, {"level": effective_level})
+
+        return {
+            "node_id": node_id,
+            "old_label": old_label,
+            "new_label": new_label,
+            "level": effective_level,
+            "old_data_len": old_len,
+            "new_data_len": new_len,
+        }
+
+    def _compact_data(self, data: dict, max_keys: int = 10) -> dict:
+        """Deterministic data compaction (level 2).
+
+        Keeps top-level keys only, limiting to *max_keys*.
+        Nested dicts/lists are replaced with type+length markers.
+        """
+        if not isinstance(data, dict) or not data:
+            return {}
+        result = {}
+        for i, (k, v) in enumerate(data.items()):
+            if i >= max_keys:
+                result["_truncated_keys"] = len(data) - max_keys
+                break
+            if isinstance(v, str) and len(v) > 100:
+                result[k] = v[:97] + "..."
+            elif isinstance(v, dict):
+                result[k] = f"{{dict:{len(v)} keys}}"
+            elif isinstance(v, list):
+                result[k] = f"[list:{len(v)} items]"
+            else:
+                result[k] = v
+        return result
+
+    def compact_batch(self, node_ids: list[str], max_label_len: int = 80,
+                      level: int = 2, summarizer=None) -> list[dict]:
+        """Compact multiple nodes in one call.
+
+        Returns list of compaction results (same format as ``compact()``).
+        Nodes that don't exist are skipped (no error).
+        """
+        results = []
+        for nid in node_ids:
+            r = self.compact_node(nid, max_label_len=max_label_len,
+                             level=level, summarizer=summarizer)
+            if r:
+                results.append(r)
+        return results
+
+    def compact_stats(self) -> dict:
+        """Return statistics about compacted vs. uncompacted nodes.
+
+        A node is considered "compacted" if its data contains
+        ``_compacted: True``.
+        """
+        total = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM nodes"
+        ).fetchone()["c"]
+        compacted = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM nodes WHERE data LIKE '%_compacted%'",
+        ).fetchone()["c"]
+        immutable = self.immutable_count()
+        return {
+            "total_nodes": total,
+            "compacted_nodes": compacted,
+            "uncompacted_nodes": total - compacted,
+            "immutable_records": immutable,
+            "compaction_ratio": round(compacted / total, 4) if total else 0.0,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
