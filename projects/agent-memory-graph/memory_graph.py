@@ -22559,6 +22559,211 @@ class MemoryGraph:
         return self.serialize(token_budget=token_budget)
 
 
+
+    # ──────────────────────────────────────────────────────────────
+    # RelationIntegrityChecker (Cycle 242)
+    # ShadowMerge defense (arXiv:2605.09033) — 93.8% attack rate on graph memory
+    # Three checks: value_conflict / confidence_anomaly / origin_mismatch
+    # ──────────────────────────────────────────────────────────────
+
+    def check_relation_integrity(self, node_id: str = None) -> dict:
+        """Scan for relation-channel integrity issues.
+
+        Inspired by ShadowMerge attack analysis (arXiv:2605.09033):
+        93.8% attack success rate against graph memory via relation-channel
+        conflicts. This is a defensive scan to detect such patterns.
+
+        Three check types:
+        1. **value_conflict** — same source+relation, targets with contradictory data.
+        2. **confidence_anomaly** — node with low trust_level not quarantined.
+        3. **origin_mismatch** — edge between high-trust and low-trust nodes.
+
+        Args:
+            node_id: If provided, only check edges involving this node.
+                If None, checks all edges (full scan).
+
+        Returns:
+            Dict with keys: issues, summary, integrity_score.
+        """
+        issues = []
+
+        if node_id:
+            edges = self.conn.execute(
+                "SELECT * FROM edges WHERE source=? OR target=?",
+                (node_id, node_id)
+            ).fetchall()
+        else:
+            edges = self.conn.execute("SELECT * FROM edges").fetchall()
+
+        if not edges:
+            edges = []  # Still run node-level checks below
+
+        # Check 1: value_conflict
+        edge_map = {}
+        for e in edges:
+            key = (e["source"], e["relation"])
+            edge_map.setdefault(key, []).append(e)
+
+        for (src, rel), group in edge_map.items():
+            if len(group) < 2:
+                continue
+            target_data = []
+            for ge in group:
+                trow = self.conn.execute(
+                    "SELECT data, trust_level FROM nodes WHERE id=?",
+                    (ge["target"],)
+                ).fetchone()
+                if trow:
+                    target_data.append((ge["target"],
+                                        json.loads(trow["data"] or "{}"),
+                                        trow["trust_level"]))
+
+            for i in range(len(target_data)):
+                for j in range(i + 1, len(target_data)):
+                    tid1, d1, _ = target_data[i]
+                    tid2, d2, _ = target_data[j]
+                    conflicts = self._detect_value_conflicts(d1, d2)
+                    for field, v1, v2 in conflicts:
+                        issues.append({
+                            "type": "value_conflict",
+                            "source": src,
+                            "relation": rel,
+                            "targets": [tid1, tid2],
+                            "field": field,
+                            "values": [v1, v2],
+                            "severity": "high",
+                            "details": f"Field '{field}' has conflicting values: {v1} vs {v2}",
+                        })
+
+        # Check 2: confidence_anomaly
+        trust_rows = self.conn.execute(
+            "SELECT id, label, trust_level, quarantined FROM nodes "
+            "WHERE trust_level < 0.3 AND quarantined = 0"
+        ).fetchall()
+        for tr in trust_rows:
+            issues.append({
+                "type": "confidence_anomaly",
+                "node_id": tr["id"],
+                "label": tr["label"],
+                "trust_level": tr["trust_level"],
+                "severity": "medium",
+                "details": f"Node '{tr['label']}' has low trust_level={tr['trust_level']:.3f} but not quarantined",
+            })
+
+        # Check 3: origin_mismatch
+        for e in edges:
+            src_row = self.conn.execute(
+                "SELECT trust_level FROM nodes WHERE id=?",
+                (e["source"],)
+            ).fetchone()
+            tgt_row = self.conn.execute(
+                "SELECT trust_level FROM nodes WHERE id=?",
+                (e["target"],)
+            ).fetchone()
+            if src_row and tgt_row:
+                trust_diff = abs(src_row["trust_level"] - tgt_row["trust_level"])
+                if trust_diff > 0.5:
+                    issues.append({
+                        "type": "origin_mismatch",
+                        "edge": {"source": e["source"], "target": e["target"],
+                                 "relation": e["relation"]},
+                        "source_trust": src_row["trust_level"],
+                        "target_trust": tgt_row["trust_level"],
+                        "trust_gap": round(trust_diff, 3),
+                        "severity": "low" if trust_diff < 0.7 else "high",
+                        "details": f"Trust gap {trust_diff:.3f} between linked nodes",
+                    })
+
+        # Summary
+        by_type = {}
+        by_severity = {}
+        for iss in issues:
+            by_type[iss["type"]] = by_type.get(iss["type"], 0) + 1
+            by_severity[iss["severity"]] = by_severity.get(iss["severity"], 0) + 1
+
+        total_checks = max(len(edges), 1)
+        integrity_score = max(0.0, 1.0 - len(issues) / total_checks)
+
+        return {
+            "issues": issues,
+            "summary": {
+                "total": len(issues),
+                "by_type": by_type,
+                "by_severity": by_severity,
+                "total_edges": len(edges),
+            },
+            "integrity_score": round(integrity_score, 4),
+        }
+
+    def _detect_value_conflicts(self, d1: dict, d2: dict,
+                                fields: list[str] = None) -> list[tuple]:
+        """Detect conflicting scalar values between two data dicts.
+
+        Only compares keys present in BOTH dicts with different values.
+        Skips complex types (dict/list).
+        """
+        conflicts = []
+        keys = set(d1.keys()) & set(d2.keys())
+        if fields:
+            keys &= set(fields)
+        for key in keys:
+            v1, v2 = d1[key], d2[key]
+            if isinstance(v1, (dict, list)) or isinstance(v2, (dict, list)):
+                continue
+            if v1 != v2:
+                conflicts.append((key, v1, v2))
+        return conflicts
+
+    def integrity_quarantine(self, issues: list[dict] = None,
+                             severity_threshold: str = "high") -> list[str]:
+        """Auto-quarantine nodes flagged by high-severity integrity issues.
+
+        Args:
+            issues: Issues list from check_relation_integrity().
+                If None, runs a fresh full scan.
+            severity_threshold: Quarantine at this severity or above
+                ('high', 'medium', 'low').
+
+        Returns:
+            List of node IDs that were quarantined.
+        """
+        if issues is None:
+            result = self.check_relation_integrity()
+            issues = result["issues"]
+
+        severity_order = {"low": 0, "medium": 1, "high": 2}
+        threshold_level = severity_order.get(severity_threshold, 2)
+
+        quarantined = []
+        for iss in issues:
+            if severity_order.get(iss["severity"], 0) >= threshold_level:
+                node_ids = set()
+                if "node_id" in iss:
+                    node_ids.add(iss["node_id"])
+                if "targets" in iss:
+                    node_ids.update(iss["targets"])
+                if "edge" in iss:
+                    node_ids.add(iss["edge"]["source"])
+                    node_ids.add(iss["edge"]["target"])
+
+                for nid in node_ids:
+                    self.conn.execute(
+                        "UPDATE nodes SET quarantined=1, quarantine_reason=? "
+                        "WHERE id=? AND quarantined=0",
+                        (f"integrity: {iss['type']}", nid)
+                    )
+                    if self.conn.total_changes > 0:
+                        quarantined.append(nid)
+
+        self.conn.commit()
+        if quarantined:
+            self._tick("integrity_quarantine", ",".join(quarantined[:5]),
+                        {"count": len(quarantined)})
+        return quarantined
+
+
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
@@ -22608,8 +22813,6 @@ def demo():
     mg.conn.commit()
     mg.decay_all()
     print(mg.visualize_ascii())
-
-
 
 
 if __name__ == "__main__":
