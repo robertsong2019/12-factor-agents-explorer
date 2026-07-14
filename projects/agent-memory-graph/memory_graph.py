@@ -22416,6 +22416,148 @@ class MemoryGraph:
             "compaction_ratio": round(compacted / total, 4) if total else 0.0,
         }
 
+    # ──────────────────────────────────────────────────────────────
+    # serialize() — token-budget-aware context serialization (Cycle 241)
+    # Searchat-inspired: pointer-based representation for max info density
+    # ──────────────────────────────────────────────────────────────
+
+    def serialize(self, node_ids: list[str] = None, token_budget: int = 4096,
+                  include_edges: bool = True,
+                  include_data: bool = True) -> dict:
+        """Serialize graph nodes into a token-budgeted context representation.
+
+        Inspired by Searchat dual-layer index: produces a compact
+        text representation with pointers (node IDs) for expandable
+        detail.  Maximizes information density within *token_budget*.
+
+        Output format::
+
+            {
+                "context": "[id1] label1 (kind1)\n[id2] label2 ...",
+                "node_pointers": {"id1": {"label":..., "kind":...}, ...},
+                "edge_summary": [{"source": id1, "target": id2, ...}],
+                "tokens_used": 123,
+                "tokens_budget": 4096,
+                "nodes_included": 5,
+                "nodes_truncated": 0,
+                "compacted_nodes": ["id3", ...],
+            }
+
+        Args:
+            node_ids: Specific nodes to serialize. If None, uses all nodes
+                ordered by weight descending (most important first).
+            token_budget: Approximate token budget (1 token ≈ 4 chars).
+            include_edges: If True, include edge summary within budget.
+            include_data: If True, include data field snippets.
+
+        Returns:
+            Serialization dict with context string and metadata.
+        """
+        # Select nodes
+        if node_ids is None:
+            rows = self.conn.execute(
+                "SELECT id FROM nodes ORDER BY weight DESC, accessed DESC"
+            ).fetchall()
+            node_ids = [r["id"] for r in rows]
+
+        char_budget = token_budget * 4
+        char_used = 0
+        context_lines = []
+        node_pointers = {}
+        nodes_included = 0
+        nodes_truncated = 0
+        compacted_ids = []
+
+        for nid in node_ids:
+            row = self.conn.execute(
+                "SELECT * FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if not row:
+                continue
+
+            label = row["label"] or ""
+            kind = row["kind"] or ""
+            data_str = row["data"] or "{}"
+            is_compacted = "_compacted" in data_str
+
+            # Estimate line size
+            if include_data and data_str != "{}":
+                data_preview = data_str[:80]
+                line = f"[{nid}] {label} ({kind}) {data_preview}"
+            else:
+                line = f"[{nid}] {label} ({kind})"
+
+            line_len = len(line) + 1  # +1 for newline
+
+            if char_used + line_len > char_budget:
+                nodes_truncated = len(node_ids) - nodes_included
+                break
+
+            context_lines.append(line)
+            node_pointers[nid] = {"label": label, "kind": kind}
+            if is_compacted:
+                compacted_ids.append(nid)
+            char_used += line_len
+            nodes_included += 1
+
+        # Edge summary (within remaining budget)
+        edge_summary = []
+        if include_edges and nodes_included > 0:
+            included_set = set(node_pointers.keys())
+            placeholders = ",".join(f"'{nid}'" for nid in included_set)
+            edge_rows = self.conn.execute(
+                f"SELECT source, target, relation, weight FROM edges "
+                f"WHERE source IN ({placeholders}) OR target IN ({placeholders})"
+            ).fetchall()
+            for er in edge_rows:
+                edge_line = {"source": er["source"], "target": er["target"],
+                             "relation": er["relation"], "weight": er["weight"]}
+                edge_str = json.dumps(edge_line)
+                if char_used + len(edge_str) < char_budget:
+                    edge_summary.append(edge_line)
+                    char_used += len(edge_str)
+                else:
+                    break
+
+        context = "\n".join(context_lines)
+        return {
+            "context": context,
+            "node_pointers": node_pointers,
+            "edge_summary": edge_summary,
+            "tokens_used": max(1, char_used // 4),
+            "tokens_budget": token_budget,
+            "nodes_included": nodes_included,
+            "nodes_truncated": nodes_truncated,
+            "compacted_nodes": compacted_ids,
+        }
+
+    def serialize_compact(self, token_budget: int = 2048) -> dict:
+        """Convenience: serialize all nodes with auto-compaction.
+
+        First auto-compacts low-weight nodes (below median weight),
+        then serializes within *token_budget*.
+
+        Args:
+            token_budget: Target token budget for the output.
+
+        Returns:
+            Same format as ``serialize()``.
+        """
+        rows = self.conn.execute(
+            "SELECT id, weight FROM nodes ORDER BY weight"
+        ).fetchall()
+        if not rows:
+            return self.serialize(token_budget=token_budget)
+
+        weights = [r["weight"] for r in rows]
+        median_w = sorted(weights)[len(weights) // 2]
+
+        to_compact = [r["id"] for r in rows if r["weight"] < median_w]
+        if to_compact:
+            self.compact_batch(to_compact, level=2)
+
+        return self.serialize(token_budget=token_budget)
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
