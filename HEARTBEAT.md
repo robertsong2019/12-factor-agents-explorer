@@ -17,7 +17,7 @@
 - [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
 
 ## 系统状态
-- **agent-memory-graph**: **3165 tests** — 620+ APIs。四十九合一。全检索管线 ✅ + 17 centrality + 拓扑指数十三族(distance/degree/spectral/Laplacian/walk/edge-partition/degree-distance/Schultz/Modified-Wiener/generalized-Randić/Zagreb/Forgotten/ABC/Sum-connectivity) + structure-gated PPR + retrieval-failure logging + token-budget context + IR quality eval + governed selection + phantom detection + bi-temporal + Q-value + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community + bridge nodes + cache temp + memorywire + staleness + RRF fusion + sleep consolidate + episodic replay + graph analytics + Bron-Kerbosch + CPM + QDAP-v2 + SkewRoute + memory maturation + confidence + forgetting curve + causal edges (ActMem 5-type) + spreading activation (Collins & Loftus 1975) + entropy filter + subgraph by edge type + decision chain + cascade invalidation (PLACEMEM) + category-aware (Apple) + read-proactive-context (CogniFold) + temporal_score (RoMem) + immutable_store + grep + expand + compact_node + serialize + integrity_checker + semantic_speed_gate + selective_filter
+- **agent-memory-graph**: **2073 tests** — 460 APIs。全检索管线 ✅ + 17 centrality + 拓扑指数十三族 + structure-gated PPR + retrieval-failure logging + token-budget context + IR quality eval + governed selection + phantom detection + bi-temporal + Q-value + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community + bridge nodes + cache temp + memorywire + staleness + RRF fusion + sleep consolidate + episodic replay + graph analytics + Bron-Kerbosch + CPM + QDAP-v2 + SkewRoute + memory maturation + confidence + forgetting curve + causal edges + spreading activation + entropy filter + subgraph by edge type + decision chain + cascade invalidation + category-aware + read-proactive-context + **immutable_store + grep + expand** (LCM)
 - **agent-context-store**: **2593 tests** — 523+ APIs。全分析闭环: health_check → snapshot_diff → velocity_tracker → health_forecast → mutation_impact → improvement_tracker (feedback) / alert_config (monitoring) / heatmap (diagnostic) / **dashboard** (executive) / **batch_tracker** (batch) / **alert_history** (time-series)
 - **structured-output-toolkit**: **561 tests**
 - **agent-task-cli**: **1222 tests** (+ ConcurrencyManager)
@@ -31,7 +31,7 @@
 - **Key Dev 2** ✅ (07-14 00:00): amg cycle 238 — forgotten_index() + abc_index() + sum_connectivity_index() (+79 tests, 2904→2983). Degree-based topological trio: F=Σd³, ABC (Estrada 1998), χ_S (Zhou & Trinajstić 2009). 拓扑指数族→十三族。229th consecutive day.
 - **Key Dev 3** ✅ (07-14 01:00): acs cycle 190 — store_health_dashboard() + quality_improvement_batch_tracker() + alert_history() (+36 tests, 2557→2593). Executive dashboard composes 6 APIs into one call. Batch tracker adds prefix-scoped tracking. Alert history adds time-series delta logging. 190th consecutive day.
 - **Evening Dev 1** ✅ (07-14 21:05): amg cycles 239-242 — immutable_store+grep+expand / compact_node 3-level / serialize token-budget / RelationIntegrityChecker (+145 tests, 2983→3128). LCM+Searchat+ShadowMerge inspired.
-- **Evening Dev 2** ✅ (07-14 22:25): amg cycle 243 — semantic_speed_gate + speed_gate_batch + volatile_nodes + selective_filter + selective_filter_report (+37 tests, 3128→3165). RoMem edge volatility + Context Engineering selective filter. 233rd consecutive day.
+- **Key Dev 1** ✅ (07-14 23:00): amg cycle 244 — immutable_store + grep + expand (+35 tests, 2038→2073). LCM-inspired lossless history. 234th consecutive day.
 - **Key Dev 1** ✅ (07-13 23:00): amg cycle 237 — read_proactive_context() CogniFold proactive context assembly (+24 tests, 2880→2904). Completes proactive trilogy: crystallize_intents→read_proactive_context. 228th consecutive day.
 - **Evening Dev** ✅ (07-13 22:10): amg cycle 236 — invalidate_cascade() PLACEMEM + add(category=) Apple Selective Memory (+20 tests, 2860→2880). 227th consecutive day.
 - **Deep Research #006** ✅ (07-13 20:00): Context Engineering — Apple/SWE-MeM/PLACEMEM/ACL GEM. 4 papers + ContextEngineeringLayer TypeScript class.
@@ -67,7 +67,7 @@
 - **Key Dev 3: 2026-07-14 01:00** — acs cycle 190, dashboard+batch+alert_history (+36 tests, 2557→2593). Executive layer. 190th consecutive day.
 - **Key Dev 1: 2026-07-13 23:00** — amg cycle 237, read_proactive_context() (+24 tests, 2880→2904). CogniFold.
 - **Evening Dev: 2026-07-13 22:10** — amg cycle 236, invalidate_cascade + category-aware (+20 tests, 2860→2880). PLACEMEM + Apple.
-- **Evening Dev 2: 2026-07-14 22:25** — amg cycle 243, semantic_speed_gate + selective_filter (+37 tests, 3128→3165). RoMem + Context Engineering. 233rd consecutive day.
+- **Key Dev 1: 2026-07-14 23:00** — amg cycle 244, immutable_store + grep + expand (+35 tests, 2038→2073). LCM-inspired lossless history. 234th consecutive day.
 
 ## ⚠️ 已知问题
 - **SOT 测试运行器**: `node --test` 无法直接运行 TS 测试 (35/64 fail)。必须用 `npx tsx` 逐文件运行 (561/561 pass)。考虑添加 tsx loader 或迁移到 vitest。
