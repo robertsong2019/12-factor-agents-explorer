@@ -5825,6 +5825,136 @@ class MemoryGraph:
                 total += 1.0 / (ds + dt)
         return total
 
+    def ga_index(self) -> Optional[float]:
+        """Geometric-Arithmetic index (Dăscălescu *et al.* 2010).
+
+        GA = Σ_{(u,v) ∈ E}  2·√(d_u · d_v) / (d_u + d_v)
+
+        For each edge, GA takes the ratio of the geometric mean to the
+        arithmetic mean of endpoint degrees, multiplied by 2 (so that
+        GA = 1 for edges with equal endpoint degrees and > 0 always).
+        GA ≥ 1 for regular graphs and GA ≤ |E| trivially.
+
+        **Properties:**
+        - K_n (n ≥ 2):  GA = n(n-1)/2 · 1 = n(n-1)/2   (all edges (n-1, n-1), ratio = 1)
+        - K_2:  GA = 2·√1/2 = 1   (still 1 since d_u = d_v)
+        - C_n:  GA = n · 1 = n   (all edges (2,2), ratio = 1)
+        - P_n:  GA = (n-3)·1 + 2·2√2/3   for n ≥ 3
+          internal edges (2,2) contribute 1, endpoint edges (1,2) contribute 2√2/3
+          P_2: GA = 1,  P_3: GA = 2·2√2/3 ≈ 1.8856
+        - Star K_{1,k}:  GA = k · 2√k/(k+1)
+        - For r-regular graphs:  GA = m   (every term equals 1)
+
+        Returns:
+            GA index value (float), or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        total = 0.0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                total += 2.0 * (ds * dt) ** 0.5 / (ds + dt)
+        return total
+
+    def augmented_zagreb_index(self) -> Optional[float]:
+        """Augmented Zagreb index (Furtula *et al.* 2010).
+
+        AZI = Σ_{(u,v) ∈ E}  ( d_u · d_v / (d_u + d_v - 2) )³
+
+        A third-generation degree-based descriptor with very high
+        discriminative power.  The cubic exponent amplifies differences
+        in degree heterogeneity.  For edges where d_u + d_v = 2 (i.e.
+        both endpoints have degree 1, as in K₂), the denominator is 0;
+        such edges are skipped (contribute 0) to avoid division by zero.
+
+        **Properties:**
+        - K_n (n ≥ 3):  AZI = m · ((n-1)²/(2n-4))³  =  n(n-1)/2 · ((n-1)²/(2(n-2)))³
+        - K_2:  AZI = 0   (d_u + d_v - 2 = 0)
+        - K_3:  AZI = 3 · (4/2)³ = 3 · 8 = 24
+        - C_n:  AZI = n · (4/2)³ = 8n   (all edges (2,2): 2·2/(2+2-2) = 4/2 = 2, cubed = 8)
+        - P_n (n ≥ 3):
+          internal edges (2,2): 4/2 = 2, cubed = 8
+          endpoint edges (1,2): 2/1 = 2, cubed = 8
+          AZI = 8(n-1)  for n ≥ 3;  P_2: AZI = 0
+        - Star K_{1,k} (k ≥ 2):
+          each edge (1,k): k/(k-1), cubed = (k/(k-1))³
+          AZI = k · (k/(k-1))³
+        - K_{1,1} = K_2: AZI = 0
+
+        Returns:
+            AZI value (float), or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        total = 0.0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            denom = ds + dt - 2
+            if denom > 0 and ds > 0 and dt > 0:
+                total += (ds * dt / denom) ** 3
+        return total
+
+    def harmonic_index(self) -> Optional[float]:
+        """Harmonic index (Fajtlowicz 1998).
+
+        H = Σ_{(u,v) ∈ E}  2 / (d_u + d_v)
+
+        A simple degree-based descriptor that is exactly twice the
+        sum-connectivity index.  Included for completeness as it appears
+        independently in the literature under its own name and has
+        slightly different normalisation conventions.
+
+        **Properties:**
+        - K_n:  H = n/2   (= 2 · χ_S = 2 · n/4)
+        - K_2:  H = 1
+        - C_n:  H = n/2
+        - P_n (n ≥ 3):  H = (n-3)/2 + 4/3
+          internal edges: 2/4 = 1/2,  endpoint edges: 2/3
+          P_2: H = 1,  P_3: H = 4/3
+        - Star K_{1,k}:  H = 2k/(k+1)
+        - For r-regular graphs:  H = m/r
+        - Relation:  H = 2 · sum_connectivity_index  always
+
+        Returns:
+            Harmonic index (float), or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        total = 0.0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                total += 2.0 / (ds + dt)
+        return total
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
