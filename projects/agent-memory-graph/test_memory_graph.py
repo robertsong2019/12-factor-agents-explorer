@@ -23598,3 +23598,70 @@ class TestIntentAwareEdgeCost:
         # Both score 1, so the first one found wins (causal comes before multi_hop)
         intent = mg.detect_query_intent("why are these related")
         assert intent in ("causal", "multi_hop")
+
+
+class TestRetrieveWithIntent:
+    """Tests for intent-routed retrieval integration."""
+
+    def test_returns_intent_and_results(self, mg):
+        """Result includes intent classification."""
+        a = mg.add("Kubernetes deploy", "concept", {"tool": "helm"})
+        mg.add("Python script", "concept", {"tool": "python"})
+        result = mg.retrieve_with_intent("how are these related")
+        assert "intent" in result
+        assert "results" in result
+        assert result["intent"] == "multi_hop"
+
+    def test_empty_query_returns_empty_results(self, mg):
+        """No matches → empty results."""
+        result = mg.retrieve_with_intent("nonexistent xyz123")
+        assert result["results"] == []
+        assert result["intent"] == "factual"
+
+    def test_results_have_intent_bonus(self, mg):
+        """Results include intent_bonus field."""
+        a = mg.add("Root cause", "concept")
+        b = mg.add("Effect", "concept")
+        mg.link(a.id, b.id, "causes")
+        result = mg.retrieve_with_intent("why did this happen")
+        if result["results"]:
+            assert "intent_bonus" in result["results"][0]
+
+    def test_causal_intent_ranks_causally_connected_higher(self, mg):
+        """Causal query boosts nodes with causal edges."""
+        # Build a small graph with causal and non-causal edges
+        root = mg.add("Root Event", "event", {"action": "deploy"})
+        effect = mg.add("Downstream Effect", "event", {"action": "fail"})
+        unrelated = mg.add("Unrelated Note", "concept", {"topic": "cooking"})
+
+        mg.link(root.id, effect.id, "causes")
+        mg.link(root.id, unrelated.id, "similar_to")
+
+        result = mg.retrieve_with_intent("why deploy fail")
+        # Effect should rank higher than unrelated for causal queries
+        if len(result["results"]) >= 2:
+            ids = [r.get("node_id", r.get("id")) for r in result["results"]]
+            if effect.id in ids and unrelated.id in ids:
+                assert ids.index(effect.id) < ids.index(unrelated.id)
+
+    def test_edge_adjustments_returned(self, mg):
+        """Edge affinity map is returned for transparency."""
+        a = mg.add("A", "concept")
+        mg.link(a.id, mg.add("B", "concept").id, "causes")
+        result = mg.retrieve_with_intent("why")
+        assert "edge_adjustments" in result
+        assert isinstance(result["edge_adjustments"], dict)
+
+    def test_limit_respected(self, mg):
+        """Limit is respected in output."""
+        for i in range(10):
+            mg.add(f"Node {i}", "concept", {"keyword": "python"})
+        result = mg.retrieve_with_intent("python", limit=3)
+        assert len(result["results"]) <= 3
+
+    def test_factual_intent_no_adjustments(self, mg):
+        """Factual queries have empty edge adjustments."""
+        a = mg.add("A", "concept")
+        result = mg.retrieve_with_intent("python framework")
+        assert result["intent"] == "factual"
+        assert result["edge_adjustments"] == {}

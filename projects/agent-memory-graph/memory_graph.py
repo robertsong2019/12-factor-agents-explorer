@@ -23889,6 +23889,86 @@ class MemoryGraph:
             "edges": edges,
         }
 
+    def retrieve_with_intent(self, query: str, *, limit: int = 10,
+                             ) -> dict:
+        """Intent-routed retrieval combining intent detection with pipeline.
+
+        Thin integration layer that:
+        1. Detects query intent (temporal/causal/multi_hop/factual)
+        2. Runs the standard ``retrieve()`` pipeline
+        3. Applies intent-aware edge-cost reranking as a tiebreaker
+
+        Returns a dict with both the results and the intent metadata,
+        so callers can understand *why* certain results were surfaced.
+
+        Args:
+            query:  Natural language query.
+            limit:  Max results.
+
+        Returns:
+            ``{intent, results: [...], edge_adjustments: {...}}``
+        """
+        intent = self.detect_query_intent(query)
+
+        # Standard retrieval pipeline
+        raw_results = self.retrieve(query, limit=limit * 2, rerank=True)
+
+        if not raw_results:
+            return {
+                "intent": intent,
+                "results": [],
+                "edge_adjustments": {},
+            }
+
+        # Get intent-aware edge costs for the result nodes
+        affinity = self._INTENT_EDGE_AFFINITY.get(intent, {})
+
+        # Rerank results using edge-cost information
+        # For each result, find its incoming edges and compute an
+        # intent bonus (lower avg edge cost = more relevant)
+        reranked = []
+        for r in raw_results:
+            nid = r.get("node_id", r.get("id"))
+            if not nid:
+                reranked.append(r)
+                continue
+
+            # Get edges connected to this node
+            edges = self.conn.execute(
+                "SELECT relation, weight FROM edges WHERE source=? OR target=?",
+                (nid, nid)
+            ).fetchall()
+
+            if edges and affinity:
+                # Average multiplier on connected edges
+                multipliers = []
+                for e in edges:
+                    m = affinity.get(e["relation"], 1.0)
+                    multipliers.append(m)
+                avg_mult = sum(multipliers) / len(multipliers)
+                # Lower multiplier = more relevant for this intent
+                intent_bonus = max(0.0, 1.0 - avg_mult)  # 0 to 0.5ish
+            else:
+                intent_bonus = 0.0
+
+            # Blend original score with intent bonus
+            base_score = r.get("score", 0.5)
+            final_score = base_score * (1.0 + intent_bonus)
+
+            r_copy = dict(r)
+            r_copy["intent_bonus"] = round(intent_bonus, 4)
+            r_copy["score"] = round(final_score, 6)
+            reranked.append(r_copy)
+
+        # Re-sort by blended score
+        reranked.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+        return {
+            "intent": intent,
+            "results": reranked[:limit],
+            "edge_adjustments": affinity,
+        }
+
 
 
 def demo():
