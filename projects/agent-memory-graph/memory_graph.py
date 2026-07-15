@@ -5955,6 +5955,155 @@ class MemoryGraph:
                 total += 2.0 / (ds + dt)
         return total
 
+    # ------------------------------------------------------------------
+    # Cycle 251 – Degree-distribution inequality & redefined indices
+    # ------------------------------------------------------------------
+
+    def lorenz_coefficient(self) -> Optional[dict]:
+        """Lorenz coefficient / Gini index of degree distribution.
+
+        Measures how unequally degree is distributed across nodes,
+        using the classic Lorenz curve / Gini coefficient approach
+        applied to the degree sequence.
+
+        **Interpretation:**
+        - 0.0 → perfectly equal (regular graph, every node same degree)
+        - 1.0 → maximally unequal (star graph: one hub, all others degree 1)
+        - < 0.3 → egalitarian
+        - > 0.6 → hub-dominated
+
+        Returns a dict with:
+        - ``gini``: Gini coefficient in [0, 1]
+        - ``lorenz_curve``: list of (cumulative_share_nodes, cumulative_share_degree)
+        - ``mean_degree``: average degree
+        - ``degree_sequence``: sorted degree list (ascending)
+
+        Returns:
+            dict, or ``None`` for < 1 node.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        n = len(rows)
+        if n == 0:
+            return None
+        degrees = sorted(self.degree(str(r["id"])) for r in rows)
+        total_degree = sum(degrees)
+        if total_degree == 0:
+            # All isolated nodes → perfectly equal
+            curve = [(i / n, 0.0) for i in range(n + 1)]
+            return {"gini": 0.0, "lorenz_curve": curve,
+                    "mean_degree": 0.0, "degree_sequence": degrees}
+        # Lorenz curve
+        cum_nodes = 0.0
+        cum_degree = 0.0
+        curve = [(0.0, 0.0)]
+        for d in degrees:
+            cum_nodes += 1
+            cum_degree += d
+            curve.append((cum_nodes / n, cum_degree / total_degree))
+        # Gini coefficient = area between equality line and Lorenz curve
+        # G = 1 - 2 * integral(lorenz)
+        # Discrete: G = (2 * sum(i * y_i) / (n * sum(y_i))) - (n + 1) / n
+        # Or: G = 1 - 2 * trapezoidal_area(lorenz_curve)
+        area = 0.0
+        for i in range(n):
+            # trapezoid between curve[i] and curve[i+1]
+            x0, y0 = curve[i]
+            x1, y1 = curve[i + 1]
+            area += (y0 + y1) * (x1 - x0) / 2.0
+        gini = 1.0 - 2.0 * area
+        # Clamp to [0, 1] for floating point safety
+        gini = max(0.0, min(1.0, gini))
+        return {
+            "gini": gini,
+            "lorenz_curve": curve,
+            "mean_degree": total_degree / n,
+            "degree_sequence": degrees,
+        }
+
+    def redefined_randic_indices(self) -> Optional[dict]:
+        """Redefined Randić indices (Randić 2008).
+
+        Three variants of the Randić index using transformed degree ratios:
+
+        - **RD₁** = Σ_{(u,v)∈E} (d_u · d_v / (d_u + d_v))
+          This is the inverse of the sum-connectivity term × d_u·d_v.
+
+        - **RD₂** = Σ_{(u,v)∈E} (d_u · d_v / (d_u + d_v))²
+          Squared version, emphasising high-degree edges.
+
+        - **RD₃** = Σ_{(u,v)∈E} (d_u · d_v / (d_u + d_v))³
+          Cubic version, maximum discrimination.
+
+        **Properties:**
+        - For r-regular graph with m edges: RD₁ = m·r/2, RD₂ = m·(r/2)², RD₃ = m·(r/2)³
+        - K₂: RD₁=1, RD₂=1, RD₃=1 (but d_u+d_v=2, d_u·d_v=1, ratio=1/2)
+          Actually K₂: d_u=d_v=1, ratio = 1·1/(1+1) = 0.5
+          RD₁ = 0.5, RD₂ = 0.25, RD₃ = 0.125
+        - C_n: d_u=d_v=2, ratio = 4/4 = 1, RD₁=n, RD₂=n, RD₃=n
+        - Star K_{1,k}: d_center=k, d_leaf=1, ratio = k/(k+1)
+          RD₁ = k·k/(k+1), RD₂ = k·(k/(k+1))², RD₃ = k·(k/(k+1))³
+
+        Returns:
+            dict with keys ``rd1``, ``rd2``, ``rd3``, or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        rd1 = rd2 = rd3 = 0.0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                ratio = (ds * dt) / (ds + dt)
+                rd1 += ratio
+                rd2 += ratio * ratio
+                rd3 += ratio * ratio * ratio
+        return {"rd1": rd1, "rd2": rd2, "rd3": rd3}
+
+    def redefined_zagreb_index(self) -> Optional[float]:
+        """Redefined third Zagreb index (ReZM₃).
+
+        ReZM₃ = Σ_{(u,v) ∈ E} (d_u + d_v) · (d_u · d_v)
+
+        This combines additive (M₁-like) and multiplicative (M₂-like)
+        degree terms into a single descriptor.
+
+        **Properties:**
+        - K_n: ReZM₃ = m · 2(n-1) · (n-1)² = m · 2(n-1)³
+          where m = n(n-1)/2
+        - K₂: ReZM₃ = 2 · 1 = 2
+        - C_n: ReZM₃ = n · 4 · 4 = 16n
+        - P₃: ReZM₃ = (edge 1-2: (1+2)·2=6) + (edge 2-3: (2+1)·2=6) = 12
+        - Star K_{1,k}: ReZM₃ = k · (k+1) · k = k²(k+1)
+
+        Returns:
+            float, or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        total = 0.0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                total += (ds + dt) * (ds * dt)
+        return total
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
