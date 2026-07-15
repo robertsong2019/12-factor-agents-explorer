@@ -20,22 +20,22 @@
 - [x] amg serialize token-budget (cycle 241)
 - [x] amg RelationIntegrityChecker (cycle 242)
 - [x] amg semantic_speed_gate + selective_filter (cycle 243)
-- [x] amg GA/AZI/Harmonic indices (Key Dev 2, 拓扑→十六族)
+- [x] amg dual-mode binary signature / SimHash (cycle 249)
 - [x] acs report_export + decay_model + alert_correlation (Key Dev 3 cycle 191)
 - [x] Deep Research #008: Memory Security (ShadowMerge/HMARS/OSL-MR)
 - [x] Deep Research #009: Context Engineering Layer (LCM/Searchat)
 - [x] Docs: code-lab/README.md + 2 skill READMEs
 
 ## 系统状态
-- **agent-memory-graph**: **3249 tests** — 670+ APIs。全检索管线 ✅ + 17 centrality + 拓扑指数十六族 + structure-gated PPR + retrieval-failure logging + token-budget context + IR quality eval + governed selection + phantom detection + bi-temporal + Q-value + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community + bridge nodes + cache temp + memorywire + staleness + RRF fusion + sleep consolidate + episodic replay + graph analytics + Bron-Kerbosch + CPM + QDAP-v2 + SkewRoute + memory maturation + confidence + forgetting curve + causal edges + spreading activation + entropy filter + subgraph by edge type + decision chain + cascade invalidation + category-aware + read-proactive-context + immutable_store + grep + expand + compact_node(3-level) + serialize(token-budget) + RelationIntegrityChecker + semantic_speed_gate + selective_filter + GA/AZI/Harmonic
+- **agent-memory-graph**: **3354 tests** — 680+ APIs。全检索管线 ✅ + 17 centrality + 拓扑指数十六族 + structure-gated PPR + retrieval-failure logging + token-budget context + IR quality eval + governed selection + phantom detection + bi-temporal + Q-value + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community + bridge nodes + cache temp + memorywire + staleness + RRF fusion + sleep consolidate + episodic replay + graph analytics + Bron-Kerbosch + CPM + QDAP-v2 + SkewRoute + memory maturation + confidence + forgetting curve + causal edges + spreading activation + entropy filter + subgraph by edge type + decision chain + cascade invalidation + category-aware + read-proactive-context + immutable_store + grep + expand + compact_node(3-level) + serialize(token-budget) + RelationIntegrityChecker + semantic_speed_gate + selective_filter + GA/AZI/Harmonic
 - **agent-context-store**: **2636 tests** — 526+ APIs。全分析闭环+export+decay+causal: health_check → snapshot_diff → velocity_tracker → health_forecast → mutation_impact → improvement_tracker / alert_config / heatmap / dashboard / batch_tracker / alert_history / **report_export** / **quality_decay_model** / **alert_correlation**
 - **structured-output-toolkit**: **561 tests**
 - **agent-task-cli**: **1222 tests**
 - **context-forge**: **613 tests**
 - **nano-agent**: **384 tests**
-- **四项目总计**: 7668 tests ✅
+- **四项目总计**: 7773 tests ✅
 - **amg 234天 / acs 191天 🏆**
-- **零回滚率**: amg 234天 / acs 191天 🏆
+- **零回滚率**: amg 235天 / acs 191天 🏆
 
 ## 近期活动 (07-14 ~ 07-15)
 - **Key Dev 2** ✅ (07-15 00:00): amg cycle 239 — ga_index() + augmented_zagreb_index() + harmonic_index() (+84 tests, 3165→3249). Degree-based topological trio. 拓扑→十六族. 227th consecutive day (key-dev-2 lineage).
@@ -66,7 +66,7 @@
 - **Key Dev 2: 2026-07-15 00:00** — amg cycle 239, GA/AZI/Harmonic indices (+84 tests, 3165→3249). 拓扑十六族.
 - **Key Dev 3: 2026-07-15 01:00** — acs cycle 191, report_export+decay_model+alert_correlation (+43 tests, 2593→2636). Export+predictive+causal.
 - **Evening Dev: 2026-07-14 21:05** — amg cycles 239-242, immutable_store/compact/serialize/integrity (+145 tests, 2983→3128).
-- **Evening Dev: 2026-07-14 22:25** — amg cycle 243, semantic_speed_gate+selective_filter (+37 tests, 3128→3165).
+- **Evening Dev: 2026-07-15 22:25** — amg cycle 249, dual-mode binary signature / SimHash fast path (+28 tests, 3326→3354). Hippocampus-inspired.
 - **Key Dev 1: 2026-07-14 23:00** — amg cycle 244, immutable_store reimplementation (+35 tests, 2038→2073).
 
 ## ⚠️ 已知问题
