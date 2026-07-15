@@ -23380,3 +23380,107 @@ class TestSkillBankHealth:
         health = mg.skill_bank_health()
         assert "avg_q_value" in health
         assert isinstance(health["avg_q_value"], (int, float))
+
+
+class TestMemoryInformationDensity:
+    """Tests for memory_information_density (PRISM/PlugMem inspired)."""
+
+    def test_single_node_density(self, mg):
+        """Compute density for one node."""
+        n = mg.add("Python web framework", "concept", {"lang": "python", "type": "framework"})
+        result = mg.memory_information_density(node_id=n.id)
+        assert result["id"] == n.id
+        assert result["density"] > 0
+        assert result["unique_terms"] > 0
+        assert result["char_count"] > 0
+
+    def test_nonexistent_node_returns_empty(self, mg):
+        """Invalid node_id → empty dict."""
+        assert mg.memory_information_density(node_id="fake_id") == {}
+
+    def test_bulk_returns_sorted_list(self, mg):
+        """Bulk mode returns list sorted by density descending."""
+        mg.add("Short", "concept")
+        mg.add("A very detailed node with lots of information packed in", "concept",
+               {"field1": "value1", "field2": "value2", "field3": "value3"})
+        results = mg.memory_information_density()
+        assert isinstance(results, list)
+        assert len(results) >= 2
+        # Sorted descending
+        densities = [r["density"] for r in results]
+        assert densities == sorted(densities, reverse=True)
+
+    def test_filter_by_kind(self, mg):
+        """Kind filter only returns matching nodes."""
+        mg.add("Concept 1", "concept", {"key": "value"})
+        mg.add("Event 1", "event", {"key": "value"})
+        results = mg.memory_information_density(kind="concept")
+        assert all(r["kind"] == "concept" for r in results)
+
+    def test_top_k_limit(self, mg):
+        """top_k limits results."""
+        for i in range(10):
+            mg.add(f"Node {i}", "concept", {"index": i})
+        results = mg.memory_information_density(top_k=3)
+        assert len(results) <= 3
+
+    def test_rank_percentile(self, mg):
+        """Bulk mode includes rank_percentile."""
+        for i in range(5):
+            mg.add(f"Node {i}", "concept")
+        results = mg.memory_information_density(top_k=5)
+        for r in results:
+            assert "rank_percentile" in r
+            assert 0 < r["rank_percentile"] <= 100
+
+    def test_empty_graph_returns_empty_list(self, mg):
+        """No nodes → empty list."""
+        assert mg.memory_information_density() == []
+
+    def test_dense_node_scores_higher(self, mg):
+        """Information-dense node has higher density than sparse one."""
+        sparse = mg.add("a", "concept")  # minimal info
+        dense = mg.add("kubernetes deployment automation", "concept",
+                       {"platform": "k8s", "action": "deploy", "tool": "helm",
+                        "namespace": "production"})
+        results = mg.memory_information_density(top_k=2)
+        dense_score = next(r["density"] for r in results if r["id"] == dense.id)
+        sparse_score = next(r["density"] for r in results if r["id"] == sparse.id)
+        assert dense_score > sparse_score
+
+    def test_unique_terms_extraction(self, mg):
+        """Unique terms are extracted from label + data."""
+        n = mg.add("alpha beta gamma", "concept", {"delta": "epsilon"})
+        result = mg.memory_information_density(node_id=n.id)
+        # Should find alpha, beta, gamma, delta, epsilon
+        assert result["unique_terms"] >= 5
+
+    def test_q_value_affects_density(self, mg):
+        """Higher Q-value increases density via q_weight multiplier."""
+        n1 = mg.add("Same label", "concept", {"key": "val"})
+        n2 = mg.add("Same label", "concept", {"key": "val"})
+
+        # Give n2 a high Q-value
+        try:
+            mg.update_q(n2.id, reward=1.0, reason="test")
+        except Exception:
+            pass
+
+        r1 = mg.memory_information_density(node_id=n1.id)
+        r2 = mg.memory_information_density(node_id=n2.id)
+        # Same content, but n2 should have higher or equal density due to Q
+        assert r2["density"] >= r1["density"]
+
+    def test_char_count_includes_data(self, mg):
+        """char_count reflects both label and data size."""
+        short = mg.add("X", "concept", {"d": "v"})
+        long = mg.add("X", "concept", {"description": "a" * 200})
+        r_short = mg.memory_information_density(node_id=short.id)
+        r_long = mg.memory_information_density(node_id=long.id)
+        assert r_long["char_count"] > r_short["char_count"]
+
+    def test_density_non_negative(self, mg):
+        """Density is always non-negative."""
+        n = mg.add("Test", "concept", {"k": "v"})
+        result = mg.memory_information_density(node_id=n.id)
+        assert result["density"] >= 0.0

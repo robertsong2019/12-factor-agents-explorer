@@ -23645,6 +23645,129 @@ class MemoryGraph:
             "recommendations": recs,
         }
 
+    # ── Memory Information Density (PRISM / PlugMem inspired) ──────
+
+    def memory_information_density(self, *, node_id: str = None,
+                                   kind: str = None,
+                                   top_k: int = 20) -> dict | list[dict]:
+        """Compute information density metrics for memory nodes.
+
+        Inspired by:
+            - PRISM (arXiv:2607): accuracy–context–cost Pareto frontier
+            - PlugMem (ICML 2026): Memory Information Density (PMI/token)
+
+        Density is defined as the ratio of **useful semantic content** to
+        **storage cost** (in characters), giving a per-node score.
+
+        For each node, density = (unique_terms / char_count) × q_value_weight,
+        where:
+            - unique_terms = number of distinct non-trivial words in label + data
+            - char_count = total characters of serialised label + data JSON
+            - q_value_weight = 0.5 + q_value (range [0.5, 1.5])
+
+        A higher score means more information per token — the node is
+        information-dense.
+
+        Args:
+            node_id: Score a single node. Returns a dict.
+            kind: Filter by node kind.  Returns top-k densest.
+            top_k: Limit when returning a ranked list.
+
+        Returns:
+            If *node_id* given: ``{id, label, kind, density, unique_terms,
+            char_count, q_value, rank_percentile}``.
+
+            Otherwise: list of dicts sorted by density descending, length ≤ top_k.
+        """
+        import math as _math
+
+        if node_id is not None:
+            row = self.conn.execute(
+                "SELECT id, label, kind, data, weight FROM nodes WHERE id=?",
+                (node_id,)
+            ).fetchone()
+            if not row:
+                return {}
+            return self._compute_density(row)
+
+        # Bulk: optionally filter by kind
+        if kind:
+            rows = self.conn.execute(
+                "SELECT id, label, kind, data, weight FROM nodes WHERE kind=? ORDER BY weight DESC",
+                (kind,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, label, kind, data, weight FROM nodes ORDER BY weight DESC"
+            ).fetchall()
+
+        if not rows:
+            return []
+
+        scored = [self._compute_density(r) for r in rows]
+        scored.sort(key=lambda x: x.get("density", 0), reverse=True)
+
+        # Add rank percentile
+        total = len(scored)
+        for i, entry in enumerate(scored[:top_k]):
+            entry["rank_percentile"] = round((total - i) / total * 100, 1)
+
+        return scored[:top_k]
+
+    def _compute_density(self, row) -> dict:
+        """Compute information density for a single node row."""
+        label = row["label"] or ""
+        raw_data = row["data"]
+        if isinstance(raw_data, str):
+            try:
+                data = json.loads(raw_data)
+            except Exception:
+                data = {}
+        else:
+            data = raw_data or {}
+
+        # Flatten data into a text blob
+        data_str = json.dumps(data, ensure_ascii=False, sort_keys=True)
+        full_text = (label + " " + data_str).lower()
+
+        # Unique non-trivial terms (len > 2 to skip stop-word-ish tokens)
+        terms = set(
+            w for w in full_text.replace("{", " ").replace("}", " ")
+            .replace('"', " ").replace(":", " ").replace(",", " ")
+            .replace("[", " ").replace("]", " ")
+            .split()
+            if len(w) > 2
+        )
+        unique_terms = len(terms)
+
+        # Character cost
+        char_count = len(label) + len(data_str)
+        if char_count == 0:
+            char_count = 1
+
+        # Q-value weight
+        try:
+            qrow = self.conn.execute(
+                "SELECT q_value FROM nodes WHERE id=?", (row["id"],)
+            ).fetchone()
+            q_val = qrow["q_value"] if qrow and qrow["q_value"] is not None else 0.5
+        except Exception:
+            q_val = 0.5
+
+        q_weight = 0.5 + max(0.0, min(1.0, q_val))
+
+        density = (unique_terms / char_count) * q_weight
+
+        return {
+            "id": row["id"],
+            "label": label,
+            "kind": row["kind"],
+            "density": round(density, 6),
+            "unique_terms": unique_terms,
+            "char_count": char_count,
+            "q_value": round(q_val, 4),
+        }
+
 
 
 def demo():
