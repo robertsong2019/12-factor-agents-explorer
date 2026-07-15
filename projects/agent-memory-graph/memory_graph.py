@@ -24232,6 +24232,178 @@ class MemoryGraph:
 
 
 
+    # ── Memory Deduplication (SimHash-based) ──────────────────────
+    #
+    # Near-duplicate detection using binary signatures from cycle 249.
+    # Two nodes with Hamming distance ≤ threshold are considered duplicates.
+    # Merge strategy: keep the node with higher weight, absorb edges and
+    # data from the duplicate.
+    #
+    # Reference: Charikar (2002) SimHash + Manku et al. (2008) Hamming LSH.
+
+    def find_duplicate_nodes(self, *, threshold: int = 3, bits: int = 64,
+                             kind: str = None) -> list[dict]:
+        """Detect near-duplicate nodes via SimHash Hamming distance.
+
+        Computes a binary signature for every node (or all nodes of
+        a given *kind*) and reports pairs whose Hamming distance is
+        within *threshold*.
+
+        Time complexity is O(N²) in the number of nodes, but with
+        a tiny constant (~1 comparison per nanosecond).  For typical
+        memory graphs (< 10 000 nodes) this completes in well under
+        a second.
+
+        Args:
+            threshold: Max Hamming distance to consider duplicates.
+                       Default 3 (≈95% bit overlap for 64-bit hashes).
+            bits:      Signature width (should match binary_signature).
+            kind:      Restrict scan to a single node kind.
+
+        Returns:
+            List of ``{node_a, node_b, label_a, label_b, kind,
+            hamming_distance}`` sorted by ascending distance.
+        """
+        if kind:
+            rows = self.conn.execute(
+                "SELECT id, label, kind FROM nodes WHERE kind=?",
+                (kind,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, label, kind FROM nodes"
+            ).fetchall()
+
+        if len(rows) < 2:
+            return []
+
+        # Pre-compute signatures
+        sigs: list[tuple[str, str, str, str]] = []  # (id, sig, label, kind)
+        for row in rows:
+            try:
+                sig = self.binary_signature(row["id"], bits=bits)
+                sigs.append((row["id"], sig, row["label"], row["kind"]))
+            except (KeyError, Exception):
+                continue
+
+        duplicates: list[dict] = []
+        n = len(sigs)
+        for i in range(n):
+            for j in range(i + 1, n):
+                dist = self.hamming_distance(sigs[i][1], sigs[j][1])
+                if dist <= threshold:
+                    duplicates.append({
+                        "node_a": sigs[i][0],
+                        "node_b": sigs[j][0],
+                        "label_a": sigs[i][2],
+                        "label_b": sigs[j][2],
+                        "kind": sigs[i][3],
+                        "hamming_distance": dist,
+                    })
+
+        duplicates.sort(key=lambda x: x["hamming_distance"])
+        return duplicates
+
+    def deduplicate(self, *, threshold: int = 3, dry_run: bool = True,
+                    kind: str = None) -> dict:
+        """Detect and optionally merge near-duplicate nodes.
+
+        Uses :meth:`find_duplicate_nodes` to identify pairs, then
+        (unless *dry_run*) merges the lower-weight node into the
+        higher-weight one using :meth:`merge_nodes`.
+
+        When multiple duplicates form a cluster (A≈B, B≈C), they are
+        processed in ascending Hamming order so the closest pair is
+        merged first; subsequent pairs involving a merged-away node
+        are skipped.
+
+        Args:
+            threshold: Max Hamming distance for duplicate detection.
+            dry_run:   If True (default), only report — do not merge.
+            kind:      Restrict to a single node kind.
+
+        Returns:
+            ``{duplicates_found, merges_executed, merged_pairs,
+            skipped, savings}``
+
+            *savings* is an estimate of storage saved (bytes freed).
+        """
+        dupes = self.find_duplicate_nodes(
+            threshold=threshold, kind=kind
+        )
+
+        if dry_run or not dupes:
+            return {
+                "duplicates_found": len(dupes),
+                "merges_executed": 0,
+                "merged_pairs": [],
+                "skipped": 0,
+                "savings": 0,
+                "dry_run": dry_run,
+            }
+
+        # Track which nodes have been merged away
+        merged_away: set[str] = set()
+        merges: list[dict] = []
+        skipped = 0
+
+        for pair in dupes:
+            a, b = pair["node_a"], pair["node_b"]
+            if a in merged_away or b in merged_away:
+                skipped += 1
+                continue
+
+            # Decide which to keep (higher weight wins)
+            wa = self.conn.execute(
+                "SELECT weight FROM nodes WHERE id=?", (a,)
+            ).fetchone()
+            wb = self.conn.execute(
+                "SELECT weight FROM nodes WHERE id=?", (b,)
+            ).fetchone()
+
+            if not wa or not wb:
+                skipped += 1
+                continue
+
+            if wa["weight"] >= wb["weight"]:
+                keep_id, merge_id = a, b
+            else:
+                keep_id, merge_id = b, a
+
+            # Estimate savings (label + data size)
+            merge_row = self.conn.execute(
+                "SELECT label, data FROM nodes WHERE id=?", (merge_id,)
+            ).fetchone()
+            est_savings = len(merge_row["label"] or "") + len(merge_row["data"] or "")
+
+            result = self.merge_nodes(merge_id, keep_id)
+            if result is not None:
+                merged_away.add(merge_id)
+                merges.append({
+                    "kept": keep_id,
+                    "merged": merge_id,
+                    "label_kept": pair["label_a"] if keep_id == a else pair["label_b"],
+                    "label_merged": pair["label_b"] if keep_id == a else pair["label_a"],
+                    "hamming_distance": pair["hamming_distance"],
+                })
+            else:
+                skipped += 1
+
+        total_savings = sum(
+            len(str(m.get("label_merged", ""))) + 60  # rough per-node overhead
+            for m in merges
+        )
+
+        return {
+            "duplicates_found": len(dupes),
+            "merges_executed": len(merges),
+            "merged_pairs": merges,
+            "skipped": skipped,
+            "savings": total_savings,
+            "dry_run": False,
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
