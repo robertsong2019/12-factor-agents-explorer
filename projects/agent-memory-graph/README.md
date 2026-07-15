@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-3249-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-3444-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -49,6 +49,12 @@
 - **图收缩** — contract_nodes 节点合并为超节点 / contract_communities 社区级超节点折叠
 - **自适应检索** — QDAP-v2 6 类查询分类器 (trivial/exact/semantic/relational/temporal/exploratory) + 连续权重插值 + SkewRoute 分数偏度分析 + Entropy 修正，per-query 动态融合权重
 - **图拓扑分析** — find_cycle 环路检测 (DFS back-edge) + graph_periphery 最远节点 + maximal_cliques Bron-Kerbosch 极大团枚举 + clique_number/largest_clique + clique_overlap_matrix 团重叠矩阵 + k_clique_communities CPM 重叠社区
+- **程序性记忆压缩** — compress_to_skill / retrieve_skills / evolve_skill / skill_bank_health 将情景记忆压缩为可复用的技能节点 (Experience Compression Spectrum L1→L2)
+- **信息密度评估** — memory_information_density PRISM/PlugMem 启发的 Pareto 指标，衡量每个节点的信息量/token 比
+- **意图感知检索** — detect_query_intent / intent_aware_edge_cost / retrieve_with_intent PRISM 启发的查询意图路由，按意图类型调整边遍历成本
+- **双模检索** — binary_signature / similarity_search_binary / dual_mode_retrieve Hippocampus 启发的 SimHash 二进制签名预过滤 + 图重排序两阶段检索
+- **去重** — find_duplicate_nodes / deduplicate 基于 SimHash 汉明距离的近重复节点检测与合并
+- **洛伦兹系数与重定义指数** — lorenz_coefficient (度分布 Gini 系数) + redefined_randic_indices (Randić 2008 三变体) + redefined_zagreb_index (第三 Zagreb 指数)
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## 安装
@@ -2185,6 +2191,12 @@ python3 -m pytest test_memory_graph.py -q
 45. **Token 预算序列化** — serialize() 按指定 token 预算贪心打包节点为 LLM 可用格式 (include_edges/include_data 可选)，serialize_compact() 自动压缩+序列化一步到位
 46. **关系完整性校验** — check_relation_integrity 检测 relation channel 上的值冲突（矛盾数据/ dangling references/ type mismatches）+ integrity_quarantine 自动隔离高危节点。数据质量守卫
 47. **语义速度门控 + 选择性过滤** — semantic_speed_gate 测量节点邻域波动率（边增删频率），speed_gate_batch 批量门控，volatile_nodes 高波动节点排行 + selective_filter 多维度质量过滤（权重/kind/标签/隔离/完整度）+ selective_filter_report 过滤摘要报告。SSGM 启发的动态质量管控
+48. **程序性记忆压缩** — compress_to_skill 将多个情景记忆压缩为 Skill Contract 节点 (Experience Compression Spectrum L1→L2, Anything2Skill)，retrieve_skills 多信号检索 (文本相关性+置信度+Q值+时效)，evolve_skill 反馈驱动版本演进 (AutoRefine)，skill_bank_health 技能库健康度
+49. **信息密度评估** — memory_information_density PRISM/PlugMem 启发的 Pareto 指标 (unique_terms/char_count × q_value_weight)，衡量每节点的信息量/token 比，支持 kind 过滤和 top-k 排名
+50. **意图感知边成本** — detect_query_intent 4 类查询分类 (temporal/causal/multi_hop/factual) + intent_aware_edge_cost 按意图调整边遍历成本 (temporal 查询折扣时序边，causal 折扣因果边) + retrieve_with_intent 意图路由检索管线 (PRISM 启发)
+51. **双模 SimHash 检索** — binary_signature (64-bit SimHash) + similarity_search_binary (汉明距离 O(N) 近邻搜索) + dual_mode_retrieve (二进制预过滤→图重排序两阶段，Hippocampus 启发：31× 更快检索，14× 更少 token)
+52. **去重与合并** — find_duplicate_nodes O(N²) 汉明距离近重复检测 + deduplicate 自动合并 (高权重节点吸收低权重节点的边和数据，Charikar 2002 SimHash + Manku 2008 Hamming LSH)
+53. **洛伦兹系数与重定义指数** — lorenz_coefficient (度分布 Gini 系数 + Lorenz 曲线) + redefined_randic_indices (Randić 2008: RD₁/RD₂/RD₃ 三变体) + redefined_zagreb_index (ReZM₃ = Σ(d_u+d_v)·(d_u·d_v))，拓扑指数扩展至十七族
 
 ---
 
@@ -2364,6 +2376,195 @@ result = mg.serialize(
 #### `selective_filter_report(node_ids, **kwargs) -> dict`
 
 运行 `selective_filter` 并生成摘要报告：输入数、通过数、各维度淘汰数。
+
+---
+
+### 程序性记忆压缩 (Cycle 245)
+
+> Experience Compression Spectrum (Zhang et al., arXiv:2604.15877) + Anything2Skill (arXiv:2607.09033)
+
+#### `compress_to_skill(episode_ids, name, *, description="", confidence=0.5) -> Node | None`
+
+将多个情景记忆节点压缩为一个 `kind='skill'` 的技能节点。创建 Skill Contract 数据结构 (skill_name/description/source_episodes/steps/constraints/confidence/version)，链接技能→每个源节点（`abstracts` 边），并给予 Q 值提升。
+
+```python
+episodes = ["node-001", "node-002", "node-003"]
+skill = mg.compress_to_skill(episodes, "deploy_to_staging",
+                             description="Standard deploy workflow")
+print(skill.data["compression_ratio"])  # ~15.0 (3 episodes × 5)
+print(skill.data["steps"])  # extracted action steps
+```
+
+#### `retrieve_skills(context="", *, top_k=5, min_confidence=0.0, tags=None) -> list[Node]`
+
+多信号技能检索。评分 = 0.30×文本相关性 + 0.25×置信度 + 0.30×Q值 + 0.15×时效性。
+
+#### `evolve_skill(skill_id, *, feedback=0.0, new_steps=None, new_constraints=None, description=None, reason="") -> Node | None`
+
+反馈驱动的技能演进。正向 feedback 提升置信度和 Q 值，负向降低。置信度 < 0.1 时标记 deprecated。使用 semver 版本追踪，supersede 链记录历史。
+
+```python
+# 技能成功使用后强化
+mg.evolve_skill(skill.id, feedback=0.3, reason="successful deploy")
+
+# 技能失败后弱化
+mg.evolve_skill(skill.id, feedback=-0.5, new_constraints=["requires Python 3.12+"],
+               reason="failed on Python 3.11")
+```
+
+#### `skill_bank_health() -> dict`
+
+技能库健康度报告：总数、活跃、已废弃、平均置信度、平均 Q 值。
+
+---
+
+### 信息密度评估 (Cycle 246)
+
+> PRISM (arXiv:2607) + PlugMem (ICML 2026) 启发
+
+#### `memory_information_density(*, node_id=None, kind=None, top_k=20) -> dict | list[dict]`
+
+计算记忆节点的信息密度：`density = (unique_terms / char_count) × q_value_weight`。
+
+- **unique_terms**: label + data 中长度 > 2 的不同词数
+- **char_count**: label + JSON 序列化 data 的总字符数
+- **q_value_weight**: 0.5 + q_value (范围 [0.5, 1.5])
+
+```python
+# 全图密度 Top 5
+dense = mg.memory_information_density(top_k=5)
+for d in dense:
+    print(f"{d['label']}: density={d['density']}, terms={d['unique_terms']}")
+
+# 单节点密度
+info = mg.memory_information_density(node_id="node-001")
+print(info["rank_percentile"])  # e.g. 95.2
+```
+
+---
+
+### 意图感知边成本 (Cycle 247)
+
+> PRISM (arXiv:2607) 启发的意图路由
+
+#### `detect_query_intent(query) -> str`
+
+将查询分类为四种意图类型：
+
+| 类型 | 关键词示例 | 优先边类型 |
+|------|-----------|-----------|
+| `temporal` | when/before/after/timeline/什么时候 | supersedes, causes |
+| `causal` | why/because/cause/为什么/原因 | causes, prevents, enables |
+| `multi_hop` | connect/path/link/关联/链路 | similar_to, related_to |
+| `factual` | _(默认)_ | 无特殊加权 |
+
+#### `intent_aware_edge_cost(query, *, node_id=None) -> dict`
+
+计算意图调整后的边成本。每种意图有不同的 edge-type affinity multiplier（< 1.0 = 折扣，> 1.0 = 惩罚）。
+
+```python
+result = mg.intent_aware_edge_cost("why did the deploy fail?")
+# {'intent': 'causal', 'edge_count': 12,
+#  'edges': [{'source': '...', 'relation': 'causes', 'adjusted_cost': 0.2, ...}, ...]}
+```
+
+#### `retrieve_with_intent(query, *, limit=10) -> dict`
+
+意图路由检索管线：1) 检测意图 → 2) 标准 retrieve 管线 → 3) 意图感知边成本重排序。
+
+返回 `{intent, results: [...], edge_adjustments: {...}}`。
+
+---
+
+### 双模 SimHash 检索 (Cycles 249-250)
+
+> Hippocampus (arXiv:2602.13594) 启发 — 31× 更快检索，14× 更少 token
+
+#### `binary_signature(node_id, *, bits=64) -> str`
+
+计算节点的 SimHash 二进制签名。基于 label + data 的 token-level MD5 哈希加权和，中位数阈值量化为 bit string。相同内容 → 相同签名；语义相似 → 少量 bit 差异。
+
+#### `similarity_search_binary(query, *, limit=10, max_hamming=None, kind=None) -> list[dict]`
+
+二进制签名相似度搜索。计算查询的 SimHash，扫描所有节点的汉明距离。O(N) 但常数极小 (~1 cmp/ns)。
+
+```python
+results = mg.similarity_search_binary("deploy failure", max_hamming=20)
+# [{'node_id': '...', 'label': 'deploy error', 'hamming_distance': 5}, ...]
+```
+
+#### `dual_mode_retrieve(query, *, limit=10) -> dict`
+
+两阶段检索：**Phase 1** 二进制预过滤（SimHash 汉明距离筛选 3×limit 候选）→ **Phase 2** 图检索+重排序（blend binary_similarity × 0.4 + graph_score × 0.6）。小图 (< 10 节点) 自动跳过二进制阶段。
+
+```python
+result = mg.dual_mode_retrieve("rust memory safety")
+# {'candidates': [...], 'results': [...],
+#  'binary_phase': {'candidate_count': 30, 'query_signature': '10101...'},
+#  'graph_phase': {'method': 'retrieve_rerank', 'count': 10}}
+```
+
+---
+
+### 去重与合并 (Cycle 250)
+
+> Charikar (2002) SimHash + Manku et al. (2008) Hamming LSH
+
+#### `find_duplicate_nodes(*, threshold=3, bits=64, kind=None) -> list[dict]`
+
+检测近重复节点。预计算每个节点的 SimHash，O(N²) 两两比对汉明距离。threshold=3 表示 ≥95% bit 重叠即为重复。
+
+```python
+dupes = mg.find_duplicate_nodes(threshold=3)
+# [{'node_a': '...', 'node_b': '...', 'label_a': 'deploy error',
+#   'label_b': 'deployment error', 'hamming_distance': 2}, ...]
+```
+
+#### `deduplicate(*, threshold=3, dry_run=True, kind=None) -> dict`
+
+检测并合并近重复节点。合并策略：高权重节点吸收低权重节点的边和数据（使用 `merge_nodes`）。簇处理（A≈B, B≈C）按汉明距离升序合并，已合并节点跳过。
+
+```python
+# 先 dry run 查看结果
+report = mg.deduplicate(threshold=3, dry_run=True)
+print(report["duplicates_found"])  # e.g. 5
+
+# 实际合并
+report = mg.deduplicate(threshold=3, dry_run=False)
+print(report["merges_executed"])   # e.g. 3
+print(report["savings"])           # est. bytes saved
+```
+
+---
+
+### 洛伦兹系数与重定义指数 (Cycle 251)
+
+#### `lorenz_coefficient() -> dict | None`
+
+度分布的 Lorenz 系数 / Gini 指数。衡量节点度分布的不均等程度。
+
+| Gini 值 | 含义 |
+|---------|------|
+| 0.0 | 完全均等（正则图，每个节点度相同） |
+| 1.0 | 最大不均等（星型图，一个 hub + 所有其他节点度=1） |
+| < 0.3 | 平等主义 |
+| > 0.6 | Hub 主导 |
+
+返回 `{gini, lorenz_curve, mean_degree, degree_sequence}`。
+
+#### `redefined_randic_indices() -> dict | None`
+
+Randić (2008) 重定义 Randić 指数三变体：
+
+- **RD₁** = Σ (d_u·d_v / (d_u+d_v))
+- **RD₂** = Σ (d_u·d_v / (d_u+d_v))²
+- **RD₃** = Σ (d_u·d_v / (d_u+d_v))³
+
+高次变体对高度数边区分度更强。返回 `{rd1, rd2, rd3}`。
+
+#### `redefined_zagreb_index() -> float | None`
+
+第三 Zagreb 重定义指数：ReZM₃ = Σ (d_u+d_v)·(d_u·d_v)。结合加性 (M₁-like) 和乘性 (M₂-like) 度项。
 
 ---
 
