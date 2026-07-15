@@ -22994,3 +22994,389 @@ class TestHararyIndex:
         mg.harary_index()
         after = mg.harary_index()
         assert before == after
+
+
+# ── Procedural Memory: compress_to_skill / retrieve_skills / evolve_skill / skill_bank_health ──
+
+
+class TestCompressToSkill:
+    """Tests for L1→L2 experience compression (compress_to_skill)."""
+
+    def test_basic_compression(self, mg):
+        """Compress 3 episodes into a single skill node."""
+        e1 = mg.add("Deployed API", "event", {"action": "run tests"})
+        e2 = mg.add("Built docker image", "event", {"action": "docker build"})
+        e3 = mg.add("Pushed to registry", "event", {"action": "docker push"})
+
+        skill = mg.compress_to_skill(
+            [e1.id, e2.id, e3.id], "CI/CD Pipeline",
+            description="Standard deployment workflow"
+        )
+        assert skill is not None
+        assert skill.kind == "skill"
+        assert skill.label == "CI/CD Pipeline"
+        d = skill.data
+        assert d["skill_name"] == "CI/CD Pipeline"
+        assert d["source_count"] == 3
+        assert d["confidence"] == 0.5
+        assert d["version"] == "0.1.0"
+        assert "run tests" in d["steps"]
+        assert "docker build" in d["steps"]
+        assert "docker push" in d["steps"]
+
+    def test_empty_episodes_returns_none(self, mg):
+        """No episodes → no skill."""
+        assert mg.compress_to_skill([], "Empty") is None
+
+    def test_all_invalid_ids_returns_none(self, mg):
+        """All invalid IDs → no skill."""
+        assert mg.compress_to_skill(["bad1", "bad2"], "Phantom") is None
+
+    def test_some_invalid_ids_uses_valid_only(self, mg):
+        """Mix of valid+invalid → uses valid subset."""
+        e1 = mg.add("Real episode", "event", {"action": "do thing"})
+        skill = mg.compress_to_skill([e1.id, "fake_id"], "Partial")
+        assert skill is not None
+        assert skill.data["source_count"] == 1
+
+    def test_compression_ratio(self, mg):
+        """Compression ratio scales with episode count."""
+        eps = [mg.add(f"Step {i}", "event", {"action": f"a{i}"}) for i in range(5)]
+        skill = mg.compress_to_skill([e.id for e in eps], "Five-step skill")
+        # 5 episodes × 5x factor = 25.0
+        assert skill.data["compression_ratio"] == 25.0
+
+    def test_links_to_source_episodes(self, mg):
+        """Skill node links to sources via 'abstracts' edges."""
+        e1 = mg.add("First", "event")
+        e2 = mg.add("Second", "event")
+        skill = mg.compress_to_skill([e1.id, e2.id], "Linked Skill")
+
+        neighbors = mg.neighbors(skill.id)
+        linked_ids = {n.id for n in neighbors}
+        assert e1.id in linked_ids
+        assert e2.id in linked_ids
+
+    def test_confidence_clamping(self, mg):
+        """Confidence clamped to [0, 1]."""
+        e = mg.add("Episode", "event")
+        skill_high = mg.compress_to_skill([e.id], "High", confidence=5.0)
+        assert skill_high.data["confidence"] == 1.0
+
+        e2 = mg.add("Episode2", "event")
+        skill_low = mg.compress_to_skill([e2.id], "Low", confidence=-1.0)
+        assert skill_low.data["confidence"] == 0.0
+
+    def test_dedup_steps(self, mg):
+        """Duplicate steps are deduplicated."""
+        e1 = mg.add("First", "event", {"action": "build"})
+        e2 = mg.add("Second", "event", {"action": "build"})
+        skill = mg.compress_to_skill([e1.id, e2.id], "Dedup")
+        assert skill.data["steps"].count("build") == 1
+
+    def test_source_kinds_tracked(self, mg):
+        """Source episode kinds are recorded."""
+        e1 = mg.add("Event 1", "event")
+        f1 = mg.add("Fact 1", "fact")
+        skill = mg.compress_to_skill([e1.id, f1.id], "Mixed")
+        assert "event" in skill.data["source_kinds"]
+        assert "fact" in skill.data["source_kinds"]
+
+    def test_default_confidence_is_half(self, mg):
+        """Default confidence is 0.5."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Default")
+        assert skill.data["confidence"] == 0.5
+
+    def test_tags_include_procedural(self, mg):
+        """Skill gets 'procedural' and 'compressed' tags."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Tagged")
+        row = mg.conn.execute("SELECT tags FROM nodes WHERE id=?", (skill.id,)).fetchone()
+        tags = json.loads(row["tags"])
+        assert "procedural" in tags
+        assert "compressed" in tags
+
+    def test_skill_node_has_kind_skill(self, mg):
+        """Created node kind is 'skill'."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Kind Check")
+        assert skill.kind == "skill"
+
+    def test_empty_description_default(self, mg):
+        """Description defaults to empty string."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "No Desc")
+        assert skill.data["description"] == ""
+
+
+class TestRetrieveSkills:
+    """Tests for procedural skill retrieval (retrieve_skills)."""
+
+    def test_retrieve_returns_skills(self, mg):
+        """retrieve_skills returns matching skill nodes."""
+        e1 = mg.add("Write tests", "event", {"action": "pytest"})
+        e2 = mg.add("Run tests", "event", {"action": "pytest run"})
+        mg.compress_to_skill([e1.id, e2.id], "Test Workflow",
+                             description="Testing with pytest")
+
+        results = mg.retrieve_skills("test pytest")
+        assert len(results) >= 1
+        assert results[0].kind == "skill"
+
+    def test_retrieve_no_skills_returns_empty(self, mg):
+        """Empty skill bank → empty list."""
+        assert mg.retrieve_skills("anything") == []
+
+    def test_retrieve_respects_top_k(self, mg):
+        """top_k limits results."""
+        for i in range(5):
+            e = mg.add(f"Episode {i}", "event", {"action": f"action_{i}"})
+            mg.compress_to_skill([e.id], f"Skill {i}")
+        results = mg.retrieve_skills("action", top_k=2)
+        assert len(results) <= 2
+
+    def test_retrieve_min_confidence_filter(self, mg):
+        """Low-confidence skills are filtered out."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Low Conf", confidence=0.1)
+        results = mg.retrieve_skills("", min_confidence=0.5)
+        assert skill.id not in {s.id for s in results}
+
+    def test_retrieve_no_context_returns_neutral(self, mg):
+        """Empty context still returns skills (neutral scoring)."""
+        e = mg.add("E", "event")
+        mg.compress_to_skill([e.id], "Contextless")
+        results = mg.retrieve_skills("")
+        assert len(results) >= 1
+
+    def test_retrieve_ranks_by_relevance(self, mg):
+        """More relevant skill ranks higher."""
+        e1 = mg.add("Deploy", "event", {"action": "deploy kubernetes"})
+        mg.compress_to_skill([e1.id], "K8s Deploy",
+                             description="kubernetes deployment")
+
+        e2 = mg.add("Cook", "event", {"action": "cook pasta"})
+        mg.compress_to_skill([e2.id], "Pasta Recipe",
+                             description="cooking italian food")
+
+        results = mg.retrieve_skills("kubernetes deploy")
+        assert results[0].label == "K8s Deploy"
+
+    def test_retrieve_orders_by_combined_score(self, mg):
+        """High-confidence skill with matching context wins."""
+        e1 = mg.add("A", "event", {"action": "python script"})
+        mg.compress_to_skill([e1.id], "Python Runner",
+                             confidence=0.9,
+                             description="run python scripts")
+
+        e2 = mg.add("B", "event", {"action": "python script"})
+        mg.compress_to_skill([e2.id], "Python Runner 2",
+                             confidence=0.2,
+                             description="run python scripts")
+
+        results = mg.retrieve_skills("python", top_k=2)
+        assert results[0].data["confidence"] >= results[-1].data["confidence"]
+
+
+class TestEvolveSkill:
+    """Tests for skill evolution (evolve_skill)."""
+
+    def test_positive_feedback_increases_confidence(self, mg):
+        """Positive feedback → higher confidence."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Skill", confidence=0.5)
+        old_conf = skill.data["confidence"]
+
+        evolved = mg.evolve_skill(skill.id, feedback=1.0, reason="worked great")
+        assert evolved.data["confidence"] > old_conf
+
+    def test_negative_feedback_decreases_confidence(self, mg):
+        """Negative feedback → lower confidence."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Skill", confidence=0.5)
+        old_conf = skill.data["confidence"]
+
+        evolved = mg.evolve_skill(skill.id, feedback=-1.0, reason="failed")
+        assert evolved.data["confidence"] < old_conf
+
+    def test_version_bump(self, mg):
+        """Evolution increments patch version."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Skill")
+        assert skill.data["version"] == "0.1.0"
+
+        evolved = mg.evolve_skill(skill.id, feedback=0.5)
+        assert evolved.data["version"] == "0.1.1"
+
+        evolved2 = mg.evolve_skill(skill.id, feedback=0.5)
+        assert evolved2.data["version"] == "0.1.2"
+
+    def test_add_new_steps(self, mg):
+        """New steps are appended to the skill."""
+        e = mg.add("E", "event", {"action": "step1"})
+        skill = mg.compress_to_skill([e.id], "Skill")
+        evolved = mg.evolve_skill(skill.id, feedback=0.5,
+                                  new_steps=["step2", "step3"])
+        assert "step2" in evolved.data["steps"]
+        assert "step3" in evolved.data["steps"]
+        assert "step1" in evolved.data["steps"]
+
+    def test_add_constraints(self, mg):
+        """Constraints are appended."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Skill")
+        evolved = mg.evolve_skill(skill.id, feedback=0.5,
+                                  new_constraints=["max 3 retries"])
+        assert "max 3 retries" in evolved.data["constraints"]
+
+    def test_update_description(self, mg):
+        """Description can be updated."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Skill", description="old")
+        evolved = mg.evolve_skill(skill.id, feedback=0.5,
+                                  description="new description")
+        assert evolved.data["description"] == "new description"
+
+    def test_deprecation_when_confidence_too_low(self, mg):
+        """Skill gets 'deprecated' tag when confidence < 0.1."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Skill", confidence=0.15)
+        evolved = mg.evolve_skill(skill.id, feedback=-1.0,
+                                  reason="total failure")
+        row = mg.conn.execute("SELECT tags FROM nodes WHERE id=?", (evolved.id,)).fetchone()
+        tags = json.loads(row["tags"])
+        assert "deprecated" in tags
+
+    def test_undeprecated_when_confidence_recovers(self, mg):
+        """Deprecated tag removed when confidence recovers above 0.1."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Skill", confidence=0.05)
+        # Manually set deprecated tag (compress won't add it automatically)
+        mg.conn.execute("UPDATE nodes SET tags=? WHERE id=?",
+                        (json.dumps(["procedural", "compressed", "deprecated"]),
+                         skill.id))
+        mg.conn.commit()
+
+        evolved = mg.evolve_skill(skill.id, feedback=1.0, reason="recovered")
+        row = mg.conn.execute("SELECT tags FROM nodes WHERE id=?", (evolved.id,)).fetchone()
+        tags = json.loads(row["tags"])
+        assert "deprecated" not in tags
+
+    def test_evolve_non_skill_returns_none(self, mg):
+        """Evolving a non-skill node returns None."""
+        n = mg.add("Not a skill", "fact")
+        assert mg.evolve_skill(n.id, feedback=0.5) is None
+
+    def test_evolve_nonexistent_returns_none(self, mg):
+        """Evolving a nonexistent ID returns None."""
+        assert mg.evolve_skill("fake_id", feedback=0.5) is None
+
+    def test_last_evolved_at_recorded(self, mg):
+        """Evolution timestamp is recorded."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Skill")
+        evolved = mg.evolve_skill(skill.id, feedback=0.5)
+        assert "last_evolved_at" in evolved.data
+        assert evolved.data["last_evolved_at"] > 0
+
+    def test_reason_recorded(self, mg):
+        """Evolution reason is recorded."""
+        e = mg.add("E", "event")
+        skill = mg.compress_to_skill([e.id], "Skill")
+        evolved = mg.evolve_skill(skill.id, feedback=0.5,
+                                  reason="user reported success")
+        assert evolved.data["last_evolution_reason"] == "user reported success"
+
+    def test_step_dedup_on_evolve(self, mg):
+        """Duplicate steps not added twice during evolution."""
+        e = mg.add("E", "event", {"action": "original"})
+        skill = mg.compress_to_skill([e.id], "Skill")
+        evolved = mg.evolve_skill(skill.id, new_steps=["original"])
+        assert evolved.data["steps"].count("original") == 1
+
+
+class TestSkillBankHealth:
+    """Tests for procedural skill bank health dashboard."""
+
+    def test_empty_skill_bank(self, mg):
+        """Empty bank returns zeros with helpful recommendation."""
+        health = mg.skill_bank_health()
+        assert health["total_skills"] == 0
+        assert health["active"] == 0
+        assert "compress_to_skill" in health["recommendations"][0]
+
+    def test_single_skill(self, mg):
+        """One healthy skill."""
+        e = mg.add("E", "event")
+        mg.compress_to_skill([e.id], "Solo Skill", confidence=0.8)
+        health = mg.skill_bank_health()
+        assert health["total_skills"] == 1
+        assert health["active"] == 1
+        assert health["deprecated"] == 0
+        assert health["avg_confidence"] == 0.8
+
+    def test_deprecated_count(self, mg):
+        """Deprecated skills counted separately."""
+        e1 = mg.add("E1", "event")
+        e2 = mg.add("E2", "event")
+        mg.compress_to_skill([e1.id], "Good", confidence=0.8)
+        s2 = mg.compress_to_skill([e2.id], "Bad", confidence=0.15)
+        mg.evolve_skill(s2.id, feedback=-1.0, reason="fail")
+        health = mg.skill_bank_health()
+        assert health["deprecated"] >= 1
+
+    def test_coverage_by_kind(self, mg):
+        """Source kinds are aggregated."""
+        e1 = mg.add("E1", "event")
+        f1 = mg.add("F1", "fact")
+        c1 = mg.add("C1", "concept")
+        mg.compress_to_skill([e1.id, f1.id], "Mixed A")
+        mg.compress_to_skill([c1.id], "Concept skill")
+        health = mg.skill_bank_health()
+        assert "event" in health["coverage_by_kind"]
+        assert "fact" in health["coverage_by_kind"]
+        assert "concept" in health["coverage_by_kind"]
+
+    def test_redundancy_detection(self, mg):
+        """Overlapping steps are flagged."""
+        e1 = mg.add("E1", "event", {"action": "step_a"})
+        e2 = mg.add("E2", "event", {"action": "step_a"})
+        e3 = mg.add("E3", "event", {"action": "step_a"})
+        mg.compress_to_skill([e1.id, e2.id], "Skill A")
+        mg.compress_to_skill([e2.id, e3.id], "Skill B")
+        health = mg.skill_bank_health()
+        assert health["redundancy_groups"] >= 1
+
+    def test_staleness_tracking(self, mg):
+        """Staleness is measured in days."""
+        e = mg.add("E", "event")
+        mg.compress_to_skill([e.id], "Fresh Skill")
+        health = mg.skill_bank_health()
+        assert health["avg_staleness_days"] >= 0.0
+
+    def test_low_confidence_recommendation(self, mg):
+        """Low average confidence triggers recommendation."""
+        e1 = mg.add("E1", "event")
+        e2 = mg.add("E2", "event")
+        mg.compress_to_skill([e1.id], "Low1", confidence=0.2)
+        mg.compress_to_skill([e2.id], "Low2", confidence=0.3)
+        health = mg.skill_bank_health()
+        assert any("confidence" in r.lower() for r in health["recommendations"])
+
+    def test_healthy_skill_bank(self, mg):
+        """Healthy bank has positive recommendations."""
+        e = mg.add("E", "event", {"action": "unique_step"})
+        mg.compress_to_skill([e.id], "Healthy Skill", confidence=0.85)
+        health = mg.skill_bank_health()
+        assert health["active"] == 1
+        # Should have a positive message or no warnings
+        assert isinstance(health["recommendations"], list)
+
+    def test_avg_q_value_reported(self, mg):
+        """Q-value average is reported (0 if no Q-learning)."""
+        e = mg.add("E", "event")
+        mg.compress_to_skill([e.id], "Q Skill")
+        health = mg.skill_bank_health()
+        assert "avg_q_value" in health
+        assert isinstance(health["avg_q_value"], (int, float))

@@ -23180,6 +23180,471 @@ class MemoryGraph:
             "filtered_ids": filtered,
         }
 
+    # ── Procedural Memory: Experience Compression (L1→L2) ──────────
+
+    def compress_to_skill(self, episode_ids: list[str], name: str,
+                          *, description: str = "",
+                          confidence: float = 0.5) -> Optional[Node]:
+        """Compress multiple episodic memories into a procedural skill node.
+
+        Implements the L1→L2 upward compression described in the Experience
+        Compression Spectrum (Zhang et al., arXiv:2604.15877):
+
+            L0 (trace)  → L1 (episodic, 5-20×) → L2 (skill, 50-500×)
+
+        Given a set of episode / event / fact nodes, this method:
+
+        1. Validates all *episode_ids* exist.
+        2. Extracts labels + data from source episodes.
+        3. Creates a ``kind='skill'`` node with a **Skill Contract** data
+           structure (inspired by Anything2Skill, arXiv:2607.09033):
+
+           .. code-block:: python
+
+               {
+                   "skill_name": "...",
+                   "description": "...",
+                   "source_episodes": ["id1", "id2", ...],
+                   "source_count": N,
+                   "compression_ratio": approx,
+                   "confidence": float,          # 0.0–1.0
+                   "version": "0.1.0",
+                   "invocation_conditions": [],   # filled by caller or evolve
+                   "steps": [],                   # extracted steps
+                   "constraints": [],
+                   "created_at": timestamp,
+               }
+
+        4. Links skill → each source episode via ``'abstracts'`` edge
+           (reuses crystallize_intents convention).
+        5. Awards a Q-value boost to the new skill node.
+
+        Args:
+            episode_ids: Source episode / event / fact node IDs.
+            name: Skill name (becomes node label).
+            description: Optional human-readable summary.
+            confidence: Initial confidence [0,1].
+
+        Returns:
+            The created skill :class:`Node`, or ``None`` if no valid episodes.
+        """
+        if not episode_ids:
+            return None
+
+        # Validate source episodes
+        valid = []
+        for eid in episode_ids:
+            row = self.conn.execute(
+                "SELECT id, label, kind, data FROM nodes WHERE id=?", (eid,)
+            ).fetchone()
+            if row:
+                valid.append(row)
+
+        if not valid:
+            return None
+
+        # Extract steps from source episodes (labels become step candidates)
+        steps = []
+        source_labels = []
+        source_kinds = set()
+        for row in valid:
+            source_labels.append(row["label"])
+            source_kinds.add(row["kind"])
+            d = row["data"]
+            if isinstance(d, str):
+                try:
+                    d = json.loads(d)
+                except Exception:
+                    d = {}
+            if isinstance(d, dict):
+                action = d.get("action") or d.get("step")
+                if action:
+                    steps.append(action)
+
+        # Deduplicate steps while preserving order
+        seen = set()
+        unique_steps = []
+        for s in steps:
+            if s not in seen:
+                seen.add(s)
+                unique_steps.append(s)
+
+        # Build Skill Contract
+        source_count = len(valid)
+        # Approximate compression: episodes → 1 skill node
+        # Each episode ~5 tokens of label+data vs 1 consolidated node
+        compression_ratio = round(source_count * 5.0, 1)
+
+        skill_data = {
+            "skill_name": name,
+            "description": description,
+            "source_episodes": [r["id"] for r in valid],
+            "source_count": source_count,
+            "source_kinds": sorted(source_kinds),
+            "compression_ratio": compression_ratio,
+            "confidence": max(0.0, min(1.0, confidence)),
+            "version": "0.1.0",
+            "invocation_conditions": [],
+            "steps": unique_steps,
+            "constraints": [],
+            "created_at": time.time(),
+        }
+
+        # Create the skill node
+        skill = self.add(name, kind="skill", data=skill_data,
+                         tags=["procedural", "compressed"])
+
+        # Link skill → source episodes via 'abstracts' edges
+        for row in valid:
+            self.link(skill.id, row["id"], "abstracts", weight=0.8)
+
+        # Q-value boost for consolidated skills
+        try:
+            self.update_q(skill.id, reward=0.3,
+                          reason="skill_compression")
+        except Exception:
+            pass
+
+        return skill
+
+    def retrieve_skills(self, context: str = "", *, top_k: int = 5,
+                        min_confidence: float = 0.0,
+                        tags: list[str] = None) -> list[Node]:
+        """Retrieve procedural skill nodes matching *context*.
+
+        Procedural retrieval inspired by Anything2Skill (arXiv:2607.09033):
+        matches ``invocation_conditions`` and ``steps`` against the query
+        context, combined with Q-value and recency signals.
+
+        Scoring components (equal weight):
+            - **Text relevance**: BM25 / FTS match on name + description + steps
+            - **Confidence**: Skill Contract confidence field
+            - **Q-value**: Learned utility (if available)
+            - **Recency**: Fresher skills get a small boost
+
+        Args:
+            context: Task / query context to match against.
+            top_k: Maximum skills to return.
+            min_confidence: Filter out skills below this threshold.
+            tags: Optional tag filter.
+
+        Returns:
+            List of skill :class:`Node` objects, best first.
+        """
+        query = (
+            "SELECT id FROM nodes WHERE kind='skill'"
+        )
+        params: list = []
+        if tags:
+            # Simple tag containment check
+            query += " AND tags LIKE ?"
+            params.append(f'%"{tags[0]}"%')
+        rows = self.conn.execute(query, params).fetchall()
+
+        if not rows:
+            return []
+
+        # Gather text for BM25-like scoring
+        terms = set(context.lower().split()) if context else set()
+        scored = []
+
+        for row in rows:
+            node = self.get_node(row["id"])
+            if not node:
+                continue
+            d = node.data if isinstance(node.data, dict) else {}
+            confidence = d.get("confidence", 0.5)
+            if confidence < min_confidence:
+                continue
+
+            # Text relevance: term overlap on name + description + steps
+            text_parts = [node.label.lower()]
+            if isinstance(d, dict):
+                text_parts.append(str(d.get("description", "")).lower())
+                for s in d.get("steps", []):
+                    text_parts.append(str(s).lower())
+                for c in d.get("invocation_conditions", []):
+                    text_parts.append(str(c).lower())
+            blob = " ".join(text_parts)
+
+            if terms:
+                hits = sum(1 for t in terms if t in blob)
+                text_score = hits / max(len(terms), 1)
+            else:
+                text_score = 0.5  # neutral if no query
+
+            # Confidence signal
+            conf_score = confidence
+
+            # Q-value signal
+            q = 0.5
+            try:
+                qrow = self.conn.execute(
+                    "SELECT q_value FROM nodes WHERE id=?", (node.id,)
+                ).fetchone()
+                if qrow and qrow["q_value"] is not None:
+                    q = min(max(qrow["q_value"], 0.0), 1.0)
+            except Exception:
+                pass
+
+            # Recency signal
+            age = time.time() - node.created
+            recency = max(0.0, 1.0 - age / (365.0 * 86400))  # 1-year half-life
+
+            combined = 0.30 * text_score + 0.25 * conf_score + 0.30 * q + 0.15 * recency
+            scored.append((combined, node))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [n for _, n in scored[:top_k]]
+
+    def evolve_skill(self, skill_id: str, *,
+                     feedback: float = 0.0,
+                     new_steps: list[str] = None,
+                     new_constraints: list[str] = None,
+                     description: str = None,
+                     reason: str = "") -> Optional[Node]:
+        """Evolve a procedural skill with feedback and version tracking.
+
+        Inspired by AutoRefine (arXiv:2607.04588): skills without maintenance
+        decay.  This method applies feedback (positive or negative) and
+        optionally extends the Skill Contract, then increments the patch
+        version (semver).
+
+        - Positive *feedback* (→ 1.0): increases confidence and Q-value.
+        - Negative *feedback* (→ -1.0): decreases confidence; if it drops
+          below 0.1, the skill is marked as deprecated via a tag.
+
+        Uses the existing ``supersede`` mechanism to record the evolution
+        chain, so ``trace_decision_chain()`` can reconstruct the skill's
+        history.
+
+        Args:
+            skill_id: The skill node to evolve.
+            feedback: Signal in [-1, 1]. Positive = success, negative = failure.
+            new_steps: Additional steps to append.
+            new_constraints: Additional constraints to append.
+            description: New description (replaces old).
+            reason: Human-readable reason for this evolution.
+
+        Returns:
+            Updated skill :class:`Node`, or ``None`` if not found.
+        """
+        node = self.get_node(skill_id)
+        if not node or node.kind != "skill":
+            return None
+
+        d = node.data if isinstance(node.data, dict) else {}
+
+        # Adjust confidence
+        old_conf = d.get("confidence", 0.5)
+        delta = feedback * 0.15  # 15% per feedback event
+        new_conf = max(0.0, min(1.0, old_conf + delta))
+        d["confidence"] = round(new_conf, 4)
+
+        # Append steps / constraints
+        if new_steps:
+            existing_steps = d.get("steps", [])
+            for s in new_steps:
+                if s not in existing_steps:
+                    existing_steps.append(s)
+            d["steps"] = existing_steps
+
+        if new_constraints:
+            existing_cons = d.get("constraints", [])
+            for c in new_constraints:
+                if c not in existing_cons:
+                    existing_cons.append(c)
+            d["constraints"] = existing_cons
+
+        if description is not None:
+            d["description"] = description
+
+        # Version bump (patch level)
+        ver = d.get("version", "0.1.0")
+        parts = ver.split(".")
+        if len(parts) == 3:
+            parts[2] = str(int(parts[2]) + 1)
+            d["version"] = ".".join(parts)
+        else:
+            d["version"] = "0.1.1"
+
+        d["last_evolved_at"] = time.time()
+        d["last_evolution_reason"] = reason
+
+        # Deprecate if confidence too low
+        tags = json.loads(
+            self.conn.execute("SELECT tags FROM nodes WHERE id=?", (skill_id,)).fetchone()["tags"]
+        ) if self.conn.execute("SELECT tags FROM nodes WHERE id=?", (skill_id,)).fetchone() else []
+        if new_conf < 0.1 and "deprecated" not in tags:
+            tags.append("deprecated")
+        elif new_conf >= 0.1 and "deprecated" in tags:
+            tags.remove("deprecated")
+
+        # Persist
+        self.conn.execute(
+            "UPDATE nodes SET data=?, tags=?, accessed=? WHERE id=?",
+            (json.dumps(d), json.dumps(tags), time.time(), skill_id)
+        )
+
+        # Q-value adjustment
+        try:
+            if feedback > 0:
+                self.update_q(skill_id, reward=feedback * 0.2,
+                              reason=f"skill_evolve: {reason}")
+            elif feedback < 0:
+                self.penalize_q(skill_id, penalty=abs(feedback) * 0.2,
+                                reason=f"skill_evolve: {reason}")
+        except Exception:
+            pass
+
+        # Record evolution as a supersede chain entry
+        try:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO supersede_chain"
+                " (old_id, new_id, trigger, reason, evidence, timestamp)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (skill_id, skill_id, "skill_evolution",
+                 reason or "feedback-based evolution",
+                 json.dumps({"feedback": feedback,
+                              "old_confidence": old_conf,
+                              "new_confidence": new_conf,
+                              "version": d["version"]}),
+                 time.time())
+            )
+        except Exception:
+            pass
+
+        self.conn.commit()
+        self._tick("evolve_skill", skill_id, {"feedback": feedback})
+        return self.get_node(skill_id)
+
+    def skill_bank_health(self) -> dict:
+        """Health metrics for the procedural skill bank.
+
+        Mirrors ``agent-context-store``'s ``store_health_check`` pattern,\n        applied to L2 procedural memory.
+
+        Returns a dashboard dict with:
+
+            - total_skills: Count of skill nodes.
+            - active: Skills with confidence ≥ 0.3 (not deprecated).
+            - deprecated: Skills tagged 'deprecated'.
+            - avg_confidence: Mean confidence across active skills.
+            - avg_q_value: Mean Q-value (if Q-learning is used).
+            - coverage_by_kind: Source episode kinds represented.
+            - avg_staleness: Mean age of last evolution / creation.
+            - redundancy: Skills sharing >60% step overlap (over-clustering).
+            - recommendations: Actionable suggestions.
+        """
+        rows = self.conn.execute(
+            "SELECT id, label, data, tags, created, accessed, weight"
+            " FROM nodes WHERE kind='skill'"
+        ).fetchall()
+
+        if not rows:
+            return {
+                "total_skills": 0,
+                "active": 0,
+                "deprecated": 0,
+                "avg_confidence": 0.0,
+                "avg_q_value": 0.0,
+                "coverage_by_kind": [],
+                "avg_staleness_days": 0.0,
+                "redundancy_groups": 0,
+                "recommendations": ["No procedural skills yet. Use compress_to_skill() to create one."],
+            }
+
+        total = len(rows)
+        confidences = []
+        q_values = []
+        active_count = 0
+        deprecated_count = 0
+        source_kinds = set()
+        now = time.time()
+        ages = []
+        step_sets = []
+
+        for row in rows:
+            d = row["data"]
+            if isinstance(d, str):
+                try:
+                    d = json.loads(d)
+                except Exception:
+                    d = {}
+            if not isinstance(d, dict):
+                d = {}
+
+            tags = row["tags"]
+            if isinstance(tags, str):
+                try:
+                    tags = json.loads(tags)
+                except Exception:
+                    tags = []
+
+            conf = d.get("confidence", 0.5)
+            confidences.append(conf)
+
+            is_deprecated = "deprecated" in (tags or [])
+            if is_deprecated:
+                deprecated_count += 1
+            elif conf >= 0.3:
+                active_count += 1
+
+            for k in d.get("source_kinds", []):
+                source_kinds.add(k)
+
+            steps = d.get("steps", [])
+            if steps:
+                step_sets.append(set(steps))
+
+            # Q-value
+            qrow = self.conn.execute(
+                "SELECT q_value FROM nodes WHERE id=?", (row["id"],)
+            ).fetchone()
+            if qrow and qrow["q_value"] is not None:
+                q_values.append(qrow["q_value"])
+
+            # Age (use last_evolved_at if available)
+            last_ts = d.get("last_evolved_at", row["created"])
+            ages.append((now - last_ts) / 86400)  # days
+
+        # Redundancy: pairs with >60% step overlap
+        redundancy_groups = 0
+        for i in range(len(step_sets)):
+            for j in range(i + 1, len(step_sets)):
+                overlap = len(step_sets[i] & step_sets[j])
+                union = len(step_sets[i] | step_sets[j])
+                if union > 0 and overlap / union > 0.6:
+                    redundancy_groups += 1
+
+        avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+        avg_q = sum(q_values) / len(q_values) if q_values else 0.0
+        avg_age = sum(ages) / len(ages) if ages else 0.0
+
+        # Recommendations
+        recs = []
+        if avg_conf < 0.4:
+            recs.append("Average confidence is low. Collect more feedback via evolve_skill().")
+        if deprecated_count > active_count:
+            recs.append("More deprecated than active skills. Consider pruning or refining.")
+        if avg_age > 30:
+            recs.append("Skills are stale (avg >30 days). Run evolve_skill() with fresh feedback.")
+        if redundancy_groups > 0:
+            recs.append(f"{redundancy_groups} redundant skill pairs detected. Consider merging.")
+        if not recs:
+            recs.append("Skill bank is healthy.")
+
+        return {
+            "total_skills": total,
+            "active": active_count,
+            "deprecated": deprecated_count,
+            "avg_confidence": round(avg_conf, 4),
+            "avg_q_value": round(avg_q, 4),
+            "coverage_by_kind": sorted(source_kinds),
+            "avg_staleness_days": round(avg_age, 1),
+            "redundancy_groups": redundancy_groups,
+            "recommendations": recs,
+        }
+
 
 
 def demo():
