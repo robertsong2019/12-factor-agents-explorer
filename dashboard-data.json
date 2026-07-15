@@ -1,7 +1,13 @@
 {
-  "lastUpdated": "2026-07-13T22:00:00Z",
-  "generatedAt": "2026-07-14 06:00 CST",
-  "actionRequired": [],
+  "lastUpdated": "2026-07-15T22:00:00Z",
+  "generatedAt": "2026-07-16 06:00 CST",
+  "actionRequired": [
+    {
+      "severity": "warn",
+      "item": "knowledge-organization (fd0515b0) last run errored",
+      "action": "check logs"
+    }
+  ],
   "activeNow": [
     {
       "job": "dashboard-update-morning",
@@ -13,14 +19,14 @@
       "name": "dashboard-update-morning",
       "schedule": "6:00 AM daily",
       "id": "f38e0365",
-      "lastRun": "2026-07-13T22:00:00Z",
-      "nextRun": "2026-07-14T22:00:00Z",
+      "lastRun": "~1m ago",
+      "nextRun": "in 24h",
       "status": "running",
       "errors": 0
     },
     {
       "name": "github-trending-daily",
-      "schedule": "7:00 AM daily CST",
+      "schedule": "7:00 AM CST",
       "id": "9b2a8701",
       "lastRun": "~23h ago",
       "nextRun": "in 60m",
@@ -29,7 +35,7 @@
     },
     {
       "name": "github-trending-deep",
-      "schedule": "8:00 AM daily CST",
+      "schedule": "8:00 AM CST",
       "id": "2c714952",
       "lastRun": "~22h ago",
       "nextRun": "in 2h",
@@ -39,7 +45,7 @@
     {
       "name": "github-creative-evening",
       "schedule": "7:00 PM daily (x2)",
-      "id": "610a8d6d / ad37c59a",
+      "id": "610a8d6d+ad37c59a",
       "lastRun": "~11h ago",
       "nextRun": "in 13h",
       "status": "ok",
@@ -48,7 +54,7 @@
     {
       "name": "deep-exploration-evening",
       "schedule": "8:00 PM daily (x3)",
-      "id": "265091b6 / a4bf5e2a / bb46cb70",
+      "id": "265091b6+a4bf5e2a+bb46cb70",
       "lastRun": "~10h ago",
       "nextRun": "in 14h",
       "status": "ok",
@@ -65,7 +71,7 @@
     },
     {
       "name": "tool-development-evening (CST)",
-      "schedule": "10:00 PM daily CST",
+      "schedule": "10:00 PM CST",
       "id": "62bf7f3b",
       "lastRun": "~8h ago",
       "nextRun": "in 16h",
@@ -110,7 +116,7 @@
     },
     {
       "name": "knowledge-organization (CST)",
-      "schedule": "2:00 AM daily CST",
+      "schedule": "2:00 AM CST",
       "id": "1ea6e3b0",
       "lastRun": "~4h ago",
       "nextRun": "in 20h",
@@ -123,8 +129,8 @@
       "id": "fd0515b0",
       "lastRun": "~4h ago",
       "nextRun": "in 20h",
-      "status": "ok",
-      "errors": 0
+      "status": "error",
+      "errors": 1
     },
     {
       "name": "project-testing-morning",
@@ -147,7 +153,7 @@
     {
       "name": "essay-generation-morning",
       "schedule": "5:00 AM daily (x2)",
-      "id": "686ec55c / f0362050",
+      "id": "686ec55c+f0362050",
       "lastRun": "~1h ago",
       "nextRun": "in 23h",
       "status": "ok",
@@ -155,33 +161,62 @@
     }
   ],
   "sessions": {
-    "totalRecentSessions": 1,
-    "uniqueSessions": 1,
-    "activeInLast24h": 1,
-    "activeInLast1h": 1,
-    "recentSessions": [
+    "totalStoredSessions": 56,
+    "activeInLast1h": 3,
+    "activeInLast6h": 14,
+    "activeInLast24h": 20,
+    "mainSession": {
+      "model": "glm-5-turbo",
+      "contextPercent": 50.6,
+      "ageHours": 0.2
+    },
+    "topContextUsage": [
       {
-        "key": "cron:dashboard-update-morning",
-        "age": "0.0h",
-        "model": "glm-5.1",
-        "ctxPercent": 16,
-        "kind": "cron"
+        "name": "main",
+        "ctx_pct": 50.6,
+        "model": "glm-5-turbo"
+      },
+      {
+        "name": "key-development-2",
+        "ctx_pct": 38.3,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "knowledge-org-CST",
+        "ctx_pct": 33.7,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "key-development-3",
+        "ctx_pct": 30.4,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "knowledge-org",
+        "ctx_pct": 29.1,
+        "model": "glm-5.1"
+      },
+      {
+        "name": "project-testing",
+        "ctx_pct": 29.1,
+        "model": "glm-5.1"
       }
     ]
   },
   "systemHealth": {
     "model": "glm-5.1",
     "cronJobs": 19,
-    "allCronsHealthy": true,
-    "uptime": "82 days (since 2026-04-22)",
-    "errorsToday": 0,
-    "memoryUsage": "1.0Gi / 1.9Gi",
-    "diskUsage": "84%",
-    "loadAverage": "0.86, 0.30, 0.17"
+    "allCronsHealthy": false,
+    "failedCrons": 1,
+    "uptime": "85 days (since 2026-04-22)",
+    "errorsToday": 1,
+    "memoryUsage": "1.1Gi / 1.9Gi (58%)",
+    "diskUsage": "84% (7.6G free)",
+    "loadAverage": "0.75, 0.34, 0.13"
   },
   "projectStats": {
-    "lastWorkspaceCommit": "b4b2771 feat: forgotten_index() + abc_index() + sum_connectivity_index() — Cycle 238",
-    "memoryUsage": "1.0Gi / 1.9Gi",
-    "diskUsage": "84%"
+    "lastWorkspaceCommit": "2ac3ee4 docs: documentation improvement report 2026-07-16",
+    "totalCronJobs": 19,
+    "healthyCronJobs": 18
   }
 }
