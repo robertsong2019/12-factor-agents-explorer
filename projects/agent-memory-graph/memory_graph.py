@@ -23768,6 +23768,127 @@ class MemoryGraph:
             "q_value": round(q_val, 4),
         }
 
+    # ── Intent-Aware Edge Costing (PRISM-inspired) ────────────────
+
+    # Intent type → edge-type discount/inflation map
+    _INTENT_EDGE_AFFINITY: dict[str, dict[str, float]] = {
+        "temporal": {
+            "happened_before": 0.5, "happened_after": 0.5,
+            "supersedes": 0.3, "causes": 0.4,
+            "abstracts": 1.5, "similar_to": 1.5,
+        },
+        "causal": {
+            "causes": 0.2, "prevents": 0.2, "enables": 0.3,
+            "depends_on": 0.3, "conflicts_with": 0.4,
+            "abstracts": 1.5, "similar_to": 1.2,
+        },
+        "multi_hop": {
+            "similar_to": 0.4, "related_to": 0.5,
+            "abstracts": 0.6, "works_on": 0.8,
+            "causes": 0.7, "depends_on": 0.7,
+        },
+        "factual": {},  # no special weighting
+    }
+
+    _INTENT_KEYWORDS: dict[str, set[str]] = {
+        "temporal": {"when", "before", "after", "timeline", "history",
+                      "sequence", "order", "past", "future", "ago",
+                      "\u4ec0\u4e48\u65f6\u5019", "\u4e4b\u524d", "\u4e4b\u540e", "\u65f6\u95f4\u7ebf"},
+        "causal": {"why", "because", "cause", "effect", "reason",
+                   "result", "consequence", "prevent", "enable",
+                   "\u4e3a\u4ec0\u4e48", "\u539f\u56e0", "\u5bfc\u81f4", "\u7ed3\u679c"},
+        "multi_hop": {"connect", "path", "link", "related",
+                      "chain", "trace", "follow", "expand",
+                      "\u5173\u8054", "\u94fe\u8def", "\u8ffd\u6eaf"},
+    }
+
+    def detect_query_intent(self, query: str) -> str:
+        """Classify a query into an intent type for edge-aware retrieval.
+
+        Inspired by PRISM (arXiv:2607): intent routing determines which
+        edge types are prioritised during graph traversal.
+
+        Types:
+            - ``temporal`` — time/ordering queries
+            - ``causal`` — why/cause/effect queries
+            - ``multi_hop`` — connectivity/path queries
+            - ``factual`` — default keyword lookup
+
+        Args:
+            query: Natural language query string.
+
+        Returns:
+            One of 'temporal', 'causal', 'multi_hop', 'factual'.
+        """
+        q_lower = query.lower()
+        best_intent = "factual"
+        best_score = 0
+
+        for intent, keywords in self._INTENT_KEYWORDS.items():
+            score = sum(1 for kw in keywords if kw in q_lower)
+            if score > best_score:
+                best_score = score
+                best_intent = intent
+
+        return best_intent
+
+    def intent_aware_edge_cost(self, query: str, *, node_id: str = None,
+                               ) -> list[dict] | dict:
+        """Compute intent-adjusted edge costs for graph traversal.
+
+        PRISM-inspired: different query intents should traverse
+        different edge types with different costs.
+
+        - **temporal** queries: discount temporal edges (supersedes, causes)
+        - **causal** queries: discount causal edges (causes, prevents, enables)
+        - **multi_hop** queries: discount structural edges (similar_to, related_to)
+        - **factual** queries: no discounting (uniform cost)
+
+        Edge cost = 1.0 × affinity_multiplier, where lower = cheaper traversal.
+
+        Args:
+            query: Query string for intent detection.
+            node_id: If given, only return edges from this node.
+                     Otherwise returns all edges with adjusted costs.
+
+        Returns:
+            If node_id given: dict with ``{intent, edges: [...]}``.
+            Otherwise: ``{intent, edge_count, edges: [...]}``.
+        """
+        intent = self.detect_query_intent(query)
+        affinity = self._INTENT_EDGE_AFFINITY.get(intent, {})
+
+        if node_id:
+            rows = self.conn.execute(
+                "SELECT source, target, relation, weight FROM edges WHERE source=? OR target=?",
+                (node_id, node_id)
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT source, target, relation, weight FROM edges"
+            ).fetchall()
+
+        edges = []
+        for row in rows:
+            rel = row["relation"]
+            base_cost = 1.0 / max(row["weight"], 0.01)
+            multiplier = affinity.get(rel, 1.0)
+            adjusted_cost = round(base_cost * multiplier, 4)
+            edges.append({
+                "source": row["source"],
+                "target": row["target"],
+                "relation": rel,
+                "base_cost": round(base_cost, 4),
+                "adjusted_cost": adjusted_cost,
+                "multiplier": multiplier,
+            })
+
+        return {
+            "intent": intent,
+            "edge_count": len(edges),
+            "edges": edges,
+        }
+
 
 
 def demo():

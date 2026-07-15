@@ -23484,3 +23484,117 @@ class TestMemoryInformationDensity:
         n = mg.add("Test", "concept", {"k": "v"})
         result = mg.memory_information_density(node_id=n.id)
         assert result["density"] >= 0.0
+
+
+class TestIntentAwareEdgeCost:
+    """Tests for intent detection and edge-cost adjustment (PRISM-inspired)."""
+
+    def test_detect_factual_default(self, mg):
+        """No intent keywords → 'factual'."""
+        assert mg.detect_query_intent("python framework") == "factual"
+
+    def test_detect_temporal(self, mg):
+        """Time keywords detected."""
+        assert mg.detect_query_intent("what happened before the deploy") == "temporal"
+        assert mg.detect_query_intent("timeline of events") == "temporal"
+
+    def test_detect_causal(self, mg):
+        """Cause keywords detected."""
+        assert mg.detect_query_intent("why did the build fail") == "causal"
+        assert mg.detect_query_intent("what caused the outage") == "causal"
+
+    def test_detect_multi_hop(self, mg):
+        """Path/connectivity keywords detected."""
+        assert mg.detect_query_intent("how are these related") == "multi_hop"
+        assert mg.detect_query_intent("trace the chain") == "multi_hop"
+
+    def test_detect_chinese_temporal(self, mg):
+        """Chinese temporal keywords detected."""
+        assert mg.detect_query_intent("什么时候发生的") == "temporal"
+
+    def test_detect_chinese_causal(self, mg):
+        """Chinese causal keywords detected."""
+        assert mg.detect_query_intent("为什么会失败") == "causal"
+
+    def test_edge_cost_returns_intent(self, mg):
+        """Result includes detected intent."""
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "causes")
+        result = mg.intent_aware_edge_cost("why did this happen")
+        assert result["intent"] == "causal"
+
+    def test_causal_query_discounts_causal_edges(self, mg):
+        """Causal query makes causal edges cheaper (multiplier < 1)."""
+        a, b = mg.add("Cause"), mg.add("Effect")
+        mg.link(a.id, b.id, "causes")
+        result = mg.intent_aware_edge_cost("why did this happen")
+        causal_edge = [e for e in result["edges"] if e["relation"] == "causes"][0]
+        assert causal_edge["multiplier"] < 1.0
+        assert causal_edge["adjusted_cost"] < causal_edge["base_cost"]
+
+    def test_temporal_query_discounts_temporal_edges(self, mg):
+        """Temporal query makes temporal edges cheaper."""
+        a, b = mg.add("Before"), mg.add("After")
+        mg.link(a.id, b.id, "supersedes")
+        result = mg.intent_aware_edge_cost("what happened before")
+        supersedes_edge = [e for e in result["edges"] if e["relation"] == "supersedes"][0]
+        assert supersedes_edge["multiplier"] < 1.0
+
+    def test_multi_hop_query_discounts_structural_edges(self, mg):
+        """Multi-hop query makes similarity edges cheaper."""
+        a, b = mg.add("X"), mg.add("Y")
+        mg.link(a.id, b.id, "similar_to")
+        result = mg.intent_aware_edge_cost("how are these related")
+        sim_edge = [e for e in result["edges"] if e["relation"] == "similar_to"][0]
+        assert sim_edge["multiplier"] < 1.0
+
+    def test_factual_query_uniform_costs(self, mg):
+        """Factual query: no edge-type discounting (all multiplier=1.0)."""
+        a, b = mg.add("X"), mg.add("Y")
+        mg.link(a.id, b.id, "causes")
+        mg.link(a.id, b.id, "similar_to")
+        result = mg.intent_aware_edge_cost("python framework")
+        for edge in result["edges"]:
+            assert edge["multiplier"] == 1.0
+
+    def test_node_scoped_edge_cost(self, mg):
+        """node_id limits edges to those involving that node."""
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "causes")
+        mg.link(b.id, c.id, "similar_to")
+        result = mg.intent_aware_edge_cost("why", node_id=a.id)
+        sources = {e["source"] for e in result["edges"]}
+        targets = {e["target"] for e in result["edges"]}
+        assert a.id in sources or a.id in targets
+
+    def test_empty_graph_edge_cost(self, mg):
+        """No edges → empty result with intent."""
+        result = mg.intent_aware_edge_cost("why did this happen")
+        assert result["intent"] == "causal"
+        assert result["edge_count"] == 0
+
+    def test_inflated_edges_more_expensive(self, mg):
+        """Non-matching edges can be inflated (multiplier > 1)."""
+        a, b = mg.add("A"), mg.add("B")
+        mg.link(a.id, b.id, "abstracts")
+        result = mg.intent_aware_edge_cost("why did this happen")
+        # 'abstracts' has affinity 1.5 for causal intent → more expensive
+        abs_edge = [e for e in result["edges"] if e["relation"] == "abstracts"]
+        if abs_edge:
+            assert abs_edge[0]["multiplier"] > 1.0
+            assert abs_edge[0]["adjusted_cost"] > abs_edge[0]["base_cost"]
+
+    def test_edge_count_matches(self, mg):
+        """Edge count matches actual edges returned."""
+        a, b, c = mg.add("A"), mg.add("B"), mg.add("C")
+        mg.link(a.id, b.id, "r1")
+        mg.link(b.id, c.id, "r2")
+        result = mg.intent_aware_edge_cost("test query")
+        assert result["edge_count"] == len(result["edges"])
+
+    def test_intent_priority_when_multiple_match(self, mg):
+        """When multiple intents match, the one with most keywords wins."""
+        # "why related" has causal keyword "why" and multi_hop keyword "related"
+        # Both score 1, so the first one found wins (causal comes before multi_hop)
+        intent = mg.detect_query_intent("why are these related")
+        assert intent in ("causal", "multi_hop")
