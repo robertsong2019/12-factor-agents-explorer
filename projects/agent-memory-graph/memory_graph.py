@@ -25465,6 +25465,194 @@ class MemoryGraph:
             return result is not None
         return False
 
+    # ----------------------------------------------------------------
+    # Prospective Memory (PM-Bench-inspired, arXiv:2607.12385)
+    # ----------------------------------------------------------------
+
+    def add_intention(self, label: str, *, trigger: str = None,
+                      action: str = None, data: dict = None,
+                      deadline: float = None,
+                      priority: str = "normal") -> Node:
+        """Add a prospective memory — a delayed intention to be executed
+        when a trigger condition is met.
+
+        PM-Bench (arXiv:2607.12385, COLM 2026) shows prospective memory
+        is largely unsolved: GPT-5.4 achieves only 65.1% F1. This method
+        stores intentions with trigger cues so they can be matched later.
+
+        Args:
+            label: Description of the intention.
+            trigger: Natural-language cue description (when to fire).
+            action: What to do when triggered.
+            data: Optional metadata.
+            deadline: Optional Unix timestamp for expiry.
+            priority: ``'low'|'normal'|'high'``.
+
+        Returns:
+            The created intention node (kind=``'intention'``).
+        """
+        intention_data = data or {}
+        if trigger:
+            intention_data["trigger"] = trigger
+        if action:
+            intention_data["action"] = action
+        if deadline:
+            intention_data["deadline"] = deadline
+        intention_data["priority"] = priority
+        intention_data["status"] = "pending"
+
+        return self.add(label, kind="intention", data=intention_data,
+                         tags=["prospective"])
+
+    def check_prospective_cues(self, context: str, *, now: float = None
+                                ) -> list[dict]:
+        """Check if any pending intentions should be triggered by *context*.
+
+        Performs keyword-overlap matching between the context string
+        and each pending intention's trigger description. Returns matched
+        intentions sorted by match score.
+
+        Also checks deadlines: expired intentions are marked as ``'missed'``.
+
+        Args:
+            context: Current context / user input to match against.
+            now: Override current timestamp (for testing).
+
+        Returns:
+            List of ``{node_id, label, trigger, action, score, priority,
+            deadline_status}`` for matched intentions.
+        """
+        import time as _time
+        import re
+        current_time = now or _time.time()
+
+        # Get all pending intentions
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE kind='intention' "
+            "AND json_extract(data, '$.status')='pending'"
+        ).fetchall()
+
+        if not rows:
+            return []
+
+        context_words = set(re.findall(r"[a-z]{2,}", context.lower()))
+        context_stop = {"the", "a", "an", "is", "are", "to", "of",
+                        "in", "for", "and", "or", "not", "with", "by",
+                        "on", "at", "i", "you", "we", "it", "this",
+                        "that", "my", "your", "me"}
+        context_words -= context_stop
+
+        results = []
+        for row in rows:
+            data = json.loads(row["data"])
+            trigger = data.get("trigger", "")
+            trigger_words = set(re.findall(r"[a-z]{2,}", trigger.lower()))
+            trigger_words -= context_stop
+
+            # Keyword overlap score
+            if not trigger_words:
+                score = 0.0
+            else:
+                overlap = len(context_words & trigger_words)
+                score = overlap / max(len(trigger_words), 1)
+
+            # Deadline check
+            deadline = data.get("deadline")
+            deadline_status = "none"
+            if deadline:
+                if current_time >= deadline:
+                    deadline_status = "expired"
+                    # Mark as missed
+                    data["status"] = "missed"
+                    self.conn.execute(
+                        "UPDATE nodes SET data=? WHERE id=?",
+                        (json.dumps(data), row["id"])
+                    )
+                else:
+                    remaining = deadline - current_time
+                    if remaining < 3600:
+                        deadline_status = "urgent"
+                    elif remaining < 86400:
+                        deadline_status = "soon"
+                    else:
+                        deadline_status = "future"
+
+            # Only include if there's some match or deadline urgency
+            if score > 0 or deadline_status in ("urgent", "expired"):
+                results.append({
+                    "node_id": row["id"],
+                    "label": row["label"],
+                    "trigger": trigger,
+                    "action": data.get("action", ""),
+                    "score": round(score, 4),
+                    "priority": data.get("priority", "normal"),
+                    "deadline_status": deadline_status,
+                    "deadline": deadline,
+                })
+
+        self.conn.commit()
+
+        # Sort by score desc, then priority
+        priority_order = {"high": 0, "normal": 1, "low": 2}
+        results.sort(
+            key=lambda x: (-x["score"], priority_order.get(x["priority"], 1))
+        )
+        return results
+
+    def fulfill_intention(self, node_id: str) -> bool:
+        """Mark a prospective intention as fulfilled.
+
+        Args:
+            node_id: ID of the intention node.
+
+        Returns:
+            ``True`` if updated, ``False`` if not found or not an intention.
+        """
+        node = self.get_node(node_id)
+        if not node or node.kind != "intention":
+            return False
+        data = node.data or {}
+        data["status"] = "fulfilled"
+        data["fulfilled_at"] = time.time()
+        self.update_node(node_id, data=data)
+        return True
+
+    def pending_intentions(self, *, include_expired: bool = False
+                            ) -> list[dict]:
+        """List all pending prospective intentions.
+
+        Args:
+            include_expired: If True, also include 'missed' intentions.
+
+        Returns:
+            List of intention summaries.
+        """
+        if include_expired:
+            rows = self.conn.execute(
+                "SELECT * FROM nodes WHERE kind='intention' "
+                "AND json_extract(data, '$.status') IN ('pending', 'missed') "
+                "ORDER BY created DESC"
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM nodes WHERE kind='intention' "
+                "AND json_extract(data, '$.status')='pending' "
+                "ORDER BY created DESC"
+            ).fetchall()
+
+        return [
+            {
+                "node_id": r["id"],
+                "label": r["label"],
+                "trigger": json.loads(r["data"]).get("trigger", ""),
+                "action": json.loads(r["data"]).get("action", ""),
+                "priority": json.loads(r["data"]).get("priority", "normal"),
+                "status": json.loads(r["data"]).get("status", "pending"),
+                "deadline": json.loads(r["data"]).get("deadline"),
+            }
+            for r in rows
+        ]
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
