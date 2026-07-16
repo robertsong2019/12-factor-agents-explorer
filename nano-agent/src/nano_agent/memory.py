@@ -257,6 +257,39 @@ class Memory:
             return True
         return False
 
+    def search_by_tag(self, tag: str, limit: int = 0) -> List[MemoryEntry]:
+        """返回带有指定标签的所有记忆，按时间排序。
+
+        Args:
+            tag: 要搜索的标签
+            limit: 返回条目上限，0 表示全部
+        """
+        matched = [e for e in self._entries if tag in e.tags]
+        if limit > 0:
+            return matched[-limit:]
+        return matched
+
+    def merge(self, other: 'Memory') -> int:
+        """合并另一个 Memory 实例到当前实例。
+
+        去重逻辑：跳过 content 完全相同的条目。
+        Returns: 实际新增的条目数。
+        """
+        existing_contents = {e.content for e in self._entries}
+        added = 0
+        for entry in other._entries:
+            if entry.content not in existing_contents:
+                self._entries.append(entry)
+                existing_contents.add(entry.content)
+                added += 1
+
+        if len(self._entries) > self.max_entries:
+            self._entries = self._entries[-self.max_entries:]
+
+        if added > 0:
+            self._save()
+        return added
+
     def to_context(self, max_tokens: int = 1000) -> str:
         """转换为上下文字符串"""
         entries = self.get_recent()

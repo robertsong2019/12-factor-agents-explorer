@@ -20,14 +20,17 @@
 - [x] **F8**: `Memory.top_important(n)` — rank memories by importance ✅ 2026-06-25
 
 ### Agent Enhancements
-- [ ] **F9**: `Agent.run_batch(inputs)` — process multiple inputs in sequence
-- [ ] **F10**: `Agent.summary()` — summarize conversation history
+- [x] **F9**: `Agent.run_batch(inputs)` — process multiple inputs in sequence ✅ 2026-07-12
+- [x] **F10**: `Agent.summary()` — summarize conversation history ✅ 2026-07-12
 
 ### Tool System
-- [ ] **F11**: `Tool.validate_args()` strict mode — reject unknown parameters
-- [ ] **F12**: `list_tools_by_prefix()` — filter registered tools by name prefix
+- [x] **F11**: `Tool.validate_args()` strict mode — reject unknown parameters ✅ 2026-07-12
+- [x] **F12**: `list_tools_by_prefix()` — filter registered tools by name prefix ✅ 2026-07-12
+- [x] **F13**: `Memory.search_by_tag(tag)` — search memories by single tag with optional limit ✅ 2026-07-16
+- [x] **F14**: `Memory.merge(other)` — merge two Memory instances with content-based dedup ✅ 2026-07-16
 
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
-**Round 3:** F9-F12 — Agent batch processing and tool enhancements
+**Round 3:** F9-F12 — Agent batch processing and tool enhancements ✅
+**Round 4:** F13-F14 — Tag search and memory merge ✅ 2026-07-16
