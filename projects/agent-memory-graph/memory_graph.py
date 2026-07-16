@@ -26110,6 +26110,272 @@ class MemoryGraph:
             ),
         }
 
+    # ----------------------------------------------------------------
+    # Adaptive Query Router (GraphRAG / LightRAG-inspired)
+    # ----------------------------------------------------------------
+
+    def query(
+        self,
+        question: str,
+        *,
+        mode: str = "auto",
+        limit: int = 10,
+        detail: bool = False,
+        **kwargs,
+    ) -> dict:
+        """Adaptive query router — picks the best retrieval strategy.
+
+        Inspired by GraphRAG (Edge et al. 2024) and LightRAG (HKUDS
+        2024) query routing, this method analyses the question and
+        automatically dispatches to the most appropriate search mode:
+
+        - **basic**  — Keyword lookup via ``retrieve()`` (BM25 + vector).
+          Fast, precise, best for simple entity lookups.
+        - **global** — Community-level scan via ``query_global()``.
+          Best for broad conceptual questions ("what are the main themes?").
+        - **local**  — Spreading activation from seed nodes via
+          ``spread_activation()``. Best for neighbourhood exploration
+          ("what's connected to X?").
+        - **drift**  — DRIFT hybrid search via ``drift_search()``.
+          Best for complex multi-hop questions requiring both global
+          context and local precision.
+        - **hybrid** — SimHash + graph via ``dual_mode_retrieve()``.
+          Best for large graphs where binary pre-filtering helps.
+
+        When ``mode='auto'`` (default), the router uses lightweight
+        heuristics on the question to pick the best mode:
+
+        1. Short factual questions (≤3 words, contains entity names)
+           → **basic**
+        2. Questions with global/exploratory keywords ("overview",
+           "themes", "summary", "all about", "big picture")
+           → **global**
+        3. Questions asking about relationships/connections ("related",
+           "connected", "linked", "between")
+           → **local**
+        4. Complex questions (multi-clause, contains "how"/"why",
+           >8 words)
+           → **drift**
+        5. Fallback for everything else
+           → **hybrid** if graph has >10 nodes, else **basic**
+
+        Args:
+            question: Natural-language query string.
+            mode:     Force a specific mode ('auto'|'basic'|'global'|
+                      'local'|'drift'|'hybrid').
+            limit:    Max results to return.
+            detail:   If True, include full node details in results.
+            **kwargs: Passed through to the underlying search method.
+
+        Returns:
+            ``{question, mode, rationale, results, stats}``
+        """
+        import re
+
+        # --- Determine mode ----------------------------------------
+        if mode == "auto":
+            mode, rationale = self._route_query(question)
+        else:
+            rationale = f"explicit mode='{mode}'"
+
+        # --- Dispatch to chosen strategy ---------------------------
+        t0 = __import__("time").perf_counter()
+
+        if mode == "basic":
+            raw = self.retrieve(question, limit=limit, rerank=True)
+            results = []
+            for r in (raw if isinstance(raw, list) else []):
+                if isinstance(r, dict):
+                    node = r.get("node")
+                    results.append({
+                        "node_id": r.get("node_id", r.get("id", "")),
+                        "label": r.get("label") or (node.label if node else ""),
+                        "kind": r.get("kind") or (node.kind if node else ""),
+                        "score": r.get("score", r.get("bm25_score", 0)),
+                    })
+                elif hasattr(r, "id"):
+                    results.append({
+                        "node_id": r.id,
+                        "label": getattr(r, "label", ""),
+                        "kind": getattr(r, "kind", ""),
+                        "score": getattr(r, "score", 0),
+                    })
+
+        elif mode == "global":
+            raw = self.query_global(
+                question, limit=kwargs.get("global_k", 5),
+            )
+            results = []
+            for community in raw.get("results", []):
+                for member in community.get("members", []):
+                    results.append({
+                        "node_id": member["id"],
+                        "label": member.get("label", ""),
+                        "kind": member.get("kind", ""),
+                        "community": community.get("community_id"),
+                        "score": community.get("score", 0),
+                    })
+                    if len(results) >= limit:
+                        break
+                if len(results) >= limit:
+                    break
+
+        elif mode == "local":
+            # Seed from keyword search, then spread
+            seeds = self.retrieve(question, limit=3)
+            seed_ids = []
+            for r in (seeds if isinstance(seeds, list) else []):
+                if isinstance(r, dict):
+                    seed_ids.append(
+                        r.get("node_id", r.get("id", ""))
+                    )
+                elif hasattr(r, "id"):
+                    seed_ids.append(r.id)
+            seed_ids = [s for s in seed_ids if s]
+
+            if seed_ids:
+                try:
+                    activations = self.spread_activation(
+                        seed_ids,
+                        decay_factor=kwargs.get("decay", 0.4),
+                        threshold=kwargs.get("threshold", 0.1),
+                        max_hops=kwargs.get("max_hops", 2),
+                    )
+                except (KeyError, ValueError):
+                    activations = {}
+
+                results = []
+                for nid, act in sorted(
+                    activations.items(), key=lambda x: x[1], reverse=True
+                )[:limit]:
+                    row = self.conn.execute(
+                        "SELECT label, kind FROM nodes WHERE id=?",
+                        (nid,),
+                    ).fetchone()
+                    if row:
+                        results.append({
+                            "node_id": nid,
+                            "label": row["label"],
+                            "kind": row["kind"],
+                            "score": round(act, 4),
+                            "seed": nid in seed_ids,
+                        })
+            else:
+                results = []
+
+        elif mode == "drift":
+            raw = self.drift_search(
+                question,
+                local_k=limit,
+                global_k=kwargs.get("global_k", 3),
+                max_iterations=kwargs.get("max_iterations", 2),
+            )
+            results = raw.get("final_results", [])
+
+        elif mode == "hybrid":
+            raw = self.dual_mode_retrieve(
+                question, limit=limit,
+            )
+            results = raw if isinstance(raw, list) else raw.get("results", [])
+
+        else:
+            raise ValueError(
+                f"Unknown mode '{mode}'. "
+                "Use: auto, basic, global, local, drift, hybrid"
+            )
+
+        elapsed_ms = (__import__("time").perf_counter() - t0) * 1000
+
+        # --- Enrich with detail if requested -----------------------
+        if detail:
+            for r in results:
+                nid = r.get("node_id", "")
+                if nid:
+                    row = self.conn.execute(
+                        "SELECT label, kind, weight, data, tags FROM nodes "
+                        "WHERE id=?",
+                        (nid,),
+                    ).fetchone()
+                    if row:
+                        r["label"] = r.get("label") or row["label"]
+                        r["kind"] = r.get("kind") or row["kind"]
+                        r["weight"] = row["weight"]
+                        r["data"] = json.loads(row["data"]) if row["data"] else {}
+                        r["tags"] = json.loads(row["tags"]) if row["tags"] else []
+
+        return {
+            "question": question,
+            "mode": mode,
+            "rationale": rationale,
+            "results": results[:limit],
+            "stats": {
+                "total_results": len(results),
+                "elapsed_ms": round(elapsed_ms, 2),
+                "node_count": self.stats()["nodes"],
+                "edge_count": self.edge_count(),
+            },
+        }
+
+    def _route_query(self, question: str) -> tuple[str, str]:
+        """Heuristic router — analyse question to pick best mode.
+
+        Returns ``(mode, rationale_string)``.
+        """
+        q_lower = question.lower().strip()
+        words = q_lower.split()
+        n_words = len(words)
+        node_count = self.stats()["nodes"]
+
+        # 1. Short factual lookup → basic
+        if n_words <= 3:
+            return "basic", (
+                "short query (≤3 words) → keyword lookup"
+            )
+
+        # 2. Global / exploratory keywords
+        global_markers = [
+            "overview", "themes", "summary", "all about",
+            "big picture", "landscape", "categories", "main",
+            "list all", "everything",
+        ]
+        if any(m in q_lower for m in global_markers):
+            return "global", (
+                "exploratory keywords detected → community scan"
+            )
+
+        # 3. Complex multi-hop → drift (check before local so
+        #    multi-clause questions with "connected" route here)
+        complex_markers = ["how", "why", "what happens if", "trace"]
+        has_complex = any(m in q_lower for m in complex_markers)
+        has_multiclause = q_lower.count(" and ") >= 1 or \
+            q_lower.count("?") >= 2
+        if has_complex or (n_words > 8 and has_multiclause):
+            return "drift", (
+                "complex multi-hop question → DRIFT hybrid search"
+            )
+
+        # 4. Relationship / connection questions
+        local_markers = [
+            "related", "connected", "linked", "between",
+            "neighbors", "neighbours", "associated",
+            "what connects", "depends on",
+        ]
+        if any(m in q_lower for m in local_markers):
+            return "local", (
+                "relationship keywords → spreading activation"
+            )
+
+        # 5. Default: hybrid for large graphs, basic for small
+        if node_count > 10:
+            return "hybrid", (
+                f"general query on {node_count}-node graph "
+                "→ dual-mode SimHash+graph"
+            )
+        return "basic", (
+            f"general query on small graph ({node_count} nodes) "
+            "→ keyword lookup"
+        )
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
