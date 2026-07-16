@@ -25654,6 +25654,254 @@ class MemoryGraph:
         ]
 
 
+    # ----------------------------------------------------------------
+    # DRIFT Search (GraphRAG-inspired, Edge et al. 2024)
+    # ----------------------------------------------------------------
+
+    def drift_search(
+        self,
+        question: str,
+        *,
+        max_iterations: int = 2,
+        local_k: int = 5,
+        global_k: int = 3,
+        spread_hops: int = 2,
+        spread_decay: float = 0.4,
+        spread_threshold: float = 0.1,
+        rrf_k: int = 60,
+        summarizer=None,
+    ) -> dict:
+        """DRIFT-style hybrid search — global sweep then local refinement.
+
+        Combines GraphRAG's two-phase philosophy in a single method:
+
+        1. **Global phase** — ``query_global()`` finds relevant
+           communities at a high level.
+        2. **Local phase** — For each matched community, runs
+           ``spread_activation()`` from member nodes to find
+           neighbourhood context.
+        3. **Refinement loop** — Extracts keywords from phase-1
+           results and re-retrieves with ``retrieve()`` to catch
+           nodes that community-level matching missed.
+
+        This is the most sophisticated retrieval mode, blending
+        community-level understanding with node-level precision.
+        Use when neither pure-global nor pure-local search suffices.
+
+        Args:
+            question:       Natural-language query.
+            max_iterations: Refinement iterations (1 = no refine).
+            local_k:        Max nodes per community in local phase.
+            global_k:       Max communities from global phase.
+            spread_hops:    Spreading activation max hops.
+            spread_decay:   Spreading activation decay.
+            spread_threshold: Spreading activation min activation.
+            rrf_k:          RRF constant for merging phases.
+            summarizer:     Optional LLM callback for community summaries.
+
+        Returns:
+            ``{question, iterations, global_results, local_results,
+            refined_results, final_results}``
+        """
+        import re
+
+        # ---- Phase 1: Global community sweep -------------------------
+        global_res = self.query_global(
+            question, summarizer=summarizer, limit=global_k
+        )
+
+        # ---- Phase 2: Local spreading activation ---------------------
+        seed_ids: list[str] = []
+        for community in global_res.get("results", []):
+            for member in community.get("members", []):
+                seed_ids.append(member["id"])
+
+        # Also do a direct keyword retrieval as parallel local signal
+        kw_results = self.recall(question, limit=local_k * 2)
+        for r in kw_results:
+            if hasattr(r, 'id'):
+                seed_ids.append(r.id)
+            elif isinstance(r, dict) and r.get("node_id"):
+                seed_ids.append(r["node_id"])
+            elif isinstance(r, dict) and r.get("id"):
+                seed_ids.append(r["id"])
+
+        # Deduplicate seeds
+        seen = set()
+        unique_seeds = []
+        for sid in seed_ids:
+            if sid not in seen:
+                seen.add(sid)
+                unique_seeds.append(sid)
+
+        local_results: list[dict] = []
+        if unique_seeds:
+            try:
+                activations = self.spread_activation(
+                    unique_seeds,
+                    decay_factor=spread_decay,
+                    threshold=spread_threshold,
+                    max_hops=spread_hops,
+                )
+            except (KeyError, ValueError):
+                activations = {}
+
+            # Build node detail for activated nodes
+            for nid, act in sorted(
+                activations.items(), key=lambda x: x[1], reverse=True
+            )[:local_k * 3]:
+                row = self.conn.execute(
+                    "SELECT id, label, kind, weight FROM nodes WHERE id=?",
+                    (nid,),
+                ).fetchone()
+                if row:
+                    local_results.append({
+                        "node_id": nid,
+                        "label": row["label"],
+                        "kind": row["kind"],
+                        "weight": row["weight"],
+                        "activation": round(act, 4),
+                        "source": "seed" if nid in seen else "spread",
+                    })
+
+        # ---- Phase 3: RRF merge of global + local --------------------
+        def _rrf_score(node_id: str, rank_global: int, rank_local: int) -> float:
+            return (1 / (rrf_k + rank_global)) + (1 / (rrf_k + rank_local))
+
+        # Rank nodes from each phase
+        global_node_rank: dict[str, int] = {}
+        for i, community in enumerate(global_res.get("results", [])):
+            for member in community.get("members", []):
+                nid = member["id"]
+                if nid not in global_node_rank:
+                    global_node_rank[nid] = len(global_node_rank) + 1
+
+        local_node_rank: dict[str, int] = {}
+        for i, lr in enumerate(local_results):
+            local_node_rank[lr["node_id"]] = i + 1
+
+        all_nodes = set(global_node_rank) | set(local_node_rank)
+        merged = []
+        for nid in all_nodes:
+            gr = global_node_rank.get(nid, len(global_node_rank) + 100)
+            lr = local_node_rank.get(nid, len(local_node_rank) + 100)
+            score = _rrf_score(nid, gr, lr)
+            row = self.conn.execute(
+                "SELECT label, kind, weight FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if row:
+                merged.append({
+                    "node_id": nid,
+                    "label": row["label"],
+                    "kind": row["kind"],
+                    "weight": row["weight"],
+                    "score": round(score, 6),
+                    "in_global": nid in global_node_rank,
+                    "in_local": nid in local_node_rank,
+                })
+
+        merged.sort(key=lambda x: x["score"], reverse=True)
+        refined_results = merged[:local_k * 3]
+
+        # ---- Iterative refinement -----------------------------------
+        iteration_log = [{
+            "iteration": 0,
+            "global_communities": global_res.get("total_communities", 0),
+            "global_matched": global_res.get("communities_matched", 0),
+            "local_activated": len(local_results),
+            "merged_unique": len(merged),
+        }]
+
+        for iteration in range(1, max_iterations):
+            # Extract keywords from current results
+            current_labels = " ".join(
+                r.get("label", "") for r in refined_results
+            )
+            # Combine original question with discovered labels
+            expanded_query = f"{question} {current_labels}"
+
+            # Re-retrieve with expanded query
+            try:
+                new_results = self.retrieve(
+                    expanded_query, limit=local_k * 2, rerank=True
+                )
+            except Exception:
+                new_results = []
+
+            # Merge new results with existing via RRF
+            new_node_rank: dict[str, int] = {}
+            for i, r in enumerate(new_results):
+                nid = ""
+                if isinstance(r, dict):
+                    nid = r.get("node_id", r.get("id", ""))
+                elif hasattr(r, 'id'):
+                    nid = r.id
+                if nid and nid not in new_node_rank:
+                    new_node_rank[nid] = len(new_node_rank) + 1
+
+            # Preserve original global/local flags from first pass
+            orig_flags: dict[str, dict] = {}
+            for r in refined_results:
+                orig_flags[r["node_id"]] = {
+                    "in_global": r.get("in_global", False),
+                    "in_local": r.get("in_local", False),
+                }
+
+            existing_rank = {
+                r["node_id"]: i + 1
+                for i, r in enumerate(refined_results)
+            }
+
+            all_ids = set(existing_rank) | set(new_node_rank)
+            remerged = []
+            for nid in all_ids:
+                er = existing_rank.get(nid, len(existing_rank) + 100)
+                nr = new_node_rank.get(nid, len(new_node_rank) + 100)
+                score = _rrf_score(nid, er, nr)
+                row = self.conn.execute(
+                    "SELECT label, kind, weight FROM nodes WHERE id=?", (nid,)
+                ).fetchone()
+                if row:
+                    flags = orig_flags.get(nid, {})
+                    remerged.append({
+                        "node_id": nid,
+                        "label": row["label"],
+                        "kind": row["kind"],
+                        "weight": row["weight"],
+                        "score": round(score, 6),
+                        "in_previous": nid in existing_rank,
+                        "in_expanded": nid in new_node_rank,
+                        "in_global": flags.get("in_global", False),
+                        "in_local": flags.get("in_local", False),
+                    })
+
+            remerged.sort(key=lambda x: x["score"], reverse=True)
+            refined_results = remerged[:local_k * 3]
+
+            iteration_log.append({
+                "iteration": iteration,
+                "expanded_query": expanded_query[:200],
+                "new_candidates": len(new_results),
+                "merged_unique": len(remerged),
+            })
+
+        # Final trim
+        final_results = refined_results[:local_k * 2]
+
+        return {
+            "question": question,
+            "iterations": len(iteration_log),
+            "iteration_log": iteration_log,
+            "global_results": global_res,
+            "local_results": local_results[:local_k],
+            "refined_results": refined_results,
+            "final_results": final_results,
+            "total_unique_nodes": len(merged) + sum(
+                il.get("new_candidates", 0) for il in iteration_log[1:]
+            ),
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
