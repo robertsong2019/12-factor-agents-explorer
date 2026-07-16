@@ -28,6 +28,8 @@
 - [x] **F12**: `list_tools_by_prefix()` — filter registered tools by name prefix ✅ 2026-07-12
 - [x] **F13**: `Memory.search_by_tag(tag)` — search memories by single tag with optional limit ✅ 2026-07-16
 - [x] **F14**: `Memory.merge(other)` — merge two Memory instances with content-based dedup ✅ 2026-07-16
+- [x] **F15**: `Memory.search_all_tags(tags)` — AND semantic multi-tag search ✅ 2026-07-16
+- [x] **F16**: `Memory.distinct_tags()` — sorted unique tag list ✅ 2026-07-16
 
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅

@@ -269,6 +269,28 @@ class Memory:
             return matched[-limit:]
         return matched
 
+    def search_all_tags(self, tags: List[str], limit: int = 0) -> List[MemoryEntry]:
+        """返回同时包含所有指定标签的记忆（AND 语义）。
+
+        Args:
+            tags: 需要同时匹配的标签列表
+            limit: 返回条目上限，0 表示全部
+        """
+        if not tags:
+            return []
+        tag_set = set(tags)
+        matched = [e for e in self._entries if tag_set <= set(e.tags)]
+        if limit > 0:
+            return matched[-limit:]
+        return matched
+
+    def distinct_tags(self) -> List[str]:
+        """返回所有出现过的标签，按字母排序。"""
+        all_tags = set()
+        for entry in self._entries:
+            all_tags.update(entry.tags)
+        return sorted(all_tags)
+
     def merge(self, other: 'Memory') -> int:
         """合并另一个 Memory 实例到当前实例。
 
