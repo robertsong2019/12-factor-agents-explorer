@@ -24553,6 +24553,363 @@ class MemoryGraph:
         }
 
 
+    # ----------------------------------------------------------------
+    # Write Governance Check (PASB-inspired, arXiv:2607.10526)
+    # ----------------------------------------------------------------
+
+    _GOVERNANCE_HEDGES = frozenset({
+        'maybe', 'might', 'could', 'perhaps', 'possibly', 'seems',
+        'apparently', 'supposedly', 'allegedly', 'presumably',
+        'likely', 'probably', 'roughly', 'approximately',
+        'suggests', 'appears', 'uncertain', 'unclear', 'unconfirmed',
+        'tentative', 'hypothetical', 'speculative', 'draft',
+        'estimate', 'estimated', 'estimated to be', 'believed',
+        'thought to be', 'said to be', 'reportedly',
+    })
+
+    _GOVERNANCE_CERTAINTY = frozenset({
+        'is', 'are', 'definitely', 'absolutely', 'certainly',
+        'undoubtedly', 'confirmed', 'verified', 'proven',
+        'established', 'guaranteed', 'always', 'never',
+        'all', 'every', 'none', 'must', 'cannot',
+        'will', 'shall', 'undeniably', 'incontestably',
+        'unquestionably', 'irrefutably', 'positively',
+    })
+
+    _GOVERNANCE_BROADENERS = frozenset({
+        'all', 'every', 'always', 'never', 'everyone',
+        'everything', 'nobody', 'nothing', 'anywhere',
+        'everywhere', 'all types', 'all kinds', 'all forms',
+        'universally', 'exclusively', 'only', 'solely',
+    })
+
+    _ATTRIBUTION_KEYS = frozenset({
+        'source', 'according_to', 'cited_from', 'reference',
+        'reported_by', 'verified_by', 'evidence', 'provenance',
+        'citation', 'attributed_to', 'source_type',
+        'confidence_level', 'reliability', 'verbatim',
+    })
+
+    def _tokenize_gov(self, text: str) -> list[str]:
+        """Lower-case word tokens for governance analysis."""
+        import re
+        return re.findall(r"[a-z']+", text.lower())
+
+    def _detect_status_promotion(self, old_label: str, new_label: str) -> dict:
+        """Detect certainty escalation from hedged to definitive.
+
+        PASB failure mode #1: *status promotion* transforms a tentative
+        statement into an asserted fact, e.g.
+        ``"user might like Italian"`` → ``"user likes Italian"``.
+        """
+        old_tokens = set(self._tokenize_gov(old_label))
+        new_tokens = set(self._tokenize_gov(new_label))
+
+        old_hedges = old_tokens & self._GOVERNANCE_HEDGES
+        new_hedges = new_tokens & self._GOVERNANCE_HEDGES
+        old_cert = old_tokens & self._GOVERNANCE_CERTAINTY
+        new_cert = new_tokens & self._GOVERNANCE_CERTAINTY
+
+        hedge_removed = bool(old_hedges and not new_hedges)
+        certainty_added = bool(new_cert and not old_cert)
+
+        score = 0.0
+        if hedge_removed:
+            score += 0.35
+        if certainty_added:
+            score += 0.35
+        # Extra signal: hedge count drops further
+        if len(old_hedges) > len(new_hedges):
+            score += 0.1 * (len(old_hedges) - len(new_hedges))
+
+        score = min(1.0, score)
+        triggered = score >= 0.3
+
+        return {
+            "type": "status_promotion",
+            "triggered": triggered,
+            "score": round(score, 3),
+            "old_hedges": sorted(old_hedges),
+            "new_hedges": sorted(new_hedges),
+            "old_certainty": sorted(old_cert),
+            "new_certainty": sorted(new_cert),
+            "detail": (
+                f"Hedged→definitive: removed {sorted(old_hedges - new_hedges)}, "
+                f"added certainty {sorted(new_cert - old_cert)}"
+                if triggered else "No significant certainty escalation"
+            ),
+        }
+
+    def _detect_attribution_removal(self, old_data: dict,
+                                    new_data: dict) -> dict:
+        """Detect removal of source / provenance / evidence.
+
+        PASB failure mode #2: *attribution removal* strips source
+        qualifiers, e.g. ``{source: "survey"}`` → ``{}``.
+        """
+        old_keys = set((old_data or {}).keys())
+        new_keys = set((new_data or {}).keys())
+
+        old_attribution = old_keys & self._ATTRIBUTION_KEYS
+        new_attribution = new_keys & self._ATTRIBUTION_KEYS
+        removed = old_attribution - new_attribution
+
+        # Also detect confidence level drop
+        old_conf = (old_data or {}).get('confidence_level')
+        new_conf = (new_data or {}).get('confidence_level')
+        conf_dropped = False
+        if old_conf and new_conf and new_conf > old_conf:
+            conf_dropped = True
+        elif old_conf and not new_conf:
+            conf_dropped = True
+
+        score = 0.0
+        if removed:
+            score += 0.4 * len(removed)
+        if conf_dropped:
+            score += 0.3
+
+        score = min(1.0, score)
+        triggered = score >= 0.3
+
+        return {
+            "type": "attribution_removal",
+            "triggered": triggered,
+            "score": round(score, 3),
+            "removed_keys": sorted(removed),
+            "confidence_dropped": conf_dropped,
+            "detail": (
+                f"Removed attribution keys: {sorted(removed)}"
+                if removed else
+                ("Confidence level inflated or removed"
+                 if conf_dropped else "No attribution removal detected")
+            ),
+        }
+
+    def _detect_scope_broadening(self, old_label: str,
+                                 new_label: str) -> dict:
+        """Detect over-generalisation from specific to universal.
+
+        PASB failure mode #3: *scope broadening* generalises a
+        qualified statement, e.g. ``"likes restaurant A"`` →
+        ``"likes all restaurants"``.
+        """
+        old_tokens = set(self._tokenize_gov(old_label))
+        new_tokens = set(self._tokenize_gov(new_label))
+
+        old_broad = old_tokens & self._GOVERNANCE_BROADENERS
+        new_broad = new_tokens & self._GOVERNANCE_BROADENERS
+        added = new_broad - old_broad
+
+        # Detect universal quantifier insertion
+        score = 0.0
+        if added:
+            score += 0.5 * len(added)
+
+        # Detect removal of qualifiers / specific identifiers
+        old_specific = old_tokens - new_tokens - self._GOVERNANCE_BROADENERS
+        if old_specific and added:
+            score += 0.2
+
+        score = min(1.0, score)
+        triggered = score >= 0.3
+
+        return {
+            "type": "scope_broadening",
+            "triggered": triggered,
+            "score": round(score, 3),
+            "added_broadeners": sorted(added),
+            "removed_specifics": sorted(old_specific)[:10],
+            "detail": (
+                f"Added universal quantifiers: {sorted(added)}"
+                if triggered else "No scope broadening detected"
+            ),
+        }
+
+    def write_governance_check(self, node_id: str, *,
+                               new_label: str = None,
+                               new_data: dict = None) -> dict:
+        """Check a proposed write for sycophantic content modification.
+
+        Inspired by PASB (arXiv:2607.10526): *Persistent Agent
+        Sycophancy at Commit Boundaries*. Agents exhibit three failure
+        modes when persisting memory across session boundaries:
+
+        1. **Status promotion** — hedged claim → definitive assertion.
+        2. **Attribution removal** — source/evidence qualifiers stripped.
+        3. **Scope broadening** — specific claim → universal generalisation.
+
+        This method compares an existing node's content with proposed
+        new content and flags any of the three patterns.
+
+        Args:
+            node_id: ID of the node being modified.
+            new_label: Proposed new label (``None`` = unchanged).
+            new_data: Proposed new data dict (``None`` = unchanged).
+
+        Returns:
+            ``{node_id, verdict, overall_score, checks: [...], recommendation}``
+
+            *verdict* is one of ``'safe'``, ``'flag'``, ``'reject'``.
+            *recommendation* is a human-readable action string.
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return {
+                "node_id": node_id,
+                "verdict": "error",
+                "overall_score": 0.0,
+                "checks": [],
+                "recommendation": "Node not found",
+            }
+
+        old_label = node.label or ""
+        old_data = node.data or {}
+        check_label = new_label if new_label is not None else old_label
+        check_data = new_data if new_data is not None else old_data
+
+        checks = []
+        checks.append(self._detect_status_promotion(old_label, check_label))
+        checks.append(self._detect_attribution_removal(old_data, check_data))
+        checks.append(self._detect_scope_broadening(old_label, check_label))
+
+        triggered = [c for c in checks if c["triggered"]]
+        overall = max((c["score"] for c in checks), default=0.0)
+
+        if overall >= 0.6:
+            verdict = "reject"
+        elif triggered:
+            verdict = "flag"
+        else:
+            verdict = "safe"
+
+        if verdict == "reject":
+            rec = ("Write rejected: high-risk sycophantic modification "
+                   f"({len(triggered)} patterns detected). "
+                   "Review before committing.")
+        elif verdict == "flag":
+            names = ", ".join(c["type"] for c in triggered)
+            rec = (f"Write flagged: potential {names}. "
+                   "Proceed with caution or revise content.")
+        else:
+            rec = "Write appears safe — no sycophantic patterns detected."
+
+        return {
+            "node_id": node_id,
+            "verdict": verdict,
+            "overall_score": round(overall, 3),
+            "checks": checks,
+            "recommendation": rec,
+        }
+
+    def safe_supersede(self, node_id: str, *,
+                       new_label: str = None, new_kind: str = None,
+                       new_data: dict = None) -> dict:
+        """Supersede a node with write governance check.
+
+        Runs :meth:`write_governance_check` first. If the verdict is
+        ``'reject'``, the supersede is blocked and the original node
+        is left untouched. If ``'flag'``, a warning is recorded but
+        the supersede proceeds. If ``'safe'``, normal supersede.
+
+        Args:
+            node_id: ID of the node to supersede.
+            new_label: New label (defaults to old).
+            new_kind: New kind (defaults to old).
+            new_data: New data (defaults to old).
+
+        Returns:
+            ``{governance, new_id}`` — *governance* is the check
+            result, *new_id* is the new node ID or ``None`` if blocked.
+        """
+        gov = self.write_governance_check(
+            node_id, new_label=new_label, new_data=new_data
+        )
+
+        if gov["verdict"] == "reject":
+            return {"governance": gov, "new_id": None}
+
+        new_id = self.supersede(
+            node_id, new_label=new_label,
+            new_kind=new_kind, new_data=new_data
+        )
+        return {"governance": gov, "new_id": new_id}
+
+    def governance_audit(self, *, node_id: str = None,
+                         limit: int = 100) -> dict:
+        """Audit recent supersede operations for governance risk.
+
+        Scans the supersede chain (old → new via ``superseded_by``
+        edges) and runs governance checks on each transition.
+
+        Args:
+            node_id: If provided, audit only that node's chain.
+                     If ``None``, sample up to *limit* recent superseded nodes.
+            limit: Max chains to audit when *node_id* is ``None``.
+
+        Returns:
+            ``{total_chains, audited, safe, flagged, rejected, details}``
+        """
+        if node_id:
+            chains = [(node_id,)]
+        else:
+            # Find nodes that were superseded (have outgoing superseded_by)
+            rows = self.conn.execute(
+                "SELECT source FROM edges WHERE relation='superseded_by' "
+                "ORDER BY ROWID DESC LIMIT ?", (limit,)
+            ).fetchall()
+            chains = [(r["source"],) for r in rows]
+
+        details = []
+        safe = flagged = rejected = 0
+
+        for (old_id,) in chains:
+            # Find the new node via superseded_by edge
+            edge = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? AND relation='superseded_by'",
+                (old_id,)
+            ).fetchone()
+            if not edge:
+                continue
+
+            new_id = edge["target"]
+            old_node = self.get_node(old_id)
+            new_node = self.get_node(new_id)
+            if not old_node or not new_node:
+                continue
+
+            gov = self.write_governance_check(
+                old_id,
+                new_label=new_node.label,
+                new_data=new_node.data,
+            )
+
+            if gov["verdict"] == "safe":
+                safe += 1
+            elif gov["verdict"] == "flag":
+                flagged += 1
+            elif gov["verdict"] == "reject":
+                rejected += 1
+
+            details.append({
+                "old_id": old_id,
+                "old_label": old_node.label,
+                "new_id": new_id,
+                "new_label": new_node.label,
+                "verdict": gov["verdict"],
+                "score": gov["overall_score"],
+            })
+
+        return {
+            "total_chains": len(chains),
+            "audited": len(details),
+            "safe": safe,
+            "flagged": flagged,
+            "rejected": rejected,
+            "details": details,
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
