@@ -23794,6 +23794,215 @@ class MemoryGraph:
             "recommendations": recs,
         }
 
+    # ── Skill Composition (L1→L2 Meta-Skill) ──────────────────────
+
+    def skill_compose(self, skill_ids: list[str], name: str,
+                      *, description: str = "",
+                      confidence: float = None) -> Optional[Node]:
+        """Compose multiple L1 skills into an L2 meta-skill.
+
+        Implements the upward composition step in the Experience
+        Compression Spectrum (Zhang et al., arXiv:2604.15877):
+
+            L0 (trace) → L1 (skill) → L2 (meta-skill)
+
+        Given two or more ``kind='skill'`` nodes (created via
+        :meth:`compress_to_skill`), this method:
+
+        1. Validates all *skill_ids* exist and are skills.
+        2. Merges their steps (union, deduplicated, order-preserving).
+        3. Merges constraints from all component skills.
+        4. Aggregates source episode references.
+        5. Creates a new ``kind='skill'`` node with ``'composed'`` tag.
+        6. Links meta-skill → each component via ``'composes'`` edges.
+        7. Sets confidence = mean of components (or explicit override).
+
+        The resulting meta-skill can itself be evolved via
+        :meth:`evolve_skill` or retrieved via :meth:`retrieve_skills`.
+
+        Args:
+            skill_ids: Two or more component skill node IDs.
+            name: Meta-skill name (becomes node label).
+            description: Optional human-readable summary.
+            confidence: Override confidence [0,1]. Default: mean of components.
+
+        Returns:
+            The created meta-skill :class:`Node`, or ``None`` if <2 valid skills.
+        """
+        if not skill_ids or len(skill_ids) < 2:
+            return None
+
+        # Validate component skills
+        valid = []
+        for sid in skill_ids:
+            row = self.conn.execute(
+                "SELECT id, label, kind, data FROM nodes WHERE id=?", (sid,)
+            ).fetchone()
+            if row and row["kind"] == "skill":
+                valid.append(row)
+
+        if len(valid) < 2:
+            return None
+
+        # Merge steps, constraints, source episodes from all components
+        merged_steps = []
+        merged_constraints = []
+        all_source_episodes = []
+        component_confidences = []
+        total_source_count = 0
+
+        for row in valid:
+            d = row["data"]
+            if isinstance(d, str):
+                try:
+                    d = json.loads(d)
+                except Exception:
+                    d = {}
+            if not isinstance(d, dict):
+                d = {}
+
+            for s in d.get("steps", []):
+                if s not in merged_steps:
+                    merged_steps.append(s)
+
+            for c in d.get("constraints", []):
+                if c not in merged_constraints:
+                    merged_constraints.append(c)
+
+            for ep in d.get("source_episodes", []):
+                if ep not in all_source_episodes:
+                    all_source_episodes.append(ep)
+
+            component_confidences.append(d.get("confidence", 0.5))
+            total_source_count += d.get("source_count", 0)
+
+        # Confidence: explicit override or mean of components
+        if confidence is not None:
+            final_confidence = max(0.0, min(1.0, confidence))
+        else:
+            final_confidence = round(
+                sum(component_confidences) / len(component_confidences), 4
+            )
+
+        meta_data = {
+            "skill_name": name,
+            "description": description,
+            "component_skills": [r["id"] for r in valid],
+            "component_count": len(valid),
+            "source_episodes": all_source_episodes,
+            "aggregated_source_count": total_source_count,
+            "compression_ratio": round(total_source_count * 5.0, 1),
+            "confidence": final_confidence,
+            "version": "0.1.0",
+            "invocation_conditions": [],
+            "steps": merged_steps,
+            "constraints": merged_constraints,
+            "composed_at": time.time(),
+            "composition_level": 2,
+        }
+
+        # Create the meta-skill node
+        meta = self.add(name, kind="skill", data=meta_data,
+                        tags=["procedural", "composed"])
+
+        # Link meta-skill → components via 'composes' edges
+        for row in valid:
+            self.link(meta.id, row["id"], "composes", weight=0.9)
+
+        # Q-value: aggregate from components
+        try:
+            q_vals = []
+            for row in valid:
+                qrow = self.conn.execute(
+                    "SELECT q_value FROM nodes WHERE id=?", (row["id"],)
+                ).fetchone()
+                if qrow and qrow["q_value"] is not None:
+                    q_vals.append(qrow["q_value"])
+            base_q = sum(q_vals) / len(q_vals) if q_vals else 0.0
+            self.update_q(meta.id, reward=base_q + 0.1,
+                          reason="skill_composition")
+        except Exception:
+            pass
+
+        return meta
+
+    def skill_decompose(self, meta_skill_id: str) -> list[Node]:
+        """Return the component skills of an L2+ meta-skill.
+
+        Args:
+            meta_skill_id: A skill node created via :meth:`skill_compose`.
+
+        Returns:
+            List of component skill :class:`Node` objects. Empty if the
+            skill has no components or doesn't exist.
+        """
+        node = self.get_node(meta_skill_id)
+        if not node or node.kind != "skill":
+            return []
+
+        d = node.data if isinstance(node.data, dict) else {}
+        component_ids = d.get("component_skills", [])
+        if not component_ids:
+            return []
+
+        result = []
+        for cid in component_ids:
+            n = self.get_node(cid)
+            if n:
+                result.append(n)
+        return result
+
+    def skill_lineage(self, skill_id: str, *, depth: int = 10) -> dict:
+        """Recursively expand the composition hierarchy of a skill.
+
+        Returns a tree dict showing the full lineage:
+
+        .. code-block:: python
+
+            {
+                "id": "meta-skill-id",
+                "label": "Full Pipeline",
+                "level": 2,
+                "components": [
+                    {"id": "skill-1", "label": "Deploy", "level": 1, ...},
+                    {"id": "skill-2", "label": "Test", "level": 1, ...},
+                ]
+            }
+
+        Args:
+            skill_id: Root skill to expand.
+            depth: Max recursion depth to prevent infinite loops.
+
+        Returns:
+            Tree dict, or empty dict if skill not found.
+        """
+        node = self.get_node(skill_id)
+        if not node or node.kind != "skill":
+            return {}
+
+        d = node.data if isinstance(node.data, dict) else {}
+        level = d.get("composition_level", 1)
+
+        result = {
+            "id": node.id,
+            "label": node.label,
+            "level": level,
+            "confidence": d.get("confidence", 0.5),
+            "steps": d.get("steps", []),
+        }
+
+        if depth > 0:
+            component_ids = d.get("component_skills", [])
+            if component_ids:
+                children = []
+                for cid in component_ids:
+                    child = self.skill_lineage(cid, depth=depth - 1)
+                    if child:
+                        children.append(child)
+                result["components"] = children
+
+        return result
+
     # ── Memory Information Density (PRISM / PlugMem inspired) ──────
 
     def memory_information_density(self, *, node_id: str = None,

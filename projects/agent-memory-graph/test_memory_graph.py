@@ -23382,6 +23382,316 @@ class TestSkillBankHealth:
         assert isinstance(health["avg_q_value"], (int, float))
 
 
+class TestSkillCompose:
+    """Tests for L1→L2 skill composition (skill_compose + skill_decompose + skill_lineage)."""
+
+    def _make_skill(self, mg, label, steps_confidence=None):
+        """Helper: create a simple skill from episodes."""
+        eps = []
+        for i, (action, _) in enumerate(steps_confidence or [("do A", 0.5)]):
+            ep = mg.add(f"Episode {label}-{i}", "event", {"action": action})
+            eps.append(ep)
+        return mg.compress_to_skill([e.id for e in eps], label,
+                                    confidence=steps_confidence[0][1] if steps_confidence else 0.5)
+
+    def test_basic_composition(self, mg):
+        """Compose 2 skills into 1 meta-skill."""
+        e1 = mg.add("Deploy", "event", {"action": "docker build"})
+        e2 = mg.add("Push", "event", {"action": "docker push"})
+        s1 = mg.compress_to_skill([e1.id], "Build Skill")
+        s2 = mg.compress_to_skill([e2.id], "Push Skill")
+
+        meta = mg.skill_compose([s1.id, s2.id], "CI/CD Pipeline")
+        assert meta is not None
+        assert meta.kind == "skill"
+        assert meta.label == "CI/CD Pipeline"
+        d = meta.data
+        assert d["component_count"] == 2
+        assert d["composition_level"] == 2
+        assert "docker build" in d["steps"]
+        assert "docker push" in d["steps"]
+
+    def test_single_skill_returns_none(self, mg):
+        """Need at least 2 skills to compose."""
+        e = mg.add("E", "event")
+        s = mg.compress_to_skill([e.id], "Lonely Skill")
+        assert mg.skill_compose([s.id], "Meta") is None
+
+    def test_empty_returns_none(self, mg):
+        """Empty list returns None."""
+        assert mg.skill_compose([], "Empty") is None
+
+    def test_all_invalid_returns_none(self, mg):
+        """All invalid IDs returns None."""
+        assert mg.skill_compose(["bad1", "bad2"], "Phantom") is None
+
+    def test_non_skill_nodes_ignored(self, mg):
+        """Non-skill nodes are filtered out; need >=2 real skills."""
+        e1 = mg.add("E1", "event")
+        e2 = mg.add("E2", "event")
+        s1 = mg.compress_to_skill([e1.id], "Skill 1")
+        # e2 is an event, not a skill — only 1 valid skill
+        assert mg.skill_compose([s1.id, e2.id], "Mixed") is None
+
+    def test_partial_invalid_uses_valid(self, mg):
+        """Mix of valid skills + invalid IDs → uses valid subset if >=2."""
+        e1 = mg.add("A", "event", {"action": "a"})
+        e2 = mg.add("B", "event", {"action": "b"})
+        s1 = mg.compress_to_skill([e1.id], "Skill A")
+        s2 = mg.compress_to_skill([e2.id], "Skill B")
+        meta = mg.skill_compose([s1.id, s2.id, "fake_id"], "Partial")
+        assert meta is not None
+        assert meta.data["component_count"] == 2
+
+    def test_steps_merged_and_deduped(self, mg):
+        """Overlapping steps are merged and deduplicated."""
+        e1a = mg.add("A1", "event", {"action": "build"})
+        e1b = mg.add("A2", "event", {"action": "test"})
+        e2a = mg.add("B1", "event", {"action": "build"})
+        e2b = mg.add("B2", "event", {"action": "deploy"})
+        s1 = mg.compress_to_skill([e1a.id, e1b.id], "Skill A")
+        s2 = mg.compress_to_skill([e2a.id, e2b.id], "Skill B")
+
+        meta = mg.skill_compose([s1.id, s2.id], "Merged")
+        steps = meta.data["steps"]
+        assert steps.count("build") == 1
+        assert "test" in steps
+        assert "deploy" in steps
+
+    def test_confidence_is_average(self, mg):
+        """Default confidence = mean of component skills."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        s1 = mg.compress_to_skill([e1.id], "High", confidence=0.8)
+        s2 = mg.compress_to_skill([e2.id], "Low", confidence=0.4)
+
+        meta = mg.skill_compose([s1.id, s2.id], "Avg")
+        assert meta.data["confidence"] == round((0.8 + 0.4) / 2, 4)
+
+    def test_confidence_override(self, mg):
+        """Explicit confidence overrides the average."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        s1 = mg.compress_to_skill([e1.id], "S1", confidence=0.3)
+        s2 = mg.compress_to_skill([e2.id], "S2", confidence=0.7)
+
+        meta = mg.skill_compose([s1.id, s2.id], "Override", confidence=0.95)
+        assert meta.data["confidence"] == 0.95
+
+    def test_confidence_clamping(self, mg):
+        """Confidence clamped to [0, 1]."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        s1 = mg.compress_to_skill([e1.id], "S1")
+        s2 = mg.compress_to_skill([e2.id], "S2")
+
+        meta_high = mg.skill_compose([s1.id, s2.id], "High", confidence=5.0)
+        assert meta_high.data["confidence"] == 1.0
+
+    def test_links_via_composes_edges(self, mg):
+        """Meta-skill links to components via 'composes' edges."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        s1 = mg.compress_to_skill([e1.id], "Skill A")
+        s2 = mg.compress_to_skill([e2.id], "Skill B")
+
+        meta = mg.skill_compose([s1.id, s2.id], "Linked")
+        neighbors = mg.neighbors(meta.id)
+        linked_ids = {n.id for n in neighbors}
+        assert s1.id in linked_ids
+        assert s2.id in linked_ids
+
+    def test_tags_include_composed(self, mg):
+        """Meta-skill gets 'procedural' and 'composed' tags."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        s1 = mg.compress_to_skill([e1.id], "S1")
+        s2 = mg.compress_to_skill([e2.id], "S2")
+
+        meta = mg.skill_compose([s1.id, s2.id], "Tagged")
+        row = mg.conn.execute("SELECT tags FROM nodes WHERE id=?", (meta.id,)).fetchone()
+        tags = json.loads(row["tags"])
+        assert "procedural" in tags
+        assert "composed" in tags
+
+    def test_aggregated_source_episodes(self, mg):
+        """Meta-skill aggregates source episodes from all components."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        e3 = mg.add("C", "event")
+        s1 = mg.compress_to_skill([e1.id, e2.id], "Skill AB")
+        s2 = mg.compress_to_skill([e3.id], "Skill C")
+
+        meta = mg.skill_compose([s1.id, s2.id], "ABC")
+        sources = meta.data["source_episodes"]
+        assert e1.id in sources
+        assert e2.id in sources
+        assert e3.id in sources
+
+    def test_constraints_merged(self, mg):
+        """Constraints from components are merged."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        s1 = mg.compress_to_skill([e1.id], "S1")
+        s2 = mg.compress_to_skill([e2.id], "S2")
+
+        # Add constraints via evolve
+        mg.evolve_skill(s1.id, new_constraints=["needs docker"])
+        mg.evolve_skill(s2.id, new_constraints=["needs kubectl"])
+
+        meta = mg.skill_compose([s1.id, s2.id], "Constrained")
+        constraints = meta.data["constraints"]
+        assert "needs docker" in constraints
+        assert "needs kubectl" in constraints
+
+    def test_retrieve_finds_meta_skill(self, mg):
+        """retrieve_skills can find composed meta-skills."""
+        e1 = mg.add("Deploy app", "event", {"action": "kubectl apply"})
+        e2 = mg.add("Rollback", "event", {"action": "kubectl rollback"})
+        s1 = mg.compress_to_skill([e1.id], "Deploy")
+        s2 = mg.compress_to_skill([e2.id], "Rollback")
+
+        meta = mg.skill_compose([s1.id, s2.id], "K8s Ops",
+                                description="kubernetes operations")
+        results = mg.retrieve_skills("kubernetes")
+        assert any(r.id == meta.id for r in results)
+
+    def test_multi_level_composition(self, mg):
+        """L2 meta-skill can be composed into L3."""
+        # Create 2 L1 skills
+        e1 = mg.add("A", "event", {"action": "step_a"})
+        e2 = mg.add("B", "event", {"action": "step_b"})
+        e3 = mg.add("C", "event", {"action": "step_c"})
+        e4 = mg.add("D", "event", {"action": "step_d"})
+        s1 = mg.compress_to_skill([e1.id, e2.id], "Skill 1")
+        s2 = mg.compress_to_skill([e3.id, e4.id], "Skill 2")
+
+        # Compose into L2
+        meta1 = mg.skill_compose([s1.id, s2.id], "Meta L2")
+        assert meta1 is not None
+
+        # Create another L2
+        e5 = mg.add("E", "event", {"action": "step_e"})
+        e6 = mg.add("F", "event", {"action": "step_f"})
+        s3 = mg.compress_to_skill([e5.id], "Skill 3")
+        s4 = mg.compress_to_skill([e6.id], "Skill 4")
+        meta2 = mg.skill_compose([s3.id, s4.id], "Meta L2-b")
+
+        # Compose L2 → L3
+        mega = mg.skill_compose([meta1.id, meta2.id], "Mega L3")
+        assert mega is not None
+        assert mega.data["component_count"] == 2
+        # Steps from all levels should be present
+        all_steps = mega.data["steps"]
+        assert "step_a" in all_steps
+        assert "step_f" in all_steps
+
+    def test_evolve_meta_skill(self, mg):
+        """Meta-skill can be evolved just like a regular skill."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        s1 = mg.compress_to_skill([e1.id], "S1", confidence=0.6)
+        s2 = mg.compress_to_skill([e2.id], "S2", confidence=0.6)
+        meta = mg.skill_compose([s1.id, s2.id], "Meta")
+
+        evolved = mg.evolve_skill(meta.id, feedback=1.0, reason="great combo")
+        assert evolved is not None
+        assert evolved.data["confidence"] > 0.6
+
+
+class TestSkillDecompose:
+    """Tests for skill_decompose — listing component skills."""
+
+    def test_decompose_returns_components(self, mg):
+        """skill_decompose returns the component skill list."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        s1 = mg.compress_to_skill([e1.id], "S1")
+        s2 = mg.compress_to_skill([e2.id], "S2")
+        meta = mg.skill_compose([s1.id, s2.id], "Meta")
+
+        components = mg.skill_decompose(meta.id)
+        assert len(components) == 2
+        labels = {c.label for c in components}
+        assert "S1" in labels
+        assert "S2" in labels
+
+    def test_decompose_non_meta_returns_empty(self, mg):
+        """A regular skill (no components) returns empty list."""
+        e = mg.add("E", "event")
+        s = mg.compress_to_skill([e.id], "Regular")
+        assert mg.skill_decompose(s.id) == []
+
+    def test_decompose_nonexistent_returns_empty(self, mg):
+        """Non-existent ID returns empty list."""
+        assert mg.skill_decompose("fake_id") == []
+
+    def test_decompose_non_skill_returns_empty(self, mg):
+        """Non-skill node returns empty list."""
+        e = mg.add("E", "event")
+        assert mg.skill_decompose(e.id) == []
+
+
+class TestSkillLineage:
+    """Tests for skill_lineage — recursive hierarchy expansion."""
+
+    def test_lineage_flat_skill(self, mg):
+        """Lineage of a regular L1 skill has no components."""
+        e = mg.add("E", "event")
+        s = mg.compress_to_skill([e.id], "Flat")
+        tree = mg.skill_lineage(s.id)
+        assert tree["label"] == "Flat"
+        assert tree["level"] == 1
+        assert "components" not in tree or tree["components"] == []
+
+    def test_lineage_meta_skill(self, mg):
+        """Lineage of an L2 meta-skill shows components."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        e3 = mg.add("C", "event")
+        s1 = mg.compress_to_skill([e1.id, e2.id], "AB")
+        s2 = mg.compress_to_skill([e3.id], "C")
+        meta = mg.skill_compose([s1.id, s2.id], "ABC")
+
+        tree = mg.skill_lineage(meta.id)
+        assert tree["label"] == "ABC"
+        assert tree["level"] == 2
+        assert len(tree["components"]) == 2
+
+    def test_lineage_multi_level(self, mg):
+        """Lineage expands L2→L1 recursively."""
+        e1 = mg.add("A", "event", {"action": "a"})
+        e2 = mg.add("B", "event", {"action": "b"})
+        e3 = mg.add("C", "event", {"action": "c"})
+        e4 = mg.add("D", "event", {"action": "d"})
+
+        s1 = mg.compress_to_skill([e1.id, e2.id], "S1")
+        s2 = mg.compress_to_skill([e3.id, e4.id], "S2")
+        meta = mg.skill_compose([s1.id, s2.id], "Meta")
+
+        tree = mg.skill_lineage(meta.id)
+        assert tree["level"] == 2
+        # Each component should be L1
+        for child in tree["components"]:
+            assert child["level"] == 1
+
+    def test_lineage_nonexistent_returns_empty(self, mg):
+        """Non-existent skill returns empty dict."""
+        assert mg.skill_lineage("fake") == {}
+
+    def test_lineage_depth_limit(self, mg):
+        """Depth limit prevents infinite recursion."""
+        e1 = mg.add("A", "event")
+        e2 = mg.add("B", "event")
+        s1 = mg.compress_to_skill([e1.id], "S1")
+        s2 = mg.compress_to_skill([e2.id], "S2")
+        meta = mg.skill_compose([s1.id, s2.id], "Meta")
+
+        # depth=0 → no expansion
+        tree = mg.skill_lineage(meta.id, depth=0)
+        assert "components" not in tree
+
+
 class TestMemoryInformationDensity:
     """Tests for memory_information_density (PRISM/PlugMem inspired)."""
 
