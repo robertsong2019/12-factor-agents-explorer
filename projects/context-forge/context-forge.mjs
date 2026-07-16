@@ -15,7 +15,9 @@
 
 import { readdir, readFile, writeFile, stat, mkdir } from "node:fs/promises";
 import { join, basename, extname, relative, sep } from "node:path";
-import { existsSync as fsExistsSync, unlinkSync as fsUnlinkSync } from "node:fs";
+import { existsSync as fsExistsSync, unlinkSync as fsUnlinkSync, watch as fsWatch, readdirSync as fsReaddirSync } from "node:fs";
+
+export { fsWatch as _fsWatch };
 
 export const existsSync = fsExistsSync;
 
@@ -2585,6 +2587,7 @@ async function main() {
     dryRun: args.includes("--dry-run"),
     update: args.includes("--update"),
     json: args.includes("--json"),
+    watch: args.includes("--watch"),
     format: (() => {
       const eq = args.find(a => a.startsWith("--format="));
       if (eq) return eq.split("=")[1];
@@ -2662,6 +2665,26 @@ async function main() {
   }
 
   console.log(`\n✨ Done! ${options.dryRun ? "(dry run — no files written)" : "Context files generated."}`);
+
+  // F11: Watch mode — regenerate on file changes
+  if (options.watch) {
+    console.log(`\n👁  Watch mode enabled — monitoring ${basename(root)} for changes (500ms debounce)...`);
+    console.log(`   Press Ctrl+C to stop.\n`);
+    const cancel = watchProject(root, { ...options, dryRun: false }, 500, (result) => {
+      if (result.success) {
+        console.log(`   [${new Date().toLocaleTimeString()}] Regeneration #${result.runCount} completed in ${result.elapsed}s`);
+      } else {
+        console.log(`   [${new Date().toLocaleTimeString()}] Regeneration #${result.runCount} failed: ${result.error}`);
+      }
+    });
+    process.on('SIGINT', () => {
+      console.log('\n👋 Stopping watch mode...');
+      cancel();
+      process.exit(0);
+    });
+    // Keep process alive
+    setInterval(() => {}, 1000);
+  }
 }
 
 // ─── F28: TODO/FIXME Comment Extraction ─────────────────────────────────
@@ -4392,6 +4415,110 @@ export function formatImportHealthReport(result) {
   }
 
   return lines.join('\n');
+}
+
+// ─── F11: Watch Mode ─────────────────────────────────────────────────
+
+/**
+ * Debounced watch mode — re-runs analysis when source files change.
+ * @param {string} root - Project root directory
+ * @param {object} options - Same options as main()
+ * @param {number} debounceMs - Debounce delay (default 500ms)
+ * @param {function} onRegenerate - Optional callback called after each regeneration
+ * @returns {function} cancel function to stop watching
+ */
+export function watchProject(root, options = {}, debounceMs = 500, onRegenerate = null) {
+  let timer = null;
+  let running = false;
+  let runCount = 0;
+
+  const watchedExtensions = new Set([
+    '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx',
+    '.py', '.go', '.rs', '.java', '.kt',
+    '.json', '.toml', '.yaml', '.yml', '.md',
+    '.css', '.scss', '.html', '.vue', '.svelte',
+  ]);
+
+  function shouldWatch(filename) {
+    if (!filename) return false;
+    const ext = filename.slice(filename.lastIndexOf('.'));
+    return watchedExtensions.has(ext);
+  }
+
+  async function regenerate() {
+    if (running) return;
+    running = true;
+    runCount++;
+    const start = Date.now();
+    try {
+      await runAnalysis(root, options);
+      const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+      console.log(`\n📊 Regenerated (${runCount}) in ${elapsed}s — watching for changes...`);
+      if (onRegenerate) onRegenerate({ success: true, runCount, elapsed: parseFloat(elapsed) });
+    } catch (err) {
+      console.error(`❌ Regeneration failed: ${err.message}`);
+      if (onRegenerate) onRegenerate({ success: false, runCount, error: err.message });
+    } finally {
+      running = false;
+    }
+  }
+
+  const watchers = [];
+  try {
+    const watcher = fsWatch(root, { recursive: true }, (eventType, filename) => {
+      if (!shouldWatch(filename)) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(regenerate, debounceMs);
+    });
+    watchers.push(watcher);
+  } catch {
+    console.log('⚠️ Recursive watch not supported, using polling fallback...');
+    const pollInterval = setInterval(() => { regenerate(); }, 5000);
+    watchers.push({ close: () => clearInterval(pollInterval) });
+  }
+
+  return function cancel() {
+    if (timer) clearTimeout(timer);
+    for (const w of watchers) { try { w.close(); } catch { /* ignore */ } }
+  };
+}
+
+/**
+ * Core analysis pipeline — extracted from main() for reuse in watch mode.
+ */
+async function runAnalysis(root, options) {
+  const gitignore = await parseGitignore(root);
+  const [info, langs, importData, apiSurface, configData] = await Promise.all([
+    detectProject(root),
+    scanLanguages(root, 3, 0, gitignore),
+    extractImports(root, 3, 0, gitignore),
+    extractApiSurface(root, 3, 0, gitignore),
+    parseConfigFiles(root),
+  ]);
+  info.apiSurface = apiSurface;
+  info.configData = configData;
+
+  const structure = await getDirStructure(root, '', 2, 0, gitignore);
+  const gitInfo = await analyzeGitHistory(root);
+
+  const generators = {
+    agents: { file: 'AGENTS.md', gen: () => generateAgentsMd(info, langs, structure, gitInfo) },
+    cursor: { file: '.cursorrules', gen: () => generateCursorRules(info, langs, structure) },
+    copilot: { file: '.github/copilot-instructions.md', gen: () => generateCopilotInstructions(info) },
+    claude: { file: '.claude/CLAUDE.md', gen: () => generateClaudeMd(info, langs, structure) },
+  };
+
+  const targets = options.only
+    ? { [options.only]: generators[options.only] }
+    : generators;
+
+  for (const [name, { file, gen }] of Object.entries(targets)) {
+    if (!gen || !generators[name]) {
+      console.error(`❌ Unknown type: ${name}. Use: agents, cursor, copilot, claude`);
+      continue;
+    }
+    await writeOrUpdate(join(root, file), gen(), options);
+  }
 }
 
 // Only run main when executed directly (not imported)

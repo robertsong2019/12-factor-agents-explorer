@@ -28,7 +28,7 @@
 - [x] **F10**: Validation mode — check generated files against actual codebase ✅ 2026-06-19
 
 ### Developer Experience
-- [ ] **F11**: Watch mode — regenerate on file changes
+- [x] **F11**: Watch mode — regenerate on file changes ✅ 2026-07-16
 - [x] **F12**: Diff preview — show what would change before updating ✅ 2026-06-20
 - [x] **F13**: Template system — customizable output templates ✅ 2026-06-21
 - [x] **F14**: Cache analysis results — faster re-runs ✅ 2026-06-21
