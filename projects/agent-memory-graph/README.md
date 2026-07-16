@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-3444-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-3721-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -2565,6 +2565,139 @@ Randić (2008) 重定义 Randić 指数三变体：
 #### `redefined_zagreb_index() -> float | None`
 
 第三 Zagreb 重定义指数：ReZM₃ = Σ (d_u+d_v)·(d_u·d_v)。结合加性 (M₁-like) 和乘性 (M₂-like) 度项。
+
+---
+
+### 写入治理 (Cycle 252)
+
+#### `write_governance_check(node_id, label=None, data=None, tags=None) -> dict`
+
+PASB 启发（arXiv:2607.10526），在 commit 边界检测三类谄媚失败模式：
+
+| 失败模式 | 检测内容 |
+|---------|---------|
+| `status_promotion` | hedged → definitive（确定性升级）|
+| `attribution_removal` | source/evidence/provenance 被剥离 |
+| `scope_broadening` | specific → universal（范围扩大）|
+
+返回 `{classification: 'safe'|'flag'|'reject', findings: [...]}`。
+
+#### `safe_supersede(old_id, new_node, ...) -> dict`
+
+带治理门的 supersede 操作。reject 级别的发现会阻止写入。
+
+#### `governance_audit(node_id) -> dict`
+
+回溯审计 supersede 链，检查历史写入中是否存在治理违规。
+
+---
+
+### 社区语义层 (Cycle 253)
+
+#### `community_topic_labels(community_id) -> list[str]`
+
+GraphRAG 启发的社区主题标签提取。从节点 kind、tags、关键词中提取社区代表性标签。
+
+#### `community_semantic_summary(community_id, llm_callback=None) -> str`
+
+社区语义摘要。支持确定性摘要（默认）或通过 `llm_callback` 接入 LLM。
+
+#### `community_overview() -> list[dict]`
+
+综合结构 + 语义的社区仪表盘。每个社区返回成员数、主题标签、语义摘要。
+
+#### `query_global(question, top_k=5) -> list[dict]`
+
+GraphRAG 全局搜索：跨社区摘要匹配问题，返回最相关社区及其成员。
+
+---
+
+### 生命周期操作评估 (Cycle 254)
+
+#### `lifecycle_operation_eval(operation, args, golden_set=None) -> dict`
+
+MemOps 启发（arXiv:2607.12893）的 6 探针生命周期验证器：
+
+| 探针 | 检测内容 |
+|------|---------|
+| `detection` | 操作是否被正确检测 |
+| `target` | 目标节点是否正确 |
+| `transition` | 状态转换是否合法 |
+| `robustness` | 边界条件鲁棒性 |
+| `provenance` | 来源链是否完整 |
+| `leakage` | 是否有数据泄漏 |
+
+支持 add/update/supersede/forget/merge 操作。golden_set 验证 + 每探针 override。
+
+---
+
+### 前瞻记忆 (Cycle 255)
+
+#### `add_intention(label, trigger_cues, deadline=None) -> Node`
+
+PM-Bench 启发（arXiv:2607.12385, COLM 2026）。存储延迟执行的意图，附带触发线索和截止时间。
+
+#### `check_prospective_cues(context_text) -> list[dict]`
+
+关键词重叠匹配。检查当前上下文是否触发任何 pending intention。返回带紧迫度分类（urgent/soon/future/expired）的匹配列表。
+
+#### `fulfill_intention(node_id) -> Node | None`
+
+标记意图为已完成，记录完成时间戳。
+
+#### `pending_intentions(include_expired=False) -> list[Node]`
+
+列出活跃（或全部）的待执行意图。
+
+---
+
+### DRIFT 搜索 (Cycle 256)
+
+#### `drift_search(question, max_iter=2, top_k=10) -> dict`
+
+GraphRAG 启发（Edge et al. 2024）的 DRIFT 混合搜索：
+
+1. **Global sweep** — `query_global()` 社区级理解
+2. **Local spread** — 从社区成员出发的扩散激活
+3. **RRF merge** — 全局 + 局部信号逆序融合
+4. **Iterative refine** — 用发现的标签扩展查询，重新检索
+
+保留 `in_global`/`in_local` 标志跨迭代。桥接 GraphRAG 的全局理解力与节点级精度。
+
+---
+
+### 技能组合与谱系 (Cycle 257)
+
+#### `skill_compose(skill_ids, meta_label=None, meta_data=None) -> Node`
+
+Experience Compression Spectrum 启发的 L1→L2 元技能组合。将多个技能节点组合成元技能。
+
+#### `skill_decompose(meta_skill_id) -> list[Node]`
+
+分解元技能为组成组件列表。
+
+#### `skill_lineage(node_id, max_depth=10) -> dict`
+
+递归构建技能谱系树。返回祖先和后代的层级关系。
+
+---
+
+### 自适应查询路由 (Cycle 258)
+
+#### `query(question, mode='auto', detail=False, top_k=10) -> dict`
+
+GraphRAG/LightRAG 启发的自适应查询路由器。分析问题特征并分派到最佳检索模式：
+
+| 模式 | 触发条件 | 底层方法 |
+|------|---------|---------|
+| `basic` | 短事实查询（≤3 words）| `retrieve()` BM25+vector |
+| `global` | 探索性关键词（overview/themes/summary）| `query_global()` |
+| `drift` | 复杂多跳（how/why/multi-clause）| `drift_search()` |
+| `local` | 关系关键词（connected/related/depends）| `spread_activation()` |
+| `hybrid` | 大图通用查询 | `dual_mode_retrieve()` |
+
+`mode='auto'` 自动路由，也支持手动指定。`detail=True` 返回丰富结果。
+统一返回格式：`{question, mode, rationale, results, stats}`。
 
 ---
 
