@@ -24910,6 +24910,330 @@ class MemoryGraph:
         }
 
 
+    # ----------------------------------------------------------------
+    # Community Semantic Layer (GraphRAG-inspired)
+    # ----------------------------------------------------------------
+
+    def community_topic_labels(self, communities: dict[str, int] = None,
+                               *, top_k: int = 5) -> dict[int, list[str]]:
+        """Extract dominant topic labels for each community.
+
+        Derives topics from three signals (in priority order):
+        1. **Kind frequency** — the most common node kind.
+        2. **Tag frequency** — aggregated tag counts.
+        3. **Keyword extraction** — top TF words across member labels.
+
+        Args:
+            communities: ``{node_id: community_id}``. Auto-detects if None.
+            top_k: Max topics per community.
+
+        Returns:
+            ``{community_id: ["topic1", "topic2", ...]}``
+        """
+        if communities is None:
+            communities = self.detect_communities_leiden()
+        if not communities:
+            return {}
+
+        # Group members
+        members: dict[int, list[str]] = defaultdict(list)
+        for nid, cid in communities.items():
+            members[cid].append(nid)
+
+        import re
+        from collections import Counter
+
+        result = {}
+        for cid, node_ids in members.items():
+            if not node_ids:
+                continue
+            placeholders = ",".join("?" * len(node_ids))
+            rows = self.conn.execute(
+                f"SELECT label, kind, tags FROM nodes WHERE id IN ({placeholders})",
+                node_ids
+            ).fetchall()
+
+            # Kind frequency
+            kind_counts = Counter(r["kind"] for r in rows)
+            # Tag frequency
+            tag_counts: Counter = Counter()
+            for r in rows:
+                for tag in json.loads(r["tags"] or "[]"):
+                    tag_counts[tag] += 1
+
+            # Keyword extraction from labels
+            word_counts: Counter = Counter()
+            stop = {"the", "a", "an", "is", "are", "was", "were",
+                    "to", "of", "in", "for", "and", "or", "not",
+                    "with", "by", "on", "at", "from", "as", "it",
+                    "this", "that", "user", "data"}
+            for r in rows:
+                words = re.findall(r"[a-z]{2,}", (r["label"] or "").lower())
+                for w in words:
+                    if w not in stop:
+                        word_counts[w] += 1
+
+            topics: list[str] = []
+            # Top kind
+            if kind_counts:
+                top_kind = kind_counts.most_common(1)[0][0]
+                topics.append(f"{top_kind}s")
+            # Top tags
+            for tag, _ in tag_counts.most_common(2):
+                if tag not in topics:
+                    topics.append(tag)
+            # Top keywords
+            for word, _ in word_counts.most_common(3):
+                if word not in topics and len(topics) < top_k:
+                    topics.append(word)
+
+            result[cid] = topics[:top_k]
+
+        return result
+
+    def community_semantic_summary(self, communities: dict[str, int] = None,
+                                  *, summarizer=None) -> list[dict]:
+        """Generate semantic summaries for each community.
+
+        For each community, collects member labels and produces a
+        concise summary. If *summarizer* (a callable
+        ``str → str``) is provided, it is called with the concatenated
+        labels; otherwise a deterministic extractive summary is used
+        (top-weighted labels).
+
+        Inspired by GraphRAG community summaries (Edge et al., 2024):
+        communities are summarised independently, then summaries can
+        be composed hierarchically for global queries.
+
+        Args:
+            communities: ``{node_id: community_id}``. Auto-detects if None.
+            summarizer: Optional ``Callable[[str], str]`` for LLM-based summary.
+
+        Returns:
+            ``[{community_id, size, summary, top_labels, topics}]``
+        """
+        if communities is None:
+            communities = self.detect_communities_leiden()
+        if not communities:
+            return []
+
+        topics_map = self.community_topic_labels(communities)
+        members: dict[int, list[str]] = defaultdict(list)
+        for nid, cid in communities.items():
+            members[cid].append(nid)
+
+        results = []
+        for cid, node_ids in members.items():
+            if not node_ids:
+                continue
+            placeholders = ",".join("?" * len(node_ids))
+            rows = self.conn.execute(
+                f"SELECT id, label, weight FROM nodes WHERE id IN ({placeholders}) ORDER BY weight DESC",
+                node_ids
+            ).fetchall()
+
+            labels = [r["label"] for r in rows if r["label"]]
+            top_labels = labels[:10]
+
+            if summarizer and labels:
+                combined = "; ".join(labels[:50])
+                try:
+                    summary = summarizer(combined)
+                except Exception:
+                    summary = "; ".join(top_labels[:5])
+            else:
+                # Deterministic: top 5 labels by weight
+                summary = "; ".join(top_labels[:5])
+
+            results.append({
+                "community_id": cid,
+                "size": len(node_ids),
+                "summary": summary,
+                "top_labels": top_labels,
+                "topics": topics_map.get(cid, []),
+            })
+
+        # Sort by size descending
+        results.sort(key=lambda x: x["size"], reverse=True)
+        return results
+
+    def community_overview(self, communities: dict[str, int] = None,
+                           *, summarizer=None) -> dict:
+        """Generate a hierarchical overview of all communities.
+
+        Combines structural stats (from ``community_summary``) with
+        semantic summaries (from ``community_semantic_summary``) into
+        a single dashboard-like report.
+
+        Args:
+            communities: ``{node_id: community_id}``. Auto-detects if None.
+            summarizer: Optional LLM callback for richer summaries.
+
+        Returns:
+            ``{total_communities, total_nodes, largest_community,
+            communities: [{id, size, summary, topics, density,
+            avg_weight, top_members}]}``
+        """
+        if communities is None:
+            communities = self.detect_communities_leiden()
+        if not communities:
+            return {
+                "total_communities": 0,
+                "total_nodes": 0,
+                "largest_community": None,
+                "communities": [],
+            }
+
+        structural = self.community_summary(communities={
+            cid: nids for cid, nids in self._group_communities(communities).items()
+        })
+        semantic = self.community_semantic_summary(
+            communities, summarizer=summarizer
+        )
+
+        # Index structural by community id
+        struct_map = {s["id"]: s for s in structural}
+        sem_map = {s["community_id"]: s for s in semantic}
+
+        all_cids = sorted(set(struct_map) | set(sem_map),
+                          key=lambda c: struct_map.get(c, {}).get("size", 0),
+                          reverse=True)
+
+        combined = []
+        for cid in all_cids:
+            s = struct_map.get(cid, {})
+            sm = sem_map.get(cid, {})
+            combined.append({
+                "id": cid,
+                "size": s.get("size", sm.get("size", 0)),
+                "summary": sm.get("summary", ""),
+                "topics": sm.get("topics", []),
+                "density": s.get("density", 0.0),
+                "avg_weight": s.get("avg_weight", 0.0),
+                "top_members": s.get("top_members", []),
+                "internal_edges": s.get("internal_edges", 0),
+            })
+
+        total_nodes = sum(c["size"] for c in combined)
+        largest = combined[0]["id"] if combined else None
+
+        return {
+            "total_communities": len(combined),
+            "total_nodes": total_nodes,
+            "largest_community": largest,
+            "communities": combined,
+        }
+
+    def _group_communities(self, communities: dict[str, int]) -> dict[int, list[str]]:
+        """Convert {node_id: comm_id} → {comm_id: [node_ids]}."""
+        groups: dict[int, list[str]] = defaultdict(list)
+        for nid, cid in communities.items():
+            groups[cid].append(nid)
+        return dict(groups)
+
+    def query_global(self, question: str, *, summarizer=None,
+                     limit: int = 10) -> dict:
+        """GraphRAG-style global query across community summaries.
+
+        Instead of retrieving individual nodes, this method:
+        1. Detects communities.
+        2. Generates summaries for each.
+        3. Scores each summary against the query (keyword overlap).
+        4. Returns top matching communities + their member nodes.
+
+        This is the GraphRAG *global* search mode, suitable for
+        questions that span many nodes (e.g. "what are the main themes?").
+
+        Args:
+            question: Natural-language query.
+            summarizer: Optional LLM callback for community summaries.
+            limit: Max communities to return.
+
+        Returns:
+            ``{question, communities_matched, total_communities,
+            results: [{community_id, score, summary, topics, members}]}``
+        """
+        communities = self.detect_communities_leiden()
+        if not communities:
+            return {
+                "question": question,
+                "communities_matched": 0,
+                "total_communities": 0,
+                "results": [],
+            }
+
+        summaries = self.community_semantic_summary(
+            communities, summarizer=summarizer
+        )
+
+        import re
+        query_words = set(re.findall(r"[a-z]{2,}", question.lower()))
+        query_words -= {"the", "a", "an", "is", "are", "was", "were",
+                        "to", "of", "in", "for", "and", "or", "not",
+                        "with", "by", "on", "at", "from", "as", "it",
+                        "this", "that", "what", "how", "why", "when"}
+
+        scored = []
+        for s in summaries:
+            # Score by keyword overlap with summary + topics + labels
+            summary_words = set(re.findall(
+                r"[a-z]{2,}", s["summary"].lower()
+            ))
+            topic_words = set(
+                w.lower() for t in s.get("topics", []) for w in t.split()
+            )
+            label_words = set(
+                w.lower() for label in s.get("top_labels", [])
+                for w in re.findall(r"[a-z]{2,}", label.lower())
+            )
+
+            all_words = summary_words | topic_words | label_words
+            overlap = len(query_words & all_words)
+            # Normalise by query length
+            score = overlap / max(len(query_words), 1)
+
+            scored.append((score, s))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top = scored[:limit]
+
+        # Get member nodes for top communities
+        members_map = self._group_communities(communities)
+
+        results = []
+        for score, s in top:
+            cid = s["community_id"]
+            member_ids = members_map.get(cid, [])
+            member_nodes = []
+            if member_ids:
+                placeholders = ",".join("?" * len(member_ids))
+                rows = self.conn.execute(
+                    f"SELECT id, label, kind, weight FROM nodes WHERE id IN ({placeholders}) ORDER BY weight DESC LIMIT 10",
+                    member_ids
+                ).fetchall()
+                member_nodes = [
+                    {"id": r["id"], "label": r["label"],
+                      "kind": r["kind"], "weight": r["weight"]}
+                    for r in rows
+                ]
+
+            results.append({
+                "community_id": cid,
+                "score": round(score, 4),
+                "summary": s["summary"],
+                "topics": s.get("topics", []),
+                "size": s["size"],
+                "members": member_nodes,
+            })
+
+        return {
+            "question": question,
+            "communities_matched": len([r for r in results if r["score"] > 0]),
+            "total_communities": len(summaries),
+            "results": results,
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
