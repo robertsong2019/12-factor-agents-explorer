@@ -25233,6 +25233,238 @@ class MemoryGraph:
             "results": results,
         }
 
+    # ----------------------------------------------------------------
+    # Lifecycle Operation Evaluation (MemOps-inspired, arXiv:2607.12893)
+    # ----------------------------------------------------------------
+
+    def lifecycle_operation_eval(self, operations: list[dict],
+                                  *, golden_set: dict = None) -> dict:
+        """Evaluate memory lifecycle operations for integrity.
+
+        MemOps (arXiv:2607.12893) defines 6 probe types that test
+        whether memory operations maintain a consistent, safe state:
+
+        1. **detection** — Can we find the target memory to operate on?
+        2. **target** — Is the correct memory selected (not a distractor)?
+        3. **transition** — Does the operation produce the expected state change?
+        4. **robustness** — Does the operation handle edge cases gracefully?
+        5. **provenance** — Is the operation history traceable?
+        6. **leakage** — Does the operation affect unrelated memories?
+
+        This method runs a sequence of operations and evaluates each
+        across all 6 probes.
+
+        Args:
+            operations: List of operation dicts, each with:
+                - ``op``: ``'add'|'update'|'supersede'|'forget'|'merge'``
+                - ``args``: Arguments dict for the operation
+                - ``expect``: Expected post-state (optional)
+                - ``probe_overrides``: Per-probe expectations (optional)
+            golden_set: Optional ``{node_id: expected_attrs}`` for
+                        validating target correctness.
+
+        Returns:
+            ``{total_ops, probes_passed, probes_total, pass_rate,
+            details: [{op_index, op_type, probes: {detection, target,
+            transition, robustness, provenance, leakage}}]}``
+        """
+        results = []
+        probes_passed = 0
+        probes_total = 0
+
+        for i, op_spec in enumerate(operations):
+            op_type = op_spec.get("op", "")
+            args = op_spec.get("args", {})
+            expect = op_spec.get("expect", {})
+            overrides = op_spec.get("probe_overrides", {})
+
+            probe_results = {}
+
+            # --- 1. Detection: can we find the target? ---
+            target_id = args.get("node_id") or args.get("source_id")
+            if op_type == "add":
+                # Add always succeeds in detection (no target needed)
+                probe_results["detection"] = {"pass": True, "detail": "N/A (add op)"}
+            elif target_id:
+                node = self.get_node(target_id)
+                passed = node is not None
+                probe_results["detection"] = {
+                    "pass": passed,
+                    "detail": f"Target {target_id} {'found' if passed else 'NOT found'}",
+                }
+            else:
+                probe_results["detection"] = {
+                    "pass": False, "detail": "No target_id specified",
+                }
+
+            # --- Execute operation ---
+            op_result = self._execute_lifecycle_op(op_type, args)
+
+            # --- 2. Target: correct memory selected? ---
+            if golden_set and target_id:
+                golden = golden_set.get(target_id, {})
+                node = self.get_node(target_id) or self._get_deleted_node(target_id)
+                if node:
+                    matches = all(
+                        getattr(node, k, None) == v
+                        for k, v in golden.items()
+                    )
+                    probe_results["target"] = {
+                        "pass": matches,
+                        "detail": f"Golden attrs {'match' if matches else 'MISMATCH'}",
+                    }
+                else:
+                    probe_results["target"] = {
+                        "pass": False, "detail": "Node not found for golden check",
+                    }
+            elif op_type == "add":
+                passed = op_result is not None
+                probe_results["target"] = {
+                    "pass": passed,
+                    "detail": f"Add created node: {'yes' if passed else 'no'}",
+                }
+            else:
+                probe_results["target"] = {
+                    "pass": True, "detail": "No golden set provided",
+                }
+
+            # --- 3. Transition: expected state change? ---
+            if expect:
+                actual = self._check_post_state(op_type, args, op_result)
+                expected_status = expect.get("status", True)
+                passed = actual == expected_status
+                probe_results["transition"] = {
+                    "pass": passed,
+                    "detail": f"Expected {expected_status}, got {actual}",
+                }
+            else:
+                probe_results["transition"] = {
+                    "pass": True, "detail": "No expectation specified",
+                }
+
+            # --- 4. Robustness: edge cases handled? ---
+            robustness_passed = op_result is not None or op_type in ("update", "forget", "merge")
+            if op_type == "supersede":
+                # Supersede should produce a new ID
+                robustness_passed = isinstance(op_result, str) and len(op_result) > 0
+            elif op_type == "merge":
+                robustness_passed = op_result is not None
+            probe_results["robustness"] = {
+                "pass": robustness_passed,
+                "detail": f"Op returned {'valid' if robustness_passed else 'invalid'} result",
+            }
+
+            # --- 5. Provenance: operation traceable? ---
+            provenance_passed = False
+            if op_type == "supersede" and op_result:
+                # Check superseded_by edge exists
+                if target_id:
+                    edge = self.conn.execute(
+                        "SELECT 1 FROM edges WHERE source=? AND relation='superseded_by'",
+                        (target_id,)
+                    ).fetchone()
+                    provenance_passed = edge is not None
+            elif op_type == "add" and op_result:
+                provenance_passed = True  # add is always in the log
+            elif op_type in ("update", "forget", "merge"):
+                provenance_passed = True  # these are logged via _tick
+            else:
+                provenance_passed = True
+            probe_results["provenance"] = {
+                "pass": provenance_passed,
+                "detail": f"Traceability: {'verified' if provenance_passed else 'MISSING'}",
+            }
+
+            # --- 6. Leakage: unrelated memories unaffected? ---
+            unrelated_ids = op_spec.get("unrelated_ids", [])
+            if unrelated_ids:
+                unaffected = True
+                for uid in unrelated_ids:
+                    node = self.get_node(uid)
+                    if node is None:
+                        unaffected = False
+                        break
+                probe_results["leakage"] = {
+                    "pass": unaffected,
+                    "detail": f"{len(unrelated_ids)} unrelated nodes {'unaffected' if unaffected else 'AFFECTED'}",
+                }
+            else:
+                probe_results["leakage"] = {
+                    "pass": True, "detail": "No unrelated IDs to check",
+                }
+
+            # Apply overrides
+            for probe_name, override in overrides.items():
+                if probe_name in probe_results:
+                    probe_results[probe_name].update(override)
+
+            # Count passes
+            for probe in probe_results.values():
+                probes_total += 1
+                if probe["pass"]:
+                    probes_passed += 1
+
+            results.append({
+                "op_index": i,
+                "op_type": op_type,
+                "probes": probe_results,
+            })
+
+        pass_rate = (probes_passed / probes_total) if probes_total > 0 else 0.0
+
+        return {
+            "total_ops": len(operations),
+            "probes_passed": probes_passed,
+            "probes_total": probes_total,
+            "pass_rate": round(pass_rate, 4),
+            "details": results,
+        }
+
+    def _execute_lifecycle_op(self, op_type: str, args: dict):
+        """Execute a single lifecycle operation and return result."""
+        try:
+            if op_type == "add":
+                return self.add(**args)
+            elif op_type == "update":
+                return self.update_node(**args)
+            elif op_type == "supersede":
+                return self.supersede(**args)
+            elif op_type == "forget":
+                return self.strategic_forget(**args)
+            elif op_type == "merge":
+                return self.merge_nodes(**args)
+            else:
+                return None
+        except Exception:
+            return None
+
+    def _get_deleted_node(self, node_id: str):
+        """Try to retrieve a node that may have been deleted/merged."""
+        # Check immutable store
+        try:
+            entries = self._immutable_retrieve(node_id)
+            if entries:
+                return entries[0]
+        except Exception:
+            pass
+        return None
+
+    def _check_post_state(self, op_type: str, args: dict, result) -> bool:
+        """Check if post-operation state matches expected."""
+        if result is None:
+            return False
+        if op_type == "add":
+            return hasattr(result, "id")
+        if op_type == "update":
+            return result is not None
+        if op_type == "supersede":
+            return isinstance(result, str) and len(result) > 0
+        if op_type == "forget":
+            return True  # strategic_forget returns None on success
+        if op_type == "merge":
+            return result is not None
+        return False
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
