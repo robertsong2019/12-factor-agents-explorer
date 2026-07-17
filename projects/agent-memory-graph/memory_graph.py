@@ -26377,6 +26377,374 @@ class MemoryGraph:
         )
 
 
+    # ----------------------------------------------------------------
+    # Intent-Aware Token Budgets (MemFlow-inspired)
+    # ----------------------------------------------------------------
+
+    _INTENT_BUDGET_PRESETS = {
+        # Mode → (default_budget, description)
+        "basic":  200,
+        "local":  500,
+        "global": 1000,
+        "drift":  800,
+        "hybrid": 600,
+    }
+
+    def intent_aware_token_budgets(
+        self,
+        question: str = "",
+        *,
+        mode: str = "auto",
+        override: dict[str, int] = None,
+    ) -> dict:
+        """Return mode-dependent token budgets for retrieval.
+
+        MemFlow (arXiv:2605.03312) shows that different query intents
+        benefit from tiered token budgets: simple lookups need few
+        tokens, while global/drift queries need more context to be
+        effective.  Disabling intent-aware budgets costs ~18.7pp
+        accuracy.
+
+        This method does NOT perform retrieval — it returns the
+        budget allocation that ``query_with_budgets()`` (or external
+        callers) should use.
+
+        Presets (tokens)::
+
+            basic:   200   — quick entity lookup
+            local:   500   — neighbourhood exploration
+            hybrid:  600   — SimHash + graph blend
+            drift:   800   — multi-hop with global context
+            global: 1000   — community-level thematic scan
+
+        Args:
+            question:  Natural-language query (used to auto-detect mode).
+            mode:      Force a mode ('auto' to detect from question).
+            override:  Dict mapping mode → token budget to customise.
+                       ``{"global": 1500}`` raises global budget.
+
+        Returns:
+            ``{mode, budgets, selected_budget, rationale}``
+        """
+        # Resolve mode
+        if mode == "auto":
+            resolved_mode, rationale = self._route_query(question)
+        else:
+            resolved_mode = mode
+            rationale = f"explicit mode='{mode}'"
+
+        # Build budget table
+        budgets = dict(self._INTENT_BUDGET_PRESETS)
+        if override:
+            for k, v in override.items():
+                if k in budgets:
+                    budgets[k] = v
+
+        selected = budgets.get(resolved_mode, 600)
+
+        return {
+            "mode": resolved_mode,
+            "budgets": budgets,
+            "selected_budget": selected,
+            "rationale": rationale,
+        }
+
+    def query_with_budgets(
+        self,
+        question: str,
+        *,
+        mode: str = "auto",
+        override: dict[str, int] = None,
+        chars_per_token: float = 4.0,
+        detail: bool = False,
+    ) -> dict:
+        """Query with intent-aware token budget allocation.
+
+        Combines ``intent_aware_token_budgets()`` with
+        ``retrieve_token_budgeted()`` to provide a single-call
+        retrieval that automatically scales context size based on
+        query complexity.
+
+        This is the recommended production retrieval path for
+        external callers (LLM agents, MCP servers, etc.).
+
+        Args:
+            question:       Natural-language query.
+            mode:           Force mode ('auto' for detection).
+            override:       Custom mode → budget overrides.
+            chars_per_token: Char-to-token conversion ratio.
+            detail:         Include full node details.
+
+        Returns:
+            ``{question, mode, rationale, budget, context, nodes,
+            token_count, truncated, stats}``
+        """
+        # 1. Determine budget
+        budget_info = self.intent_aware_token_budgets(
+            question, mode=mode, override=override,
+        )
+        token_budget = budget_info["selected_budget"]
+
+        # 2. Retrieve with budget
+        retrieval = self.retrieve_token_budgeted(
+            question,
+            token_budget=token_budget,
+            chars_per_token=chars_per_token,
+        )
+
+        # 3. Optionally enrich with detail
+        nodes = retrieval["nodes"]
+        if detail:
+            for n in nodes:
+                nid = n.get("node_id", "")
+                if nid:
+                    row = self.conn.execute(
+                        "SELECT weight, data, tags FROM nodes WHERE id=?",
+                        (nid,),
+                    ).fetchone()
+                    if row:
+                        n["weight"] = row["weight"]
+                        n["data"] = json.loads(row["data"]) if row["data"] else {}
+                        n["tags"] = json.loads(row["tags"]) if row["tags"] else []
+
+        return {
+            "question": question,
+            "mode": budget_info["mode"],
+            "rationale": budget_info["rationale"],
+            "budget": token_budget,
+            "context": retrieval["context"],
+            "nodes": nodes,
+            "token_count": retrieval["token_count"],
+            "truncated": retrieval["truncated"],
+            "stats": {
+                "node_count": self.stats()["nodes"],
+                "edge_count": self.edge_count(),
+                "elapsed_ms": 0,  # filled by caller if needed
+            },
+        }
+
+    # ----------------------------------------------------------------
+    # Retrieval Screening — read-time security (GhostWriter-inspired)
+    # ----------------------------------------------------------------
+
+    _INJECTION_PATTERNS = [
+        # Instruction-pattern keywords that indicate attempted
+        # memory-injection / prompt-injection via stored content
+        "ignore previous",
+        "ignore all",
+        "disregard the above",
+        "you are now",
+        "new instructions:",
+        "system prompt:",
+        "forget everything",
+        "override your",
+        "act as if",
+        "pretend you are",
+        "do not follow",
+        "reveal your",
+        "what is your prompt",
+        "what are your instructions",
+    ]
+
+    def screen_retrieval(
+        self,
+        results: list[dict],
+        *,
+        patterns: list[str] = None,
+        threshold: int = 1,
+        node_field: str = "nodes",
+    ) -> dict:
+        """Screen retrieval results for injection / manipulation.
+
+        GhostWriter/AM-Sentry (arXiv:2607.06595) show 98% memory
+        injection rate in unprotected systems.  This method provides
+        read-time screening: scanning retrieved node content for
+        instruction-pattern strings that may indicate planted
+        injections.
+
+        Dual-layer defense (complements ``write_governance_check()``):
+        - **Write-time** (cycle 252): blocks sycophantic writes
+        - **Read-time** (this): flags suspicious retrieved content
+
+        Args:
+            results:    Retrieval result dict (from ``query()`` or
+                        ``query_with_budgets()``) or list of node dicts.
+            patterns:   Custom pattern list (default: built-in).
+            threshold:  Min pattern hits to flag as suspicious.
+            node_field: Key containing node list in dict input.
+
+        Returns:
+            ``{clean, flagged, total, flagged_ids, details}``
+        """
+        check_patterns = patterns or self._INJECTION_PATTERNS
+        check_lower = [p.lower() for p in check_patterns]
+
+        # Normalise input to list of node dicts
+        if isinstance(results, dict):
+            nodes = results.get(node_field, results.get("results", []))
+        else:
+            nodes = results
+
+        clean = []
+        flagged = []
+        details = []
+
+        for node in nodes:
+            # Gather all text content from the node
+            label = str(node.get("label", ""))
+            kind = str(node.get("kind", ""))
+            data = node.get("data", {})
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except Exception:
+                    pass
+            data_str = " ".join(str(v) for v in data.values()) if isinstance(data, dict) else str(data)
+            tags = node.get("tags", [])
+            tags_str = " ".join(str(t) for t in tags) if isinstance(tags, list) else str(tags)
+
+            combined = f"{label} {kind} {data_str} {tags_str}".lower()
+
+            hits = []
+            for p in check_lower:
+                if p in combined:
+                    hits.append(p)
+
+            node_id = node.get("node_id", node.get("id", ""))
+
+            if len(hits) >= threshold:
+                flagged.append(node)
+                details.append({
+                    "node_id": node_id,
+                    "hits": hits,
+                    "hit_count": len(hits),
+                    "label": label,
+                })
+            else:
+                clean.append(node)
+
+        return {
+            "clean": clean,
+            "flagged": flagged,
+            "total": len(nodes),
+            "flagged_count": len(flagged),
+            "flagged_ids": [d["node_id"] for d in details],
+            "details": details,
+        }
+
+    def query_confidence_score(
+        self,
+        question: str,
+        *,
+        mode: str = "auto",
+        limit: int = 10,
+    ) -> dict:
+        """Query with confidence scoring for caller-side escalation.
+
+        MemFlow Validator-inspired: not all retrievals are equally
+        trustworthy.  This method wraps ``query()`` and adds a
+        ``confidence`` field [0, 1] so callers can decide whether to
+        use the results directly or escalate (e.g., ask user, search
+        wider, or fallback to full-context).
+
+        Confidence factors:
+        - **Coverage**: fraction of results with non-empty data (0-0.3)
+        - **Score spread**: variance of result scores (0-0.2)
+        - **Graph density**: local edge density around results (0-0.2)
+        - **Result count**: sufficient results vs limit (0-0.15)
+        - **Freshness**: recency of top results (0-0.15)
+
+        Args:
+            question: Natural-language query.
+            mode:     Force mode ('auto' for detection).
+            limit:    Max results.
+
+        Returns:
+            ``{question, mode, results, confidence, factors, stats}``
+        """
+        raw = self.query(question, mode=mode, limit=limit, detail=True)
+        results = raw.get("results", [])
+
+        if not results:
+            return {
+                "question": question,
+                "mode": raw.get("mode", mode),
+                "results": [],
+                "confidence": 0.0,
+                "factors": {"reason": "no results"},
+                "stats": raw.get("stats", {}),
+            }
+
+        # Factor 1: Coverage (nodes with non-empty data)
+        with_data = sum(
+            1 for r in results
+            if r.get("data") and any(v for v in r["data"].values())
+        )
+        coverage = min(with_data / max(len(results), 1), 1.0) * 0.30
+
+        # Factor 2: Score spread (variance indicates differentiation)
+        scores = [r.get("score", 0) for r in results if isinstance(r.get("score"), (int, float))]
+        if len(scores) >= 2:
+            avg = sum(scores) / len(scores)
+            variance = sum((s - avg) ** 2 for s in scores) / len(scores)
+            spread = min(variance * 10, 1.0) * 0.20  # scale up small variances
+        else:
+            spread = 0.0
+
+        # Factor 3: Graph density around result nodes
+        result_ids = [r.get("node_id", "") for r in results if r.get("node_id")]
+        if result_ids:
+            placeholders = ",".join("?" * len(result_ids))
+            edge_count = self.conn.execute(
+                f"SELECT COUNT(*) FROM edges WHERE source IN ({placeholders}) OR target IN ({placeholders})",
+                (*result_ids, *result_ids),
+            ).fetchone()[0]
+            max_possible = len(result_ids) * (len(result_ids) - 1)
+            density = min(edge_count / max(max_possible, 1), 1.0) * 0.20
+        else:
+            density = 0.0
+
+        # Factor 4: Result count sufficiency
+        count_factor = min(len(results) / max(limit, 1), 1.0) * 0.15
+
+        # Factor 5: Freshness (top-3 average recency)
+        import time
+        now = time.time()
+        top3 = results[:3]
+        ages = []
+        for r in top3:
+            nid = r.get("node_id", "")
+            if nid:
+                row = self.conn.execute(
+                    "SELECT accessed FROM nodes WHERE id=?", (nid,),
+                ).fetchone()
+                if row and row["accessed"]:
+                    ages.append(max(now - row["accessed"], 0))
+        if ages:
+            avg_age = sum(ages) / len(ages)
+            # 0 seconds old → full 0.15, 7 days → ~0
+            freshness = max(0, 1 - avg_age / 604800) * 0.15
+        else:
+            freshness = 0.0
+
+        confidence = round(coverage + spread + density + count_factor + freshness, 4)
+
+        return {
+            "question": question,
+            "mode": raw.get("mode", mode),
+            "results": results,
+            "confidence": confidence,
+            "factors": {
+                "coverage": round(coverage, 4),
+                "score_spread": round(spread, 4),
+                "graph_density": round(density, 4),
+                "result_count": round(count_factor, 4),
+                "freshness": round(freshness, 4),
+            },
+            "stats": raw.get("stats", {}),
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
