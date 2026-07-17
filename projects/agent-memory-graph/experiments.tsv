@@ -311,3 +311,11 @@ timestamp	commit	metric	value	status	description
 2026-07-16T23:05:00+08:00	dc93f16	test_count	3656→3682	keep	Cycle 257: skill_compose + skill_decompose + skill_lineage — L1→L2 meta-skill composition (Experience Compression Spectrum)
 2026-07-16T23:05:00+08:00	dc93f16	test_pass_rate	100%	keep	All 3682 passing, 0 regressions, 29.71s. 238th consecutive day.
 2026-07-17T00:00	841b2b6	test_count	3721/3721	keep	Cycle 258: query() adaptive routing. GraphRAG/LightRAG-inspired mode router (auto→basic/global/drift/local/hybrid). _route_query 5 heuristic rules. detail= enrichment. +39 tests (3682→3721). 238th day without rollback.
+2026-07-17T21:05:00+08:00	0faf635	test_count	3721→3782	keep	Cycle 259: intent_aware_token_budgets + query_with_budgets + screen_retrieval + query_confidence_score — MemFlow tiered budgets + GhostWriter read-time screening + MemFlow Validator confidence.
+2026-07-17T21:05:00+08:00	0faf635	test_pass_rate	100%	keep	All 3782 passing, 0 regressions, 26.48s. 239th consecutive day.
+2026-07-17T21:15:00+08:00	a7b5c48	test_count	3782→3802	keep	Cycle 260: govern_skill_bank() — SkeMex/MUSE-inspired Govern step. Four policies: deprecate stale/low-confidence, merge redundant, prune overflow. dry_run mode.
+2026-07-17T21:15:00+08:00	a7b5c48	test_pass_rate	100%	keep	All 3802 passing, 0 regressions, 27.29s. 240th consecutive day.
+2026-07-17T21:30:00+08:00	b5626ae	test_count	3802→3834	keep	Cycle 261: seven_intent_taxonomy — temporal_reasoning + constraint_validation routing. MemFlow 7-intent expansion. Fixed substring matching bug (how∈show).
+2026-07-17T21:30:00+08:00	b5626ae	test_pass_rate	100%	keep	All 3834 passing, 0 regressions, 26.58s. 241st consecutive day.
+2026-07-17T21:45:00+08:00	4a04a83	test_count	3834→3849	keep	Cycle 262: query_route_audit() — routing observability. Mode distribution + per-question rationale + optional result counts.
+2026-07-17T21:45:00+08:00	4a04a83	test_pass_rate	100%	keep	All 3849 passing, 0 regressions, 27.17s. 242nd consecutive day.
