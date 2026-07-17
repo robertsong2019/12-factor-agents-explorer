@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-3721-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-3945-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -2695,9 +2695,143 @@ GraphRAG/LightRAG 启发的自适应查询路由器。分析问题特征并分�
 | `drift` | 复杂多跳（how/why/multi-clause）| `drift_search()` |
 | `local` | 关系关键词（connected/related/depends）| `spread_activation()` |
 | `hybrid` | 大图通用查询 | `dual_mode_retrieve()` |
+| `temporal` | 时间关键词（when/before/after/timeline）| bi-temporal scan |
+| `constraint` | 约束关键词（must/rule/valid/policy）| validation scan |
 
 `mode='auto'` 自动路由，也支持手动指定。`detail=True` 返回丰富结果。
 统一返回格式：`{question, mode, rationale, results, stats}`。
+
+### 七意图分类路由 (Cycle 259-260)
+
+#### `intent_aware_token_budgets(question='', *, mode='auto', override=None) -> dict`
+
+MemFlow (arXiv:2605.03312) 启发的意图感知 token 预算分配。不同查询意图需要不同大小的上下文窗口：简单查找只需 200 tokens，全局社区扫描需要 1000+ tokens。禁用意图感知预算会损失约 18.7pp 准确率。
+
+**预算预设：**
+
+| 模式 | Token 预算 | 场景 |
+|------|-----------|------|
+| `basic` | 200 | 快速实体查找 |
+| `local` | 500 | 邻域探索 |
+| `hybrid` | 600 | SimHash + 图混合 |
+| `drift` | 800 | 多跳 + 全局上下文 |
+| `global` | 1000 | 社区级主题扫描 |
+
+`override` 参数可自定义特定模式的预算，如 `{"global": 1500}`。
+返回 `{mode, budgets, selected_budget, rationale}`。此方法不执行检索，仅返回预算分配。
+
+#### `query_with_budgets(question, *, mode='auto', override=None, chars_per_token=4.0, detail=False) -> dict`
+
+结合 `intent_aware_token_budgets()` 和 `retrieve_token_budgeted()` 的单调用检索。自动根据查询复杂度缩放上下文大小。**推荐作为外部调用者（LLM agents、MCP servers 等）的生产检索路径。**
+
+返回 `{question, mode, rationale, budget, context, nodes, token_count, truncated, stats}`。
+
+#### `screen_retrieval(results, *, patterns=None, threshold=1, node_field='nodes') -> dict`
+
+GhostWriter/AM-Sentry (arXiv:2607.06595) 启发的检索结果注入检测。未保护系统面临 98% 的内存注入风险。此方法提供**读取时**安全筛选，扫描检索到的节点内容中的指令注入模式。
+
+双层防御体系：
+- **写入时**（Cycle 252）：`write_governance_check()` 阻止谄媚写入
+- **读取时**（此方法）：标记可疑的检索内容
+
+内置 14 种注入模式检测（如 "ignore previous"、"system prompt:" 等）。返回 `{clean, flagged, total, flagged_count, flagged_ids, details}`。
+
+#### `query_confidence_score(question, *, mode='auto', limit=10) -> dict`
+
+MemFlow Validator 启发的查询置信度评分。并非所有检索结果都同样可信。此方法包装 `query()` 并添加 `[0, 1]` 置信度字段，调用方可据此决定直接使用结果或升级（如询问用户、扩大搜索）。
+
+**置信度因子：**
+
+| 因子 | 权重 | 说明 |
+|------|------|------|
+| Coverage | 0.30 | 有非空数据的节点占比 |
+| Score spread | 0.20 | 结果分数方差（差异化程度）|
+| Graph density | 0.20 | 结果节点的局部边密度 |
+| Result count | 0.15 | 结果数 / limit 充足度 |
+| Freshness | 0.15 | Top-3 结果的平均新鲜度 |
+
+返回 `{question, mode, results, confidence, factors, stats}`。
+
+### 技能库治理 (Cycle 260)
+
+#### `govern_skill_bank(*, max_skills=100, min_confidence=0.2, deprecate_after_days=60, merge_redundancy_threshold=0.7, dry_run=False) -> dict`
+
+SkeMex (arXiv:2606.09365) Read-Write-Assess-**Govern** 生命周期的治理步骤。应用可配置策略保持技能库健康有界。
+
+**执行策略（按顺序）：**
+
+1. **废弃过期技能** — 超过 `deprecate_after_days` 天未演化的技能标记为 'deprecated'
+2. **废弃低置信度** — 置信度 < `min_confidence` 的技能标记为 'deprecated'
+3. **合并冗余对** — 步骤重叠 ≥ `merge_redundancy_threshold` 的技能通过 `skill_compose()` 合并
+4. **修剪溢出** — 总技能数 > `max_skills` 时，删除最旧的废弃技能
+
+`dry_run=True` 时仅报告不执行。返回 `{policies, actions, summary}`，其中 actions 为 `{action, skill_id, reason}` 列表。
+
+### 路由可观测性 (Cycle 261-262)
+
+#### `query_route_audit(questions=None, *, include_results=False) -> dict`
+
+MemFlow 启发的查询路由审计工具。调试问题为何被路由到特定模式，识别路由误分类。对每个问题执行 `_route_query()`（不执行检索），构建路由表。
+
+无参数时使用内置 12 问题诊断集（覆盖 basic/global/drift/local/temporal/constraint 六种模式）。
+`include_results=True` 同时执行完整 `query()` 获取结果数和耗时。
+
+返回 `{audited, mode_distribution, summary, per_question}`。
+
+### 推理质量评估 (Cycle 263)
+
+#### `reasoning_quality_eval(*, seed_ids=None) -> dict`
+
+MemOps/ActMem 启发的图推理质量评估。完成评估三部曲：
+
+- `retrieval_quality_eval()` — IR 指标（能找到吗？）
+- `lifecycle_operation_eval()` — 操作安全（能维护吗？）
+- `reasoning_quality_eval()` — 图质量（能推理吗？）
+
+**七个质量维度：**
+
+1. **connectivity** — 从种子节点可达的节点比例
+2. **causal_chain_completeness** — 完整 vs 断裂的因果链
+3. **conflict_resolution_rate** — 已解决的 supersede 链
+4. **supersede_depth_stats** — 波动性指标（平均/最大深度）
+5. **temporal_consistency** — valid_from/valid_to 间隙检测
+
+### 信息密度分析 (Cycle 264)
+
+#### `graph_information_density(*, node_ids=None, edge_types=None) -> dict`
+
+PlugMem PMI 启发的图信息密度度量。使用 Pointwise Mutual Information 评估记忆连接是否携带真实信息还是仅为结构噪声。
+
+PMI 公式：`PMI(w_ij) = log2((w_ij × W_total) / (s_i × s_j))`，其中 s_i、s_j 为节点的加权度（强度），W_total 为所有边权重之和。
+
+**返回指标：**
+
+| 指标 | 说明 |
+|------|------|
+| `mean_pmi` | 所有边的平均 PMI |
+| `positive_fraction` | PMI > 0 的边占比（强于预期）|
+| `entropy` | 边权重分布的香农熵（bits）|
+| `normalized_entropy` | 熵 / log₂(N_edges)，∈ [0, 1] |
+| `information_score` | (1 - normalized_entropy) × density，∈ [0, 1] |
+| `pmi_spread` | PMI 标准差（差异化程度）|
+| `edge_type_breakdown` | 按边类型的 PMI 统计 |
+
+### 知识缺口分析 (Cycle 265)
+
+#### `knowledge_gap_report(*, node_ids=None, max_gaps=10, min_score=0.3) -> dict`
+
+结构化知识图谱缺口检测。回答 "应该在哪里添加连接？" — 在 `graph_information_density` 的整体分析基础上，定位具体的节点和集群边界缺口。
+
+**返回部分：**
+
+| 部分 | 说明 |
+|------|------|
+| `orphan_nodes` | 度 ≤ 1 的孤立节点（通过图遍历不可达）|
+| `isolated_clusters` | 跨组件桥接边 < 2 的连通分量 |
+| `bridge_opportunities` | 跨集群边界的最佳节点对（按共享标签 + 组合权重评分）|
+| `underconnected_hubs` | 高权重但低度的节点（"重要但孤独"）|
+| `gap_score` | 0-100 复合分（100 = 连接良好）|
+| `recommendations` | 优先级行动列表 |
 
 ---
 
