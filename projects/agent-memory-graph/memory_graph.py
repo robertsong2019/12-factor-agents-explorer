@@ -27561,6 +27561,231 @@ class MemoryGraph:
             "recommendations": recs,
         }
 
+    # ── Information Density: PMI-based graph quality metric ────────
+
+    def graph_information_density(self, *, node_ids: list[str] = None,
+                                 edge_types: list[str] = None) -> dict:
+        """Compute Pointwise Mutual Information (PMI) density of the memory graph.
+
+        Inspired by PlugMem which uses PMI to measure whether memory
+        connections carry genuine information or are merely structural noise.
+
+        **PMI density** compares the actual edge-weight distribution against
+        a maximum-entropy (uniform) baseline:
+
+            PMI(w_ij) = log2( (w_ij * W_total) / (s_i * s_j) )
+
+        where s_i, s_j are weighted degrees (strengths) of nodes
+        *i* and *j*, and W_total is the sum of all edge weights.
+
+        A graph where all edges have equal weight has PMI ≈ 0 for every
+        edge (maximum entropy, no information differentiation).  Positive
+        PMI means the edge is stronger than expected; negative means weaker.
+
+        **Metrics returned:**
+
+        - **mean_pmi**: Average PMI across all edges.
+        - **positive_fraction**: Fraction of edges with PMI > 0.
+        - **negative_fraction**: Fraction with PMI < 0.
+        - **entropy**: Shannon entropy of the normalised edge-weight
+          distribution (bits).  Maximum = log₂(N_edges).
+        - **normalized_entropy**: entropy / log₂(N_edges), ∈ [0, 1].
+          High → uniform (low information); Low → concentrated (high information).
+        - **density**: Graph density = actual_edges / max_possible_edges.
+        - **weighted_density**: Sum of edge weights / (N × (N-1) / 2).
+        - **pmi_spread**: Standard deviation of PMI values (differentiation).
+          Higher spread = more informative edge structure.
+        - **information_score**: Composite: (1 - normalized_entropy) × density.
+          ∈ [0, 1].  Summarises overall information density.
+        - **edge_type_breakdown**: Per-edge-type PMI statistics.
+        - **recommendations**: Actionable suggestions.
+
+        Args:
+            node_ids: Restrict analysis to a subgraph induced by these nodes.
+                If None, analyses the entire graph.
+            edge_types: Restrict to specific edge types (e.g. ``['causes',
+                'relates_to']``).  If None, includes all edge types.
+
+        Returns:
+            Dict with the metrics described above.
+        """
+        # ── Gather edges ────────────────────────────────────────────
+        query = "SELECT source, target, weight, relation FROM edges"
+        conditions = []
+        params: list = []
+
+        if node_ids:
+            placeholders = ",".join("?" * len(node_ids))
+            conditions.append(f"source IN ({placeholders})")
+            conditions.append(f"target IN ({placeholders})")
+            params.extend(node_ids)
+            params.extend(node_ids)
+
+        if edge_types:
+            placeholders = ",".join("?" * len(edge_types))
+            conditions.append(f"relation IN ({placeholders})")
+            params.extend(edge_types)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        rows = self.conn.execute(query, params).fetchall()
+
+        if len(rows) < 2:
+            return {
+                "mean_pmi": 0.0,
+                "positive_fraction": 0.0,
+                "negative_fraction": 0.0,
+                "entropy": 0.0,
+                "normalized_entropy": 0.0,
+                "density": 0.0,
+                "weighted_density": 0.0,
+                "pmi_spread": 0.0,
+                "information_score": 0.0,
+                "node_count": 0,
+                "edge_count": len(rows),
+                "total_weight": 0.0,
+                "edge_type_breakdown": {},
+                "recommendations": [
+                    "Insufficient edges for density analysis.",
+                    "Add more connections to enable meaningful PMI computation.",
+                ],
+            }
+
+        # ── Compute node strengths (weighted degrees) ──────────────
+        strengths: dict[str, float] = {}
+        total_weight = 0.0
+
+        for row in rows:
+            w = row["weight"] if row["weight"] is not None else 1.0
+            w = max(w, 1e-10)  # avoid zero division
+            strengths[row["source"]] = strengths.get(row["source"], 0.0) + w
+            strengths[row["target"]] = strengths.get(row["target"], 0.0) + w
+            total_weight += w
+
+        if total_weight <= 0:
+            total_weight = float(len(rows))
+
+        # ── PMI per edge ────────────────────────────────────────────
+        pmi_values = []
+        pmi_by_type: dict[str, list[float]] = {}
+
+        for row in rows:
+            w = row["weight"] if row["weight"] is not None else 1.0
+            w = max(w, 1e-10)
+            s_i = strengths.get(row["source"], 1e-10)
+            s_j = strengths.get(row["target"], 1e-10)
+
+            # PMI: log2( (w_ij * W_total) / (s_i * s_j) )
+            numerator = w * total_weight
+            denominator = s_i * s_j
+            if denominator > 0 and numerator > 0:
+                pmi = math.log2(numerator / denominator)
+            else:
+                pmi = 0.0
+
+            pmi_values.append(pmi)
+            rel = row["relation"] or "default"
+            pmi_by_type.setdefault(rel, []).append(pmi)
+
+        # ── Shannon entropy of normalised weights ──────────────────
+        raw_weights = [
+            max(row["weight"] if row["weight"] is not None else 1.0, 1e-10)
+            for row in rows
+        ]
+        w_sum = sum(raw_weights)
+        if w_sum > 0:
+            probs = [w / w_sum for w in raw_weights]
+        else:
+            probs = [1.0 / len(raw_weights)] * len(raw_weights)
+
+        entropy = -sum(p * math.log2(p) for p in probs if p > 0)
+        max_entropy = math.log2(len(rows)) if len(rows) > 1 else 1.0
+        norm_entropy = entropy / max_entropy if max_entropy > 0 else 0.0
+
+        # ── Graph density ───────────────────────────────────────────
+        n_nodes = len(strengths)
+        max_edges = n_nodes * (n_nodes - 1) / 2 if n_nodes > 1 else 1
+        density = len(rows) / max_edges if max_edges > 0 else 0.0
+        weighted_density = total_weight / max_edges if max_edges > 0 else 0.0
+
+        # ── Aggregate metrics ───────────────────────────────────────
+        mean_pmi = sum(pmi_values) / len(pmi_values) if pmi_values else 0.0
+        positive = sum(1 for v in pmi_values if v > 0)
+        negative = sum(1 for v in pmi_values if v < 0)
+        total = len(pmi_values)
+
+        # Standard deviation of PMI
+        if total > 1:
+            variance = sum((v - mean_pmi) ** 2 for v in pmi_values) / (total - 1)
+            pmi_spread = math.sqrt(variance)
+        else:
+            pmi_spread = 0.0
+
+        # Composite information score
+        information_score = (1.0 - norm_entropy) * density if density > 0 else 0.0
+
+        # Per-type breakdown
+        type_breakdown = {}
+        for rel, vals in pmi_by_type.items():
+            if vals:
+                type_breakdown[rel] = {
+                    "count": len(vals),
+                    "mean_pmi": round(sum(vals) / len(vals), 4),
+                    "min": round(min(vals), 4),
+                    "max": round(max(vals), 4),
+                }
+
+        # ── Recommendations ─────────────────────────────────────────
+        recs = []
+        if norm_entropy > 0.9:
+            recs.append(
+                "Edge weights are near-uniform (high entropy). "
+                "Consider differentiating weights to improve routing."
+            )
+        if density < 0.1 and n_nodes > 10:
+            recs.append(
+                f"Low density ({density:.3f}) with {n_nodes} nodes. "
+                "Graph is sparse — add connections to improve reachability."
+            )
+        if total > 0 and negative / total > 0.5:
+            recs.append(
+                f"{negative}/{total} edges have negative PMI "
+                "(weaker than expected). Consider pruning or re-weighting."
+            )
+        if pmi_spread < 0.1 and total > 5:
+            recs.append(
+                "Very low PMI spread — all edges are structurally similar. "
+                "Add typed/weighted edges for differentiation."
+            )
+        if information_score < 0.05:
+            recs.append(
+                f"Low information score ({information_score:.4f}). "
+                "Graph stores little structural signal relative to size."
+            )
+        if not recs:
+            recs.append(
+                "Information density is healthy. "
+                "Edge structure carries meaningful differentiation."
+            )
+
+        return {
+            "mean_pmi": round(mean_pmi, 4),
+            "positive_fraction": round(positive / total, 4) if total > 0 else 0.0,
+            "negative_fraction": round(negative / total, 4) if total > 0 else 0.0,
+            "entropy": round(entropy, 4),
+            "normalized_entropy": round(norm_entropy, 4),
+            "density": round(density, 4),
+            "weighted_density": round(weighted_density, 4),
+            "pmi_spread": round(pmi_spread, 4),
+            "information_score": round(information_score, 4),
+            "node_count": n_nodes,
+            "edge_count": len(rows),
+            "total_weight": round(total_weight, 4),
+            "edge_type_breakdown": type_breakdown,
+            "recommendations": recs,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
