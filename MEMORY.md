@@ -14,26 +14,26 @@
 
 ---
 
-## Current Focus (2026-07-15)
+## Current Focus (2026-07-17)
 
 ### Active Theme
-Autoresearch 方法论实践 — amg **连续234天零回滚率** 🏆。
+Autoresearch 方法论实践 — amg **连续238天零回滚率** 🏆。
 
-### 项目测试总量 (07-15 凌晨快照)
+### 项目测试总量 (07-17 凌晨快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
-| agent-memory-graph | **3249** | 670+ | 五十五合一: 全检索管线 + 17 centrality + 拓扑指数十三族(distance/degree/spectral/Laplacian/walk/edge-partition/degree-distance/Schultz+Modified-Wiener/generalized-Randić/Zagreb/Forgotten/ABC/Sum-connectivity) + structure-gated PPR + retrieval-failure logging + token-budgeted context + IR quality eval (incl. utilization_rate) + governed selection + Laplacian pseudoinverse + phantom detection + auto_forget + bi-temporal + Q-value + CRDT + community + decision-chain + entropy-filter + subgraph-by-edge-type + causal-edges(ActMem 5-type) + spreading-activation + temporal_score + crystallize_intents + invalidate-cascade(PLACEMEM) + category-aware(Apple) + read-proactive-context(CogniFold) + immutable_store + grep + expand(LCM) + compact_node(三级升级) + serialize(token-budget) + RelationIntegrityChecker(ShadowMerge defense) + ... |
-| agent-context-store | **2636** | 526+ | 三大管线完整+全分析闭环: Graph 12 / Quality 12 (action+velocity+cohort+heatmap) / Store 17 (longitudinal+predictive+prescriptive+feedback+monitoring+dashboard+batch+alert-history) |
+| agent-memory-graph | **3849** | 750+ | 六十四合一: 全检索管线 + 17 centrality + 拓扑指数十九族 + IR eval + governed selection + phantom detection + spreading activation + proactive context + cascade invalidation + immutable_store + compact_node + serialize + RelationIntegrityChecker + intent_aware_token_budgets + screen_retrieval + query_confidence_score + govern_skill_bank + 7-intent taxonomy (temporal + constraint) + query_route_audit + ... |
+| agent-context-store | **2727** | 550+ | 三大管线完整+全分析闭环(十八层): Graph 12 / Quality 12 (action+velocity+cohort+heatmap) / Store 17 (longitudinal+predictive+prescriptive+feedback+monitoring+dashboard+batch+alert-history) |
 | structured-output-toolkit | **561** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
 | agent-task-cli | **1222** | 190+ features | Cache+Storage+EventBus+ConcurrencyManager+merge |
-| **四项目总计** | **7668** | — | — |
+| **四项目总计** | **8359** | — | — |
 
 其他: openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / context-forge 613 / nano-agent 384 / AMS v1.0-dev 645 / prompt-router 258
 
-**全项目总计**: 10371+ tests (四核心 7668 + context-forge 613 + nano-agent 384 + 其他 1706)
+**全项目总计**: 11056+ tests (四核心 8359 + context-forge 613 + nano-agent 384 + 其他 1700)
 
 ### 最高优先级
-**README → npm publish** (四项目)。这是当前最大未交付价值。amg 定位: "beyond recall — agency-grade graph memory — security-first"。7359 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，竞争窗口收紧。
+**README → npm publish** (四项目)。这是当前最大未交付价值。amg 定位: "beyond recall — agency-grade graph memory — security-first"。8231 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，PlugMem 已有 OpenClaw plugin，竞争窗口收紧。
 
 ### 07-14 晚间开发 (amg cycles 239-242, code-lab-evening)
 - **Cycle 239: immutable_store + grep() + expand()** — LCM (arXiv:2605.04050) + Searchat 启发。append-only 不可变存储，add() 自动写入，确保数据在 compact/delete 后存活。grep() 全历史搜索（含已删节点），expand() 无损回溯（优先 live，fallback immutable）。+41 tests
@@ -62,6 +62,35 @@ Autoresearch 方法论实践 — amg **连续234天零回滚率** 🏆。
 - **amg 竞争定位**: "Security-first graph memory" — phantom detection + integrity checker + cascade invalidation 是 Mem0 没有的差异化。
 - **Next: Cycle 239 候选**: RelationIntegrityChecker (3 checks: value_conflict/confidence_anomaly/origin_mismatch + integrity_score)。~40 tests。已有 runnable TypeScript demo。
 - **研究笔记**: [catalyst-research/exploration-notes/2026-07-14-memory-security-hybrid-architecture.md](catalyst-research/exploration-notes/2026-07-14-memory-security-hybrid-architecture.md)
+
+### 07-17 晚间 code-lab (amg cycles 259-262)
+- **Cycle 259: intent_aware_token_budgets + query_with_budgets + screen_retrieval + query_confidence_score** — MemFlow (arXiv:2605.03312) tiered token budgets (basic=200/local=500/hybrid=600/drift=800/global=1000) + GhostWriter/AM-Sentry (arXiv:2607.06595) read-time injection screening (14 instruction patterns, dual-layer defense complementing write_governance) + MemFlow Validator-inspired query confidence (5 factors: coverage/score_spread/graph_density/result_count/freshness). +61 tests
+- **Cycle 260: govern_skill_bank()** — SkeMex/MUSE-inspired Govern step of Read-Write-Assess-Govern lifecycle. Four policies: (1) deprecate stale (>N days), (2) deprecate low-confidence, (3) merge redundant (Jaccard ≥ threshold via skill_compose), (4) prune overflow (max_skills). dry_run mode for audit. Completes procedural memory governance. +20 tests
+- **Cycle 261: seven_intent_taxonomy** — MemFlow 7-intent expansion. query() routes from 5→7 modes: adds temporal_reasoning (bi-temporal scan with validity windows + supersede awareness) and constraint_validation (kind/tag/keyword search for rule/policy/requirement nodes). Fixed substring matching bug in _route_query (how∈show, was∈was) using word-boundary regex. +32 tests
+- **Cycle 262: query_route_audit()** — Routing observability. Mode distribution + per-question rationale + optional result counts for latency analysis. Built-in diagnostic question set covers all 7 modes. +15 tests
+- **amg 3721→3849 (+128 tests), 242nd consecutive day without rollback**
+
+### 07-16 晚间~07-17 凌晨开发 (amg cycles 252-258, acs cycle 193)
+- **Cycle 252: write_governance_check + safe_supersede + governance_audit** — PASB-inspired (arXiv:2607.10526) commit boundary protection. Three sycophantic failure mode detectors: status_promotion (hedged→definitive), attribution_removal (source qualifiers stripped), scope_broadening (specific→universal). safe_supersede gates supersede operations. governance_audit retrospectively audits supersede chains. +70 tests
+- **Cycle 253: community_topic_labels + community_semantic_summary + community_overview + query_global** — GraphRAG-inspired community semantic layer. Topic extraction (kind+tag+keyword frequency), deterministic + LLM-callback summaries, combined structural+semantic dashboard, global query across community summaries. +40 tests
+- **Cycle 254: lifecycle_operation_eval** — MemOps-inspired (arXiv:2607.12893) 6-probe validator. detection/target/transition/robustness/provenance/leakage probes across add/update/supersede/forget/merge operations. +29 tests
+- **Cycle 255: prospective memory** — PM-Bench-inspired (arXiv:2607.12385, COLM 2026). add_intention with trigger cues + deadline, check_prospective_cues keyword-overlap matching, fulfill_intention, pending_intentions. +38 tests
+- **Cycle 256: drift_search** — DRIFT-style hybrid search (global→local→refine with RRF merge). GraphRAG Edge et al. 2024. +35 tests, commit 7ac582d
+- **Cycle 257** — +26 tests (commit 311ba6a)
+- **Cycle 258: query() adaptive routing** — GraphRAG/LightRAG-inspired mode router (auto→basic/global/drift/local/hybrid). _route_query 5 heuristic rules. detail= enrichment. +39 tests, commit 841b2b6
+- **acs Cycle 193: store_trend_report + alert_prediction_accuracy + scorecard_preset_library** — Trend report (N-snapshot time-series with change-point detection) + prediction backtesting (precision/recall/F1 confusion matrix) + 6 built-in presets (default/archive/kgraph/realtime/qa/balanced). +49 tests, commit bb124bb
+- **amg 3444→3721 (+277 tests), 238th consecutive day without rollback**
+- **acs 2678→2727 (+49 tests), 193rd consecutive day without rollback**
+
+### 07-16 凌晨开发 (amg Key Dev 2 + acs Key Dev 3)
+- **Key Dev 2 (amg cycle 251): lorenz_coefficient() + redefined_randic_indices() + redefined_zagreb_index()** — 三新 degree-based 拓扑指数。Lorenz/Gini = 首个图级别度分布不平等度量 (Lorenz 曲线 + Gini 系数, star K_{1,k} → (k-1)/(2(k+1)))。RD₁/RD₂/RD₃ = Randić 2008 redefined variants (ratio d_u·d_v/(d_u+d_v) raised to powers 1/2/3, progressive discrimination)。ReZM₃ = Σ(d_u+d_v)·(d_u·d_v) (hybrid additive-multiplicative, always ≥ M₂)。拓扑指数族→十九族。3386→3444 (+58 tests), commit 0939b10
+- **Key Dev 3 (acs cycle 192): store_health_diff() + alert_prediction() + store_health_scorecard()** — 三新分析层。health_diff = 时序对比 (score/grade/alert/metric/forecast/improvement/recommendation deltas)。alert_prediction = 预测性告警 (decay model + history-weighted confidence, active/high/moderate severity)。scorecard = 自定义权重评分 (per-team reweighting, auto-normalization, grade comparison)。分析管线扩展: +temporal +predictive-alerting +custom-perspective。2636→2678 (+42 tests), commit a70a130
+- **amg 3444 tests, 236th consecutive day without rollback**
+- **acs 2678 tests, 192nd consecutive day without rollback**
+
+### 07-15 晚间开发 (amg cycles 249-250)
+- **Cycle 249: dual_mode_retrieve() + binary_signature() + similarity_search_binary()** — Hippocampus (arXiv:2602.13594) 启发。SimHash 64-bit 签名 + Hamming distance O(1) 比较 + 两阶段检索 (binary pre-filter → graph rerank, 0.4×binary_sim + 0.6×graph_score)。小图优化 (<10 nodes 直接 retrieve)。3326→3354 (+28 tests), commit c751e9d, 235th day
+- **Cycle 250: find_duplicate_nodes() + deduplicate()** — SimHash-based near-duplicate detection (threshold Hamming distance) + merge duplicates with edge consolidation。3354→3386 (+32 tests)
 
 ### 07-15 凌晨开发 (amg Key Dev 2 + acs Key Dev 3)
 - **Key Dev 2 (amg cycle 239 key-dev-2): ga_index() + augmented_zagreb_index() + harmonic_index()** — 三新 degree-based 拓扑指数。GA = Σ 2√(d_u·d_v)/(d_u+d_v) (AM-GM bound: GA ≤ m)。AZI = Σ (d_u·d_v/(d_u+d_v-2))³ (最高判别力, K₂→0)。H = Σ 2/(d_u+d_v) = 2·χ_S (文献独立命名)。拓扑指数族→十六族。3165→3249 (+84 tests), commit 3a7a4c7
@@ -132,9 +161,34 @@ Autoresearch 方法论实践 — amg **连续234天零回滚率** 🏆。
 - **GitHub Trending**: codebase-memory-mcp(23K⭐) / Agent-Reach(48K⭐) / design.md(Google)
 - **博客发布**: 「Agent 记忆的 2026 前沿」~2800字 ✅
 
+### 07-16 晚间深度研究 #013: Agent Memory Evaluation Revolution — From Recall to Lifecycle Operations
+- **MemOps** (arXiv:2607.12893, Jul 14) — Lifecycle memory operations benchmark。memory 不是静态事实集合而是 remember/forget/update/reflect 操作的生命周期。6 类探针(detection/target/transition/robustness/provenance/leakage)。关键发现：final-answer accuracy 掩盖 unsafe memory state。session-level >> turn-level retrieval。parametric memory 全线 unreliable。
+- **The Compliance Trap** (arXiv:2607.10608, Jul 12, Johns Hopkins) — E-P-R (Entry-Propagation-Recovery) 轨迹框架。agents 在第一个决策点就 adopt conflicting memory。更强模型 = 更大绝对损害(compliance trap)。MemTrapBench benchmark。recovery 全线 weak。
+- **PM-Bench** (arXiv:2607.12385, Jul 14, COLM 2026) — Prospective memory benchmark。执行延迟意图在未来 cue 出现时。GPT-5.4 仅 65.1% F1。无单一策略跨模型有效。amg 完全缺 prospective memory 维度。
+- **PASB / Persistent Sycophancy** (arXiv:2607.10526, Jul 11-13) — 1600 tasks，测试 OpenClaw + Hermes-Agent。commit boundary = 关键转折点：session-only 45.0% → committed 71.9% (+27pp)。三种写入失败模式(status promotion/attribution removal/scope broadening)。agent sycophancy = state-writing governance 问题。
+- **五维评估分类法**: Recall(solved) → Lifecycle(frontier) → Consumption(frontier) → Prospective(frontier) → Write Safety(frontier)。amg 仅评估 dimension 1。competitive opportunity：amg can be first npm lib with 5D evaluation。
+- **Next: lifecycle_operation_eval() (~80 tests) + write_governance_check() (~50 tests)**。两个 runnable code demos 已验证 (MemOps validator + EPR detector)。研究笔记: [catalyst-research/exploration-notes/2026-07-16-agent-memory-evaluation-revolution.md]
+
+### 07-17 晚间深度研究 #014: Self-Evolving Agent Memory — From Static Architectures to Meta-Adaptive Systems
+- **MemGen** (arXiv:2509.24704, Sep 2025) — Generative latent memory。不检索条目而是生成 latent token 序列作为 memory。Memory Trigger (何时调用) + Memory Weaver (生成记忆)。比 ExpeL/AWM +38.22%，比 GRPO +13.44%。无监督下自发涌现 planning/procedural/working memory。
+- **EvoMemBench** (arXiv:2605.18421, May 2026, HKUST-GZ) — 首个 self-evolving memory benchmark。两轴: in-episode vs cross-episode × knowledge vs execution。15 方法对比。发现：(1) long-context baselines 仍高度竞争 (2) 无单一 memory 形式全胜 (3) retrieval 赢知识密集，procedural 赢执行密集。amg 跨所有 5 族但未在此 benchmark 测评。
+- **MemEvolve + EvolveLab** (arXiv:2512.18746, Dec 2025) — Meta-evolution: 不仅 evolve memory content，还 evolve memory ARCHITECTURE。EvolveLab 统一 12 系统为 encode/store/retrieve/manage 设计空间。+17.06% 改进。
+- **MUSE-Autoskill** (arXiv:2605.27366, ByteDance, May 2026) — Skill 5-stage lifecycle (creation→memory→management→evaluation→refinement)。Per-skill memory 跨任务积累经验。Self-created skills 超越 human-authored (85.24% vs 81.17%)。Cross-agent transfer 51.90%。
+- **SkeMex** (arXiv:2606.09365, Jun 2026) — Read-Write-Assess-Govern lifecycle。Value-aware retrieval (context-dependent utility)。Multi-branch repository (general/task-specific/action-level)。
+- **Memp** (arXiv:2508.06433, ACL 2026 Findings, zjunlp) — Procedural memory 两级抽象 (step-by-step + script-level)。Stronger→weaker model skill transfer 有效。
+- **FieldMem** (arXiv:2602.21220, Jan 2026) — PDE-based continuous field memory。Memories diffuse + thermodynamic decay + field coupling。LongMemEval +116% F1 multi-session, +43.8% temporal。Multi-agent >99.8% collective intelligence。
+- **关键洞察**: (1) Memory architecture meta-adaptation is next frontier (2) EvoMemBench 是缺失的标准化 benchmark (3) Per-skill memory 是 npm 生态杀手特性 (4) Generative latent memory 威胁 retrieval-based 系统 (5) Physics-inspired decay outperforms exponential
+- **amg 实现路径**: compress_to_skill() + retrieve_skills() + evolve_skill() + skill_bank_health() + govern_skill_bank() ~140 tests。Read-Write-Assess-Govern 映射到 amg 现有 Q-value + strategic_forget。
+- **Code demo**: Read-Write-Assess-Govern lifecycle TypeScript, 已验证可运行
+- **研究笔记**: [catalyst-research/exploration-notes/2026-07-17-self-evolving-agent-memory-meta-adaptive.md](catalyst-research/exploration-notes/2026-07-17-self-evolving-agent-memory-meta-adaptive.md)
+
 ### 近期研究一览 (详细笔记在 catalyst-research/exploration-notes/)
 | 日期 | 主题 | 核心洞察 |
 |------|------|----------|
+| 07-15 | **Procedural Memory & Skill Extraction (#011)** | Experience Compression Spectrum: L0→L1→L2→L3 (5-500-1000×), cross-community citation <1%, "missing diagonal" = adaptive cross-level compression / Anything2Skill: SkillBank + structured Skill Contracts (invocation/contraindication/steps/constraints/confidence) → 98.85% qsv / MemSkill: meta-memory skills (how to remember, not what) + RL controller, HuggingFace #3 paper / AutoSkill: lifecycle v0.1→v0.1.1, OpenClaw integration exists / AutoRefine: skill decay without maintenance / amg = L1-only, kind="skill" exists but no procedural structure / Next: compress_to_skill + retrieve_skills + evolve_skill APIs ✅ |
+| 07-17 | **Self-Evolving Agent Memory (#014)** | MemGen generative latent(+38.22%)/EvoMemBench 4-setting benchmark(15 methods)/MemEvolve meta-architecture(+17.06%)/MUSE 5-stage skill lifecycle(per-skill memory, self>human 85.24%)/SkeMex Read-Write-Assess-Govern/Memp ACL 2026 procedural/FieldMem PDE continuous(+116% F1)/amg spans all 5 EvoMemBench families/skill lifecycle ~140 tests ✅ |
+| 07-16 | **Agent Memory Evaluation Revolution (#013)** | MemOps lifecycle ops(6 probes)/Compliance Trap E-P-R(更强模型=更大损害)/PM-Bench prospective(65.1% F1)/PASB persistent sycophancy(commit boundary +27pp)/5D taxonomy replaces 1D accuracy/amg=dim1 only→5D opportunity ✅ |
+| 07-15 | **Structured Memory Pareto Frontier (#010)** | PRISM: training-free intent-aware edge costing + bundle search + LLM compression → 0.831 LoCoMo @ 22K tokens (13× less)/PlugMem (ICML 2026): knowledge-centric graph (propositional+prescriptive) → LongMemEval 90.2 SOTA, OpenClaw plugin shipped/Hippocampus: Dynamic Wavelet Matrix → 31× faster, 14× fewer tokens/信息密度 > recall@k/Pareto frontier is the new eval standard/amg gaps: intent-aware edges + procedural memory + density metrics + plugin distribution ✅ |
 | 07-13 | **Proactive Memory & Geometric Time (#007)** | RoMem: 连续相位旋转+Semantic Speed Gate→几何阴影解决时间冲突 (SOTA ICEWS 72.6 MRR, MultiTQ 2-3×)/CogniFold: 三层CLS扩展(event→concept→intent) + 拓扑自组织涌现意图 (LoCoMo 81.23%, LongMemEval 93.0%)/SkillGraph: 技能图进化+组合关系/"不完美即机制"哲学/append-only>破坏性更新/三层proactive context window ✅ |
 | 07-13 | **Context Engineering: Beyond Retrieval (#006)** | Apple: 全量历史比无记忆更差(71%<79%)/选择性持久化4类/SWE-MeM: 自适应压缩工具+Memory-aware GRPO 60.2% SWE-Bench/PLACEMEM: 记忆胶囊统一语义+KV cache 级联失效/ACL 2026: 检索-生成鸿沟 19-53% token节省/零token数据刷新14×加速 ✅ |
 | 07-12 | **Retrieval-Reasoning Gap & Actionable Memory (#005)** | ActMem 因果图+反事实推理/SimpleMem 熵感知压缩 30×token/MAGMA 正交多图 ACL 2026/Write-Manage-Read 5家族/Survey: Memory≠RAG/因果边=检索→推理桥梁/写入时过滤>检索时排序 ✅ |
@@ -219,85 +273,74 @@ Autoresearch 方法论实践 — amg **连续234天零回滚率** 🏆。
 34. **Context Engineering 的核心分离原则 (LCM 2026.05)** — LLM 管上下文 = GOTO，确定性代码管状态 = Structured Programming。immutable_store (数据不丢) + compact() 三级升级 (保证收敛) + serialize() 指针化 (信息密度) + expand() (无损回溯) 是完整的上下文工程层。npm 生态零竞品。
 35. **Workspace-level phantom 是 cron 路径的系统性风险** — cycles 239-243 在 workspace 日志中记录但代码不在项目 repo 中。不同于 class shadowing（代码中有但被覆盖），这是「日志有但代码完全不存在」。防御：cron 模板必须包含 `cd repo && test` 验证步骤。
 36. **分析管线的终极形态是 causal 闭环** — acs 从 descriptive(184) 到 causal(191)，经历 diagnostic→predictive→prescriptive→feedback→monitoring→executive→batch→time-series→export→decay→correlation 十二层。report_export 让非技术干系人可访问，decay_model 实现预测性维护，alert_correlation 回答"为什么"。
+37. **检索侧是 2026 的前沿 (PRISM/PlugMem/Hippocensus 共识)** — 写入已足够好，差异化在查询时。PRISM 四模块(intent routing→edge cost→bundle search→compression)全部在 inference-time，零训练。PlugMem 的差异化在 retrieve_and_reason() 模块。Hippocampus 的创新在压缩域搜索。amg 的 add() pipeline 已经很强，下一增长在 query-time intelligence。
+38. **Pareto frontier 是 agent memory 的新评估标准** — PRISM 定义 accuracy–context–cost 三维空间。不再只看 accuracy，要看"达到这个 accuracy 用了多少 token"。PlugMem 的 Memory Information Density (PMI/token) 是首个跨架构可比指标。amg 需要添加 density metrics。
+39. **知识单元 > 实体节点 > 文本块 (PlugMem ICML 2026)** — propositional ("user is vegetarian") + prescriptive ("recommend Italian vegetarian dishes") 比 entity/relation graph 的 information density 高一个数量级。amg 缺 procedural memory type。LongMemEval 90.2 SOTA 证明知识中心架构的有效性。
+40. **Plugin-first distribution 是 agent memory 的 go-to-market** — PlugMem 已发布 OpenClaw plugin (plugmem.remember/recall tools) + Claude Code plugin + Memory Inspector UI。amg 的 npm 发布必须定位为 plugin ecosystem，不只是 library。竞品已在场内。
+41. **Memory 和 Skills 是同一问题在不同压缩级别 (Experience Compression Spectrum)** — Zhang et al. (arXiv:2604.15877) formalize L0(trace)→L1(episodic,5-20×)→L2(skill,50-500×)→L3(rule,1000×+)。cross-community citation <1%。每个系统都在固定级别运行，无自适应跨级压缩 = "missing diagonal"。amg 是 L1-only。添加 compress_to_skill() 使 amg 成为首个 full-spectrum 系统。
+42. **Skill Contracts > 自由文本技能** — Anything2Skill 的结构化合约 (invocation_conditions/contraindications/steps/constraints/output_spec/confidence) 机器可检查、可版本化、可组合。amg 的 kind="skill" 存在但无结构。采用 Skill Contract schema 解锁程序性检索和执行规划。
+43. **Meta-memory skills 是最高杠杆特性** — MemSkill (HuggingFace #3 paper) 证明 "如何记忆" 的技能可学习、可跨数据集迁移。amg 的 entropy_filter/strategic_forget 是硬编码的。用 Q-value 机制使其自适应 = 通往自进化记忆的路径。
+44. **Skill Bank decay 是 L1 staleness 的程序性类比** — AutoRefine 证明技能无维护会退化。evolve_skill() 用 amg 的 supersede + causal_edge 自然扩展到技能版本管理。skill_bank_health() 镜像 acs 的 health check 模式。
+45. **度分布不平等是图级别结构指标 (Lorenz/Gini 2026.07)** — 所有拓扑指数都是边级贡献求和，lorenz_coefficient() 是首个图级别度量：图有多「hub 主导」？Lorenz 曲线可用于 dashboard 可视化。star K_{1,k} → Gini = (k-1)/(2(k+1))，regular graph → Gini = 0。
+46. **时序对比闭环是操作关键 (acs cycle 192)** — health_diff() 回答「什么改变了？」，alert_prediction() 回答「什么即将发生？」，scorecard() 回答「从我的视角看健康吗？」。三个正交方向将静态快照转变为动态可操作系统。
+47. **Recall benchmarks obsolete as quality signal (MemOps 2607.12893)** — final-answer accuracy credits correct answers despite inconsistent/unsafe memory states。MemOps 6-probe (detection/target/transition/robustness/provenance/leakage) 是新标准。session-level >> turn-level retrieval。amg 需要 lifecycle_operation_eval()。
+48. **Commit boundary is the new attack surface (PASB 2607.10526)** — sycophancy 在写入 durable memory 时变为 persistent。session-only 45.0% → committed 71.9% (+27pp)。三种失败模式：status promotion/attribution removal/scope broadening。amg 的 add() 需要 write-time governance。OpenClaw 被 PASB 直接测试。
+49. **Stronger agents need memory governance MORE (Compliance Trap 2607.10608)** — 合规率跨模型相似但更强模型绝对损害更大。E-P-R (Entry-Propagation-Recovery) 轨迹框架。recovery 全线 weak。positioning：「security-first memory for increasingly capable agents」。
+50. **Prospective memory is unsolved (PM-Bench COLM 2026)** — 延迟意图执行：GPT-5.4 仅 65.1% F1。无单一策略跨模型有效。amg 完全缺 prospective memory。add_intention() + check_prospective_cues() 是新维度。
+51. **Memory architecture meta-adaptation > content adaptation (MemEvolve 2025.12)** — EvolveLab 统一 12 系统为 encode/store/retrieve/manage。+17.06%。Prior systems evolve content but architecture is static。amg 的 700+ APIs 是设计空间，缺 meta-controller 选择操作组合。
+52. **No single memory form wins all settings (EvoMemBench 2026.05)** — 15 方法 + 4 settings 标准对比。Retrieval 赢知识密集，procedural 赢执行密集。Long-context baselines 仍竞争。amg 跨全部 5 族但未在此 benchmark 测评。EvoMemBench > LoCoMo 作为 benchmark 优先级。
+53. **Per-skill memory is the npm killer feature (MUSE-Autoskill 2026.05)** — Each skill accumulates experience across tasks independently。Self-created skills 超越 human-authored (85.24% vs 81.17%)。Read-Write-Assess-Govern lifecycle 映射到 amg Q-value + strategic_forget。No npm lib has skill lifecycle。
+54. **Generative latent memory may supersede retrieval (MemGen 2025.09)** — Generate latent token sequences as memory instead of retrieving entries。Spontaneously develops planning/procedural/working memory without supervision。Threat to all retrieval-based systems。但需 model training，amg training-free 是 pragmatic advantage。
+55. **Physics-inspired decay > exponential (FieldMem 2026.01)** — PDE-based continuous fields: diffuse + thermodynamic decay + field coupling。+116% F1 LongMemEval multi-session。Spreading activation 是 diffusion 的雏形。Decay 应与 diffusion 耦合 (importance × semantic_density × coupling)。
+56. **Stronger model skills transfer to weaker models (Memp ACL 2026)** — Procedural memory built with strong models retains value when migrated。Two-level abstraction (step-by-step + script-level)。Cross-model skill portability is a feature, not side effect。
 
 ---
 
 ## Active Next Actions
 
-### 最高优先级: npm Publish (本周)
-- [ ] **agent-memory-graph: README + npm publish** — 2407 tests, 530+ APIs, 三十七合一 + 全检索管线 + 完整拓扑指数族 + phantom detection
-- [ ] **agent-context-store: README + npm publish** — 2636 tests, 526+ APIs, 全分析闭环+export+predictive decay+causal
-- [ ] **structured-output-toolkit: README + npm publish** — 561 tests, 4650+ lines
-- [ ] **agent-task-cli: README + npm publish** — 1167 tests
+### 🔴 最高优先级: npm Publish
+- [ ] **agent-memory-graph: README + npm publish** — 3721 tests, 700+ APIs
+- [ ] **agent-context-store: README + npm publish** — 2727 tests, 550+ APIs
+- [ ] **structured-output-toolkit: README + npm publish** — 561 tests
+- [ ] **agent-task-cli: README + npm publish** — 1222 tests
 
-> ⚠️ **竞争窗口收紧 (07-11 研究)** — Mandol (ISCAS+MSRA) 已发 paper+PyPI+GitHub，LoCoMo SOTA 92.21%。MRMS 验证 amg 架构方向。npm 发布不再是可选项。
+> ⚠️ Mandol (ISCAS+MSRA) 已发 paper+PyPI+GitHub，LoCoMo SOTA 92.21%。PlugMem 已有 OpenClaw plugin。竞争窗口收紧。
 
-### 高优先级: 功能完善
-- [ ] agent-memory-graph: Bayesian Dimension 类型 (cycle 214, ~150行src+~100行tests, 受 Nous 启发)
-- [x] agent-memory-graph: 全检索管线完成 ✅ (cycles 207-212: PPR→auto_forget→hybrid RRF→graph_rerank→unified retrieve())
-- [x] agent-memory-graph: Laplacian toolkit ✅ (cycle 213: natural_connectivity + effective_resistance + information_centrality + _laplacian_pseudoinverse infra)
-- [x] agent-memory-graph: 14 centrality metrics ✅ (degree/eigenvector/betweenness/closeness/harmonic/percolation/pagerank/katz/subgraph/laplacian/PPR/natural_conn/effective_resistance/information)
-- [x] agent-context-store: longitudinal analytics ✅ (cycle 186: snapshot_diff + velocity_tracker)
-- [x] agent-task-cli: Cache/Storage/EventBus 扩展 ✅ (cycles 43-44, +29 tests)
-- [x] structured-output-toolkit: batchSafe concurrency fix ✅ (cycle 208, +7 tests)
-- [ ] agent-memory-graph: DF-Leiden 集成 (~190行+~120行增量)
-- [x] agent-memory-graph: current-flow betweenness/closeness ✅ (cycles 214-218: full spectral+topological index family, 拓扑五族完整)
-- [x] agent-memory-graph: pre-commit phantom commit detection ✅ (cycle 219: AST-based class shadowing guard, 37 tests, detected 10 known issues)
-- [x] agent-memory-graph: Randić + Harary indices ✅ (cycle 220: 拓扑指数族补完)
-- [x] agent-memory-graph: select_governed() 三阶段 governed selection ✅ (cycle 222: MRMS-style structured gates → vector recall → graph expansion, +21 tests)
-- [x] agent-memory-graph: retrieval_quality_eval() IR metrics ✅ (cycle 224: precision@k/recall@k/NDCG/MRR/F1/hit_rate, +31 tests)
-- [x] agent-memory-graph: Szeged + Gutman indices ✅ (cycle 225: edge-partition + degree-distance, +31 tests)
-- [x] agent-context-store: quality_heatmap + mutation_impact ✅ (cycle 188: diagnostic + prescriptive, +28 tests)
-- [x] agent-context-store: store_health_alert_config ✅ (cycle 189: configurable per-dimension alert thresholds, severity classification, +16 tests)
-- [x] agent-context-store: quality_improvement_tracker ✅ (cycle 189: closed-loop feedback, actual vs planned delta accuracy, +15 tests)
-- [x] agent-memory-graph: Schultz index + modified Wiener index ✅ (cycle 226: degree-sum + generalized W_λ, +31 tests)
-- [x] agent-memory-graph: trace_decision_chain() ✅ (cycle 227: TokenMizer-inspired supersede chain, +21 tests)
-- [x] agent-memory-graph: add_with_entropy_filter() ✅ (cycle 228: SimpleMem write-time filter, +25 tests)
-- [x] agent-memory-graph: subgraph_by_edge_type() ✅ (cycle 229: MAGMA orthogonal view, +18 tests)
+### 🟡 研究驱动 — 待实现
+- [x] ✅ amg: lifecycle_operation_eval() — MemOps-style operation validator (#013). Cycle 254, +29 tests
+- [x] ✅ amg: write_governance_check() — PASB-inspired commit boundary protection (#013). Cycle 252, +70 tests
+- [x] ✅ amg: summarize_community() + community_overview() — GraphRAG community summaries (#012). Cycle 253, +40 tests
+- [x] ✅ amg: query() adaptive routing — GraphRAG/LightRAG mode selection (#012). Cycle 258, +39 tests
+- [x] ✅ amg: drift_search() — DRIFT hybrid search with question generation (#012). Cycle 256, +35 tests
+- [ ] amg: compress_to_skill() + retrieve_skills() + evolve_skill() + skill_bank_health() + govern_skill_bank() — Read-Write-Assess-Govern lifecycle (SkeMex + MUSE + #014). ~+140 tests. **Self-created skills > human-authored (MUSE 85.24% vs 81.17%)**
+- [ ] amg: EvoMemBench adapter — 4-setting benchmark (in-ep/cross-ep × knowledge/exec). **Priority over LoCoMo** (#014)
+- [ ] amg: intent_aware_token_budgets() — serialize/retrieve mode-dependent budgets (basic=200, local=500, global=1000, drift=800, hybrid=600). MemFlow #015. ~+15 tests
+- [ ] amg: screen_retrieval() — read-time security check (instruction-pattern detection in retrieved content). GhostWriter/AM-Sentry #015. ~+25 tests
+- [ ] amg: query_confidence_score — confidence field in query() return for caller-side escalation. MemFlow Validator #015. ~+15 tests
+- [ ] amg: seven_intent_taxonomy — expand 5 routes to MemFlow's 7 (add temporal-reasoning + constraint-validation). #015. ~+60 tests
+- [ ] amg: three_layer_router_cascade — rules→SLM→keywords fallback. MemFlow #015. ~+40 tests
+- [ ] amg: intent_aware_edge_cost() — PRISM intent routing (#010). ~+40 tests
+- [ ] amg: procedural memory node type — PlugMem prescriptive knowledge (#010). ~+50 tests
+- [ ] amg: memory_information_density() metric — PlugMem PMI density (#010). ~+25 tests
+- [ ] amg: Bayesian Dimension 类型 — Nous 启发. ~250行
+- [ ] amg: DF-Leiden 集成 — ~310行增量
+- [ ] amg: reasoning_quality_eval() — 冲突检测率/因果链完整度
+- [ ] amg: fact-level evaluation metrics — 参考 Engram
+- [ ] LoCoMo benchmark adapter + full-context baseline reporting
+- [ ] **amg README: 竞品对比表** — Mem0/Zep/Mandol/PlugMem/PRISM/Hippocampus + **GraphRAG/LightRAG positioning: security-first agent-native GraphRAG**
 
-### 07-11 研究驱动的新任务
-- [x] agent-memory-graph: structure-gated PPR ✅ (cycle 221: SAGE propagation gating, 5 gate metrics, +31 tests)
-- [x] agent-memory-graph: retrieval-failure logging ✅ (cycle 222: SAGE reader-writer feedback loop, +23 tests)
-- [x] agent-memory-graph: token-budget context generation ✅ (cycle 223: retrieve_token_budgeted, Mandol-inspired, +24 tests)
-- [x] agent-memory-graph: IR quality eval ✅ (cycle 224: precision@k/recall@k/NDCG/MRR, +31 tests)
-- [x] agent-memory-graph: Szeged + Gutman indices ✅ (cycle 225: edge-partition + degree-distance, +31 tests)
-- [x] agent-context-store: heatmap + mutation_impact ✅ (cycle 188: diagnostic + prescriptive analytics, +28 tests)
-- [ ] **amg README: 竞品对比表** — LoCoMo leaderboard (Mem0/Zep/MemOS/EverMemOS/Mandol/Engram), 定位 "beyond recall — agency-grade graph memory"
+### 🟣 Deep Research #015 Findings (2026-07-17)
+- **MemFlow** (arXiv:2605.03312): Route-then-compile pattern. 7 intent types → tiered retrieval + token budgets. 3-layer cascade router (rules→SLM→keywords, 87.7% accuracy). 2× SLM improvement. Disabling intent routing costs 18.7pp.
+- **GraphBit** (arXiv:2605.13848): DAG-based deterministic orchestration. 3-tier memory isolation (ephemeral/structured/external). Rust engine: 0% hallucination, 11.9ms latency. 67.6% GAIA accuracy.
+- **GhostWriter/AM-Sentry** (arXiv:2607.06595): 98% memory injection rate. Dual-layer defense (write policy + retrieval screen). Validates amg security positioning, identifies missing read-time screening.
+- **笔记**: [catalyst-research/exploration-notes/2026-07-17-intent-driven-memory-orchestration.md](catalyst-research/exploration-notes/2026-07-17-intent-driven-memory-orchestration.md)
 
-### 07-12 深度研究 #005 驱动的新任务
-- [x] agent-memory-graph: add_causal_edge() ✅ (cycle 230: ActMem 5-type causal edges + BFS traversal, +55 tests)
-- [x] agent-memory-graph: add_with_entropy_filter() ✅ (cycle 228: SimpleMem-inspired, +25 tests)
-- [x] agent-memory-graph: subgraph_by_edge_type() ✅ (cycle 229: MAGMA orthogonal view, +18 tests)
-- [ ] agent-memory-graph: reasoning_quality_eval() API — 评估冲突检测率/因果链完整度。扩展 IR eval。
-- [x] agent-memory-graph: `trace_decision_chain()` ✅ (cycle 227: TokenMizer-inspired supersede chain, already implemented)
-- [ ] agent-memory-graph: fact-level evaluation metrics (不止 IR, 还有 fact correctness), 参考 Engram per-category breakdown
-- [x] agent-memory-graph: context engineering layer ✅ (cycles 239-244: immutable_store + compact_node + serialize + expand + grep. LCM/Searchat inspired.)
-- [ ] LoCoMo benchmark: 必须同时报告 full-context baseline (Engram 方法论: same answerer + same judge)
-
-### 07-13 深度研究 #007 驱动的新任务
-- [ ] agent-memory-graph: Semantic Speed Gate — edge-level `volatility` 属性 + 预训练映射 + 简化版启发式. RoMem-inspired. ~40行src+30行tests
-- [x] agent-memory-graph: crystallize_intents() ✅ (cycle 235: CogniFold community density, +17 tests)
-- [x] agent-memory-graph: `read_proactive_context()` ✅ (cycle 237: CogniFold proactive context assembly, intent-node-driven push, +24 tests)
-- [x] agent-memory-graph: temporal_score() ✅ (cycle 234: RoMem continuous decay, +21 tests)
-
-### 07-13 深度研究 #006 驱动的新任务
-- [x] agent-memory-graph: add() 增加 category 参数 ✅ (cycle 236: Apple Selective Memory, backward-compatible column migration, +7 tests)
-- [x] agent-memory-graph: invalidate(entryId) 级联失效 ✅ (cycle 236: PLACEMEM invalidate_cascade, BFS depends_on+enables, +13 tests)
-- [x] agent-memory-graph: retrieval_quality_eval increase utilization_rate ✅ (cycle 233: ACL 2026 GEM cited_ids metric, +9 tests)
-- [x] agent-memory-graph: context_engineering_layer ✅ (cycles 239-244: all 5 components done. See #009 research notes.)
-
-### 07-14 深度研究 #009 驱动的新任务
-- [x] agent-memory-graph: immutableStore ✅ (cycle 239/244: append-only log + immutable_retrieve/history/count)
-- [x] agent-memory-graph: compact() 三级升级 ✅ (cycle 240: LLM详细→LLM要点→确定性截断 + compact_batch/stats)
-- [x] agent-memory-graph: serialize() token-budget-aware ✅ (cycle 241: pointer-based + weight-ordered greedy packing + serialize_compact)
-- [x] agent-memory-graph: expand(id) + grep(pattern) ✅ (cycle 239/244: lossless recovery + full-history search)
-
-### 中优先级
-- [ ] openclaw-langgraph-bridge: Supervisor 完善 — 261 tests, Gateway 集成测试
-- [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法集成)
-- [ ] lab/agent-observability: gen_ai.* 属性 + CostAggregator — **研究完成 ✅ 07-05**, CostAggregator 代码已验证 (6/6 tests pass), 下一步: 写入 src/cost-aggregator.ts + 属性迁移
-- [ ] AMS 生产化: EmbeddingProvider 真实接入
-- [ ] MCP Memory Server: agent-memory-graph-mcp 包 ~200行
+### 🔵 中优先级
+- [ ] openclaw-langgraph-bridge: Supervisor 完善 (261 tests)
+- [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
+- [ ] lab/agent-observability: gen_ai.* + CostAggregator (研究完成 ✅)
+- [ ] AMS 生产化: EmbeddingProvider 接入
+- [ ] MCP Memory Server: agent-memory-graph-mcp ~200行
 
 ### 待评估
 - [ ] agent-memory-graph-mcp 包实现 + MCP Registry 注册
@@ -312,13 +355,13 @@ Autoresearch 方法论实践 — amg **连续234天零回滚率** 🏆。
 | # | 项目 | Tests | 状态 |
 |---|------|-------|------|
 | 1 | agent-task-cli | 1222 | ✅ npm ready |
-| 2 | agent-memory-graph | 3249 | ✅ npm ready, 五十五合一 + 全检索管线 + 拓扑指数十六族 + IR eval + governed selection + phantom detection + spreading activation + proactive context + cascade invalidation + category-aware + immutable_store + compact_node + serialize + RelationIntegrityChecker + semantic_speed_gate + selective_filter + GA/AZI/Harmonic |
-| 3 | agent-context-store | 2636 | ✅ npm ready, 全分析闭环+export+predictive decay+causal (descriptive→diagnostic→predictive→prescriptive→feedback→monitoring→executive→batch→time-series→export→decay→correlation) |
+| 2 | agent-memory-graph | 3849 | ✅ npm ready, 六十四合一 + 全检索管线 + 拓扑指数十九族 + IR eval + governed selection + phantom detection + spreading activation + proactive context + cascade invalidation + immutable_store + compact_node + serialize + RelationIntegrityChecker + semantic_speed_gate + selective_filter + GA/AZI/Harmonic + Lorenz/Redefined-Randić/Redefined-Zagreb + SimHash dual-mode + deduplicate + write_governance_check + community_semantic_summary + query_global + drift_search + lifecycle_operation_eval + prospective_memory + query() 7-intent adaptive routing + intent_aware_token_budgets + screen_retrieval + query_confidence_score + govern_skill_bank + query_route_audit |
+| 3 | agent-context-store | 2727 | ✅ npm ready, 全分析闭环(十八层)+trend-report+prediction-accuracy+preset-library (descriptive→diagnostic→predictive→prescriptive→feedback→monitoring→executive→batch→time-series→export→decay→correlation→diff→prediction→scorecard→trend→prediction-qa→presets) |
 | 4 | structured-output-toolkit | 561 | ✅ npm ready |
 | 5 | openclaw-langgraph-bridge | 261 | 🔄 Supervisor 完善 |
 | 6 | context-forge | 613 | 🔄 继续 features |
 | 7 | lab/agent-observability | 166 | 🔄 OTel 集成 |
-| 8 | nano-agent | 314 | 🔄 Memory 扩展 |
+| 8 | nano-agent | 384 | 🔄 Memory 扩展 |
 | 9 | Agent Memory Service | 645 | ✅ v1.0-dev |
 | 10 | prompt-router | 258 | ✅ 稳定 |
 | 11 | better-ralph-core | 376 | ✅ 稳定 |
