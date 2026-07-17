@@ -27787,6 +27787,321 @@ class MemoryGraph:
         }
 
 
+    def knowledge_gap_report(self, *, node_ids: list[str] = None,
+                             max_gaps: int = 10,
+                             min_score: float = 0.3) -> dict:
+        """Identify structural gaps in the knowledge graph.
+
+        Complements the evaluation quartet by answering: **where should we
+        add connections?**  While ``graph_information_density`` measures
+        overall information structure, this API pinpoints specific nodes
+        and cluster boundaries that lack connections.
+
+        **Sections returned:**
+
+        - **orphan_nodes**: Nodes with degree ≤ 1 (isolated or barely
+          connected).  These memories are effectively unreachable via
+          graph traversal.
+        - **isolated_clusters**: Connected components with fewer than 2
+          cross-component bridge edges.  Each listed with member count,
+          total weight, and average internal degree.
+        - **bridge_opportunities**: Specific node pairs across cluster
+          boundaries that, if connected, would most improve graph
+          connectivity.  Scored by shared tags + combined weight.
+        - **underconnected_hubs**: High-weight nodes (top 25th
+          percentile) with surprisingly few edges (degree < median).
+          These are "important but lonely" memories.
+        - **gap_score**: 0-100 composite (100 = well-connected, 0 =
+          severely gapped).  Combines orphan fraction, component count,
+          and average degree.
+        - **recommendations**: Prioritised action list.
+
+        Args:
+            node_ids: Restrict analysis to a subgraph.  If None,
+                analyses the entire graph.
+            max_gaps: Maximum bridge opportunities to return.
+            min_score: Minimum bridge score to include (0-1).
+
+        Returns:
+            Dict with the sections described above.
+        """
+        import statistics
+
+        # ── Gather nodes ───────────────────────────────────────────
+        if node_ids is not None:
+            placeholders = ",".join("?" * len(node_ids))
+            node_rows = self.conn.execute(
+                f"SELECT * FROM nodes WHERE id IN ({placeholders})", node_ids
+            ).fetchall()
+        else:
+            node_rows = self.conn.execute("SELECT * FROM nodes").fetchall()
+
+        if not node_rows:
+            return {
+                "orphan_nodes": [],
+                "isolated_clusters": [],
+                "bridge_opportunities": [],
+                "underconnected_hubs": [],
+                "gap_score": 100.0,
+                "component_count": 0,
+                "total_nodes": 0,
+                "total_orphans": 0,
+                "total_isolated_clusters": 0,
+                "recommendations": ["Graph is empty — no gaps to detect."],
+            }
+
+        node_set = {r["id"] for r in node_rows}
+
+        # ── Degree computation ─────────────────────────────────────
+        degrees: dict[str, int] = {}
+        for r in node_rows:
+            nid = r["id"]
+            out_n = self.conn.execute(
+                "SELECT COUNT(*) c FROM edges WHERE source=?", (nid,)
+            ).fetchone()["c"]
+            in_n = self.conn.execute(
+                "SELECT COUNT(*) c FROM edges WHERE target=?", (nid,)
+            ).fetchone()["c"]
+            degrees[nid] = out_n + in_n
+
+        # ── Orphan nodes (degree ≤ 1) ──────────────────────────────
+        orphans = []
+        for r in node_rows:
+            d = degrees.get(r["id"], 0)
+            if d <= 1:
+                orphans.append({
+                    "node_id": r["id"],
+                    "label": r["label"],
+                    "kind": r["kind"],
+                    "degree": d,
+                    "weight": round(r["weight"] if r["weight"] else 0.0, 4),
+                })
+        orphans.sort(key=lambda x: x["weight"], reverse=True)
+
+        # ── Connected components ───────────────────────────────────
+        if node_ids is not None:
+            # Subgraph components
+            visited = set()
+            components = []
+            for nid in node_set:
+                if nid in visited:
+                    continue
+                comp = []
+                queue = [nid]
+                while queue:
+                    cur = queue.pop(0)
+                    if cur in visited:
+                        continue
+                    visited.add(cur)
+                    comp.append(cur)
+                    for e in self.conn.execute(
+                        "SELECT target FROM edges WHERE source=?", (cur,)
+                    ).fetchall():
+                        if e["target"] in node_set and e["target"] not in visited:
+                            queue.append(e["target"])
+                    for e in self.conn.execute(
+                        "SELECT source FROM edges WHERE target=?", (cur,)
+                    ).fetchall():
+                        if e["source"] in node_set and e["source"] not in visited:
+                            queue.append(e["source"])
+                components.append(comp)
+        else:
+            components = self.find_components()
+
+        # ── Isolated clusters ──────────────────────────────────────
+        isolated = []
+        if len(components) > 1:  # Only check for isolation when there are multiple components
+            for i, comp in enumerate(components):
+                if len(comp) <= 1:
+                    continue
+                # Count cross-component edges
+                comp_set = set(comp)
+                cross_edges = 0
+                internal_edges = 0
+                for nid in comp:
+                    for e in self.conn.execute(
+                        "SELECT target FROM edges WHERE source=?", (nid,)
+                    ).fetchall():
+                        if e["target"] in comp_set:
+                            internal_edges += 1
+                        else:
+                            cross_edges += 1
+
+                if cross_edges < 2:
+                    total_weight = sum(
+                        r["weight"] or 0.0
+                        for r in node_rows
+                        if r["id"] in comp_set
+                    )
+                    avg_deg = sum(degrees.get(n, 0) for n in comp) / len(comp)
+                    isolated.append({
+                        "component_id": i,
+                        "size": len(comp),
+                        "cross_edges": cross_edges,
+                        "internal_edges": internal_edges,
+                        "total_weight": round(total_weight, 4),
+                        "avg_degree": round(avg_deg, 2),
+                        "members": comp[:10],  # cap for readability
+                    })
+
+        isolated.sort(key=lambda x: x["size"], reverse=True)
+
+        # ── Bridge opportunities ───────────────────────────────────
+        # For each pair of components, find best node pair by shared tags
+        bridges = []
+        if len(components) > 1 and len(components) <= 50:
+            # Build tag sets per node
+            node_tags: dict[str, set[str]] = {}
+            for r in node_rows:
+                raw = r["tags"] if r["tags"] else ""
+                tags = {t.strip() for t in raw.split(",") if t.strip()} if raw else set()
+                node_tags[r["id"]] = tags
+
+            # Sample top-weight node from each component (cap at 20 components)
+            comp_reps = []
+            for comp in components:
+                if len(comp) == 0:
+                    continue
+                # Pick highest-weight node in component
+                best = max(
+                    comp,
+                    key=lambda n: next(
+                        (r["weight"] or 0.0 for r in node_rows if r["id"] == n), 0.0
+                    ),
+                )
+                comp_reps.append((comp, best))
+
+            for i in range(len(comp_reps)):
+                for j in range(i + 1, len(comp_reps)):
+                    comp_a, rep_a = comp_reps[i]
+                    comp_b, rep_b = comp_reps[j]
+
+                    # Compute bridge score
+                    tags_a = node_tags.get(rep_a, set())
+                    tags_b = node_tags.get(rep_b, set())
+                    shared = tags_a & tags_b
+                    tag_score = len(shared) / max(
+                        len(tags_a | tags_b) if tags_a | tags_b else 1, 1
+                    )
+
+                    w_a = next(
+                        (r["weight"] or 0.0 for r in node_rows if r["id"] == rep_a), 0.0
+                    )
+                    w_b = next(
+                        (r["weight"] or 0.0 for r in node_rows if r["id"] == rep_b), 0.0
+                    )
+                    weight_score = min(w_a, w_b) / max(
+                        max(w_a, w_b), 1.0
+                    ) if max(w_a, w_b) > 0 else 0.0
+
+                    bridge_score = 0.4 * tag_score + 0.6 * weight_score
+
+                    if bridge_score >= min_score:
+                        bridges.append({
+                            "node_a": rep_a,
+                            "node_b": rep_b,
+                            "component_a_size": len(comp_a),
+                            "component_b_size": len(comp_b),
+                            "shared_tags": sorted(shared)[:5],
+                            "score": round(bridge_score, 4),
+                        })
+
+        bridges.sort(key=lambda x: x["score"], reverse=True)
+        bridges = bridges[:max_gaps]
+
+        # ── Underconnected hubs ────────────────────────────────────
+        weights = [r["weight"] or 0.0 for r in node_rows]
+        if weights:
+            w_threshold = statistics.quantiles(weights, n=4)[2]  # 75th percentile
+            degree_values = list(degrees.values())
+            d_median = (
+                statistics.median(degree_values) if degree_values else 0
+            )
+        else:
+            w_threshold = 0
+            d_median = 0
+
+        underconnected = []
+        for r in node_rows:
+            w = r["weight"] or 0.0
+            d = degrees.get(r["id"], 0)
+            if w >= w_threshold and d < d_median and d >= 0:
+                underconnected.append({
+                    "node_id": r["id"],
+                    "label": r["label"],
+                    "kind": r["kind"],
+                    "weight": round(w, 4),
+                    "degree": d,
+                    "gap": d_median - d,
+                })
+
+        underconnected.sort(key=lambda x: x["gap"], reverse=True)
+        underconnected = underconnected[:20]  # cap
+
+        # ── Gap score (0-100) ──────────────────────────────────────
+        n_total = len(node_rows)
+        orphan_ratio = len(orphans) / n_total if n_total > 0 else 0.0
+        component_penalty = min(len(components) / max(n_total, 1), 1.0)
+        avg_degree = sum(degrees.values()) / n_total if n_total > 0 else 0.0
+        degree_factor = min(avg_degree / 4.0, 1.0)  # 4+ avg degree = full marks
+
+        gap_score = 100.0 * (
+            1.0
+            - 0.35 * orphan_ratio
+            - 0.30 * component_penalty
+            - 0.35 * (1.0 - degree_factor)
+        )
+        gap_score = max(0.0, min(100.0, gap_score))
+
+        # ── Recommendations ────────────────────────────────────────
+        recs = []
+        if orphans:
+            recs.append(
+                f"{len(orphans)} orphan nodes (degree ≤ 1). "
+                f"Review and connect high-value ones."
+            )
+        if isolated:
+            recs.append(
+                f"{len(isolated)} isolated clusters with <2 cross-component edges. "
+                f"Consider adding bridge edges between clusters."
+            )
+        if bridges:
+            top_bridge = bridges[0]
+            recs.append(
+                f"Top bridge opportunity: {top_bridge['node_a']} ↔ {top_bridge['node_b']} "
+                f"(score={top_bridge['score']}, shared tags: {top_bridge['shared_tags']})."
+            )
+        if underconnected:
+            recs.append(
+                f"{len(underconnected)} high-weight nodes with below-median degree. "
+                f"These are important memories that lack connections."
+            )
+        if gap_score >= 80:
+            recs.append("Overall graph connectivity is healthy.")
+        elif gap_score >= 50:
+            recs.append("Moderate gaps detected — focus on bridge edges.")
+        else:
+            recs.append(
+                "Significant connectivity gaps — prioritize adding edges "
+                "and reviewing orphaned content."
+            )
+        if not recs:
+            recs.append("No significant gaps detected.")
+
+        return {
+            "orphan_nodes": orphans,
+            "isolated_clusters": isolated,
+            "bridge_opportunities": bridges,
+            "underconnected_hubs": underconnected,
+            "gap_score": round(gap_score, 2),
+            "component_count": len(components),
+            "total_nodes": n_total,
+            "total_orphans": len(orphans),
+            "total_isolated_clusters": len(isolated),
+            "recommendations": recs,
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
