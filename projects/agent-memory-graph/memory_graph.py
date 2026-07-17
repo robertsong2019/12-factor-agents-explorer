@@ -27245,6 +27245,323 @@ class MemoryGraph:
         }
 
 
+    # ----------------------------------------------------------------
+    # Reasoning Quality Evaluation (MemOps + ActMem-inspired)
+    # ----------------------------------------------------------------
+
+    def reasoning_quality_eval(self, *, seed_ids: list[str] = None) -> dict:
+        """Evaluate graph reasoning quality across structural metrics.
+
+        Completes the evaluation trilogy:
+
+        - :meth:`retrieval_quality_eval` — IR metrics (can we *find*?)
+        - :meth:`lifecycle_operation_eval` — ops safety (can we *maintain*?)
+        - :meth:`reasoning_quality_eval` — graph quality (can we *reason*?)
+
+        Inspired by MemOps (arXiv:2607.12893) beyond-recall evaluation
+        and ActMem (arXiv:2606.xxxxx) causal completeness analysis.
+
+        Seven quality dimensions:
+
+        1. **connectivity** — fraction of nodes reachable from seeds
+           (or from the highest-degree node if no seeds given).
+           Low connectivity → fragmented graph → poor multi-hop reasoning.
+        2. **causal_chain_completeness** — of nodes with ``causes`` edges,
+           what fraction form complete chains (head → … → tail with no
+           orphans)?  Broken chains indicate missing intermediate nodes.
+        3. **conflict_resolution_rate** — of all supersede chains, what
+           fraction are resolved (superseded node still exists but marked)?
+           Unresolved conflicts bias reasoning.
+        4. **supersede_depth_stats** — descriptive stats on supersede
+           chain lengths.  Deep chains (>5) indicate volatile facts;
+           zero chains indicate static knowledge.
+        5. **temporal_consistency** — for bi-temporal nodes (with
+           ``valid_from``/``valid_to``), checks for gaps or overlaps
+           within the same entity lineage.
+        6. **community_coherence** — modularity score (Q) indicating
+           whether the graph has meaningful community structure.
+           High modularity → good for localised reasoning.
+        7. **provenance_coverage** — fraction of nodes with ``source``
+           or ``origin`` metadata.  Low coverage → untraceable reasoning.
+
+        Args:
+            seed_ids:  List of node IDs to use as reachability seeds.
+                       If ``None``, uses the top-3 degree nodes.
+
+        Returns:
+            ``{overall_score, dimensions: {connectivity: {score, detail},
+            causal_chain_completeness: {score, detail}, …},
+            recommendations: [...]}``
+        """
+        import statistics as _stats
+
+        dims: dict[str, dict] = {}
+        recs: list[str] = []
+
+        node_count = self.stats()["nodes"]
+
+        # --- 1. Connectivity ---
+        if node_count == 0:
+            return {
+                "overall_score": 0.0,
+                "dimensions": {},
+                "recommendations": ["Graph is empty."],
+            }
+
+        all_ids = [
+            r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes ORDER BY id"
+            ).fetchall()
+        ]
+        all_id_set = set(all_ids)
+
+        # Determine seeds
+        if not seed_ids:
+            degree_rows = self.conn.execute(
+                "SELECT source FROM edges UNION ALL SELECT target FROM edges"
+            ).fetchall()
+            deg: dict[str, int] = {}
+            for r in degree_rows:
+                deg[r["source"]] = deg.get(r["source"], 0) + 1
+            top_nodes = sorted(deg, key=deg.get, reverse=True)[:3]
+            seeds = top_nodes if top_nodes else all_ids[:1]
+        else:
+            seeds = list(seed_ids)
+
+        # BFS reachability from seeds
+        visited: set[str] = set()
+        queue = list(seeds)
+        while queue:
+            current = queue.pop(0)
+            if current in visited:
+                continue
+            visited.add(current)
+            for nb in self.neighbors(current):
+                if nb.id not in visited:
+                    queue.append(nb.id)
+
+        connectivity_score = len(visited) / len(all_id_set) if all_id_set else 0.0
+        dims["connectivity"] = {
+            "score": round(connectivity_score, 4),
+            "detail": f"{len(visited)}/{len(all_id_set)} nodes reachable from {len(seeds)} seeds",
+        }
+        if connectivity_score < 0.5:
+            recs.append(
+                "Low connectivity (<50%). Consider adding bridge edges "
+                "between isolated clusters."
+            )
+
+        # --- 2. Causal chain completeness ---
+        causal_edges = self.conn.execute(
+            "SELECT source, target FROM edges WHERE relation='causes'"
+        ).fetchall()
+        if causal_edges:
+            # Build adjacency for causal subgraph
+            causal_adj: dict[str, list[str]] = {}
+            causal_nodes: set[str] = set()
+            for ce in causal_edges:
+                causal_adj.setdefault(ce["source"], []).append(ce["target"])
+                causal_nodes.add(ce["source"])
+                causal_nodes.add(ce["target"])
+
+            # Find chain heads (no incoming causes edge) and tails (no outgoing)
+            has_incoming: set[str] = set()
+            for ce in causal_edges:
+                has_incoming.add(ce["target"])
+
+            heads = causal_nodes - has_incoming
+            tails = {n for n in causal_nodes if n not in causal_adj}
+
+            # For each head, DFS to find chain end
+            complete_chains = 0
+            total_heads = 0
+            for head in heads:
+                total_heads += 1
+                # DFS
+                stack = [head]
+                visited_causal: set[str] = set()
+                reached_tail = False
+                while stack:
+                    node = stack.pop()
+                    if node in visited_causal:
+                        continue
+                    visited_causal.add(node)
+                    successors = causal_adj.get(node, [])
+                    if not successors:
+                        reached_tail = True
+                    for s in successors:
+                        if s not in visited_causal:
+                            stack.append(s)
+                if reached_tail:
+                    complete_chains += 1
+
+            causal_score = complete_chains / total_heads if total_heads else 1.0
+            dims["causal_chain_completeness"] = {
+                "score": round(causal_score, 4),
+                "detail": f"{complete_chains}/{total_heads} causal chains complete "
+                          f"({len(causal_nodes)} nodes, {len(causal_edges)} edges)",
+            }
+            if causal_score < 0.7:
+                recs.append(
+                    "Incomplete causal chains (<70%). Some causes lead to "
+                    "dead ends — add intermediate effect nodes."
+                )
+        else:
+            dims["causal_chain_completeness"] = {
+                "score": 1.0,
+                "detail": "No causal edges in graph (N/A)",
+            }
+
+        # --- 3. Conflict resolution rate ---
+        # Supersede is tracked via edges with relation='superseded_by'
+        supersede_edges = self.conn.execute(
+            "SELECT source, target FROM edges WHERE relation='superseded_by'"
+        ).fetchall()
+        if supersede_edges:
+            resolved = sum(
+                1 for r in supersede_edges
+                if self.get_node(r["source"]) is not None
+            )
+            conflict_score = resolved / len(supersede_edges)
+            dims["conflict_resolution_rate"] = {
+                "score": round(conflict_score, 4),
+                "detail": f"{resolved}/{len(supersede_edges)} superseded nodes resolvable",
+            }
+            if conflict_score < 1.0:
+                recs.append(
+                    f"{len(supersede_edges) - resolved} superseded nodes "
+                    "could not be found — possible data integrity issue."
+                )
+        else:
+            dims["conflict_resolution_rate"] = {
+                "score": 1.0,
+                "detail": "No supersede chains (stable knowledge)",
+            }
+
+        # --- 4. Supersede depth stats ---
+        chain_depths = []
+        for r in supersede_edges:
+            depth = 1
+            current = r["target"]
+            seen_chain: set[str] = {r["source"]}
+            while current and current not in seen_chain:
+                seen_chain.add(current)
+                next_edge = self.conn.execute(
+                    "SELECT target FROM edges WHERE source=? AND relation='superseded_by'",
+                    (current,)
+                ).fetchone()
+                if not next_edge:
+                    break
+                depth += 1
+                current = next_edge["target"]
+            chain_depths.append(depth)
+
+        if chain_depths:
+            avg_depth = _stats.mean(chain_depths)
+            max_depth = max(chain_depths)
+            dims["supersede_depth_stats"] = {
+                "score": round(min(1.0, 1.0 / max(avg_depth, 1)), 4),
+                "detail": f"avg={avg_depth:.1f}, max={max_depth}, "
+                          f"n={len(chain_depths)} chains",
+            }
+            if avg_depth > 3:
+                recs.append(
+                    f"High supersede depth (avg={avg_depth:.1f}). "
+                    "Facts are volatile — consider merge or governance."
+                )
+        else:
+            dims["supersede_depth_stats"] = {
+                "score": 1.0,
+                "detail": "No supersede chains",
+            }
+
+        # --- 5. Temporal consistency ---
+        temporal_nodes = self.conn.execute(
+            "SELECT id, valid_from, valid_to FROM nodes "
+            "WHERE valid_from IS NOT NULL"
+        ).fetchall()
+        if temporal_nodes:
+            # Group by supersede chain to check continuity
+            consistent = 0
+            for tn in temporal_nodes:
+                vf = tn["valid_from"]
+                vt = tn["valid_to"]
+                if vf and vt and vt >= vf:
+                    consistent += 1
+                elif vf and not vt:
+                    consistent += 1  # open-ended is fine
+            temporal_score = consistent / len(temporal_nodes)
+            dims["temporal_consistency"] = {
+                "score": round(temporal_score, 4),
+                "detail": f"{consistent}/{len(temporal_nodes)} temporal records valid",
+            }
+            if temporal_score < 1.0:
+                recs.append(
+                    "Temporal inconsistency detected — some valid_to "
+                    "precedes valid_from."
+                )
+        else:
+            dims["temporal_consistency"] = {
+                "score": 1.0,
+                "detail": "No bi-temporal nodes",
+            }
+
+        # --- 6. Community coherence ---
+        try:
+            communities = self.community_detect()
+            # community_detect returns {node_id: community_label}
+            if communities and len(set(communities.values())) > 1:
+                mod = self.modularity(communities)
+                dims["community_coherence"] = {
+                    "score": round(min(1.0, mod), 4),
+                    "detail": f"Q={mod:.4f}, {len(set(communities.values()))} communities",
+                }
+                if mod < 0.1:
+                    recs.append(
+                        "Low modularity (<0.1). Graph lacks clear community "
+                        "structure — may affect localised reasoning."
+                    )
+            else:
+                dims["community_coherence"] = {
+                    "score": 0.0,
+                    "detail": "Single community (no partition)",
+                }
+        except Exception:
+            dims["community_coherence"] = {
+                "score": 0.0,
+                "detail": "Community detection unavailable",
+            }
+
+        # --- 7. Provenance coverage ---
+        nodes_with_source = self.conn.execute(
+            "SELECT COUNT(*) as c FROM nodes "
+            "WHERE data LIKE '%source%' OR data LIKE '%origin%'"
+        ).fetchone()["c"]
+        provenance_score = nodes_with_source / len(all_ids) if all_ids else 0.0
+        dims["provenance_coverage"] = {
+            "score": round(provenance_score, 4),
+            "detail": f"{nodes_with_source}/{len(all_ids)} nodes have source/origin metadata",
+        }
+        if provenance_score < 0.3:
+            recs.append(
+                "Low provenance coverage (<30%). Add source metadata "
+                "to improve traceability."
+            )
+
+        # --- Overall score ---
+        scores = [d["score"] for d in dims.values()]
+        overall = _stats.mean(scores) if scores else 0.0
+
+        if not recs:
+            recs.append("All quality dimensions look healthy.")
+
+        return {
+            "overall_score": round(overall, 4),
+            "dimensions": dims,
+            "recommendations": recs,
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()

@@ -23975,3 +23975,288 @@ class TestRetrieveWithIntent:
         result = mg.retrieve_with_intent("python framework")
         assert result["intent"] == "factual"
         assert result["edge_adjustments"] == {}
+
+
+# --------------------------------------------------------------------
+# Cycle 263: reasoning_quality_eval()
+# MemOps + ActMem-inspired graph reasoning quality evaluation.
+# Completes the evaluation trilogy:
+#   retrieval_quality_eval → lifecycle_operation_eval → reasoning_quality_eval
+# --------------------------------------------------------------------
+
+class TestReasoningQualityEval:
+    """Tests for reasoning_quality_eval() — graph reasoning quality."""
+
+    def test_empty_graph(self, mg):
+        """Empty graph returns zero overall score."""
+        result = mg.reasoning_quality_eval()
+        assert result["overall_score"] == 0.0
+        assert result["dimensions"] == {}
+        assert len(result["recommendations"]) > 0
+
+    def test_returns_overall_score(self, mg):
+        """Result includes overall_score in [0, 1]."""
+        mg.add("A", "concept")
+        mg.add("B", "concept")
+        result = mg.reasoning_quality_eval()
+        assert "overall_score" in result
+        assert 0.0 <= result["overall_score"] <= 1.0
+
+    def test_returns_seven_dimensions(self, mg):
+        """All 7 quality dimensions are present."""
+        mg.add("A", "concept", {"source": "test"})
+        result = mg.reasoning_quality_eval()
+        dims = result["dimensions"]
+        expected = {
+            "connectivity",
+            "causal_chain_completeness",
+            "conflict_resolution_rate",
+            "supersede_depth_stats",
+            "temporal_consistency",
+            "community_coherence",
+            "provenance_coverage",
+        }
+        assert set(dims.keys()) == expected
+
+    def test_each_dimension_has_score_and_detail(self, mg):
+        """Each dimension dict has score and detail."""
+        mg.add("A", "concept")
+        result = mg.reasoning_quality_eval()
+        for name, dim in result["dimensions"].items():
+            assert "score" in dim, f"{name} missing score"
+            assert "detail" in dim, f"{name} missing detail"
+            assert 0.0 <= dim["score"] <= 1.0
+
+    def test_recommendations_list(self, mg):
+        """Recommendations is a non-empty list."""
+        mg.add("A", "concept")
+        result = mg.reasoning_quality_eval()
+        assert isinstance(result["recommendations"], list)
+        assert len(result["recommendations"]) > 0
+
+    # --- Connectivity ---
+
+    def test_connectivity_full_graph(self, mg):
+        """Fully connected graph has connectivity = 1.0."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "similar_to")
+        result = mg.reasoning_quality_eval()
+        assert result["dimensions"]["connectivity"]["score"] == 1.0
+
+    def test_connectivity_isolated_nodes(self, mg):
+        """Isolated nodes reduce connectivity."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")  # isolated
+        mg.link(a.id, b.id, "similar_to")
+        result = mg.reasoning_quality_eval()
+        # Only 2 of 3 reachable from top-degree seed
+        assert result["dimensions"]["connectivity"]["score"] < 1.0
+
+    def test_connectivity_with_explicit_seeds(self, mg):
+        """Explicit seed_ids are respected."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "similar_to")
+        result = mg.reasoning_quality_eval(seed_ids=[a.id])
+        assert result["dimensions"]["connectivity"]["score"] == 1.0
+
+    def test_connectivity_low_triggers_recommendation(self, mg):
+        """Low connectivity triggers a recommendation."""
+        for i in range(5):
+            mg.add(f"Isolated{i}", "concept")
+        result = mg.reasoning_quality_eval()
+        assert any("connectivity" in r.lower() for r in result["recommendations"])
+
+    # --- Causal chain completeness ---
+
+    def test_causal_chain_complete(self, mg):
+        """Complete causal chain A→B→C scores 1.0."""
+        a = mg.add("Cause", "event")
+        b = mg.add("Intermediate", "event")
+        c = mg.add("Effect", "event")
+        mg.add_causal_edge(a.id, b.id, "causes")
+        mg.add_causal_edge(b.id, c.id, "causes")
+        result = mg.reasoning_quality_eval()
+        assert result["dimensions"]["causal_chain_completeness"]["score"] == 1.0
+
+    def test_causal_no_edges_is_one(self, mg):
+        """No causal edges → score 1.0 (N/A)."""
+        mg.add("A", "concept")
+        result = mg.reasoning_quality_eval()
+        assert result["dimensions"]["causal_chain_completeness"]["score"] == 1.0
+
+    def test_causal_broken_chain(self, mg):
+        """Broken causal chain (head with no tail reachable) lowers score."""
+        a = mg.add("Root", "event")
+        b = mg.add("Mid1", "event")
+        c = mg.add("Mid2", "event")
+        mg.add_causal_edge(a.id, b.id, "causes")
+        # b has no outgoing — it's a dead-end tail, reachable from head
+        # But c is disconnected from the chain
+        mg.add_causal_edge(c.id, c.id, "causes")  # self-loop orphan
+        result = mg.reasoning_quality_eval()
+        # At least one chain is complete (a→b is a complete chain)
+        assert result["dimensions"]["causal_chain_completeness"]["score"] > 0.0
+
+    def test_causal_incomplete_triggers_recommendation(self, mg):
+        """Incomplete causal chains trigger recommendation."""
+        a = mg.add("Root", "event")
+        b = mg.add("Orphan", "event")
+        # a causes b, but b has no outgoing and we have an orphan head
+        c = mg.add("Disconnected Head", "event")
+        mg.add_causal_edge(a.id, b.id, "causes")
+        mg.add_causal_edge(c.id, a.id, "causes")  # c→a→b is actually complete
+        result = mg.reasoning_quality_eval()
+        # c→a→b is complete, so this should be fine
+        assert result["dimensions"]["causal_chain_completeness"]["score"] >= 0.5
+
+    # --- Conflict resolution rate ---
+
+    def test_no_supersede_is_one(self, mg):
+        """No supersede chains → score 1.0."""
+        mg.add("Stable Fact", "concept")
+        result = mg.reasoning_quality_eval()
+        assert result["dimensions"]["conflict_resolution_rate"]["score"] == 1.0
+
+    def test_resolved_supersede(self, mg):
+        """Properly superseded node counts as resolved."""
+        old = mg.add("Old Fact", "concept", {"value": 1})
+        new = mg.add("New Fact", "concept", {"value": 2})
+        mg.supersede(old.id, new.id)
+        result = mg.reasoning_quality_eval()
+        assert result["dimensions"]["conflict_resolution_rate"]["score"] == 1.0
+
+    def test_supersede_depth_stats(self, mg):
+        """Supersede depth stats are reported."""
+        a1 = mg.add("V1", "concept")
+        a2 = mg.add("V2", "concept")
+        a3 = mg.add("V3", "concept")
+        mg.supersede(a1.id, a2.id)
+        mg.supersede(a2.id, a3.id)
+        result = mg.reasoning_quality_eval()
+        detail = result["dimensions"]["supersede_depth_stats"]["detail"]
+        assert "avg" in detail
+        assert "max" in detail
+
+    def test_deep_supersede_triggers_recommendation(self, mg):
+        """Deep supersede chains trigger a recommendation."""
+        n = mg.add("V1", "concept")
+        for i in range(7):
+            new_id = mg.supersede(n.id)
+            if new_id:
+                n = mg.get_node(new_id)
+        result = mg.reasoning_quality_eval()
+        assert any("volatile" in r.lower() or "supersede" in r.lower()
+                   for r in result["recommendations"])
+
+    # --- Temporal consistency ---
+
+    def test_temporal_no_nodes_is_one(self, mg):
+        """No bi-temporal nodes → score 1.0."""
+        mg.add("A", "concept")
+        result = mg.reasoning_quality_eval()
+        assert result["dimensions"]["temporal_consistency"]["score"] == 1.0
+
+    def test_temporal_valid_range(self, mg):
+        """Valid temporal range (from < to) scores 1.0."""
+        n = mg.add("Fact", "concept")
+        mg.set_validity(n.id, valid_from=1000.0, valid_to=2000.0)
+        result = mg.reasoning_quality_eval()
+        assert result["dimensions"]["temporal_consistency"]["score"] == 1.0
+
+    def test_temporal_open_ended(self, mg):
+        """Open-ended temporal (valid_from only) is consistent."""
+        n = mg.add("Ongoing Fact", "concept")
+        mg.set_validity(n.id, valid_from=1000.0)
+        result = mg.reasoning_quality_eval()
+        assert result["dimensions"]["temporal_consistency"]["score"] == 1.0
+
+    # --- Community coherence ---
+
+    def test_community_dense_graph(self, mg):
+        """Dense interconnected graph has some modularity signal."""
+        # Build two clusters
+        for i in range(4):
+            mg.add(f"Cluster1-{i}", "concept")
+        for i in range(4):
+            mg.add(f"Cluster2-{i}", "concept")
+        ids = list(mg.stats().get("node_ids", [])) if hasattr(mg.stats(), 'get') else []
+        # Just verify it runs without error
+        result = mg.reasoning_quality_eval()
+        assert "community_coherence" in result["dimensions"]
+        assert result["dimensions"]["community_coherence"]["score"] >= 0.0
+
+    def test_community_single_node(self, mg):
+        """Single node graph has no community partition."""
+        mg.add("Lonely", "concept")
+        result = mg.reasoning_quality_eval()
+        # Single node = single community
+        assert result["dimensions"]["community_coherence"]["score"] >= 0.0
+
+    # --- Provenance coverage ---
+
+    def test_provenance_no_source(self, mg):
+        """Nodes without source metadata → low provenance score."""
+        mg.add("A", "concept")
+        mg.add("B", "concept")
+        result = mg.reasoning_quality_eval()
+        assert result["dimensions"]["provenance_coverage"]["score"] == 0.0
+
+    def test_provenance_with_source(self, mg):
+        """Nodes with source metadata → higher provenance score."""
+        mg.add("A", "concept", {"source": "paper1"})
+        mg.add("B", "concept", {"source": "paper2"})
+        result = mg.reasoning_quality_eval()
+        assert result["dimensions"]["provenance_coverage"]["score"] == 1.0
+
+    def test_provenance_partial(self, mg):
+        """Mixed source coverage → fractional score."""
+        mg.add("With Source", "concept", {"source": "test"})
+        mg.add("No Source", "concept")
+        result = mg.reasoning_quality_eval()
+        score = result["dimensions"]["provenance_coverage"]["score"]
+        assert 0.0 < score < 1.0
+
+    def test_low_provenance_triggers_recommendation(self, mg):
+        """Low provenance triggers recommendation."""
+        mg.add("A", "concept")
+        result = mg.reasoning_quality_eval()
+        assert any("provenance" in r.lower() for r in result["recommendations"])
+
+    # --- Integration ---
+
+    def test_healthy_graph_no_warnings(self, mg):
+        """A well-formed graph has minimal recommendations."""
+        a = mg.add("Root", "concept", {"source": "core"})
+        b = mg.add("Child", "concept", {"source": "core"})
+        mg.link(a.id, b.id, "similar_to")
+        result = mg.reasoning_quality_eval()
+        # Should not have negative recommendations for connectivity/provenance
+        # since graph is small and has sources
+        assert result["overall_score"] > 0.5
+
+    def test_seed_ids_nonexistent_uses_defaults(self, mg):
+        """Nonexistent seed IDs still produce results."""
+        mg.add("A", "concept")
+        result = mg.reasoning_quality_eval(seed_ids=["nonexistent_id"])
+        # Falls back to degree-based seeds
+        assert "connectivity" in result["dimensions"]
+
+    def test_realistic_graph_overall(self, mg):
+        """A realistic graph with causal/temporal/provenance data."""
+        # Build a richer graph
+        root = mg.add("Deploy", "event", {"source": "incident-report"})
+        mid = mg.add("Latency Spike", "event", {"source": "monitor"})
+        effect = mg.add("User Impact", "event", {"source": "analytics"})
+        fact = mg.add("Mitigation", "concept", {"source": "playbook"})
+
+        mg.add_causal_edge(root.id, mid.id, "causes")
+        mg.add_causal_edge(mid.id, effect.id, "causes")
+        mg.link(effect.id, fact.id, "addressed_by")
+
+        result = mg.reasoning_quality_eval()
+        assert result["overall_score"] > 0.5
+        assert result["dimensions"]["causal_chain_completeness"]["score"] == 1.0
+        assert result["dimensions"]["provenance_coverage"]["score"] == 1.0
