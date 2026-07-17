@@ -24003,6 +24003,233 @@ class MemoryGraph:
 
         return result
 
+    # ── Skill Bank Governance (SkeMex / MUSE inspired) ───────────
+
+    def govern_skill_bank(
+        self,
+        *,
+        max_skills: int = 100,
+        min_confidence: float = 0.2,
+        deprecate_after_days: float = 60,
+        merge_redundancy_threshold: float = 0.7,
+        dry_run: bool = False,
+    ) -> dict:
+        """Enforce governance policies on the procedural skill bank.
+
+        SkeMex (arXiv:2606.09365) Read-Write-Assess-**Govern** lifecycle:
+        this method is the *Govern* step. It applies configurable policies
+        to keep the skill bank healthy and bounded.
+
+        Policies enforced (in order):
+
+        1. **Deprecate stale skills** — Skills not evolved within
+           ``deprecate_after_days`` get tagged 'deprecated'.
+        2. **Deprecate low-confidence** — Skills with confidence <
+           ``min_confidence`` get tagged 'deprecated'.
+        3. **Merge redundant pairs** — Skills with step overlap ≥
+           ``merge_redundancy_threshold`` are merged via
+           ``skill_compose()``.
+        4. **Prune overflow** — If total skills > ``max_skills``, oldest
+           deprecated skills are deleted (``strategic_forget()``).
+
+        Args:
+            max_skills:               Maximum active skills to retain.
+            min_confidence:           Confidence floor; below = deprecated.
+            deprecate_after_days:     Staleness threshold in days.
+            merge_redundancy_threshold: Jaccard overlap to trigger merge.
+            dry_run:                  If True, report actions without
+                                      making changes.
+
+        Returns:
+            ``{policies, actions, summary}`` where *actions* is a list
+            of ``{action, skill_id, reason}`` dicts.
+        """
+        import time as _time
+
+        policies = {
+            "max_skills": max_skills,
+            "min_confidence": min_confidence,
+            "deprecate_after_days": deprecate_after_days,
+            "merge_redundancy_threshold": merge_redundancy_threshold,
+            "dry_run": dry_run,
+        }
+
+        actions = []
+        now = _time.time()
+
+        rows = self.conn.execute(
+            "SELECT id, label, data, tags, created, accessed, weight "
+            "FROM nodes WHERE kind='skill'"
+        ).fetchall()
+
+        if not rows:
+            return {
+                "policies": policies,
+                "actions": [],
+                "summary": {"total_examined": 0, "deprecated": 0,
+                             "merged": 0, "pruned": 0},
+            }
+
+        # Parse all skills
+        skills = []
+        for row in rows:
+            d = row["data"]
+            if isinstance(d, str):
+                try:
+                    d = json.loads(d)
+                except Exception:
+                    d = {}
+            if not isinstance(d, dict):
+                d = {}
+            tags = row["tags"]
+            if isinstance(tags, str):
+                try:
+                    tags = json.loads(tags)
+                except Exception:
+                    tags = []
+            skills.append({
+                "id": row["id"],
+                "label": row["label"],
+                "data": d,
+                "tags": tags or [],
+                "created": row["created"],
+                "accessed": row["accessed"],
+                "weight": row["weight"],
+                "confidence": d.get("confidence", 0.5),
+                "steps": d.get("steps", []),
+                "last_evolved_at": d.get("last_evolved_at", row["created"]),
+            })
+
+        total_examined = len(skills)
+        deprecated_count = 0
+        merged_count = 0
+        pruned_count = 0
+
+        # 1. Deprecate stale skills
+        for s in skills:
+            age_days = (now - s["last_evolved_at"]) / 86400
+            if age_days > deprecate_after_days and "deprecated" not in s["tags"]:
+                actions.append({
+                    "action": "deprecate_stale",
+                    "skill_id": s["id"],
+                    "label": s["label"],
+                    "reason": f"not evolved in {age_days:.0f} days",
+                })
+                if not dry_run:
+                    new_tags = s["tags"] + ["deprecated"]
+                    self.conn.execute(
+                        "UPDATE nodes SET tags=? WHERE id=?",
+                        (json.dumps(new_tags), s["id"]),
+                    )
+                deprecated_count += 1
+
+        # 2. Deprecate low-confidence skills
+        for s in skills:
+            if s["confidence"] < min_confidence and "deprecated" not in s["tags"]:
+                # Skip if already deprecated by staleness
+                already = any(
+                    a["skill_id"] == s["id"] and a["action"] == "deprecate_stale"
+                    for a in actions
+                )
+                if already:
+                    continue
+                actions.append({
+                    "action": "deprecate_low_confidence",
+                    "skill_id": s["id"],
+                    "label": s["label"],
+                    "reason": f"confidence={s['confidence']:.2f} < {min_confidence}",
+                })
+                if not dry_run:
+                    new_tags = s["tags"] + ["deprecated"]
+                    self.conn.execute(
+                        "UPDATE nodes SET tags=? WHERE id=?",
+                        (json.dumps(new_tags), s["id"]),
+                    )
+                deprecated_count += 1
+
+        # 3. Merge redundant pairs
+        step_sets = {s["id"]: set(s["steps"]) for s in skills if s["steps"]}
+        merged_ids = set()
+        for i, s1 in enumerate(skills):
+            if s1["id"] in merged_ids:
+                continue
+            set1 = step_sets.get(s1["id"], set())
+            if not set1:
+                continue
+            for s2 in skills[i + 1:]:
+                if s2["id"] in merged_ids:
+                    continue
+                set2 = step_sets.get(s2["id"], set())
+                if not set2:
+                    continue
+                union = set1 | set2
+                if union:
+                    jaccard = len(set1 & set2) / len(union)
+                    if jaccard >= merge_redundancy_threshold:
+                        actions.append({
+                            "action": "merge_redundant",
+                            "skill_id": s1["id"],
+                            "label": s1["label"],
+                            "reason": (
+                                f"{jaccard:.0%} overlap with "
+                                f"'{s2['label']}' ({s2['id']})"
+                            ),
+                        })
+                        if not dry_run:
+                            try:
+                                self.skill_compose(
+                                    [s1["id"], s2["id"]],
+                                    f"Merged: {s1['label']} + {s2['label']}",
+                                    description=(
+                                        f"Auto-merged by govern_skill_bank() "
+                                        f"(Jaccard={jaccard:.2f})"
+                                    ),
+                                )
+                                merged_ids.add(s2["id"])
+                            except Exception:
+                                pass
+                        merged_count += 1
+
+        # 4. Prune overflow
+        active_skills = [
+            s for s in skills
+            if "deprecated" not in s["tags"] or True  # count all for pruning
+        ]
+        if len(active_skills) > max_skills:
+            # Sort deprecated + oldest first for pruning
+            deprecated_skills = [
+                s for s in active_skills if "deprecated" in s["tags"]
+            ]
+            deprecated_skills.sort(key=lambda s: s["accessed"])
+            to_prune = len(active_skills) - max_skills
+            for s in deprecated_skills[:to_prune]:
+                actions.append({
+                    "action": "prune_overflow",
+                    "skill_id": s["id"],
+                    "label": s["label"],
+                    "reason": f"bank overflow ({len(active_skills)} > {max_skills})",
+                })
+                if not dry_run:
+                    try:
+                        self.strategic_forget(s["id"])
+                    except Exception:
+                        self.delete(s["id"])
+                pruned_count += 1
+
+        if not dry_run:
+            self.conn.commit()
+
+        return {
+            "policies": policies,
+            "actions": actions,
+            "summary": {
+                "total_examined": total_examined,
+                "deprecated": deprecated_count,
+                "merged": merged_count,
+                "pruned": pruned_count,
+            },
+        }
+
     # ── Memory Information Density (PRISM / PlugMem inspired) ──────
 
     def memory_information_density(self, *, node_id: str = None,
