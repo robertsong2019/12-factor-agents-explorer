@@ -27163,6 +27163,88 @@ class MemoryGraph:
         return results[:limit]
 
 
+    def query_route_audit(
+        self,
+        questions: list[str] = None,
+        *,
+        include_results: bool = False,
+    ) -> dict:
+        """Audit query routing decisions for observability.
+
+        MemFlow (arXiv:2605.03312) shows disabling intent routing costs
+        ~18.7pp.  This method helps debug *why* a question was routed
+        to a particular mode and identify routing mis-classifications.
+
+        Runs ``_route_query()`` for each question (no actual retrieval),
+        building a routing table with mode distribution, rationale
+        summary, and per-question detail.
+
+        Args:
+            questions:         List of questions to audit. If None, uses
+                           a built-in diagnostic set.
+        include_results: If True, also run full query() for each.
+
+        Returns:
+            ``{audited, mode_distribution, summary, per_question}``
+        """
+        if questions is None:
+            questions = [
+                # basic
+                "Alice",
+                "deploy",
+                # global
+                "overview of all themes",
+                "big picture summary",
+                # drift
+                "how does Alice connect to the project?",
+                "why was this decision made and what follows?",
+                # local
+                "what is connected to Bob?",
+                # temporal
+                "when was Alice created?",
+                "timeline of changes",
+                # constraint
+                "what policy applies here?",
+                "is this valid?",
+            ]
+
+        per_question = []
+        mode_counts = {}
+
+        for q in questions:
+            mode, rationale = self._route_query(q)
+            mode_counts[mode] = mode_counts.get(mode, 0) + 1
+
+            entry = {
+                "question": q,
+                "mode": mode,
+                "rationale": rationale,
+            }
+
+            if include_results:
+                result = self.query(q)
+                entry["result_count"] = len(result.get("results", []))
+                entry["elapsed_ms"] = result.get("stats", {}).get("elapsed_ms", 0)
+
+            per_question.append(entry)
+
+        # Sort mode distribution by count descending
+        sorted_modes = sorted(
+            mode_counts.items(), key=lambda x: x[1], reverse=True
+        )
+
+        summary_parts = []
+        for mode, count in sorted_modes:
+            summary_parts.append(f"{mode}:{count}")
+
+        return {
+            "audited": len(questions),
+            "mode_distribution": dict(sorted_modes),
+            "summary": ", ".join(summary_parts),
+            "per_question": per_question,
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
