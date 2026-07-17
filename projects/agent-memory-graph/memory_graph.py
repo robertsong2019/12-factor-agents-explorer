@@ -26383,7 +26383,11 @@ class MemoryGraph:
         4. Complex questions (multi-clause, contains "how"/"why",
            >8 words)
            → **drift**
-        5. Fallback for everything else
+        5. Temporal questions ("when", "before", "after", "timeline")
+           → **temporal** — bi-temporal validity scan
+        6. Constraint questions ("must", "required", "allowed",
+           "valid") → **constraint** — validation against constraints
+        7. Fallback for everything else
            → **hybrid** if graph has >10 nodes, else **basic**
 
         Args:
@@ -26505,10 +26509,19 @@ class MemoryGraph:
             )
             results = raw if isinstance(raw, list) else raw.get("results", [])
 
+        elif mode == "temporal":
+            # Temporal reasoning: find nodes valid at relevant times
+            results = self._temporal_search(question, limit)
+
+        elif mode == "constraint":
+            # Constraint validation: find nodes with constraints
+            results = self._constraint_search(question, limit)
+
         else:
             raise ValueError(
                 f"Unknown mode '{mode}'. "
-                "Use: auto, basic, global, local, drift, hybrid"
+                "Use: auto, basic, global, local, drift, hybrid, "
+                "temporal, constraint"
             )
 
         elapsed_ms = (__import__("time").perf_counter() - t0) * 1000
@@ -26552,6 +26565,39 @@ class MemoryGraph:
         words = q_lower.split()
         n_words = len(words)
         node_count = self.stats()["nodes"]
+        import re as _re
+
+        # 0. Temporal keywords (check before short-query rule so
+        #    "when?", "history of X" route correctly)
+        temporal_short = ["when", "since", "until"]
+        temporal_long = [
+            "before", "after", "timeline", "history",
+            "future", "changed", "used to be", "previously",
+        ]
+        has_temporal = any(
+            _re.search(r'\b' + _re.escape(m) + r'\b', q_lower)
+            for m in temporal_short
+        ) or any(m in q_lower for m in temporal_long)
+
+        # 0b. Constraint keywords
+        constraint_short = ["must", "rule", "valid", "invalid"]
+        constraint_long = [
+            "required", "allowed", "permitted", "forbidden",
+            "constraint", "policy", "comply", "violation",
+        ]
+        has_constraint = any(
+            _re.search(r'\b' + _re.escape(m) + r'\b', q_lower)
+            for m in constraint_short
+        ) or any(m in q_lower for m in constraint_long)
+
+        if has_temporal:
+            return "temporal", (
+                "temporal keywords detected → bi-temporal scan"
+            )
+        if has_constraint:
+            return "constraint", (
+                "constraint keywords detected → validation scan"
+            )
 
         # 1. Short factual lookup → basic
         if n_words <= 3:
@@ -26572,8 +26618,13 @@ class MemoryGraph:
 
         # 3. Complex multi-hop → drift (check before local so
         #    multi-clause questions with "connected" route here)
-        complex_markers = ["how", "why", "what happens if", "trace"]
-        has_complex = any(m in q_lower for m in complex_markers)
+        # Use word-boundary matching for short markers to avoid
+        # false positives (e.g. 'how' inside 'show').
+        complex_markers = ["how", "why", "trace"]
+        has_complex = any(
+            _re.search(r'\b' + _re.escape(m) + r'\b', q_lower)
+            for m in complex_markers
+        ) or "what happens if" in q_lower
         has_multiclause = q_lower.count(" and ") >= 1 or \
             q_lower.count("?") >= 2
         if has_complex or (n_words > 8 and has_multiclause):
@@ -26970,6 +27021,146 @@ class MemoryGraph:
             },
             "stats": raw.get("stats", {}),
         }
+
+
+    def _temporal_search(self, question: str, limit: int = 10) -> list[dict]:
+        """Temporal reasoning search — find time-relevant nodes.
+
+        Scans for nodes with temporal metadata (created/accessed/
+        validity ranges) and returns them sorted by temporal relevance.
+        Queries temporal fields: supersede timestamps, validity
+        windows, and bi-temporal history.
+        """
+        import time as _time
+        now = _time.time()
+
+        # Get all nodes with temporal data
+        rows = self.conn.execute(
+            "SELECT id, label, kind, weight, created, accessed, data "
+            "FROM nodes ORDER BY accessed DESC LIMIT ?",
+            (limit * 3,),
+        ).fetchall()
+
+        results = []
+        for row in rows:
+            d = row["data"]
+            if isinstance(d, str):
+                try:
+                    d = json.loads(d)
+                except Exception:
+                    d = {}
+            if not isinstance(d, dict):
+                d = {}
+
+            # Compute temporal score
+            age = now - row["accessed"]
+            # Newer = higher score, with exponential decay
+            temporal_score = max(0, 1 - age / (86400 * 30))  # 30-day half-life
+
+            # Boost if has validity range
+            valid_from = d.get("valid_from")
+            valid_until = d.get("valid_until")
+            if valid_from and valid_until:
+                if valid_from <= now <= valid_until:
+                    temporal_score *= 1.5  # currently valid
+            elif valid_from and not valid_until:
+                if valid_from <= now:
+                    temporal_score *= 1.3  # open-ended validity
+
+            # Check for superseded nodes (lower score)
+            is_superseded = bool(d.get("superseded_by"))
+            if is_superseded:
+                temporal_score *= 0.3
+
+            results.append({
+                "node_id": row["id"],
+                "label": row["label"],
+                "kind": row["kind"],
+                "score": round(temporal_score, 4),
+                "created": row["created"],
+                "accessed": row["accessed"],
+                "superseded": is_superseded,
+            })
+
+        # Sort by temporal score descending
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:limit]
+
+    def _constraint_search(self, question: str, limit: int = 10) -> list[dict]:
+        """Constraint validation search — find rule/constraint nodes.
+
+        Looks for nodes that represent constraints, rules, policies,
+        or validation criteria, and returns them for evaluation
+        against the query.
+        """
+        constraint_kinds = [
+            "constraint", "rule", "policy", "requirement",
+            "law", "regulation", "standard",
+        ]
+
+        # Also check tags and data fields
+        results = []
+
+        # 1. Find nodes by kind
+        for kind in constraint_kinds:
+            rows = self.conn.execute(
+                "SELECT id, label, kind, weight, data, tags "
+                "FROM nodes WHERE kind=? LIMIT ?",
+                (kind, limit),
+            ).fetchall()
+            for row in rows:
+                results.append({
+                    "node_id": row["id"],
+                    "label": row["label"],
+                    "kind": row["kind"],
+                    "score": row["weight"],
+                    "match_type": "kind",
+                })
+
+        # 2. Find nodes with constraint-related tags
+        if len(results) < limit:
+            rows = self.conn.execute(
+                "SELECT id, label, kind, weight, tags FROM nodes LIMIT 100"
+            ).fetchall()
+            for row in rows:
+                tags_raw = row["tags"]
+                if isinstance(tags_raw, str):
+                    try:
+                        tags = json.loads(tags_raw)
+                    except Exception:
+                        tags = []
+                else:
+                    tags = tags_raw or []
+
+                for tag in (tags or []):
+                    tag_lower = str(tag).lower()
+                    if any(c in tag_lower for c in constraint_kinds):
+                        if not any(r["node_id"] == row["id"] for r in results):
+                            results.append({
+                                "node_id": row["id"],
+                                "label": row["label"],
+                                "kind": row["kind"],
+                                "score": row["weight"] * 0.8,
+                                "match_type": "tag",
+                            })
+                        break
+
+        # 3. Fallback: keyword search for constraint-related content
+        if len(results) < limit:
+            kw_results = self.retrieve(question, limit=limit)
+            for r in (kw_results if isinstance(kw_results, list) else []):
+                if isinstance(r, dict):
+                    nid = r.get("node_id", r.get("id", ""))
+                    if nid and not any(x["node_id"] == nid for x in results):
+                        results.append({
+                            "node_id": nid,
+                            "label": r.get("label", ""),
+                            "kind": r.get("kind", ""),
+                            "score": r.get("score", 0) * 0.5,
+                            "match_type": "keyword",
+                        })
+
+        return results[:limit]
 
 
 def demo():
