@@ -4625,6 +4625,145 @@ export function formatComplexityReport(analysis) {
   return lines.join('\n');
 }
 
+// ─── F47: File Coupling Analysis ────────────────────────────────────
+
+/**
+ * Analyze file coupling — which files share many dependencies.
+ * Files that import the same packages are likely to change together.
+ * @param {object} importData - { imports: Map<file, dep[]>, allImports: string[] }
+ * @returns {object} coupling analysis
+ */
+export function analyzeFileCoupling(importData) {
+  const { imports: byFile } = importData;
+  if (!byFile || byFile.size === 0) {
+    return {
+      couples: [],
+      totalFiles: 0,
+      totalCouples: 0,
+      avgCoupling: 0,
+      mostCoupled: [],
+      sharedDeps: [],
+    };
+  }
+
+  // Build file → unique deps set
+  const fileDeps = new Map();
+  for (const [file, deps] of byFile) {
+    fileDeps.set(file, new Set(deps));
+  }
+
+  const files = [...fileDeps.keys()];
+  const couples = [];
+
+  // For each pair of files, compute Jaccard similarity of their deps
+  for (let i = 0; i < files.length; i++) {
+    for (let j = i + 1; j < files.length; j++) {
+      const depsA = fileDeps.get(files[i]);
+      const depsB = fileDeps.get(files[j]);
+      if (depsA.size === 0 && depsB.size === 0) continue;
+
+      let intersection = 0;
+      const smaller = depsA.size <= depsB.size ? depsA : depsB;
+      const larger = depsA.size <= depsB.size ? depsB : depsA;
+      for (const d of smaller) {
+        if (larger.has(d)) intersection++;
+      }
+      const union = depsA.size + depsB.size - intersection;
+      if (union === 0) continue;
+
+      const jaccard = intersection / union;
+      if (intersection >= 2) {
+        couples.push({
+          fileA: files[i],
+          fileB: files[j],
+          sharedCount: intersection,
+          jaccard: parseFloat(jaccard.toFixed(3)),
+        });
+      }
+    }
+  }
+
+  couples.sort((a, b) => b.sharedCount - a.sharedCount || b.jaccard - a.jaccard);
+
+  // Per-file coupling score: sum of shared deps with all other files
+  const couplingScore = {};
+  for (const c of couples) {
+    couplingScore[c.fileA] = (couplingScore[c.fileA] || 0) + c.sharedCount;
+    couplingScore[c.fileB] = (couplingScore[c.fileB] || 0) + c.sharedCount;
+  }
+
+  const mostCoupled = Object.entries(couplingScore)
+    .map(([file, score]) => ({ file, couplingScore: score }))
+    .sort((a, b) => b.couplingScore - a.couplingScore)
+    .slice(0, 10);
+
+  // Most shared dependencies across files
+  const depFrequency = {};
+  for (const c of couples.slice(0, 20)) {
+    const depsA = fileDeps.get(c.fileA);
+    const depsB = fileDeps.get(c.fileB);
+    for (const d of depsA) {
+      if (depsB.has(d)) {
+        depFrequency[d] = (depFrequency[d] || 0) + 1;
+      }
+    }
+  }
+  const sharedDeps = Object.entries(depFrequency)
+    .map(([dep, count]) => ({ dep, coupledPairs: count }))
+    .sort((a, b) => b.coupledPairs - a.coupledPairs)
+    .slice(0, 10);
+
+  return {
+    couples: couples.slice(0, 15),
+    totalFiles: files.length,
+    totalCouples: couples.length,
+    avgCoupling: files.length > 1 ? parseFloat((couples.length / (files.length * (files.length - 1) / 2)).toFixed(3)) : 0,
+    mostCoupled,
+    sharedDeps,
+  };
+}
+
+/**
+ * Format coupling analysis as markdown report.
+ */
+export function formatCouplingReport(analysis) {
+  if (!analysis || !analysis.couples || analysis.couples.length === 0) {
+    return '### File Coupling\n\nNo coupled files detected.\n';
+  }
+
+  const lines = [
+    '### File Coupling', '',
+    `| Metric | Value |`,
+    `|--------|-------|`,
+    `| Files analyzed | ${analysis.totalFiles} |`,
+    `| Coupled pairs | ${analysis.totalCouples} |`,
+    `| Coupling ratio | ${analysis.avgCoupling} |`,
+    '',
+    '#### Most Coupled Files', '',
+    '| File | Coupling Score |',
+    '|------|---------------|',
+  ];
+
+  for (const { file, couplingScore } of analysis.mostCoupled.slice(0, 5)) {
+    lines.push(`| \`${file}\` | ${couplingScore} |`);
+  }
+
+  lines.push('', '#### Top Coupled Pairs', '', '| File A | File B | Shared Deps | Jaccard |', '|--------|--------|-------------|---------|');
+  for (const c of analysis.couples.slice(0, 5)) {
+    lines.push(`| \`${c.fileA}\` | \`${c.fileB}\` | ${c.sharedCount} | ${c.jaccard} |`);
+  }
+
+  if (analysis.sharedDeps.length > 0) {
+    lines.push('', '#### Shared Dependencies', '', '| Package | Coupled Pairs |', '|---------|---------------|');
+    for (const { dep, coupledPairs } of analysis.sharedDeps.slice(0, 5)) {
+      lines.push(`| \`${dep}\` | ${coupledPairs} |`);
+    }
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
 /**
  * Core analysis pipeline — extracted from main() for reuse in watch mode.
  */
