@@ -3,7 +3,8 @@
 """
 
 import json
-from typing import List, Dict, Any, Optional
+from difflib import SequenceMatcher
+from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -311,6 +312,54 @@ class Memory:
         if added > 0:
             self._save()
         return added
+
+    def search_fuzzy(self, query: str, threshold: float = 0.3, limit: int = 5) -> List[MemoryEntry]:
+        """模糊搜索记忆，使用 difflib SequenceMatcher 进行近似匹配。
+
+        当精确关键词搜索无结果时，可用此方法找到内容相近的记忆。
+
+        Args:
+            query: 搜索查询
+            threshold: 相似度阈值 (0.0-1.0)，默认 0.3
+            limit: 返回条目上限，<=0 表示全部
+
+        Returns:
+            按相似度降序排列的记忆列表
+        """
+        if not self._entries or not query:
+            return []
+
+        query_lower = query.lower()
+        scored: List[Tuple[float, MemoryEntry]] = []
+
+        for entry in self._entries:
+            content_lower = entry.content.lower()
+            ratio = SequenceMatcher(None, query_lower, content_lower).ratio()
+            # 也检查 query 是否匹配某个子串（提高短 query 的召回率）
+            if query_lower in content_lower:
+                ratio = max(ratio, 0.8)
+            if ratio >= threshold:
+                scored.append((ratio, entry))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results = [entry for _, entry in scored]
+        if limit > 0:
+            results = results[:limit]
+        return results
+
+    def group_by_tag(self) -> Dict[str, List[MemoryEntry]]:
+        """按标签分组记忆，返回 tag -> entries 映射。
+
+        没有标签的记忆归入 "_untagged" 键。
+        """
+        groups: Dict[str, List[MemoryEntry]] = {}
+        for entry in self._entries:
+            tags = entry.tags if entry.tags else ["_untagged"]
+            for tag in tags:
+                if tag not in groups:
+                    groups[tag] = []
+                groups[tag].append(entry)
+        return groups
 
     def to_context(self, max_tokens: int = 1000) -> str:
         """转换为上下文字符串"""

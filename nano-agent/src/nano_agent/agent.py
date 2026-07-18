@@ -247,3 +247,14 @@ class Agent:
     def turn_count(self) -> int:
         """返回对话轮次"""
         return len([m for m in self._conversation_history if m["role"] == "user"])
+
+    def add_tool(self, tool: Tool) -> None:
+        """运行时动态添加工具。如果同名工具已存在则替换。"""
+        self.tools = [t for t in self.tools if t.name != tool.name]
+        self.tools.append(tool)
+
+    def remove_tool(self, name: str) -> bool:
+        """按名称移除工具，返回是否成功。"""
+        before = len(self.tools)
+        self.tools = [t for t in self.tools if t.name != name]
+        return len(self.tools) < before
