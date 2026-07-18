@@ -30,9 +30,15 @@
 - [x] **F14**: `Memory.merge(other)` — merge two Memory instances with content-based dedup ✅ 2026-07-16
 - [x] **F15**: `Memory.search_all_tags(tags)` — AND semantic multi-tag search ✅ 2026-07-16
 - [x] **F16**: `Memory.distinct_tags()` — sorted unique tag list ✅ 2026-07-16
+- [x] **F17**: `Memory.search_fuzzy()` — difflib fuzzy search with threshold ✅ 2026-07-18
+- [x] **F18**: `Memory.group_by_tag()` — tag-based grouping, _untagged bucket ✅ 2026-07-18
+
+### Agent Enhancements (Dynamic Tools)
+- [x] **F19**: `Agent.add_tool()` / `Agent.remove_tool()` — runtime tool management ✅ 2026-07-18
 
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
 **Round 3:** F9-F12 — Agent batch processing and tool enhancements ✅
 **Round 4:** F13-F14 — Tag search and memory merge ✅ 2026-07-16
+**Round 5:** F17-F19 — Fuzzy search, tag grouping, dynamic tools ✅ 2026-07-18
