@@ -4483,6 +4483,148 @@ export function watchProject(root, options = {}, debounceMs = 500, onRegenerate 
   };
 }
 
+// ─── F46: Code Complexity Analysis ───────────────────────────────────
+
+const COMPLEXITY_PATTERNS = {
+  javascript: [
+    /\bif\b/g, /\belse\b/g, /\bfor\b/g, /\bwhile\b/g, /\bdo\b/g,
+    /\bswitch\b/g, /\bcase\b/g, /\bcatch\b/g,
+    /&&/g, /\|\|/g, /\?[^.]/g, // ternary + logical operators
+  ],
+  python: [
+    /\bif\b/g, /\belif\b/g, /\belse\b/g, /\bfor\b/g, /\bwhile\b/g,
+    /\bexcept\b/g, /\band\b/g, /\bor\b/g,
+    /\bwith\b/g, // context managers add paths
+  ],
+  go: [
+    /\bif\b/g, /\belse\b/g, /\bfor\b/g, /\bswitch\b/g, /\bcase\b/g,
+    /\bselect\b/g, /\bdefer\b/g, /&&/g, /\|\|/g,
+  ],
+  rust: [
+    /\bif\b/g, /\belse\b/g, /\bfor\b/g, /\bwhile\b/g, /\bloop\b/g,
+    /\bmatch\b/g, /&&/g, /\|\|/g, /\?\./g,
+  ],
+  java: [
+    /\bif\b/g, /\belse\b/g, /\bfor\b/g, /\bwhile\b/g, /\bswitch\b/g,
+    /\bcase\b/g, /\bcatch\b/g, /&&/g, /\|\|/g, /\?[^.]/g,
+  ],
+};
+
+function getComplexityPatterns(lang) {
+  if (!lang) return null;
+  const lower = lang.toLowerCase();
+  if (lower.includes('javascript') || lower.includes('typescript') || lower.includes('react') || lower.includes('vue') || lower.includes('svelte'))
+    return COMPLEXITY_PATTERNS.javascript;
+  if (lower.includes('python')) return COMPLEXITY_PATTERNS.python;
+  if (lower.includes('go')) return COMPLEXITY_PATTERNS.go;
+  if (lower.includes('rust')) return COMPLEXITY_PATTERNS.rust;
+  if (lower.includes('java') || lower.includes('kotlin') || lower.includes('swift'))
+    return COMPLEXITY_PATTERNS.java;
+  return null;
+}
+
+/**
+ * Estimate cyclomatic complexity per file by counting decision points.
+ * @param {string} root - Project root
+ * @param {Map} files - Map of filepath → { lang, lines } (from scanLanguages)
+ * @param {number} maxFileSize - Skip files larger than this
+ * @returns {object} complexity analysis
+ */
+export async function analyzeCodeComplexity(root, files, maxFileSize = DEFAULT_MAX_FILE_SIZE) {
+  const results = [];
+  let totalComplexity = 0;
+  let totalFiles = 0;
+  let totalLines = 0;
+  const byGrade = { A: 0, B: 0, C: 0, D: 0, F: 0 };
+
+  for (const [relPath, meta] of files) {
+    const lang = typeof meta === 'string' ? meta : meta?.lang;
+    const patterns = getComplexityPatterns(lang);
+    if (!patterns) continue;
+
+    const fullPath = join(root, relPath);
+    let fileStat;
+    try { fileStat = await stat(fullPath); } catch { continue; }
+    if (fileStat.size > maxFileSize) continue;
+
+    let content;
+    try { content = await readFile(fullPath, 'utf8'); } catch { continue; }
+
+    const lineCount = content.split('\n').length;
+    let decisionPoints = 0;
+
+    for (const pattern of patterns) {
+      const matches = content.match(pattern);
+      if (matches) decisionPoints += matches.length;
+    }
+
+    // Cyclomatic complexity ≈ decision points + 1
+    const complexity = decisionPoints + 1;
+    // Density: complexity per 100 lines
+    const density = lineCount > 0 ? (complexity / lineCount) * 100 : 0;
+    // Grade: A (≤5), B (6-10), C (11-20), D (21-40), F (>40)
+    const grade = complexity <= 5 ? 'A' : complexity <= 10 ? 'B' : complexity <= 20 ? 'C' : complexity <= 40 ? 'D' : 'F';
+
+    results.push({ file: relPath, lang, complexity, density: parseFloat(density.toFixed(2)), lines: lineCount, grade });
+    totalComplexity += complexity;
+    totalFiles++;
+    totalLines += lineCount;
+    byGrade[grade]++;
+  }
+
+  results.sort((a, b) => b.complexity - a.complexity);
+
+  return {
+    files: results.slice(0, 20), // top 20 most complex
+    totalFiles,
+    totalComplexity,
+    avgComplexity: totalFiles > 0 ? parseFloat((totalComplexity / totalFiles).toFixed(2)) : 0,
+    totalLines,
+    overallDensity: totalLines > 0 ? parseFloat((totalComplexity / totalLines * 100).toFixed(2)) : 0,
+    gradeDistribution: byGrade,
+    hottest: results.slice(0, 5),
+  };
+}
+
+/**
+ * Format complexity analysis as markdown report.
+ */
+export function formatComplexityReport(analysis) {
+  if (!analysis || !analysis.files || analysis.files.length === 0) {
+    return '### Code Complexity\n\nNo analyzable source files found.\n';
+  }
+
+  const lines = [
+    '### Code Complexity', '',
+    `| Metric | Value |`,
+    `|--------|-------|`,
+    `| Files analyzed | ${analysis.totalFiles} |`,
+    `| Total complexity | ${analysis.totalComplexity} |`,
+    `| Avg complexity/file | ${analysis.avgComplexity} |`,
+    `| Complexity density | ${analysis.overallDensity}/100 lines |`,
+    '',
+    '#### Grade Distribution', '',
+    '| Grade | Range | Files |',
+    '|-------|-------|-------|',
+    `| A | ≤5 | ${analysis.gradeDistribution.A} |`,
+    `| B | 6-10 | ${analysis.gradeDistribution.B} |`,
+    `| C | 11-20 | ${analysis.gradeDistribution.C} |`,
+    `| D | 21-40 | ${analysis.gradeDistribution.D} |`,
+    `| F | >40 | ${analysis.gradeDistribution.F} |`,
+    '',
+    '#### Top Complex Files', '',
+    '| File | Complexity | Density | Lines | Grade |',
+    '|------|-----------|---------|-------|-------|',
+  ];
+
+  for (const f of analysis.files.slice(0, 10)) {
+    lines.push(`| \`${f.file}\` | ${f.complexity} | ${f.density} | ${f.lines} | ${f.grade} |`);
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
 /**
  * Core analysis pipeline — extracted from main() for reuse in watch mode.
  */
