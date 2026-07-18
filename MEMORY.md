@@ -65,6 +65,7 @@ Autoresearch 方法论实践 — amg **连续241天零回滚率** 🏆。
 | 日期 | 主题 | 核心洞察 |
 |------|------|----------|
 | 07-17 | **Self-Evolving Agent Memory (#014)** | MemGen/EvoMemBench/MemEvolve/MUSE/SkeMex/Memp/FieldMem. Meta-adaptation+17%. Per-skill memory killer feature ✅ |
+| 07-18 | **MCP Memory Server Architecture (#017)** | Zero graph MCP servers in Registry/8-tool curated surface/memorywire alignment/governance via annotations/SDK v2 July 28 timing window ✅ |
 | 07-18 | **Self-Healing Knowledge Graphs (#016)** | EvoGraph-R1 GraphEdit MDP/HealthClaw induction/Local heuristic 90% recovery/RADD decoupled KGC. 4-strategy auto_heal_gaps() ✅ |
 | 07-17 | **Intent-Driven Memory (#015)** | MemFlow 7-intent routing/GraphBit DAG isolation/GhostWriter 98% injection rate ✅ |
 | 07-16 | **Agent Memory Evaluation (#013)** | MemOps 6-probe/Compliance Trap E-P-R/PM-Bench 65.1%/PASB commit +27pp/5D taxonomy ✅ |
@@ -157,6 +158,9 @@ Autoresearch 方法论实践 — amg **连续241天零回滚率** 🏆。
 58. **Prediction auto-tuning is the final closure of the analytics pipeline (acs c194)** — scorecard_preset_recommend() makes preset selection data-driven (edge density/tag diversity/freshness profiling). alert_prediction_tuned() makes threshold calibration self-correcting (adaptive step size, precision/recall imbalance correction, target F1). Together they complete recommend→apply→measure→tune, making acs a self-optimizing system.
 59. **Evaluation quartet is the competitive moat for npm positioning** — No npm memory library has retrieval_quality_eval + lifecycle_operation_eval + reasoning_quality_eval + graph_information_density + knowledge_gap_report. This 5-piece evaluation suite transforms amg from "another graph memory" to "the only agent memory library with built-in quality assessment and improvement recommendations."
 60. **Self-healing graphs require local heuristics + confidence-gated autonomy (#016)** — EvoGraph-R1 (CVPR 2026) formalizes GraphEdit as MDP action. Gallos & Fefferman prove local self-healing recovers 90% connectivity with only neighbor-distance info. HealthClaw shows post-episode induction (update/revise/remain/exclude) maps to 4 healing strategies: orphan_adoption, bridge_construction, hub_enrichment, duplicate_link. Key: separate proposal from validation (GSME diagnose-and-credit), all edges marked kind='auto_healed', gap_score delta tracked. Target degree ≥ 3 per node (subgraph reasoning threshold). auto_heal_gaps() = first npm library with detect→heal→measure→audit loop.
+61. **MCP Registry has ZERO graph memory servers (#017 2026.07)** — Queried registry.modelcontextprotocol.io for "graph memory" and "knowledge graph": 0 results. Official @modelcontextprotocol/server-memory is flat JSONL with substring search, 9 tools, no algorithms. All community servers (WorkingMemory, Cortex, AgentMemory Mesh) are key-value or simple entity-relation. **agent-memory-graph-mcp would be the first graph-algorithm-powered memory server in MCP ecosystem.** Stronger differentiator than "npm has no graph memory lib" — MCP is smaller, curated, directly used by Claude/Cursor.
+62. **MCP tool annotations are the perfect governance surface (#017)** — readOnlyHint/destructiveHint map naturally to amg's governance layer: recall/query/health → readOnly=true (auto-invokable), forget/decay → destructive=true (require confirmation). Governance enforced at protocol level, not just code. Every MCP client automatically respects these annotations.
+63. **Tool count is the critical UX constraint for MCP servers (#017)** — Official memory server has 9 tools. amg has 760+ APIs. Exposing all would cause tool selection paralysis (LLMs struggle with >20 tools). Design: 8-12 curated semantic tools wrapping multiple APIs internally. Maps to memorywire 5 ops (remember/recall/relate/forget/reflect) + amg unique capabilities (query/health/gaps).
 
 ---
 
@@ -219,10 +223,9 @@ Autoresearch 方法论实践 — amg **连续241天零回滚率** 🏆。
 - [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
 - [ ] lab/agent-observability: gen_ai.* + CostAggregator (研究完成 ✅)
 - [ ] AMS 生产化: EmbeddingProvider 接入
-- [ ] MCP Memory Server: agent-memory-graph-mcp ~200行
+- [ ] **MCP Memory Server: agent-memory-graph-mcp** — 研究完成 ✅ #017. 8 curated tools wrapping 760+ APIs. TypeScript ~120 lines + Python ~80 lines. MCP Registry has ZERO graph memory servers. SDK v2 stable July 28 = timing window. **Phase 1: TS wrapper (July 21-25), Phase 2: Registry publish (July 28)**
 
 ### 待评估
-- [ ] agent-memory-graph-mcp 包实现 + MCP Registry 注册
 - [ ] Agentic evaluation suite (MemoryBenchmarkHarness)
 - [ ] README 定位升级: "Bridge between production and research agent memory"
 - [ ] TrustEngineV2: 实现 lab/a2a-trust-prototype (~300行src+200行tests), 7算法已研究+代码已验证
