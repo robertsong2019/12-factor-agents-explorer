@@ -4764,6 +4764,203 @@ export function formatCouplingReport(analysis) {
   return lines.join('\n');
 }
 
+// ─── F48: Tech Debt Score ────────────────────────────────────────────
+
+/**
+ * Aggregate tech debt signals into a unified score.
+ * Combines: TODOs, dead code, complexity, unused deps, secrets, naming issues.
+ * @param {object} signals - Individual analysis results
+ * @returns {object} tech debt assessment
+ */
+export function analyzeTechDebt(signals = {}) {
+  const {
+    todos = null,
+    deadCode = null,
+    complexity = null,
+    importHealth = null,
+    secrets = null,
+    naming = null,
+    fileSizes = null,
+  } = signals;
+
+  const items = [];
+  let totalWeight = 0;
+  let totalScore = 0;
+
+  // Each signal contributes a weighted score (0-100, higher = more debt)
+
+  if (todos && typeof todos === 'object') {
+    const todoCount = todos.total ?? todos.length ?? 0;
+    const highPriority = Array.isArray(todos.items)
+      ? todos.items.filter(t => t.priority === 'high' || t.priority === 'critical').length
+      : 0;
+    const score = Math.min(100, todoCount * 5 + highPriority * 10);
+    items.push({
+      category: 'TODOs/FIXMEs',
+      count: todoCount,
+      highPriority,
+      score,
+      weight: 15,
+      severity: score >= 60 ? 'high' : score >= 30 ? 'medium' : 'low',
+    });
+    totalScore += score * 15;
+    totalWeight += 15;
+  }
+
+  if (deadCode && typeof deadCode === 'object') {
+    const deadCount = deadCode.unused ?? deadCode.dead?.length ?? 0;
+    const totalExports = deadCode.total ?? 0;
+    const ratio = totalExports > 0 ? deadCount / totalExports : 0;
+    const score = Math.round(ratio * 100);
+    items.push({
+      category: 'Dead Code',
+      count: deadCount,
+      total: totalExports,
+      ratio: parseFloat(ratio.toFixed(2)),
+      score,
+      weight: 15,
+      severity: score >= 40 ? 'high' : score >= 20 ? 'medium' : 'low',
+    });
+    totalScore += score * 15;
+    totalWeight += 15;
+  }
+
+  if (complexity && typeof complexity === 'object') {
+    const highComplexity = (complexity.gradeDistribution?.D ?? 0) + (complexity.gradeDistribution?.F ?? 0);
+    const avgComplexity = complexity.avgComplexity ?? 0;
+    const score = Math.min(100, Math.round(avgComplexity * 5 + highComplexity * 8));
+    items.push({
+      category: 'Code Complexity',
+      avgComplexity,
+      highComplexityFiles: highComplexity,
+      score,
+      weight: 20,
+      severity: score >= 60 ? 'high' : score >= 30 ? 'medium' : 'low',
+    });
+    totalScore += score * 20;
+    totalWeight += 20;
+  }
+
+  if (importHealth && typeof importHealth === 'object') {
+    const unusedCount = importHealth.unusedDeps?.length ?? 0;
+    const score = Math.min(100, unusedCount * 10);
+    items.push({
+      category: 'Unused Dependencies',
+      count: unusedCount,
+      score,
+      weight: 15,
+      severity: score >= 50 ? 'high' : score >= 20 ? 'medium' : 'low',
+    });
+    totalScore += score * 15;
+    totalWeight += 15;
+  }
+
+  if (secrets && typeof secrets === 'object') {
+    const highRisk = secrets.high ?? 0;
+    const totalCount = secrets.total ?? (secrets.findings?.length ?? 0);
+    const score = Math.min(100, highRisk * 25 + totalCount * 5);
+    items.push({
+      category: 'Security (Secrets)',
+      count: totalCount,
+      highRisk,
+      score,
+      weight: 20,
+      severity: score >= 40 ? 'critical' : score >= 20 ? 'high' : 'medium',
+    });
+    totalScore += score * 20;
+    totalWeight += 20;
+  }
+
+  if (naming && typeof naming === 'object') {
+    const inconsistencies = naming.inconsistencies ?? naming.inconsistentFiles ?? 0;
+    const totalFiles = naming.totalFiles ?? naming.total ?? 1;
+    const ratio = totalFiles > 0 ? inconsistencies / totalFiles : 0;
+    const score = Math.round(ratio * 100);
+    items.push({
+      category: 'Naming Inconsistencies',
+      count: inconsistencies,
+      total: totalFiles,
+      ratio: parseFloat(ratio.toFixed(2)),
+      score,
+      weight: 5,
+      severity: score >= 50 ? 'medium' : 'low',
+    });
+    totalScore += score * 5;
+    totalWeight += 5;
+  }
+
+  if (fileSizes && typeof fileSizes === 'object') {
+    const outliers = fileSizes.outliers ?? 0;
+    const score = Math.min(100, outliers * 10);
+    items.push({
+      category: 'File Size Outliers',
+      count: outliers,
+      score,
+      weight: 10,
+      severity: score >= 50 ? 'medium' : 'low',
+    });
+    totalScore += score * 10;
+    totalWeight += 10;
+  }
+
+  const overallScore = totalWeight > 0 ? Math.round(totalScore / totalWeight) : 0;
+  const grade = overallScore <= 20 ? 'A' : overallScore <= 40 ? 'B' : overallScore <= 60 ? 'C' : overallScore <= 80 ? 'D' : 'F';
+  const highItems = items.filter(i => i.severity === 'high' || i.severity === 'critical');
+
+  // Recommendations based on top issues
+  const recommendations = [];
+  for (const item of [...items].sort((a, b) => b.score - a.score)) {
+    if (item.score < 20) break;
+    if (item.category.includes('TODO')) recommendations.push(`Address ${item.count} TODO/FIXME comments (${item.highPriority} high priority)`);
+    else if (item.category.includes('Dead')) recommendations.push(`Remove ${item.count} unused exports (${Math.round(item.ratio * 100)}% dead code ratio)`);
+    else if (item.category.includes('Complex')) recommendations.push(`Refactor ${item.highComplexityFiles} high-complexity files (avg: ${item.avgComplexity})`);
+    else if (item.category.includes('Unused')) recommendations.push(`Remove ${item.count} unused dependencies`);
+    else if (item.category.includes('Security')) recommendations.push(`⚠️ Fix ${item.highRisk} high-risk secret exposures immediately`);
+    else if (item.category.includes('Naming')) recommendations.push(`Standardize naming in ${item.count} files`);
+    else if (item.category.includes('File Size')) recommendations.push(`Split ${item.count} oversized files`);
+  }
+
+  return {
+    overallScore,
+    grade,
+    items,
+    highPriorityCount: highItems.length,
+    recommendations,
+  };
+}
+
+/**
+ * Format tech debt assessment as markdown report.
+ */
+export function formatTechDebtReport(debt) {
+  if (!debt || !debt.items || debt.items.length === 0) {
+    return '### Tech Debt Assessment\n\nNo signals available for assessment.\n';
+  }
+
+  const lines = [
+    '### Tech Debt Assessment', '',
+    `**Overall Score: ${debt.overallScore}/100 (${debt.grade})**`, '',
+    '| Category | Score | Severity | Weight | Details |',
+    '|----------|-------|----------|--------|---------|',
+  ];
+
+  for (const item of debt.items) {
+    const emoji = item.severity === 'critical' ? '🔴' : item.severity === 'high' ? '🟠' : item.severity === 'medium' ? '🟡' : '🟢';
+    const details = item.count !== undefined ? `${item.count} items` : item.avgComplexity !== undefined ? `avg ${item.avgComplexity}` : '-';
+    lines.push(`| ${item.category} | ${item.score}/100 | ${emoji} ${item.severity} | ${item.weight}% | ${details} |`);
+  }
+
+  if (debt.recommendations.length > 0) {
+    lines.push('', '#### Recommendations', '');
+    for (let i = 0; i < debt.recommendations.length; i++) {
+      lines.push(`${i + 1}. ${debt.recommendations[i]}`);
+    }
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
 /**
  * Core analysis pipeline — extracted from main() for reuse in watch mode.
  */
