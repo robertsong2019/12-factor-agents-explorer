@@ -56,6 +56,11 @@
 - [x] **F33**: Documentation readability analysis — A-F scoring with 15+ metrics ✅ 2026-06-23
 - [x] **F34**: Dead code detection — find exported symbols never imported ✅ 2026-06-24
 
+### Code Quality
+- [x] **F46**: analyzeCodeComplexity() — cyclomatic complexity estimation (decision point counting) with A-F grading per file ✅ 2026-07-18
+- [x] **F47**: analyzeFileCoupling() — Jaccard similarity-based file coupling analysis, shared dependency tracking ✅ 2026-07-18
+- [x] **F48**: analyzeTechDebt() — weighted multi-signal tech debt score (TODOs+dead code+complexity+deps+secrets) with recommendations ✅ 2026-07-18
+
 ## Priorities
 **Round 1 (Core):** F1, F2, F3 — Better codebase understanding
 **Round 2 (Output):** F5, F6 — Better visualization
