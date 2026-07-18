@@ -1,222 +1,223 @@
 {
-  "lastUpdated": "2026-07-15T22:00:00Z",
-  "generatedAt": "2026-07-16 06:00 CST",
-  "actionRequired": [
-    {
-      "severity": "warn",
-      "item": "knowledge-organization (fd0515b0) last run errored",
-      "action": "check logs"
-    }
-  ],
-  "activeNow": [
-    {
-      "job": "dashboard-update-morning",
-      "status": "running"
-    }
-  ],
-  "crons": [
-    {
-      "name": "dashboard-update-morning",
-      "schedule": "6:00 AM daily",
-      "id": "f38e0365",
-      "lastRun": "~1m ago",
-      "nextRun": "in 24h",
+  "lastUpdated": "2026-07-18T22:00:00Z",
+  "generatedAt": "2026-07-19 06:00 CST",
+  "system": {
+    "gateway": {
       "status": "running",
-      "errors": 0
+      "pid": 3733398,
+      "port": 34524,
+      "bind": "lan (0.0.0.0)",
+      "dashboard": "http://10.8.0.5:34524/sponf0/",
+      "rpcProbe": "ok",
+      "nodeVersion": "v22.22.1",
+      "openclawVersion": "2026.4.14"
     },
-    {
-      "name": "github-trending-daily",
-      "schedule": "7:00 AM CST",
-      "id": "9b2a8701",
-      "lastRun": "~23h ago",
-      "nextRun": "in 60m",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "github-trending-deep",
-      "schedule": "8:00 AM CST",
-      "id": "2c714952",
-      "lastRun": "~22h ago",
-      "nextRun": "in 2h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "github-creative-evening",
-      "schedule": "7:00 PM daily (x2)",
-      "id": "610a8d6d+ad37c59a",
-      "lastRun": "~11h ago",
-      "nextRun": "in 13h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "deep-exploration-evening",
-      "schedule": "8:00 PM daily (x3)",
-      "id": "265091b6+a4bf5e2a+bb46cb70",
-      "lastRun": "~10h ago",
-      "nextRun": "in 14h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "code-lab-evening",
-      "schedule": "9:00 PM daily",
-      "id": "13a2f284",
-      "lastRun": "~9h ago",
-      "nextRun": "in 15h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "tool-development-evening (CST)",
-      "schedule": "10:00 PM CST",
-      "id": "62bf7f3b",
-      "lastRun": "~8h ago",
-      "nextRun": "in 16h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "tool-development-evening",
-      "schedule": "10:00 PM daily",
-      "id": "ce2fb615",
-      "lastRun": "~8h ago",
-      "nextRun": "in 16h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "key-development-1",
-      "schedule": "11:00 PM daily",
-      "id": "78eac6fc",
-      "lastRun": "~7h ago",
-      "nextRun": "in 17h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "key-development-2",
-      "schedule": "12:00 AM daily",
-      "id": "88679f9e",
-      "lastRun": "~6h ago",
-      "nextRun": "in 18h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "key-development-3",
-      "schedule": "1:00 AM daily",
-      "id": "b0fd7e8d",
-      "lastRun": "~5h ago",
-      "nextRun": "in 19h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "knowledge-organization (CST)",
-      "schedule": "2:00 AM CST",
-      "id": "1ea6e3b0",
-      "lastRun": "~4h ago",
-      "nextRun": "in 20h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "knowledge-organization",
-      "schedule": "2:00 AM daily",
-      "id": "fd0515b0",
-      "lastRun": "~4h ago",
-      "nextRun": "in 20h",
-      "status": "error",
-      "errors": 1
-    },
-    {
-      "name": "project-testing-morning",
-      "schedule": "3:00 AM daily",
-      "id": "f7510f1f",
-      "lastRun": "~3h ago",
-      "nextRun": "in 21h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "documentation-morning",
-      "schedule": "4:00 AM daily",
-      "id": "77a5bcc6",
-      "lastRun": "~2h ago",
-      "nextRun": "in 22h",
-      "status": "ok",
-      "errors": 0
-    },
-    {
-      "name": "essay-generation-morning",
-      "schedule": "5:00 AM daily (x2)",
-      "id": "686ec55c+f0362050",
-      "lastRun": "~1h ago",
-      "nextRun": "in 23h",
-      "status": "ok",
-      "errors": 0
+    "host": {
+      "os": "Linux 6.8.0-71-generic (x64)",
+      "hostname": "VM-0-5-ubuntu"
     }
-  ],
-  "sessions": {
-    "totalStoredSessions": 56,
-    "activeInLast1h": 3,
-    "activeInLast6h": 14,
-    "activeInLast24h": 20,
-    "mainSession": {
-      "model": "glm-5-turbo",
-      "contextPercent": 50.6,
-      "ageHours": 0.2
-    },
-    "topContextUsage": [
+  },
+  "cronJobs": {
+    "total": 20,
+    "active": 20,
+    "running": 1,
+    "ok": 19,
+    "jobs": [
       {
-        "name": "main",
-        "ctx_pct": 50.6,
-        "model": "glm-5-turbo"
+        "id": "f38e0365",
+        "name": "dashboard-update-morning",
+        "schedule": "0 6 * * *",
+        "status": "running",
+        "lastRun": "<1m ago",
+        "nextRun": "tomorrow 06:00"
       },
       {
+        "id": "9b2a8701",
+        "name": "github-trending-daily",
+        "schedule": "0 7 * * * Asia/Shanghai",
+        "status": "ok",
+        "lastRun": "23h ago",
+        "nextRun": "in 60m"
+      },
+      {
+        "id": "2c714952",
+        "name": "github-trending-deep",
+        "schedule": "0 8 * * * Asia/Shanghai",
+        "status": "ok",
+        "lastRun": "22h ago",
+        "nextRun": "in 2h"
+      },
+      {
+        "id": "610a8d6d",
+        "name": "github-creative-evening",
+        "schedule": "0 19 * * *",
+        "status": "ok",
+        "lastRun": "11h ago",
+        "nextRun": "in 13h"
+      },
+      {
+        "id": "ad37c59a",
+        "name": "github-creative-evening",
+        "schedule": "0 19 * * * Asia/Shanghai",
+        "status": "ok",
+        "lastRun": "11h ago",
+        "nextRun": "in 13h"
+      },
+      {
+        "id": "265091b6",
+        "name": "deep-exploration-evening",
+        "schedule": "0 20 * * *",
+        "status": "ok",
+        "lastRun": "10h ago",
+        "nextRun": "in 14h"
+      },
+      {
+        "id": "a4bf5e2a",
+        "name": "deep-exploration-evening",
+        "schedule": "0 20 * * * Asia/Shanghai",
+        "status": "ok",
+        "lastRun": "10h ago",
+        "nextRun": "in 14h",
+        "model": "glm-5.1"
+      },
+      {
+        "id": "bb46cb70",
+        "name": "deep-exploration-evening",
+        "schedule": "0 12 * * * UTC",
+        "status": "ok",
+        "lastRun": "10h ago",
+        "nextRun": "in 14h"
+      },
+      {
+        "id": "13a2f284",
+        "name": "code-lab-evening",
+        "schedule": "0 21 * * *",
+        "status": "ok",
+        "lastRun": "9h ago",
+        "nextRun": "in 15h"
+      },
+      {
+        "id": "62bf7f3b",
+        "name": "tool-development-evening",
+        "schedule": "0 22 * * * Asia/Shanghai",
+        "status": "ok",
+        "lastRun": "8h ago",
+        "nextRun": "in 16h",
+        "model": "glm-5.1"
+      },
+      {
+        "id": "ce2fb615",
+        "name": "tool-development-evening",
+        "schedule": "0 22 * * *",
+        "status": "ok",
+        "lastRun": "8h ago",
+        "nextRun": "in 16h"
+      },
+      {
+        "id": "78eac6fc",
+        "name": "key-development-1",
+        "schedule": "0 23 * * *",
+        "status": "ok",
+        "lastRun": "7h ago",
+        "nextRun": "in 17h"
+      },
+      {
+        "id": "88679f9e",
         "name": "key-development-2",
-        "ctx_pct": 38.3,
-        "model": "glm-5.1"
+        "schedule": "0 0 * * *",
+        "status": "ok",
+        "lastRun": "6h ago",
+        "nextRun": "in 18h"
       },
       {
-        "name": "knowledge-org-CST",
-        "ctx_pct": 33.7,
-        "model": "glm-5.1"
-      },
-      {
+        "id": "b0fd7e8d",
         "name": "key-development-3",
-        "ctx_pct": 30.4,
+        "schedule": "0 1 * * *",
+        "status": "ok",
+        "lastRun": "5h ago",
+        "nextRun": "in 19h"
+      },
+      {
+        "id": "1ea6e3b0",
+        "name": "knowledge-organization",
+        "schedule": "0 2 * * * Asia/Shanghai",
+        "status": "ok",
+        "lastRun": "4h ago",
+        "nextRun": "in 20h",
         "model": "glm-5.1"
       },
       {
-        "name": "knowledge-org",
-        "ctx_pct": 29.1,
-        "model": "glm-5.1"
+        "id": "fd0515b0",
+        "name": "knowledge-organization",
+        "schedule": "0 2 * * *",
+        "status": "ok",
+        "lastRun": "4h ago",
+        "nextRun": "in 20h"
       },
       {
-        "name": "project-testing",
-        "ctx_pct": 29.1,
+        "id": "f7510f1f",
+        "name": "project-testing-morning",
+        "schedule": "0 3 * * *",
+        "status": "ok",
+        "lastRun": "3h ago",
+        "nextRun": "in 21h"
+      },
+      {
+        "id": "77a5bcc6",
+        "name": "documentation-morning",
+        "schedule": "0 4 * * *",
+        "status": "ok",
+        "lastRun": "2h ago",
+        "nextRun": "in 22h"
+      },
+      {
+        "id": "686ec55c",
+        "name": "essay-generation-morning",
+        "schedule": "0 5 * * *",
+        "status": "ok",
+        "lastRun": "1h ago",
+        "nextRun": "in 23h"
+      },
+      {
+        "id": "f0362050",
+        "name": "essay-generation-morning",
+        "schedule": "0 5 * * * Asia/Shanghai",
+        "status": "ok",
+        "lastRun": "57m ago",
+        "nextRun": "in 23h",
         "model": "glm-5.1"
       }
     ]
   },
-  "systemHealth": {
-    "model": "glm-5.1",
-    "cronJobs": 19,
-    "allCronsHealthy": false,
-    "failedCrons": 1,
-    "uptime": "85 days (since 2026-04-22)",
-    "errorsToday": 1,
-    "memoryUsage": "1.1Gi / 1.9Gi (58%)",
-    "diskUsage": "84% (7.6G free)",
-    "loadAverage": "0.75, 0.34, 0.13"
+  "sessions": {
+    "total": 56,
+    "activeRecently": 30,
+    "models": {
+      "glm-5.1": 52,
+      "glm-5-turbo": 3,
+      "glm-5": 5
+    },
+    "mainSession": {
+      "model": "glm-5-turbo",
+      "contextUsage": "124k/205k (61%)",
+      "lastActive": "13m ago"
+    },
+    "oldestActive": "24h ago",
+    "channelBreakdown": {
+      "cron": 48,
+      "direct": 1,
+      "feishu": 1,
+      "wecom": 1,
+      "subagent": 3,
+      "group": 1
+    }
   },
-  "projectStats": {
-    "lastWorkspaceCommit": "2ac3ee4 docs: documentation improvement report 2026-07-16",
-    "totalCronJobs": 19,
-    "healthyCronJobs": 18
+  "health": {
+    "gateway": "ok",
+    "rpc": "ok",
+    "allCronOk": true,
+    "warnings": [
+      "Service PATH includes nvm path — recommend running openclaw doctor"
+    ]
   }
 }
