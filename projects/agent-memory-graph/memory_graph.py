@@ -28300,6 +28300,252 @@ class MemoryGraph:
         }
 
 
+    def redundancy_detect(self, *,
+                          node_ids: list[str] = None,
+                          max_pairs: int = 10,
+                          content_threshold: float = 0.65,
+                          structural_threshold: float = 0.6,
+                          ) -> dict:
+        """Detect redundant nodes in the knowledge graph.
+
+        Complements ``knowledge_gap_report`` by answering the opposite
+        question: **where is there too much overlap?**  While gaps indicate
+        missing connections, redundancy indicates noise that dilutes signal.
+
+        **Three detection dimensions:**
+
+        1. **content_duplicates**: Node pairs whose labels are highly similar
+           (trigram Jaccard ≥ ``content_threshold``).  These nodes likely
+           express the same information.
+        2. **structural_clones**: Node pairs that share most of their neighbors
+           (Jaccard of neighbour sets ≥ ``structural_threshold``).  Even if
+           content differs, these nodes play identical structural roles.
+        3. **functional_duplicates**: Same ``kind`` + similar weight (within
+           20%) + similar degree (within 1).  These nodes serve the same
+           function in the graph topology.
+
+        **Returns:**
+
+        - **content_duplicates**: ``[{node_a, node_b, label_a, label_b, similarity}]``
+        - **structural_clones**: ``[{node_a, node_b, jaccard, shared_count, total_neighbors}]``
+        - **functional_duplicates**: ``[{node_a, node_b, kind, weight_diff, degree_diff}]``
+        - **redundancy_score**: 0-100 (100 = highly redundant, 0 = no redundancy).
+          Computed as a weighted blend of the three dimensions.
+        - **merge_candidates**: Top recommended merge pairs, sorted by combined
+          score across all three dimensions.
+        - **recommendations**: Human-readable action items.
+
+        Args:
+            node_ids: Restrict analysis to a subgraph.  If None, analyses
+                the entire graph.
+            max_pairs: Maximum pairs to return per category.
+            content_threshold: Minimum trigram similarity for content duplicates.
+            structural_threshold: Minimum Jaccard for structural clones.
+        """
+        # ── Gather nodes ───────────────────────────────────────────
+        if node_ids is not None:
+            placeholders = ",".join("?" * len(node_ids))
+            node_rows = self.conn.execute(
+                f"SELECT * FROM nodes WHERE id IN ({placeholders})", node_ids
+            ).fetchall()
+        else:
+            node_rows = self.conn.execute("SELECT * FROM nodes").fetchall()
+
+        if len(node_rows) < 2:
+            return {
+                "content_duplicates": [],
+                "structural_clones": [],
+                "functional_duplicates": [],
+                "redundancy_score": 0.0,
+                "merge_candidates": [],
+                "total_nodes": len(node_rows),
+                "recommendations": ["Not enough nodes for redundancy analysis (need ≥2)."],
+            }
+
+        ids = [r["id"] for r in node_rows]
+        n = len(node_rows)
+
+        # ── Pre-compute neighbour sets, tags, degrees ──────────────
+        nbrs: dict[str, set[str]] = {}
+        tags_map: dict[str, set[str]] = {}
+        degrees: dict[str, int] = {}
+
+        for r in node_rows:
+            nid = r["id"]
+            out_e = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION "
+                "SELECT source FROM edges WHERE target=?",
+                (nid, nid),
+            ).fetchall()
+            nbrs[nid] = {e[0] for e in out_e}
+            degrees[nid] = len(nbrs[nid])
+            raw_tags = r["tags"] if r["tags"] else ""
+            tags_map[nid] = {
+                t.strip() for t in raw_tags.split(",") if t.strip()
+            } if raw_tags else set()
+
+        # ── 1. Content duplicates (trigram Jaccard) ────────────────
+        content_dups = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = self._content_similarity(
+                    node_rows[i]["label"], node_rows[j]["label"]
+                )
+                if sim >= content_threshold:
+                    content_dups.append({
+                        "node_a": node_rows[i]["id"],
+                        "node_b": node_rows[j]["id"],
+                        "label_a": node_rows[i]["label"],
+                        "label_b": node_rows[j]["label"],
+                        "similarity": round(sim, 4),
+                    })
+        content_dups.sort(key=lambda x: x["similarity"], reverse=True)
+        content_dups = content_dups[:max_pairs]
+
+        # ── 2. Structural clones (neighbour Jaccard) ───────────────
+        struct_clones = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                a_id, b_id = ids[i], ids[j]
+                na, nb = nbrs[a_id], nbrs[b_id]
+                if not na and not nb:
+                    continue
+                union = na | nb
+                if not union:
+                    continue
+                jac = len(na & nb) / len(union)
+                if jac >= structural_threshold:
+                    struct_clones.append({
+                        "node_a": a_id,
+                        "node_b": b_id,
+                        "jaccard": round(jac, 4),
+                        "shared_count": len(na & nb),
+                        "total_neighbors": len(union),
+                    })
+        struct_clones.sort(key=lambda x: x["jaccard"], reverse=True)
+        struct_clones = struct_clones[:max_pairs]
+
+        # ── 3. Functional duplicates (same kind + similar metrics) ─
+        func_dups = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                ri, rj = node_rows[i], node_rows[j]
+                if ri["kind"] != rj["kind"]:
+                    continue
+                if not ri["kind"]:
+                    continue  # skip untyped nodes
+                w1 = ri["weight"] if ri["weight"] else 1.0
+                w2 = rj["weight"] if rj["weight"] else 1.0
+                w_diff = abs(w1 - w2)
+                w_max = max(w1, w2, 0.001)
+                if w_diff / w_max > 0.2:
+                    continue
+                d1, d2 = degrees[ri["id"]], degrees[rj["id"]]
+                if abs(d1 - d2) > 1:
+                    continue
+                func_dups.append({
+                    "node_a": ri["id"],
+                    "node_b": rj["id"],
+                    "kind": ri["kind"],
+                    "weight_diff": round(w_diff, 4),
+                    "degree_diff": abs(d1 - d2),
+                })
+        func_dups = func_dups[:max_pairs]
+
+        # ── 4. Redundancy score (0-100) ────────────────────────────
+        possible_pairs = n * (n - 1) / 2
+        content_ratio = len(content_dups) / possible_pairs if possible_pairs else 0
+        struct_ratio = len(struct_clones) / possible_pairs if possible_pairs else 0
+        func_ratio = len(func_dups) / possible_pairs if possible_pairs else 0
+        # Weighted blend: content heaviest (40%), structural (35%), functional (25%)
+        redundancy_score = round(
+            min(100, 40 * content_ratio * 5 + 35 * struct_ratio * 5 + 25 * func_ratio * 5),
+            2,
+        )
+
+        # ── 5. Merge candidates (cross-dimensional ranking) ────────
+        pair_scores: dict[tuple[str, str], dict] = {}
+        for dup in content_dups:
+            key = tuple(sorted([dup["node_a"], dup["node_b"]]))
+            pair_scores.setdefault(key, {"content": 0, "structural": 0, "functional": 0})
+            pair_scores[key]["content"] = dup["similarity"]
+        for sc in struct_clones:
+            key = tuple(sorted([sc["node_a"], sc["node_b"]]))
+            pair_scores.setdefault(key, {"content": 0, "structural": 0, "functional": 0})
+            pair_scores[key]["structural"] = sc["jaccard"]
+        for fd in func_dups:
+            key = tuple(sorted([fd["node_a"], fd["node_b"]]))
+            pair_scores.setdefault(key, {"content": 0, "structural": 0, "functional": 0})
+            pair_scores[key]["functional"] = 1.0  # binary signal
+
+        merge_candidates = []
+        for (a, b), scores in pair_scores.items():
+            combined = (
+                0.40 * scores["content"]
+                + 0.35 * scores["structural"]
+                + 0.25 * scores["functional"]
+            )
+            if combined > 0:
+                merge_candidates.append({
+                    "node_a": a,
+                    "node_b": b,
+                    "content_score": round(scores["content"], 4),
+                    "structural_score": round(scores["structural"], 4),
+                    "functional_score": round(scores["functional"], 4),
+                    "combined_score": round(combined, 4),
+                })
+        merge_candidates.sort(key=lambda x: x["combined_score"], reverse=True)
+        merge_candidates = merge_candidates[:max_pairs]
+
+        # ── 6. Recommendations ─────────────────────────────────────
+        recommendations = []
+        if content_dups:
+            top = content_dups[0]
+            recommendations.append(
+                f"🔴 Content duplicate: '{top['label_a']}' ≈ '{top['label_b']}' "
+                f"(similarity={top['similarity']:.2f}). Consider merge_nodes()."
+            )
+        if struct_clones:
+            top = struct_clones[0]
+            recommendations.append(
+                f"🟠 Structural clone: {top['node_a']} ↔ {top['node_b']} "
+                f"(Jaccard={top['jaccard']:.2f}, {top['shared_count']} shared neighbours). "
+                f"Consider if both are needed."
+            )
+        if func_dups:
+            recommendations.append(
+                f"🟡 {len(func_dups)} functional duplicate pair(s) with same kind. "
+                f"Review for potential consolidation."
+            )
+        if merge_candidates:
+            top = merge_candidates[0]
+            recommendations.append(
+                f"💡 Top merge candidate: {top['node_a']} + {top['node_b']} "
+                f"(combined={top['combined_score']:.2f})."
+            )
+        if not recommendations:
+            recommendations.append("✅ No significant redundancy detected.")
+
+        # Severity classification
+        if redundancy_score >= 40:
+            recommendations.insert(0, f"⚠️ High redundancy ({redundancy_score}/100). Prioritise merging.")
+        elif redundancy_score >= 15:
+            recommendations.insert(0, f"📉 Moderate redundancy ({redundancy_score}/100).")
+        else:
+            recommendations.insert(0, f"✅ Low redundancy ({redundancy_score}/100).")
+
+        return {
+            "content_duplicates": content_dups,
+            "structural_clones": struct_clones,
+            "functional_duplicates": func_dups,
+            "redundancy_score": redundancy_score,
+            "merge_candidates": merge_candidates,
+            "total_nodes": n,
+            "total_pairs_checked": int(possible_pairs),
+            "recommendations": recommendations,
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
