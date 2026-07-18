@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-3945-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-3995-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -2832,6 +2832,61 @@ PMI 公式：`PMI(w_ij) = log2((w_ij × W_total) / (s_i × s_j))`，其中 s_i�
 | `underconnected_hubs` | 高权重但低度的节点（"重要但孤独"）|
 | `gap_score` | 0-100 复合分（100 = 连接良好）|
 | `recommendations` | 优先级行动列表 |
+
+### 自动缺口修复 (Cycle 266)
+
+#### `auto_heal_gaps(*, max_heals=10, min_bridge_score=0.3, connect_orphans=True, orphan_strategy="nearest", dry_run=False, node_ids=None) -> dict`
+
+自动应用 `knowledge_gap_report` 发现的结构缺口修复。完成 **度量→诊断→行动** 闭环的「行动」环节。
+
+**修复动作：**
+
+1. **桥接连接（Bridge）** — 对缺口报告中的每个桥接机会，在两个组件代表节点之间添加边（关系 `bridged_to`），合并孤立集群。
+2. **孤儿救援（Orphan Rescue）** — 对每个度 ≤ 1 的孤立节点，找到最相似的非孤儿节点并连接。相似度基于共享标签和权重接近度计算。
+
+**参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `max_heals` | 10 | 最大修复动作总数（桥接 + 孤儿）|
+| `min_bridge_score` | 0.3 | 最小桥接机会评分阈值 |
+| `connect_orphans` | True | 是否执行孤儿救援 |
+| `orphan_strategy` | `"nearest"` | `"nearest"` 连接最相似节点；`"hub"` 连接最高度节点 |
+| `dry_run` | False | 若为 True，仅预览不修改图 |
+| `node_ids` | None | 限制分析子图 |
+
+**返回：** `bridges_added`、`orphans_connected`、`total_heals`、`gap_score_before`、`gap_score_after`、`actions`（人类可读摘要）、`dry_run`。
+
+---
+
+### 冗余检测 (Cycle 267)
+
+#### `redundancy_detect(*, node_ids=None, max_pairs=10, content_threshold=0.65, structural_threshold=0.6) -> dict`
+
+三维冗余分析。与 `knowledge_gap_report` 互补 — 回答「哪里重叠太多？」。缺口报告发现连接不足，冗余检测发现噪声过多。
+
+**三个检测维度：**
+
+| 维度 | 检测方法 | 阈值 |
+|------|---------|------|
+| `content_duplicates` | 标签 trigram Jaccard 相似度 | ≥ `content_threshold` |
+| `structural_clones` | 邻居集合 Jaccard 重叠 | ≥ `structural_threshold` |
+| `functional_duplicates` | 同 `kind` + 权重接近 (±20%) + 度接近 (±1) | — |
+
+**返回：**
+
+| 部分 | 说明 |
+|------|------|
+| `content_duplicates` | `[{node_a, node_b, label_a, label_b, similarity}]` |
+| `structural_clones` | `[{node_a, node_b, jaccard, shared_count, total_neighbors}]` |
+| `functional_duplicates` | `[{node_a, node_b, kind, weight_diff, degree_diff}]` |
+| `redundancy_score` | 0-100（100 = 高度冗余）|
+| `merge_candidates` | 跨维度综合排序的推荐合并对 |
+| `recommendations` | 人类可读行动项 |
+
+**闭环关系：**
+- 缺口分析 → `auto_heal_gaps()` → 检测→修复循环
+- 冗余检测 → `merge_nodes()` → 检测→合并循环
 
 ---
 
