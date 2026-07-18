@@ -28011,12 +28011,15 @@ class MemoryGraph:
 
         # ── Underconnected hubs ────────────────────────────────────
         weights = [r["weight"] or 0.0 for r in node_rows]
-        if weights:
+        if len(weights) >= 2:
             w_threshold = statistics.quantiles(weights, n=4)[2]  # 75th percentile
             degree_values = list(degrees.values())
             d_median = (
                 statistics.median(degree_values) if degree_values else 0
             )
+        elif weights:
+            w_threshold = weights[0]
+            d_median = statistics.median(degrees.values()) if degrees else 0
         else:
             w_threshold = 0
             d_median = 0
@@ -28099,6 +28102,201 @@ class MemoryGraph:
             "total_orphans": len(orphans),
             "total_isolated_clusters": len(isolated),
             "recommendations": recs,
+        }
+
+    def auto_heal_gaps(self, *,
+                       max_heals: int = 10,
+                       min_bridge_score: float = 0.3,
+                       connect_orphans: bool = True,
+                       orphan_strategy: str = "nearest",
+                       dry_run: bool = False,
+                       node_ids: list[str] = None) -> dict:
+        """Auto-apply structural gap repairs suggested by knowledge_gap_report.
+
+        The **act** half of the measure→diagnose→act loop opened by
+        ``knowledge_gap_report()`` (cycle 265).  While the report
+        *identifies* gaps, this API *fixes* them by adding edges.
+
+        **Healing actions:**
+
+        1. **Bridge connection** — For each bridge_opportunity from the
+           gap report, add an edge between the two component-representative
+           nodes (relation ``"bridged_to"``).  This merges isolated clusters.
+        2. **Orphan rescue** — For each orphan node (degree ≤ 1), find the
+           most similar non-orphan node and connect them.  Similarity is
+           computed from shared tags and weight proximity.
+
+        Args:
+            max_heals: Maximum total healing actions (bridges + orphans).
+            min_bridge_score: Minimum bridge-opportunity score to act on.
+            connect_orphans: Whether to attempt orphan rescue.
+            orphan_strategy: ``"nearest"`` connect to most-similar node;
+                ``"hub"`` connect to highest-degree node.
+            dry_run: If True, report what *would* be done without modifying.
+            node_ids: Restrict analysis to a subgraph.
+
+        Returns:
+            Dict with:
+
+            - **bridges_added**: List of ``{source, target, relation, score}``
+            - **orphans_connected**: List of ``{orphan, connected_to, strategy, similarity}``
+            - **total_heals**: Count of actions performed
+            - **gap_score_before**: Gap score prior to healing
+            - **gap_score_after**: Gap score after healing (unchanged if dry_run)
+            - **actions**: Human-readable summary strings
+            - **dry_run**: Whether this was a dry run
+        """
+        # ── Capture before-state ────────────────────────────────────
+        report_before = self.knowledge_gap_report(
+            node_ids=node_ids, max_gaps=max_heals, min_score=min_bridge_score
+        )
+        gap_before = report_before["gap_score"]
+
+        bridges_added = []
+        orphans_connected = []
+        actions = []
+        heals_used = 0
+
+        # ── Helper: check if edge already exists ────────────────────
+        def _edge_exists(src: str, tgt: str) -> bool:
+            row = self.conn.execute(
+                "SELECT 1 FROM edges WHERE source=? AND target=? "
+                "UNION SELECT 1 FROM edges WHERE source=? AND target=?",
+                (src, tgt, tgt, src),
+            ).fetchone()
+            return row is not None
+
+        # ── 1. Bridge connections ──────────────────────────────────
+        for bridge in report_before.get("bridge_opportunities", []):
+            if heals_used >= max_heals:
+                break
+            if bridge["score"] < min_bridge_score:
+                continue
+            node_a = bridge["node_a"]
+            node_b = bridge["node_b"]
+            if _edge_exists(node_a, node_b):
+                continue
+            action = {
+                "source": node_a,
+                "target": node_b,
+                "relation": "bridged_to",
+                "score": bridge["score"],
+                "shared_tags": bridge.get("shared_tags", []),
+            }
+            bridges_added.append(action)
+            heals_used += 1
+            if not dry_run:
+                self.link(node_a, node_b, "bridged_to",
+                          weight=round(bridge["score"], 4))
+            actions.append(
+                f"Bridge: {node_a} ↔ {node_b} "
+                f"(score={bridge['score']:.3f})"
+            )
+
+        # ── 2. Orphan rescue ───────────────────────────────────────
+        if connect_orphans and heals_used < max_heals:
+            orphans = report_before.get("orphan_nodes", [])
+            # Build degree map for all nodes (if not subgraph)
+            all_degrees: dict[str, int] = {}
+            for r in self.conn.execute("SELECT id FROM nodes").fetchall():
+                nid = r["id"]
+                out_c = self.conn.execute(
+                    "SELECT COUNT(*) c FROM edges WHERE source=?", (nid,)
+                ).fetchone()["c"]
+                in_c = self.conn.execute(
+                    "SELECT COUNT(*) c FROM edges WHERE target=?", (nid,)
+                ).fetchone()["c"]
+                all_degrees[nid] = out_c + in_c
+
+            # Build tag sets for all nodes
+            node_tags: dict[str, set[str]] = {}
+            for r in self.conn.execute("SELECT id, tags FROM nodes").fetchall():
+                raw = r["tags"] if r["tags"] else ""
+                node_tags[r["id"]] = {
+                    t.strip() for t in raw.split(",") if t.strip()
+                } if raw else set()
+
+            # Candidate connectors: non-orphan nodes
+            non_orphan_ids = [
+                nid for nid, deg in all_degrees.items()
+                if deg > 1 and nid not in {o["node_id"] for o in orphans}
+            ]
+
+            for orphan in orphans:
+                if heals_used >= max_heals:
+                    break
+                oid = orphan["node_id"]
+                if not non_orphan_ids:
+                    break
+
+                if orphan_strategy == "hub":
+                    # Connect to highest-degree node
+                    target_id = max(non_orphan_ids,
+                                    key=lambda n: all_degrees.get(n, 0))
+                    similarity = 0.0
+                else:
+                    # "nearest": most similar by Jaccard tags + weight proximity
+                    o_tags = node_tags.get(oid, set())
+                    o_weight = orphan.get("weight", 0.0)
+
+                    best_id = None
+                    best_sim = -1.0
+                    for cand in non_orphan_ids:
+                        c_tags = node_tags.get(cand, set())
+                        # Jaccard similarity
+                        if o_tags or c_tags:
+                            tag_sim = len(o_tags & c_tags) / len(o_tags | c_tags)
+                        else:
+                            tag_sim = 0.0
+                        # Weight proximity (stored in nodes)
+                        c_weight = self.conn.execute(
+                            "SELECT weight FROM nodes WHERE id=?", (cand,)
+                        ).fetchone()
+                        c_w = c_weight["weight"] if c_weight and c_weight["weight"] else 0.0
+                        weight_sim = 1.0 - min(abs(o_weight - c_w) / max(o_weight, c_w, 1.0), 1.0)
+                        sim = 0.6 * tag_sim + 0.4 * weight_sim
+                        if sim > best_sim:
+                            best_sim = sim
+                            best_id = cand
+                    target_id = best_id
+                    similarity = round(best_sim, 4)
+
+                if target_id is None or _edge_exists(oid, target_id):
+                    continue
+
+                rescue = {
+                    "orphan": oid,
+                    "connected_to": target_id,
+                    "strategy": orphan_strategy,
+                    "similarity": similarity,
+                }
+                orphans_connected.append(rescue)
+                heals_used += 1
+                if not dry_run:
+                    self.link(oid, target_id, "rescued_to",
+                              weight=round(max(similarity, 0.1), 4))
+                actions.append(
+                    f"Orphan rescue: {oid} → {target_id} "
+                    f"({orphan_strategy}, sim={similarity:.3f})"
+                )
+
+        # ── Capture after-state ────────────────────────────────────
+        if not dry_run and heals_used > 0:
+            gap_after = self.knowledge_gap_report(
+                node_ids=node_ids
+            )["gap_score"]
+        else:
+            gap_after = gap_before
+
+        return {
+            "bridges_added": bridges_added,
+            "orphans_connected": orphans_connected,
+            "total_heals": heals_used,
+            "gap_score_before": gap_before,
+            "gap_score_after": gap_after,
+            "gap_delta": round(gap_after - gap_before, 2),
+            "actions": actions,
+            "dry_run": dry_run,
         }
 
 

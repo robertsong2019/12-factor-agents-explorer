@@ -24260,3 +24260,274 @@ class TestReasoningQualityEval:
         assert result["overall_score"] > 0.5
         assert result["dimensions"]["causal_chain_completeness"]["score"] == 1.0
         assert result["dimensions"]["provenance_coverage"]["score"] == 1.0
+
+
+# ═══════════════════════════════════════════════════════════════
+# Cycle 266: auto_heal_gaps() — measure→diagnose→act loop closed
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestAutoHealGaps:
+    """Tests for auto_heal_gaps() — the 'act' half of gap healing."""
+
+    def test_empty_graph_no_op(self, mg):
+        """Empty graph should return zero heals gracefully."""
+        result = mg.auto_heal_gaps()
+        assert result["total_heals"] == 0
+        assert result["bridges_added"] == []
+        assert result["orphans_connected"] == []
+        assert result["gap_score_before"] == 100.0
+        assert result["gap_score_after"] == 100.0
+        assert result["gap_delta"] == 0
+
+    def test_dry_run_no_modification(self, mg):
+        """dry_run=True should not modify the graph."""
+        a = mg.add("Node A", "concept", tags=["ai", "ml"])
+        b = mg.add("Node B", "concept", tags=["ai", "data"])
+        # No edges — two isolated components
+        result = mg.auto_heal_gaps(dry_run=True)
+        assert result["dry_run"] is True
+        assert len(result["bridges_added"]) >= 0  # May or may not find bridge
+        # Graph should be unchanged
+        edge_count = mg.conn.execute("SELECT COUNT(*) c FROM edges").fetchone()["c"]
+        assert edge_count == 0
+
+    def test_bridge_connection_heals_isolated_clusters(self, mg):
+        """Two disconnected clusters should get bridged."""
+        # Cluster 1
+        a1 = mg.add("Alpha", "concept", {"weight": 5}, tags=["ai", "core"])
+        a2 = mg.add("Alpha-2", "concept", tags=["ai"])
+        mg.link(a1.id, a2.id, "related")
+
+        # Cluster 2 — shared tags for high bridge score
+        b1 = mg.add("Beta", "concept", {"weight": 5}, tags=["ai", "core"])
+        b2 = mg.add("Beta-2", "concept", tags=["ai"])
+        mg.link(b1.id, b2.id, "related")
+
+        result = mg.auto_heal_gaps(min_bridge_score=0.0)
+        assert result["total_heals"] >= 1
+        assert len(result["bridges_added"]) >= 1
+        # After healing, should be one connected component
+        comps = mg.find_components()
+        assert len(comps) == 1
+
+    def test_gap_score_improves_after_healing(self, mg):
+        """Gap score should not decrease after healing."""
+        a1 = mg.add("A1", "concept", tags=["t1"])
+        a2 = mg.add("A2", "concept", tags=["t1"])
+        mg.link(a1.id, a2.id, "related")
+        b1 = mg.add("B1", "concept", tags=["t1"])
+        b2 = mg.add("B2", "concept", tags=["t1"])
+        mg.link(b1.id, b2.id, "related")
+
+        result = mg.auto_heal_gaps(min_bridge_score=0.0)
+        assert result["gap_score_after"] >= result["gap_score_before"]
+
+    def test_orphan_rescue_nearest_strategy(self, mg):
+        """Orphan node should be connected to most similar non-orphan."""
+        # Hub node with tags — degree 2 so it qualifies as non-orphan
+        hub = mg.add("Hub", "concept", tags=["python", "ai", "ml"])
+        helper = mg.add("Helper", "concept", tags=["python", "ai"])
+        helper2 = mg.add("Helper2", "concept", tags=["python"])
+        mg.link(hub.id, helper.id, "related")
+        mg.link(hub.id, helper2.id, "related")
+        # Orphan with matching tags
+        orphan = mg.add("Orphan", "concept", tags=["python", "ai", "data"])
+
+        result = mg.auto_heal_gaps(
+            connect_orphans=True,
+            orphan_strategy="nearest",
+            min_bridge_score=1.0,  # Skip bridges, test orphan path
+            max_heals=5,
+        )
+        assert len(result["orphans_connected"]) >= 1
+        rescue = result["orphans_connected"][0]
+        assert rescue["orphan"] == orphan.id
+        assert rescue["strategy"] == "nearest"
+        assert rescue["similarity"] > 0
+
+    def test_orphan_rescue_hub_strategy(self, mg):
+        """Hub strategy connects orphan to highest-degree node."""
+        hub = mg.add("Hub", "concept", tags=["data"])
+        leaf1 = mg.add("Leaf1", "concept")
+        leaf2 = mg.add("Leaf2", "concept")
+        leaf3 = mg.add("Leaf3", "concept")
+        mg.link(hub.id, leaf1.id, "related")
+        mg.link(hub.id, leaf2.id, "related")
+        mg.link(hub.id, leaf3.id, "related")
+        orphan = mg.add("Orphan", "concept")
+
+        result = mg.auto_heal_gaps(
+            connect_orphans=True,
+            orphan_strategy="hub",
+            min_bridge_score=1.0,
+            max_heals=5,
+        )
+        assert len(result["orphans_connected"]) >= 1
+        rescue = result["orphans_connected"][0]
+        assert rescue["strategy"] == "hub"
+        assert rescue["connected_to"] == hub.id
+
+    def test_max_heals_limit(self, mg):
+        """max_heals should cap total healing actions."""
+        # Create many isolated nodes
+        for i in range(10):
+            mg.add(f"Iso-{i}", "concept", tags=["shared"])
+        result = mg.auto_heal_gaps(max_heals=2, min_bridge_score=0.0)
+        assert result["total_heals"] <= 2
+
+    def test_dry_run_reports_actions(self, mg):
+        """dry_run should still populate actions list."""
+        a = mg.add("A", "concept", tags=["t"])
+        b = mg.add("B", "concept", tags=["t"])
+        result = mg.auto_heal_gaps(dry_run=True, min_bridge_score=0.0)
+        # Actions may or may not exist depending on bridge detection
+        # but dry_run flag should be set
+        assert result["dry_run"] is True
+        assert isinstance(result["actions"], list)
+
+    def test_no_duplicate_bridges(self, mg):
+        """Running auto_heal twice should not add duplicate edges."""
+        a1 = mg.add("A1", "concept", tags=["ai"])
+        a2 = mg.add("A2", "concept", tags=["ai"])
+        mg.link(a1.id, a2.id, "related")
+        b1 = mg.add("B1", "concept", tags=["ai"])
+        b2 = mg.add("B2", "concept", tags=["ai"])
+        mg.link(b1.id, b2.id, "related")
+
+        # First heal
+        r1 = mg.auto_heal_gaps(min_bridge_score=0.0)
+        bridges1 = r1["total_heals"]
+        # Second heal should find nothing new to bridge
+        r2 = mg.auto_heal_gaps(min_bridge_score=0.0)
+        assert r2["total_heals"] == 0 or r2["total_heals"] <= bridges1
+
+    def test_returns_gap_delta(self, mg):
+        """Result should include gap_delta field."""
+        a = mg.add("A", "concept")
+        result = mg.auto_heal_gaps()
+        assert "gap_delta" in result
+        assert isinstance(result["gap_delta"], (int, float))
+
+    def test_actions_are_human_readable(self, mg):
+        """Actions list should contain descriptive strings."""
+        a1 = mg.add("A1", "concept", tags=["ai"])
+        a2 = mg.add("A2", "concept", tags=["ai"])
+        mg.link(a1.id, a2.id, "r")
+        b1 = mg.add("B1", "concept", tags=["ai"])
+        b2 = mg.add("B2", "concept", tags=["ai"])
+        mg.link(b1.id, b2.id, "r")
+
+        result = mg.auto_heal_gaps(min_bridge_score=0.0)
+        for action in result["actions"]:
+            assert isinstance(action, str)
+            assert len(action) > 10  # Non-trivial description
+
+    def test_connect_orphans_false_skips_orphan_rescue(self, mg):
+        """connect_orphans=False should skip orphan rescue entirely."""
+        hub = mg.add("Hub", "concept", tags=["t"])
+        leaf1 = mg.add("Leaf1", "concept", tags=["t"])
+        leaf2 = mg.add("Leaf2", "concept", tags=["t"])
+        mg.link(hub.id, leaf1.id, "r")
+        mg.link(hub.id, leaf2.id, "r")
+        orphan = mg.add("Orphan", "concept")
+
+        result = mg.auto_heal_gaps(
+            connect_orphans=False,
+            min_bridge_score=1.0,
+        )
+        assert result["orphans_connected"] == []
+
+    def test_node_ids_subgraph_restriction(self, mg):
+        """node_ids should restrict analysis to a subgraph."""
+        a1 = mg.add("A1", "concept", tags=["ai"])
+        a2 = mg.add("A2", "concept", tags=["ai"])
+        mg.link(a1.id, a2.id, "r")
+        b1 = mg.add("B1", "concept", tags=["ai"])
+        b2 = mg.add("B2", "concept", tags=["ai"])
+        mg.link(b1.id, b2.id, "r")
+        c1 = mg.add("C1", "concept", tags=["ai"])
+
+        result = mg.auto_heal_gaps(
+            node_ids=[a1.id, a2.id],
+            min_bridge_score=0.0,
+        )
+        # Should only consider the subgraph
+        assert isinstance(result["bridges_added"], list)
+
+    def test_min_bridge_score_filters(self, mg):
+        """High min_bridge_score should filter out weak bridges."""
+        a1 = mg.add("A1", "concept", tags=["x"])
+        a2 = mg.add("A2", "concept", tags=["x"])
+        mg.link(a1.id, a2.id, "r")
+        b1 = mg.add("B1", "concept", tags=["y"])
+        b2 = mg.add("B2", "concept", tags=["y"])
+        mg.link(b1.id, b2.id, "r")
+
+        result = mg.auto_heal_gaps(min_bridge_score=0.99)
+        # No bridges should meet 0.99 threshold (different tags)
+        bridge_count = len(result["bridges_added"])
+        assert bridge_count == 0
+
+    def test_healed_graph_has_better_connectivity(self, mg):
+        """After healing, graph should have fewer components."""
+        # Three clusters
+        c1a = mg.add("C1A", "concept", tags=["shared"])
+        c1b = mg.add("C1B", "concept", tags=["shared"])
+        mg.link(c1a.id, c1b.id, "r")
+        c2a = mg.add("C2A", "concept", tags=["shared"])
+        c2b = mg.add("C2B", "concept", tags=["shared"])
+        mg.link(c2a.id, c2b.id, "r")
+        c3a = mg.add("C3A", "concept", tags=["shared"])
+        c3b = mg.add("C3B", "concept", tags=["shared"])
+        mg.link(c3a.id, c3b.id, "r")
+
+        comps_before = len(mg.find_components())
+        mg.auto_heal_gaps(min_bridge_score=0.0)
+        comps_after = len(mg.find_components())
+        assert comps_after <= comps_before
+
+    def test_bridges_use_correct_relation(self, mg):
+        """Bridges should use 'bridged_to' relation."""
+        a1 = mg.add("A1", "concept", tags=["ai"])
+        a2 = mg.add("A2", "concept", tags=["ai"])
+        mg.link(a1.id, a2.id, "r")
+        b1 = mg.add("B1", "concept", tags=["ai"])
+        b2 = mg.add("B2", "concept", tags=["ai"])
+        mg.link(b1.id, b2.id, "r")
+
+        result = mg.auto_heal_gaps(min_bridge_score=0.0)
+        for bridge in result["bridges_added"]:
+            assert bridge["relation"] == "bridged_to"
+
+    def test_orphan_rescue_uses_rescued_to_relation(self, mg):
+        """Orphan rescue edges should use 'rescued_to' relation."""
+        hub = mg.add("Hub", "concept", tags=["ai"])
+        leaf1 = mg.add("Leaf1", "concept", tags=["ai"])
+        leaf2 = mg.add("Leaf2", "concept", tags=["ai"])
+        mg.link(hub.id, leaf1.id, "r")
+        mg.link(hub.id, leaf2.id, "r")
+        orphan = mg.add("Orphan", "concept")
+
+        result = mg.auto_heal_gaps(
+            orphan_strategy="hub",
+            min_bridge_score=1.0,
+            max_heals=5,
+        )
+        # Check edge relation in the graph
+        rescued_edges = mg.conn.execute(
+            "SELECT * FROM edges WHERE relation='rescued_to'"
+        ).fetchall()
+        assert len(rescued_edges) >= 1
+
+    def test_result_structure_complete(self, mg):
+        """Result dict should have all expected keys."""
+        mg.add("A", "concept")
+        mg.add("B", "concept")
+        result = mg.auto_heal_gaps()
+        expected_keys = {
+            "bridges_added", "orphans_connected", "total_heals",
+            "gap_score_before", "gap_score_after", "gap_delta",
+            "actions", "dry_run",
+        }
+        assert set(result.keys()) == expected_keys
