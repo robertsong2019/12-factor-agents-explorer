@@ -7,3 +7,6 @@ timestamp	commit	metric	value	status	description
 2026-05-10T22:00	f4015b9	test_pass_rate	53/53	keep	Memory tags (filter/search/persist) + Agent on_step callback — +11 tests
 2026-06-18T03:10	4c7b246	test_count	145/145	keep	+29 edge case tests: memory persistence, tool exec, agent verbose/context — covers 10+ untested code paths
 2026-06-25T23:00	f0bd0bb	test_count	229/229	keep	F5-F8 Memory importance scoring+forgetting (+23 tests: set_importance/decay/forget/top_important/stats)
+2026-07-18T22:10+08:00	5b2858b	test_count	415→440/+25	keep	nano-agent: F17 search_fuzzy (difflib SequenceMatcher, threshold+sorted) + F18 group_by_tag (multi-tag grouping, _untagged bucket) + F19 Agent.add_tool/remove_tool (runtime dynamic tool mgmt). 25 new tests, zero regressions.
+2026-07-18T22:10	F20	test_count	440→459	keep	nano-agent: Memory.deduplicate(threshold) — similarity-based dedup using SequenceMatcher, preserves earliest entry (+10 tests)
+2026-07-18T22:10	F21	test_count	459/459	keep	nano-agent: Memory.chain_search(queries) — multi-query merged search with match-count ranking + optional fuzzy fallback (+9 tests)

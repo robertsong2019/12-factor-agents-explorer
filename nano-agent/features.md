@@ -35,6 +35,8 @@
 
 ### Agent Enhancements (Dynamic Tools)
 - [x] **F19**: `Agent.add_tool()` / `Agent.remove_tool()` — runtime tool management ✅ 2026-07-18
+- [x] **F20**: `Memory.deduplicate()` — similarity-based dedup, preserves earliest ✅ 2026-07-18
+- [x] **F21**: `Memory.chain_search()` — multi-query ranked search with optional fuzzy fallback ✅ 2026-07-18
 
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
@@ -42,3 +44,4 @@
 **Round 3:** F9-F12 — Agent batch processing and tool enhancements ✅
 **Round 4:** F13-F14 — Tag search and memory merge ✅ 2026-07-16
 **Round 5:** F17-F19 — Fuzzy search, tag grouping, dynamic tools ✅ 2026-07-18
+**Round 6:** F20-F21 — Deduplicate, chain search ✅ 2026-07-18

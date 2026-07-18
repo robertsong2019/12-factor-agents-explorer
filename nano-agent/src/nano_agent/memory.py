@@ -361,6 +361,89 @@ class Memory:
                 groups[tag].append(entry)
         return groups
 
+    def deduplicate(self, threshold: float = 0.95) -> int:
+        """移除内容相似度 >= threshold 的重复记忆条目，保留最早添加的。
+
+        Args:
+            threshold: 相似度阈值 (0.0-1.0)，默认 0.95（仅去重几乎完全相同的条目）
+
+        Returns:
+            被移除的条目数
+        """
+        if len(self._entries) < 2:
+            return 0
+
+        keep: List[MemoryEntry] = []
+        removed = 0
+
+        for entry in self._entries:
+            is_dup = False
+            for kept in keep:
+                ratio = SequenceMatcher(None, entry.content.lower(), kept.content.lower()).ratio()
+                if ratio >= threshold:
+                    is_dup = True
+                    break
+            if is_dup:
+                removed += 1
+            else:
+                keep.append(entry)
+
+        if removed > 0:
+            self._entries = keep
+            self._save()
+
+        return removed
+
+    def chain_search(self, queries: List[str], limit: int = 0, fuzzy: bool = False, threshold: float = 0.3) -> List[MemoryEntry]:
+        """多查询链式搜索，合并去重后按匹配查询数降序排列。
+
+        每个条目按匹配的查询数量排序（匹配越多排名越高）。
+        同一匹配数的按时间倒序。
+
+        Args:
+            queries: 搜索查询列表
+            limit: 返回条目上限，0 表示全部
+            fuzzy: 是否使用模糊匹配（基于 search_fuzzy）
+            threshold: 模糊匹配阈值（仅 fuzzy=True 时生效）
+
+        Returns:
+            按匹配数排序的去重记忆列表
+        """
+        if not queries or not self._entries:
+            return []
+
+        # Count how many queries each entry matches
+        match_counts: Dict[int, int] = {}  # id(entry) -> match count
+
+        for query in queries:
+            query_lower = query.lower()
+            if fuzzy:
+                results = self.search_fuzzy(query, threshold=threshold, limit=0)
+                for entry in results:
+                    match_counts[id(entry)] = match_counts.get(id(entry), 0) + 1
+            else:
+                for entry in self._entries:
+                    if query_lower in entry.content.lower():
+                        match_counts[id(entry)] = match_counts.get(id(entry), 0) + 1
+
+        if not match_counts:
+            return []
+
+        # Build (match_count, original_index, entry) tuples for stable sort
+        scored: List[Tuple[int, int, MemoryEntry]] = []
+        for idx, entry in enumerate(self._entries):
+            mc = match_counts.get(id(entry), 0)
+            if mc > 0:
+                scored.append((mc, idx, entry))
+
+        # Sort: more matches first, then earlier (lower index = earlier) first
+        scored.sort(key=lambda x: (-x[0], x[1]))
+
+        results = [entry for _, _, entry in scored]
+        if limit > 0:
+            results = results[:limit]
+        return results
+
     def to_context(self, max_tokens: int = 1000) -> str:
         """转换为上下文字符串"""
         entries = self.get_recent()
