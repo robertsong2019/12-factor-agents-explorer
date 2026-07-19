@@ -4,7 +4,7 @@ WebSocket Manager - 管理WebSocket连接和实时数据推送
 
 import asyncio
 import json
-from typing import Set, Dict, Any
+from typing import Set, Dict, Any, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 from .manager import AgentManager, AgentInfo
 from .monitor import ResourceMonitor
