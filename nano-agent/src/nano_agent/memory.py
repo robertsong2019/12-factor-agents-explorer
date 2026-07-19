@@ -560,6 +560,62 @@ class Memory:
             results = results[:limit]
         return results
 
+    def paginate(self, page: int = 1, page_size: int = 10, order: str = "asc") -> Dict[str, Any]:
+        """分页获取记忆条目。
+
+        Args:
+            page: 页码，从 1 开始
+            page_size: 每页条目数
+            order: "asc" = 从旧到新，"desc" = 从新到旧
+
+        Returns:
+            {"entries": [...], "page": int, "page_size": int, "total": int, "total_pages": int}
+        """
+        total = len(self._entries)
+        if page < 1 or page_size < 1:
+            return {"entries": [], "page": page, "page_size": page_size, "total": total, "total_pages": 0}
+
+        total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
+
+        entries = list(self._entries)
+        if order == "desc":
+            entries.reverse()
+
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_entries = entries[start:end]
+
+        return {
+            "entries": page_entries,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": total_pages,
+        }
+
+    def diff(self, other: 'Memory') -> Dict[str, List[MemoryEntry]]:
+        """比较两个 Memory 实例的差异。
+
+        返回三个列表：
+        - "added": other 有但 self 没有的
+        - "removed": self 有但 other 没有的
+        - "common": 两边都有的（按 content 去重）
+
+        Args:
+            other: 另一个 Memory 实例
+
+        Returns:
+            {"added": [...], "removed": [...], "common": [...]}
+        """
+        self_contents = {e.content for e in self._entries}
+        other_contents = {e.content for e in other._entries}
+
+        added = [e for e in other._entries if e.content not in self_contents]
+        removed = [e for e in self._entries if e.content not in other_contents]
+        common = [e for e in self._entries if e.content in other_contents]
+
+        return {"added": added, "removed": removed, "common": common}
+
     def to_context(self, max_tokens: int = 1000) -> str:
         """转换为上下文字符串"""
         entries = self.get_recent()
