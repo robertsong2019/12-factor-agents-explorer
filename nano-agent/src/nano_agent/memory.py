@@ -3,8 +3,10 @@
 """
 
 import json
+import re
+import copy
 from difflib import SequenceMatcher
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -443,6 +445,57 @@ class Memory:
         if limit > 0:
             results = results[:limit]
         return results
+
+    def snapshot(self) -> List[Dict[str, Any]]:
+        """创建当前记忆的深拷贝快照，用于 undo/restore 场景。
+
+        返回可序列化的列表，可直接传给 restore()。
+        """
+        return [copy.deepcopy(entry.to_dict()) for entry in self._entries]
+
+    def restore(self, snapshot_data: List[Dict[str, Any]]) -> int:
+        """从快照恢复记忆状态，返回恢复的条目数。
+
+        警告：完全替换当前所有记忆条目。
+        """
+        if not isinstance(snapshot_data, list):
+            return 0
+
+        self._entries.clear()
+        for item in snapshot_data:
+            try:
+                entry = MemoryEntry(
+                    content=item["content"],
+                    timestamp=datetime.fromisoformat(item["timestamp"]) if isinstance(item.get("timestamp"), str) else item.get("timestamp", datetime.now()),
+                    metadata=item.get("metadata", {}),
+                    tags=item.get("tags", []),
+                    importance=item.get("importance", 0.5)
+                )
+                self._entries.append(entry)
+            except (KeyError, ValueError):
+                continue
+
+        self._save()
+        return len(self._entries)
+
+    def search_regex(self, pattern: str, limit: int = 0) -> List[MemoryEntry]:
+        """正则表达式搜索记忆，按时间排序。
+
+        Args:
+            pattern: 正则表达式模式
+            limit: 返回条目上限，0 表示全部
+
+        Returns:
+            匹配的记忆列表
+
+        Raises:
+            re.error: 无效的正则表达式
+        """
+        compiled = re.compile(pattern, re.IGNORECASE)
+        matched = [e for e in self._entries if compiled.search(e.content)]
+        if limit > 0:
+            return matched[-limit:]
+        return matched
 
     def to_context(self, max_tokens: int = 1000) -> str:
         """转换为上下文字符串"""
