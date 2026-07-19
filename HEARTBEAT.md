@@ -1,76 +1,80 @@
-# HEARTBEAT.md - July 15, 2026 (Wednesday)
+# HEARTBEAT.md - July 19, 2026 (Sunday)
 
 ## 待办任务
 
-### 高优先级（本周）
-- [ ] **agent-memory-graph: README + npm publish** — **3249 tests**, 670+ APIs, 五十五合一 + 全检索管线 + 17 centrality + 拓扑指数十六族 + spreading activation + IR quality eval + governed selection + phantom detection + cascade invalidation + category-aware + proactive context + immutable_store + compact_node + serialize + RelationIntegrityChecker + semantic_speed_gate + GA/AZI/Harmonic
-- [ ] **agent-context-store: README + npm publish** — **2636 tests**, 526+ APIs, 全分析闭环: descriptive→diagnostic→predictive→prescriptive→feedback→monitoring→executive→batch→time-series→**export→predictive decay→causal**
+### 高优先级（本周~下周）
+- [ ] **agent-memory-graph: README + npm publish** — **4014 tests**, 775+ APIs, 六十八合一: dual-loop quality (gap+redundancy+balance) + evaluation quartet + auto_heal_gaps + 全检索管线 + query() 7-intent routing + screen_retrieval + govern_skill_bank + write_governance_check
+- [ ] **agent-context-store: README + npm publish** — **2763 tests**, 560+ APIs, 全分析闭环(二十一层): self-optimizing + preset ensemble
 - [ ] **structured-output-toolkit: README + npm publish** — **561 tests**, 4650+ lines
-- [ ] **agent-task-cli: README + npm publish** — **1222 tests**
+- [ ] **agent-task-cli: README + npm publish** — **1299 tests**, **F200 milestone** 🎯
 
 ### 中优先级（本月）
-- [ ] agent-memory-graph: LoCoMo benchmark adapter (研究完成 ✅ 07-09, target ≥ 60%+ — Mandol SOTA 92.21% 设定上限参考)
+- [ ] agent-memory-graph: compress_to_skill() + retrieve_skills() + evolve_skill() (研究完成 ✅ #014, Experience Compression Spectrum L1→L2)
+- [ ] agent-memory-graph: EvoMemBench adapter (4-setting benchmark, priority > LoCoMo)
+- [x] agent-memory-graph: gap_redundancy_balance() ✅ Cycle 268 (+19 tests, 3995→4014). 244th day.
 - [ ] openclaw-langgraph-bridge: Gateway 集成测试 (261 tests)
 - [ ] lab/agent-observability: gen_ai.* 属性 + CostAggregator (166 tests)
 - [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
 
-### 已完成 ✅ (07-14~15)
-- [x] amg immutable_store + grep + expand (cycles 239/244)
-- [x] amg compact_node three-level (cycle 240)
-- [x] amg serialize token-budget (cycle 241)
-- [x] amg RelationIntegrityChecker (cycle 242)
-- [x] amg semantic_speed_gate + selective_filter (cycle 243)
-- [x] amg dual-mode binary signature / SimHash (cycle 249)
-- [x] acs report_export + decay_model + alert_correlation (Key Dev 3 cycle 191)
-- [x] Deep Research #008: Memory Security (ShadowMerge/HMARS/OSL-MR)
-- [x] Deep Research #009: Context Engineering Layer (LCM/Searchat)
-- [x] Docs: code-lab/README.md + 2 skill READMEs
+### 已完成 ✅ (07-18~19)
+- [x] amg cycle 267: redundancy_detect() — three-dimensional redundancy analysis (+32 tests, 3963→3995). 243rd day. Dual-loop quality system complete.
+- [x] amg cycle 266: auto_heal_gaps() — measure→diagnose→act loop closed (+18 tests, 3945→3963). 242nd day.
+- [x] acs cycle 195: scorecard_ensemble — multi-preset consensus scoring (+19 tests, 2744→2763). 195th day. Preset stack complete.
+- [x] context-forge F46-F48: code complexity + file coupling + tech debt (+44 tests, 619→663)
+- [x] nano-agent F17-F21: fuzzy search + group_by_tag + tool mgmt + dedup + chain_search (+44 tests, 415→459)
+- [x] edge-agent-runtime: +33 tests (211→244) — greenhouse factory + sensor failure + reasoner edges
+- [x] agent-mesh-network: +44 tests (64→108) — config merging + all 7 MeshMessage types + error paths
+- [x] Blog post: knowledge gap detection (~1800 words)
+- [x] Knowledge org: MEMORY.md archived (425→271 lines), experiments.tsv phantom fixed (13 entries recovered)
+- [x] amg cycles 259-265: MemFlow-inspired features + evaluation quartet + gap report (+224 tests)
+- [x] acs cycle 194: preset_recommend + prediction_tuned — self-optimizing analytics
+- [x] agent-task-cli F198-F200: F200 milestone 🎯
+- [x] Deep Research #014: Self-Evolving Agent Memory
 
 ## 系统状态
-- **agent-memory-graph**: **3386 tests** — 685+ APIs。全检索管线 ✅ + 17 centrality + 拓扑指数十六族 + structure-gated PPR + retrieval-failure logging + token-budget context + IR quality eval + governed selection + phantom detection + bi-temporal + Q-value + Lamport clock + typed pub/sub + conflict detect + strategic forget + LPA community + bridge nodes + cache temp + memorywire + staleness + RRF fusion + sleep consolidate + episodic replay + graph analytics + Bron-Kerbosch + CPM + QDAP-v2 + SkewRoute + memory maturation + confidence + forgetting curve + causal edges + spreading activation + entropy filter + subgraph by edge type + decision chain + cascade invalidation + category-aware + read-proactive-context + immutable_store + grep + expand + compact_node(3-level) + serialize(token-budget) + RelationIntegrityChecker + semantic_speed_gate + selective_filter + GA/AZI/Harmonic
-- **agent-context-store**: **2636 tests** — 526+ APIs。全分析闭环+export+decay+causal: health_check → snapshot_diff → velocity_tracker → health_forecast → mutation_impact → improvement_tracker / alert_config / heatmap / dashboard / batch_tracker / alert_history / **report_export** / **quality_decay_model** / **alert_correlation**
+- **agent-memory-graph**: **4014 tests** — 775+ APIs。Dual-loop quality system ✅✅✅ (gap analysis + redundancy detection + unified balance metric) + auto_heal_gaps + evaluation quartet ✅ + 全检索管线 ✅ + query() 7-intent + screen_retrieval + govern_skill_bank + 19 centrality + 拓扑指数十九族 + immutable_store + compact_node + serialize + write_governance_check + drift_search + prospective_memory + SimHash dual-mode
+- **agent-context-store**: **2763 tests** — 560+ APIs。全分析闭环(二十一层) **self-optimizing + preset ensemble**: descriptive→diagnostic→predictive→prescriptive→feedback→monitoring→executive→batch→time-series→export→decay→correlation→diff→prediction→scorecard→trend→prediction-qa→presets→preset_recommend→prediction_tuning→**preset_ensemble**
 - **structured-output-toolkit**: **561 tests**
-- **agent-task-cli**: **1222 tests**
-- **context-forge**: **613 tests**
-- **nano-agent**: **384 tests**
-- **四项目总计**: 7773 tests ✅
-- **amg 234天 / acs 191天 🏆**
-- **零回滚率**: amg 235天 / acs 191天 🏆
+- **agent-task-cli**: **1299 tests** — **F200 milestone** 🎯 (200 utility features)
+- **context-forge**: **663 tests** (F48 tech debt assessment)
+- **nano-agent**: **459 tests** (F21 chain_search)
+- **四项目总计**: 8637 tests ✅
+- **amg 244天 / acs 195天 🏆**
+- **零回滚率**: amg 243天 / acs 195天 🏆
 
-## 近期活动 (07-14 ~ 07-15)
-- **Key Dev 2** ✅ (07-15 00:00): amg cycle 239 — ga_index() + augmented_zagreb_index() + harmonic_index() (+84 tests, 3165→3249). Degree-based topological trio. 拓扑→十六族. 227th consecutive day (key-dev-2 lineage).
-- **Key Dev 3** ✅ (07-15 01:00): acs cycle 191 — store_health_report_export + quality_decay_model + alert_correlation (+43 tests, 2593→2636). Export+predictive+causal layers. 191st consecutive day.
-- **Evening Dev** ✅ (07-14 21:05): amg cycles 239-242 — immutable_store+grep+expand / compact_node 3-level / serialize token-budget / RelationIntegrityChecker (+145 tests, 2983→3128). LCM+Searchat+ShadowMerge inspired.
-- **Key Dev 1** ✅ (07-15 23:00): amg cycle 250 — find_duplicate_nodes + deduplicate (+32 tests, 3354→3386). SimHash-based near-duplicate detection and merge.
-- **Evening Dev** ✅ (07-14 22:25): amg cycle 243 — semantic_speed_gate + selective_filter (+37 tests, 3128→3165). RoMem + Context Engineering.
-- **Key Dev 1** ✅ (07-14 23:00): amg cycle 244 — immutable_store + grep + expand reimplementation (+35 tests, 2038→2073). LCM-inspired lossless history. 234th consecutive day.
-- **Deep Research #008** ✅ (07-14 20:00): Memory Security — ShadowMerge/HMARS/OSL-MR/CoreMem. amg 定位 "security-first graph memory".
-- **Deep Research #009** ✅ (07-14 20:00): Context Engineering Layer — LCM/Searchat/Aeon. 完整 TypeScript 实现验证。
-- **Docs** ✅ (07-14 04:00): code-lab/README.md + skills READMEs (github-trending, x-trends).
+## 近期活动 (07-18 ~ 07-19)
+- **Cycle 267** ✅ (07-19 00:12): amg — redundancy_detect() three-dimensional analysis (+32 tests, 3963→3995). 441a53e. 243rd day. Content dups + structural clones + functional dups. Dual-loop quality system complete.
+- **acs Cycle 195** ✅ (07-19 01:00): scorecard_ensemble multi-preset consensus (+19 tests, 2744→2763). 2180a37. 195th day. Three aggregation modes + dispersion analysis.
+- **Cycle 266** ✅ (07-18 23:10): amg — auto_heal_gaps() (+18 tests, 3945→3963). 372a6f6. 242nd day. Bridge connections + orphan rescue + dry_run.
+- **context-forge F46-F48** ✅ (07-18 21:00): code complexity + file coupling + tech debt (+44 tests, 619→663).
+- **nano-agent F17-F21** ✅ (07-18 22:00-22:10): fuzzy search + group_by_tag + tool mgmt + dedup + chain_search (+44 tests, 415→459).
+- **edge-agent-runtime** ✅ (07-18 03:00): +33 tests (211→244). Greenhouse factory + reasoner edges.
+- **agent-mesh-network** ✅ (07-18 03:10): +44 tests (64→108). All 7 MeshMessage types + error paths.
+- **Blog post** ✅ (07-18 05:00): knowledge gap detection (~1800 words).
 
 ## 🚨 关键教训（已修复）
-**Phantom Commits = Class Shadowing 2.0。** 07-07 晚 6 个 API 全 phantom。07-08 全部从真实代码重生。Cycle 219 部署 AST-based pre-commit detection，检测到10个已知问题。**07-14 再次发现 workspace-level phantom**（cycles 239-243 logged 但代码不在 memory_graph.py），cycle 244 重新实现。**防御已上线但需扩展到 cron 路径。**
+**Phantom Commits = Class Shadowing 2.0。** 07-07 晚 6 个 API 全 phantom。07-08 全部从真实代码重生。Cycle 219 部署 AST-based pre-commit detection。**07-14 再次发现 workspace-level phantom**（cycles 239-243 logged 但代码不在 memory_graph.py），cycle 244 重新实现。**07-17 发现 experiments.tsv phantom** — knowledge org cron 声称添加 entries 但实际未持久化。已在 07-18 修复（13 entries 补录）。
 
 ## 本周关键路径
-1. ✅ ~~amg immutable_store + compact + serialize + grep/expand~~ DONE
-2. ✅ ~~amg RelationIntegrityChecker~~ DONE
-3. ✅ ~~amg semantic_speed_gate + selective_filter~~ DONE
-4. ✅ ~~amg GA/AZI/Harmonic indices~~ DONE — 拓扑十六族
-5. ✅ ~~acs report export + decay model + alert correlation~~ DONE
-6. ✅ ~~Deep Research #008 + #009~~ DONE
+1. ✅ ~~amg cycle 266: auto_heal_gaps~~ DONE
+2. ✅ ~~amg cycle 267: redundancy_detect~~ DONE
+3. ✅ ~~amg cycle 268: gap_redundancy_balance~~ DONE — dual-loop quality fully complete
+4. ✅ ~~acs cycle 195: scorecard_ensemble~~ DONE
+5. ✅ ~~context-forge F46-F48~~ DONE
+6. ✅ ~~nano-agent F17-F21~~ DONE
 7. ⬜ README(agent-memory-graph) → npm publish ← **#1 优先级**
-8. ⬜ README(agent-context-store) → npm publish
-9. ⬜ README(structured-output-toolkit) → npm publish
-10. ⬜ README(agent-task-cli) → npm publish
+7. ⬜ README(agent-context-store) → npm publish
+8. ⬜ README(structured-output-toolkit) → npm publish
+9. ⬜ README(agent-task-cli) → npm publish
 
 ## 上次检查
-- **Key Dev 2: 2026-07-15 00:00** — amg cycle 239, GA/AZI/Harmonic indices (+84 tests, 3165→3249). 拓扑十六族.
-- **Key Dev 3: 2026-07-15 01:00** — acs cycle 191, report_export+decay_model+alert_correlation (+43 tests, 2593→2636). Export+predictive+causal.
-- **Evening Dev: 2026-07-14 21:05** — amg cycles 239-242, immutable_store/compact/serialize/integrity (+145 tests, 2983→3128).
-- **Evening Dev: 2026-07-15 22:25** — amg cycle 249, dual-mode binary signature / SimHash fast path (+28 tests, 3326→3354). Hippocampus-inspired.
-- **Key Dev 1: 2026-07-14 23:00** — amg cycle 244, immutable_store reimplementation (+35 tests, 2038→2073).
+- **Cycle 268: 2026-07-19 22:08** — amg gap_redundancy_balance (+19 tests, 3995→4014). 244th day. Unified dual-loop health metric. Capstone synthesis: health_score + balance_ratio + 6 verdicts + action priority. Dual-loop quality system fully complete.
+- **acs Cycle 195: 2026-07-19 01:00** — scorecard_ensemble (+19 tests, 2744→2763). 195th day. Multi-preset consensus with dispersion analysis. Preset stack complete.
+- **Knowledge org: 2026-07-19 02:04** — Verified consistency after 02:03 run. Fixed math typo (其他 1606→1706, total 11798 confirmed). All counts verified: amg 3995 / acs 2763 / sot 561 / atc 1299 = 8618 four-core. MEMORY.md at 300 lines. No new dev since 02:03 run.
+- **Cycle 266: 2026-07-18 23:10** — amg auto_heal_gaps (+18 tests, 3945→3963). 242nd day.
 
 ## ⚠️ 已知问题
-- **SOT 测试运行器**: `node --test` 无法直接运行 TS 测试 (35/64 fail)。必须用 `npx tsx` 逐文件运行 (561/561 pass)。考虑添加 tsx loader 或迁移到 vitest。
-- **experiments.tsv 历史缺口**: 2026-05-08 ~ 2026-07-01 之间的 cycles 未补录（数据在各 key-dev log 中，低优先级）。
-- **Workspace phantom risk**: cron 任务可能在 workspace 日志中记录 cycles 但代码不在实际项目 repo 中。Cycle 244 是修复案例。需考虑在 cron 模板中增加 `cd /path/to/repo && npx tsx test` 验证步骤。
+- **experiments.tsv phantom**: 07-17 knowledge org cron 声称添加 entries 但实际未写入。已在 07-18 手动修复（13 entries 补录）。根本原因待查 — 可能在 cron 环境中文件路径不同或写入被 swallowed。
+- **SOT 测试运行器**: `node --test` 无法直接运行 TS 测试 (35/64 fail)。必须用 `npx tsx` 逐文件运行。
+- **MEMORY.md 体积**: ✅ 已解决 (07-18 02:05 org). 当前 ~300 行。下次阈值: 350 行。
+- **experiments.tsv 历史缺口**: 2026-05-08 ~ 2026-07-01 之间的 cycles 未补录（低优先级）。
