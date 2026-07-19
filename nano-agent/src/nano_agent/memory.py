@@ -593,6 +593,46 @@ class Memory:
             "total_pages": total_pages,
         }
 
+    def sample(self, n: int = 5, weighted: bool = True) -> List[MemoryEntry]:
+        """随机采样 n 条记忆，可选按重要度加权。
+
+        Args:
+            n: 采样数量，如果 n >= 总数则返回全部（打乱顺序）
+            weighted: True=按 importance 加权采样，False=均匀随机
+
+        Returns:
+            采样到的记忆列表
+        """
+        import random
+        total = len(self._entries)
+        if total == 0 or n <= 0:
+            return []
+        if n >= total:
+            result = list(self._entries)
+            random.shuffle(result)
+            return result
+
+        if weighted:
+            weights = [max(e.importance, 0.001) for e in self._entries]
+            return random.choices(self._entries, weights=weights, k=n)
+        else:
+            return random.sample(self._entries, n)
+
+    def intersect(self, other: 'Memory') -> List[MemoryEntry]:
+        """返回两个 Memory 实例共有的记忆条目（按 content 匹配）。
+
+        与 diff() 互补：intersect 返回 common 部分，但作为独立方法更语义化。
+        返回的是 self 中匹配的条目（保留 self 的元数据）。
+
+        Args:
+            other: 另一个 Memory 实例
+
+        Returns:
+            共有的记忆列表（按 self 中的顺序）
+        """
+        other_contents = {e.content for e in other._entries}
+        return [e for e in self._entries if e.content in other_contents]
+
     def diff(self, other: 'Memory') -> Dict[str, List[MemoryEntry]]:
         """比较两个 Memory 实例的差异。
 
@@ -615,6 +655,34 @@ class Memory:
         common = [e for e in self._entries if e.content in other_contents]
 
         return {"added": added, "removed": removed, "common": common}
+
+    def timeline(self, bucket: str = "day") -> Dict[str, int]:
+        """按时间桶聚合记忆数量，用于分析记忆的时间分布。
+
+        Args:
+            bucket: "hour" | "day" | "week" | "month" 时间桶粒度
+
+        Returns:
+            {bucket_key: count} 按时间正序排列
+        """
+        if not self._entries:
+            return {}
+
+        formats = {
+            "hour": "%Y-%m-%d %H:00",
+            "day": "%Y-%m-%d",
+            "week": "%Y-W%W",
+            "month": "%Y-%m",
+        }
+        fmt = formats.get(bucket, formats["day"])
+
+        counts: Dict[str, int] = {}
+        for entry in self._entries:
+            key = entry.timestamp.strftime(fmt)
+            counts[key] = counts.get(key, 0) + 1
+
+        # Sort by key (time order)
+        return dict(sorted(counts.items()))
 
     def to_context(self, max_tokens: int = 1000) -> str:
         """转换为上下文字符串"""

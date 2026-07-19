@@ -46,6 +46,11 @@
 - [x] **F26**: `Memory.paginate(page, page_size, order)` — pagination with asc/desc ordering ✅ 2026-07-19
 - [x] **F27**: `Memory.diff(other)` — two-way diff returning added/removed/common ✅ 2026-07-19
 
+### Memory Set Operations & Analytics
+- [x] **F28**: `Memory.intersect(other)` — set intersection, returns common entries (complements diff) ✅ 2026-07-19
+- [x] **F29**: `Memory.sample(n, weighted)` — importance-weighted random sampling ✅ 2026-07-19
+- [x] **F30**: `Memory.timeline(bucket)` — time-bucketed distribution (hour/day/week/month) ✅ 2026-07-19
+
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
@@ -56,3 +61,4 @@
 **Round 7:** F22-F23 — Snapshot/restore, regex search ✅ 2026-07-19
 **Round 8:** F24-F25 — Filter, weighted search ✅ 2026-07-19
 **Round 9:** F26-F27 — Paginate, diff ✅ 2026-07-19
+**Round 10:** F28-F30 — Intersect, sample, timeline ✅ 2026-07-19
