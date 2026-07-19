@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-4014-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-4034-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -58,6 +58,55 @@
 - **双循环质量系统** — 知识缺口分析 + 冗余检测 + 自动修复 + 统一健康评分 (gap_redundancy_balance)
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
+## Why agent-memory-graph?
+
+> **Not RAG. Memory.** — RAG 是无状态的一次性检索。Agent Memory 是 write-manage-read 循环：持续、有状态、可演化。
+
+2026 年 Agent Memory 领域的核心洞察：**recall benchmarks 已不是差异化指标，agency benchmarks 才是。** 检索准确率 90%+ 的系统很多，但能治理记忆生命周期、检测质量缺口、自愈知识图谱的系统——几乎没有。
+
+agent-memory-graph 的定位：**beyond recall — agency-grade graph memory — security-first.**
+
+### 与其他记忆方案的区别
+
+| 维度 | agent-memory-graph | Mem0 (48K⭐) | Letta (21K⭐) | Zep/Graphiti (24K⭐) | Mandol (SOTA) | PlugMem (ICML'26) |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|
+| **语言** | Python (npm: TS) | Python | Python | Python | Python | Python |
+| **存储** | SQLite (零依赖) | Vector DB + Graph | 抽象层 | Neo4j + Redis | 自定义 | 自定义 |
+| **图算法** | ✅ 30+ centrality + PPR + Leiden + 19 拓扑指数 | 部分 | ❌ | ✅ 时序图 | ❌ | ❌ |
+| **向量搜索** | ✅ sqlite-vec KNN | ✅ 外部 | ❌ | ❌ | ❌ | ❌ |
+| **全文搜索** | ✅ BM25 (FTS5) | ✅ 外部 | ❌ | ✅ | ❌ | ❌ |
+| **混合搜索** | ✅ RRF 三路融合 | ❌ | ❌ | 部分 | ❌ | ❌ |
+| **CRDT 多 Agent** | ✅ LWW/OR-Set/Trust | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **记忆治理** | ✅ write_governance + screen_retrieval | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **质量评估** | ✅ 评估五件套 | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **缺口检测** | ✅ detect→heal→measure | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **冗余检测** | ✅ 3D 冗余 + auto_consolidate | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **技能压缩** | ✅ L1→L2 Experience Spectrum | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **安全审计** | ✅ PASB 防护 + 决策链追踪 | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **记忆衰减** | ✅ Ebbinghaus 曲线 | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **演化追踪** | ✅ supersede 链 | conflict (35.7%) | ❌ | ✅ bi-temporal | ❌ | ❌ |
+| **MCP Server** | ✅ 10 工具内置 | ❌ | ❌ | ❌ | ❌ | ✅ (OpenClaw) |
+| **memorywire** | ✅ 5ops×4types | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **零依赖** | ✅ 仅 Python 标准库 | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **LoCoMo Score** | 未测 | 49.0% | N/A | N/A | **92.21%** | 90.2% |
+| **Tests** | **4034** | ~500 | ~300 | ~800 | N/A | N/A |
+
+### 独特价值
+
+1. **唯一集成图质量管理系统** — 知识缺口检测 + 冗余检测 + 自动修复 + 统一健康评分。不是「记住更多」，而是「记住对的」
+2. **唯一安全优先设计** — 写入治理 (PASB 防护) + 读取筛选 + 决策链审计。更强 Agent 需要更强记忆治理
+3. **唯一完整检索管线** — BM25 + Vector KNN + PPR + GraphRAG + DRIFT + SimHash 双模 + 意图路由。768+ API 覆盖从关键词到知识图谱问答
+4. **唯一跨压缩级别** — 情景记忆 (L1) → 技能压缩 (L2) → 治理 (Govern)。Experience Compression Spectrum 全谱覆盖
+5. **零依赖 Python** — 仅用 sqlite3 + json + math。sqlite-vec 可选。可嵌入式部署
+
+### 适用场景
+
+- **AI Agent 长期记忆** — 对话历史、用户偏好、任务经验的结构化存储与智能检索
+- **知识图谱管理** — 研究/产品知识的图谱化、社区发现、质量评估
+- **多 Agent 协作** — CRDT 合并 + 向量时钟同步，多个 Agent 共享一致的记忆
+- **GraphRAG 应用** — 从文档提取实体关系，支持 naive/local/global/hybrid 四种检索模式
+- **MCP 生态接入** — 内置 MCP Server，Claude/Cursor 等 MCP 客户端可直接操作记忆图谱
+
 ## 安装
 
 ```bash
@@ -95,6 +144,93 @@ print(mg.pagerank())  # {"1": 0.57, "2": 0.43}
 ```bash
 python3 memory_graph.py
 ```
+
+## 教程：构建一个 AI 助手的记忆系统
+
+这个教程展示如何用 agent-memory-graph 为 AI 助手构建生产级记忆系统。
+
+### 场景：客服 Agent 记住用户偏好
+
+```python
+from memory_graph import MemoryGraph
+
+mg = MemoryGraph('customer_agent.db')
+
+# 1. 记住用户信息
+user = mg.add("用户: 张三", "person", {"plan": "pro", "since": "2024-01"}, ["vip"])
+pref = mg.add("偏好: 中文回复", "fact", {"category": "communication"}, ["language"])
+history = mg.add("历史: 曾购买 API 服务", "event", {"date": "2024-03"}, ["purchase"])
+
+# 2. 建立关系
+mg.link(user.id, pref.id, "prefers", weight=0.9)
+mg.link(user.id, history.id, "has_history", weight=0.7)
+
+# 3. 智能召回 — 混合搜索
+results = mg.hybrid_retrieve("张三喜欢什么", top_k=5)
+# => 自动融合 BM25 + 向量 + 图邻居信号
+
+# 4. 记忆衰减 — 30 天后弱化
+mg.decay_all(interval_days=30)
+# 未访问的记忆权重下降，模拟自然遗忘
+
+# 5. 召回时增强 — 用户再次提到
+mg.recall("张三")
+# => 相关记忆权重恢复，模拟复习效果
+
+# 6. 图质量检查
+report = mg.knowledge_gap_report()
+print(report['gap_score'])  # 0-100, 越高缺口越大
+print(report['recommendations'][:3])  # 建议添加的连接
+
+# 7. 自动修复缺口
+mg.auto_heal_gaps(dry_run=True)  # 先预览
+mg.auto_heal_gaps(dry_run=False)  # 执行修复
+
+# 8. 健康评分
+health = mg.gap_redundancy_balance()
+print(f"Health: {health['health_score']}/100 ({health['verdict']})")
+```
+
+### 场景：多 Agent 记忆合并
+
+```python
+from memory_graph import MemoryGraph
+
+# Agent A 和 Agent B 各自积累记忆
+mg_a = MemoryGraph('agent_a.db')
+mg_b = MemoryGraph('agent_b.db')
+
+# ... 两个 Agent 独立工作，各自 add/link ...
+
+# CRDT 合并 — 保证一致性
+result = mg_a.merge_crdt(mg_b, strategy="trust", trust_weights={"A": 0.7, "B": 0.3})
+print(f"合并: {result['merged_nodes']} 节点, {result['conflicts_resolved']} 冲突已解决")
+
+# 增量同步 — 向量时钟追踪因果
+mg_a.subscribe("updates", lambda event: print(f"新变更: {event}"))
+changes = mg_a.get_changes(since_vector=clock)
+mg_b.apply_changes(changes)
+```
+
+### 场景：GraphRAG 检索
+
+```python
+from memory_graph import MemoryGraph
+
+mg = MemoryGraph('knowledge_base.db')
+
+# 从文档提取的知识已入库
+# local 模式：实体级检索
+local_results = mg.graphrag_search("Rust 的内存安全机制", mode="local")
+
+# global 模式：跨社区主题检索
+global_results = mg.graphrag_search("系统级编程语言趋势", mode="global")
+
+# hybrid 模式：local + global 融合
+hybrid_results = mg.graphrag_search("Rust vs Go 在微服务中的应用", mode="hybrid")
+```
+
+---
 
 ## 核心概念
 
@@ -2141,7 +2277,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-3249 个测试覆盖所有 API（244 个 cycle，237 天零回滚）。
+4034 个测试覆盖所有 API（269 个 cycle，245 天零回滚）。
 
 ## 设计思路
 
