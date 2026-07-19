@@ -497,6 +497,69 @@ class Memory:
             return matched[-limit:]
         return matched
 
+    def filter(self, predicate: Callable[[MemoryEntry], bool]) -> List[MemoryEntry]:
+        """函数式过滤：返回满足 predicate 的所有记忆条目。
+
+        Args:
+            predicate: 接收 MemoryEntry 返回 bool 的回调
+
+        Returns:
+            匹配的记忆列表（按时间顺序）
+
+        Example:
+            # 所有重要度 > 0.7 的记忆
+            m.filter(lambda e: e.importance > 0.7)
+            # 所有带 "urgent" 标签的记忆
+            m.filter(lambda e: "urgent" in e.tags)
+        """
+        return [e for e in self._entries if predicate(e)]
+
+    def weighted_search(self, query: str, limit: int = 5, w_content: float = 0.5, w_importance: float = 0.3, w_recency: float = 0.2) -> List[MemoryEntry]:
+        """加权多因子搜索，综合内容相似度、重要度和时间近度。
+
+        三个因子归一化到 [0, 1] 后按权重加权求和：
+        - content: SequenceMatcher 相似度
+        - importance: entry.importance (已经是 0-1)
+        - recency: 线性衰减 (最近=1.0, 最旧=0.0)
+
+        Args:
+            query: 搜索查询
+            limit: 返回条目上限
+            w_content: 内容相似度权重
+            w_importance: 重要度权重
+            w_recency: 时间近度权重
+
+        Returns:
+            按综合得分降序排列的记忆列表
+        """
+        if not self._entries or not query:
+            return []
+
+        query_lower = query.lower()
+        n = len(self._entries)
+
+        scored: List[Tuple[float, MemoryEntry]] = []
+        for idx, entry in enumerate(self._entries):
+            # Content similarity
+            content_ratio = SequenceMatcher(None, query_lower, entry.content.lower()).ratio()
+            if query_lower in entry.content.lower():
+                content_ratio = max(content_ratio, 0.8)
+
+            # Recency: linear decay (index 0 = oldest = lowest score)
+            recency = (idx + 1) / n if n > 0 else 0
+
+            total = (w_content * content_ratio
+                     + w_importance * entry.importance
+                     + w_recency * recency)
+
+            scored.append((total, entry))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results = [entry for _, entry in scored]
+        if limit > 0:
+            results = results[:limit]
+        return results
+
     def to_context(self, max_tokens: int = 1000) -> str:
         """转换为上下文字符串"""
         entries = self.get_recent()
