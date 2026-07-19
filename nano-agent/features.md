@@ -38,6 +38,14 @@
 - [x] **F20**: `Memory.deduplicate()` — similarity-based dedup, preserves earliest ✅ 2026-07-18
 - [x] **F21**: `Memory.chain_search()` — multi-query ranked search with optional fuzzy fallback ✅ 2026-07-18
 
+### Memory Advanced Operations
+- [x] **F22**: `Memory.snapshot()` / `Memory.restore()` — deep copy snapshot for undo/restore ✅ 2026-07-19
+- [x] **F23**: `Memory.search_regex(pattern)` — regex pattern search with IGNORECASE ✅ 2026-07-19
+- [x] **F24**: `Memory.filter(predicate)` — functional callback-based filtering ✅ 2026-07-19
+- [x] **F25**: `Memory.weighted_search(query)` — 3-factor weighted ranking (content+importance+recency) ✅ 2026-07-19
+- [x] **F26**: `Memory.paginate(page, page_size, order)` — pagination with asc/desc ordering ✅ 2026-07-19
+- [x] **F27**: `Memory.diff(other)` — two-way diff returning added/removed/common ✅ 2026-07-19
+
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
@@ -45,3 +53,6 @@
 **Round 4:** F13-F14 — Tag search and memory merge ✅ 2026-07-16
 **Round 5:** F17-F19 — Fuzzy search, tag grouping, dynamic tools ✅ 2026-07-18
 **Round 6:** F20-F21 — Deduplicate, chain search ✅ 2026-07-18
+**Round 7:** F22-F23 — Snapshot/restore, regex search ✅ 2026-07-19
+**Round 8:** F24-F25 — Filter, weighted search ✅ 2026-07-19
+**Round 9:** F26-F27 — Paginate, diff ✅ 2026-07-19
