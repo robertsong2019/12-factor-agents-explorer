@@ -328,3 +328,5 @@ timestamp	commit	metric	value	status	description
 2026-07-18T23:10:00+08:00	372a6f6	test_pass_rate	100%	keep	All 3963 passing, 0 regressions, 28.35s. 242nd consecutive day without rollback.
 2026-07-19T00:00:00+08:00	441a53e	test_count	3963→3995	keep	Cycle 267: redundancy_detect() — three-dimensional redundancy analysis. Content duplicates (trigram Jaccard), structural clones (neighbour Jaccard), functional duplicates (same kind + similar weight + similar degree). redundancy_score 0-100. Cross-dimensional merge_candidates. Complements gap analysis with detect→consolidate loop. +32 tests. 243rd consecutive day without rollback.
 2026-07-19T00:00:00+08:00	441a53e	test_pass_rate	100%	keep	All 3995 passing, 0 regressions, 28.83s.
+2026-07-19T23:00:00+08:00	f5f1727	test_pass_rate	100%	keep	All 4014 passing, 0 regressions, 28.41s. 244th consecutive day without rollback.
+2026-07-19T23:00:00+08:00	f5f1727	doc_coverage	cycle_268_documented	keep	README: Added gap_redundancy_balance() API docs + dual-loop quality system architecture diagram + test badge update (3995→4014) + feature list entry. Connects cycles 265-268 into coherent capstone section.

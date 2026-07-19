@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-3995-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-4014-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -55,6 +55,7 @@
 - **双模检索** — binary_signature / similarity_search_binary / dual_mode_retrieve Hippocampus 启发的 SimHash 二进制签名预过滤 + 图重排序两阶段检索
 - **去重** — find_duplicate_nodes / deduplicate 基于 SimHash 汉明距离的近重复节点检测与合并
 - **洛伦兹系数与重定义指数** — lorenz_coefficient (度分布 Gini 系数) + redefined_randic_indices (Randić 2008 三变体) + redefined_zagreb_index (第三 Zagreb 指数)
+- **双循环质量系统** — 知识缺口分析 + 冗余检测 + 自动修复 + 统一健康评分 (gap_redundancy_balance)
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## 安装
@@ -2887,6 +2888,51 @@ PMI 公式：`PMI(w_ij) = log2((w_ij × W_total) / (s_i × s_j))`，其中 s_i�
 **闭环关系：**
 - 缺口分析 → `auto_heal_gaps()` → 检测→修复循环
 - 冗余检测 → `merge_nodes()` → 检测→合并循环
+
+### 双循环质量综合评估 (Cycle 268)
+
+> **capstone** — 缺口分析与冗余检测的统一健康分数
+
+将 `knowledge_gap_report` 和 `redundancy_detect` 融合为单一可行动评估。
+
+#### `gap_redundancy_balance(*, node_ids=None, gap_weight=0.5, redundancy_weight=0.5) -> dict`
+
+统一双循环健康指标，结合缺口分数和冗余分数生成单一健康评估。
+
+**评分模型：**
+
+- `health_score = 100 - w_gap × (100 - gap_score) - w_red × redundancy_score`
+- 权重自动归一化为总和 1.0
+- `balance_ratio` ∈ [-1, 1]：负值 = 缺口主导，正值 = 冗余主导，≈0 = 均衡
+
+**裁决（verdict）：**
+
+| 裁决 | 含义 |
+|------|------|
+| `empty` | 图中无节点 |
+| `healthy` | health ≥ 80，无显著问题 |
+| `good` | health ≥ 65，轻微问题 |
+| `gap-heavy` | 缺口是健康度的主要拖累 |
+| `redundancy-heavy` | 冗余是主要拖累 |
+| `balanced-issues` | 缺口和冗余均显著 |
+
+**行动优先级（action_priority）：** `none` / `gap` / `redundancy` / `both`
+
+**双循环质量体系全景：**
+
+```
+Loop 1 (缺口)              Loop 2 (冗余)
+    │                           │
+    ▼                           ▼
+knowledge_gap_report      redundancy_detect
+    │                           │
+    ▼                           ▼
+auto_heal_gaps            merge_nodes
+    │                           │
+    └────────┬──────────────────┘
+             ▼
+   gap_redundancy_balance  ← 综合健康评估
+```
 
 ---
 
