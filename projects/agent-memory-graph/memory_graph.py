@@ -28545,6 +28545,184 @@ class MemoryGraph:
             "recommendations": recommendations,
         }
 
+    def gap_redundancy_balance(self, *,
+                               node_ids: list[str] = None,
+                               gap_weight: float = 0.5,
+                               redundancy_weight: float = 0.5,
+                               ) -> dict:
+        """Unified dual-loop health metric combining gap and redundancy scores.
+
+        Fuses ``knowledge_gap_report`` (missing connections) and
+        ``redundancy_detect`` (excess overlap) into a single actionable
+        assessment.  This is the capstone of the dual-loop quality system:
+
+        - **Loop 1 — Gap analysis**: ``knowledge_gap_report`` → ``auto_heal_gaps``
+        - **Loop 2 — Redundancy analysis**: ``redundancy_detect`` → (future merge)
+        - **Synthesis**: this method → single health score + action priority
+
+        **Scoring model:**
+
+        - ``health_score = 100 - w_gap * (100 - gap_score) - w_red * redundancy_score``
+        - Weights are auto-normalised to sum to 1.0.
+        - ``balance_ratio`` ∈ [-1, 1]: negative = gap-dominated, positive =
+          redundancy-dominated, ≈0 = balanced.
+
+        **Verdicts:**
+
+        - ``empty`` — graph has no nodes.
+        - ``healthy`` — health ≥ 80, no dominant issue.
+        - ``good`` — health ≥ 65, minor issues.
+        - ``gap-heavy`` — gaps are the primary drag on health.
+        - ``redundancy-heavy`` — redundancy is the primary drag.
+        - ``balanced-issues`` — both gap and redundancy are significant.
+
+        Args:
+            node_ids: Restrict analysis to a subgraph.  If None, analyses
+                the entire graph.
+            gap_weight: Weight for gap penalty (default 0.5).
+            redundancy_weight: Weight for redundancy penalty (default 0.5).
+
+        Returns:
+            Dict with keys: health_score, gap_score, redundancy_score,
+            verdict, dominant_issue, balance_ratio, action_priority,
+            summary, recommendations.
+        """
+        # ── Run both analyses ──────────────────────────────────────
+        gap_report = self.knowledge_gap_report(node_ids=node_ids)
+        redundancy_report = self.redundancy_detect(node_ids=node_ids)
+
+        gap_score = gap_report["gap_score"]
+        redundancy_score = redundancy_report["redundancy_score"]
+        n_nodes = gap_report.get("total_nodes", 0)
+
+        # ── Empty graph ────────────────────────────────────────────
+        if n_nodes == 0:
+            return {
+                "health_score": 100.0,
+                "gap_score": 100.0,
+                "redundancy_score": 0.0,
+                "verdict": "empty",
+                "dominant_issue": "none",
+                "balance_ratio": 0.0,
+                "action_priority": "none",
+                "summary": "Graph is empty — no issues to detect.",
+                "recommendations": ["Add nodes to begin building the knowledge graph."],
+            }
+
+        # ── Normalise weights ──────────────────────────────────────
+        w_sum = gap_weight + redundancy_weight
+        if w_sum <= 0:
+            w_gap, w_red = 0.5, 0.5
+        else:
+            w_gap = gap_weight / w_sum
+            w_red = redundancy_weight / w_sum
+
+        # ── Health score ───────────────────────────────────────────
+        # gap_score: 100 = good, 0 = bad → penalty = (100 - gap_score)
+        # redundancy_score: 100 = bad, 0 = good → penalty = redundancy_score
+        gap_penalty = 100.0 - gap_score
+        redundancy_penalty = redundancy_score
+        health_score = 100.0 - (w_gap * gap_penalty + w_red * redundancy_penalty)
+        health_score = max(0.0, min(100.0, round(health_score, 2)))
+
+        # ── Balance ratio (-1 to +1) ───────────────────────────────
+        total_penalty = gap_penalty + redundancy_penalty
+        if total_penalty > 0:
+            balance_ratio = round((redundancy_penalty - gap_penalty) / total_penalty, 4)
+        else:
+            balance_ratio = 0.0
+
+        # ── Dominant issue ─────────────────────────────────────────
+        if total_penalty < 5.0:
+            dominant_issue = "none"
+        elif gap_penalty > redundancy_penalty * 1.5:
+            dominant_issue = "gap"
+        elif redundancy_penalty > gap_penalty * 1.5:
+            dominant_issue = "redundancy"
+        else:
+            dominant_issue = "balanced-issues"
+
+        # ── Action priority ────────────────────────────────────────
+        if total_penalty < 5.0:
+            action_priority = "none"
+        elif dominant_issue == "gap":
+            action_priority = "gap"
+        elif dominant_issue == "redundancy":
+            action_priority = "redundancy"
+        else:
+            action_priority = "both"
+
+        # ── Verdict ────────────────────────────────────────────────
+        if health_score >= 80:
+            verdict = "healthy"
+        elif health_score >= 65:
+            verdict = "good"
+        elif dominant_issue == "gap":
+            verdict = "gap-heavy"
+        elif dominant_issue == "redundancy":
+            verdict = "redundancy-heavy"
+        else:
+            verdict = "balanced-issues"
+
+        # ── Summary ────────────────────────────────────────────────
+        summary = (
+            f"Health={health_score:.1f}/100 "
+            f"(gap={gap_score:.1f}, redundancy={redundancy_score:.1f}). "
+        )
+        if action_priority == "none":
+            summary += "Graph quality is good — no urgent action needed."
+        elif action_priority == "gap":
+            summary += "Primary concern: knowledge gaps. Add connections to improve reachability."
+        elif action_priority == "redundancy":
+            summary += "Primary concern: redundancy. Merge similar nodes to reduce noise."
+        else:
+            summary += "Both gaps and redundancy need attention. Address the larger penalty first."
+
+        # ── Recommendations ────────────────────────────────────────
+        recommendations = []
+
+        # Carry over top gap recommendation (if gap-driven)
+        if action_priority in ("gap", "both"):
+            for rec in gap_report.get("recommendations", []):
+                recommendations.append(f"[gap] {rec}")
+                if len(recommendations) >= 3:
+                    break
+
+        # Carry over top redundancy recommendation (if redundancy-driven)
+        if action_priority in ("redundancy", "both"):
+            for rec in redundancy_report.get("recommendations", []):
+                recommendations.append(f"[redundancy] {rec}")
+                if len(recommendations) >= 5:
+                    break
+
+        # Add balance recommendation if applicable
+        if abs(balance_ratio) > 0.5 and action_priority != "none":
+            if balance_ratio > 0:
+                recommendations.append(
+                    f"⚠️ Redundancy significantly outweighs gaps "
+                    f"(ratio={balance_ratio:+.2f}). Focus on merging."
+                )
+            else:
+                recommendations.append(
+                    f"⚠️ Gaps significantly outweigh redundancy "
+                    f"(ratio={balance_ratio:+.2f}). Focus on connecting."
+                )
+
+        if not recommendations:
+            recommendations.append("✅ Graph quality is well-balanced. No urgent action needed.")
+
+        return {
+            "health_score": health_score,
+            "gap_score": round(gap_score, 2),
+            "redundancy_score": round(redundancy_score, 2),
+            "verdict": verdict,
+            "dominant_issue": dominant_issue,
+            "balance_ratio": balance_ratio,
+            "action_priority": action_priority,
+            "summary": summary,
+            "recommendations": recommendations,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
