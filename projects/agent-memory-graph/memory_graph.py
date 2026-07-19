@@ -541,18 +541,30 @@ class MemoryGraph:
         # Merge data
         merged_data = {**json.loads(src["data"]), **json.loads(tgt["data"])}
         new_weight = max(src["weight"], tgt["weight"])
-        # Rewire edges pointing to source -> point to target
-        # First delete edges that would become duplicates
+        # Rewire edges pointing to source -> point to target.
+        # Step 1: Delete edges directly between source and target (they become self-loops).
+        self.conn.execute(
+            "DELETE FROM edges WHERE (source=? AND target=?) OR (source=? AND target=?)",
+            (source_id, target_id, target_id, source_id),
+        )
+        # Step 2: Delete source edges that would duplicate target edges after rewiring.
+        # An edge source->X with relation R is redundant if target->X with R already exists.
         self.conn.execute("""
-            DELETE FROM edges WHERE (source=? OR source=?) AND target IN (
-                SELECT e2.target FROM edges e2 WHERE e2.source=? AND e2.target=?
-                UNION
-                SELECT e2.source FROM edges e2 WHERE e2.target=? AND e2.source=?
+            DELETE FROM edges WHERE source=? AND (target, relation) IN (
+                SELECT target, relation FROM edges WHERE source=?
             )
-        """, (source_id, target_id, source_id, target_id, source_id, target_id))
+        """, (source_id, target_id))
+        # Step 3: Delete source reverse-edges that would duplicate target reverse-edges.
+        # An edge X->source with relation R is redundant if X->target with R already exists.
+        self.conn.execute("""
+            DELETE FROM edges WHERE target=? AND (source, relation) IN (
+                SELECT source, relation FROM edges WHERE target=?
+            )
+        """, (source_id, target_id))
+        # Step 4: Rewire remaining source edges to target.
         self.conn.execute("UPDATE edges SET source=? WHERE source=?", (target_id, source_id))
         self.conn.execute("UPDATE edges SET target=? WHERE target=?", (target_id, source_id))
-        # Remove self-loops
+        # Step 5: Remove any self-loops that slipped through.
         self.conn.execute("DELETE FROM edges WHERE source=? AND target=?", (target_id, target_id))
         # Update target
         self.conn.execute(
@@ -28722,6 +28734,185 @@ class MemoryGraph:
             "summary": summary,
             "recommendations": recommendations,
         }
+
+    # ════════════════════════════════════════════════════════════
+    #  CYCLE 269 — auto_consolidate()
+    #  Redundancy act-loop: detect → consolidate (mirrors gap loop)
+    # ════════════════════════════════════════════════════════════
+
+    def auto_consolidate(self, *,                        # noqa: C901
+                         max_merges: int = 5,
+                         min_score: float = 0.5,
+                         content_threshold: float = 0.65,
+                         structural_threshold: float = 0.6,
+                         dry_run: bool = False,
+                         node_ids: list[str] = None) -> dict:
+        """Auto-merge top redundancy candidates identified by ``redundancy_detect``.
+
+        The **act** half of the detect→consolidate redundancy loop,
+        mirroring ``auto_heal_gaps()`` for the gap loop.
+
+        While ``redundancy_detect`` *identifies* excess overlap, this API
+        *fixes* it by merging node pairs — choosing the higher-degree node
+        as the merge target (survivor) in each pair.
+
+        **Merge strategy:**
+
+        1. Run ``redundancy_detect`` with the given thresholds.
+        2. Filter ``merge_candidates`` by ``min_score``.
+        3. For each candidate (up to ``max_merges``), merge the
+           lower-degree node into the higher-degree node using
+           ``merge_nodes()``.
+        4. Skip pairs where either node was already merged in this run.
+
+        **Non-mutating fields returned when** ``dry_run=True``:
+        All actions are simulated; no nodes are actually merged.
+
+        Args:
+            max_merges: Maximum number of merge operations.
+            min_score: Minimum combined merge-score to act on (0–1).
+            content_threshold: Passed through to ``redundancy_detect``.
+            structural_threshold: Passed through to ``redundancy_detect``.
+            dry_run: If True, report what *would* be done without modifying.
+            node_ids: Restrict analysis to a subgraph.
+
+        Returns:
+            Dict with:
+
+            - **merges_performed**: List of ``{source, target, score,
+              content_sim, structural_sim, functional_dup, reason}``
+            - **total_merges**: Count of merges performed
+            - **redundancy_score_before**: Redundancy score prior to action
+            - **redundancy_score_after**: Redundancy score after (same as
+              before if ``dry_run``)
+            - **nodes_before / nodes_after**: Node counts
+            - **actions**: Human-readable summary strings
+            - **dry_run**: Whether this was a dry run
+            - **skipped**: Pairs skipped (already merged or below threshold)
+        """
+        # ── Capture before-state ────────────────────────────────────
+        report_before = self.redundancy_detect(
+            node_ids=node_ids,
+            max_pairs=max_merges * 3,  # fetch more, filter later
+            content_threshold=content_threshold,
+            structural_threshold=structural_threshold,
+        )
+        redundancy_before = report_before["redundancy_score"]
+        nodes_before = report_before["total_nodes"]
+
+        merges_performed = []
+        actions = []
+        skipped = []
+        merged_nodes: set[str] = set()  # track consumed node ids
+        merges_used = 0
+
+        candidates = report_before.get("merge_candidates", [])
+
+        for cand in candidates:
+            if merges_used >= max_merges:
+                break
+
+            combined_score = cand.get("combined_score", 0.0)
+            if combined_score < min_score:
+                skipped.append({
+                    "node_a": cand["node_a"],
+                    "node_b": cand["node_b"],
+                    "reason": f"score {combined_score:.3f} < {min_score}",
+                })
+                continue
+
+            node_a = cand["node_a"]
+            node_b = cand["node_b"]
+
+            # Skip if either node was already merged in this run
+            if node_a in merged_nodes or node_b in merged_nodes:
+                skipped.append({
+                    "node_a": node_a,
+                    "node_b": node_b,
+                    "reason": "node already merged in this run",
+                })
+                continue
+
+            # Determine merge direction: lower-degree → higher-degree
+            deg_a = self._node_degree(node_a)
+            deg_b = self._node_degree(node_b)
+
+            if deg_a >= deg_b:
+                source, target = node_b, node_a
+            else:
+                source, target = node_a, node_b
+
+            # Build action record
+            content_sim = cand.get("content_score", 0.0)
+            structural_sim = cand.get("structural_score", 0.0)
+            functional_dup = cand.get("functional_score", 0.0)
+
+            # Determine primary reason
+            dims = [
+                ("content", content_sim),
+                ("structural", structural_sim),
+                ("functional", functional_dup),
+            ]
+            dims.sort(key=lambda x: x[1], reverse=True)
+            reason = f"{dims[0][0]}-dominated ({dims[0][1]:.3f})"
+
+            action = {
+                "source": source,
+                "target": target,
+                "score": round(combined_score, 4),
+                "content_sim": round(content_sim, 4),
+                "structural_sim": round(structural_sim, 4),
+                "functional_dup": round(functional_dup, 4),
+                "reason": reason,
+            }
+            merges_performed.append(action)
+            merged_nodes.add(source)
+            merged_nodes.add(target)
+            merges_used += 1
+
+            if not dry_run:
+                self.merge_nodes(source, target)
+
+            actions.append(
+                f"Merge: {source} → {target} "
+                f"(score={combined_score:.3f}, {reason})"
+            )
+
+        # ── Capture after-state ────────────────────────────────────
+        if not dry_run and merges_used > 0:
+            report_after = self.redundancy_detect(
+                node_ids=node_ids,
+                max_pairs=10,
+                content_threshold=content_threshold,
+                structural_threshold=structural_threshold,
+            )
+            redundancy_after = report_after["redundancy_score"]
+            nodes_after = report_after["total_nodes"]
+        else:
+            redundancy_after = redundancy_before
+            nodes_after = nodes_before - merges_used if not dry_run else nodes_before
+
+        return {
+            "merges_performed": merges_performed,
+            "total_merges": merges_used,
+            "redundancy_score_before": round(redundancy_before, 2),
+            "redundancy_score_after": round(redundancy_after, 2),
+            "nodes_before": nodes_before,
+            "nodes_after": nodes_after,
+            "actions": actions,
+            "dry_run": dry_run,
+            "skipped": skipped,
+        }
+
+    def _node_degree(self, node_id: str) -> int:
+        """Return the total degree (in + out) of a node."""
+        out_c = self.conn.execute(
+            "SELECT COUNT(*) c FROM edges WHERE source=?", (node_id,)
+        ).fetchone()["c"]
+        in_c = self.conn.execute(
+            "SELECT COUNT(*) c FROM edges WHERE target=?", (node_id,)
+        ).fetchone()["c"]
+        return out_c + in_c
 
 
 def demo():
