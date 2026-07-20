@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-4034-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-4099-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -3023,7 +3023,95 @@ PMI 公式：`PMI(w_ij) = log2((w_ij × W_total) / (s_i × s_j))`，其中 s_i�
 
 **闭环关系：**
 - 缺口分析 → `auto_heal_gaps()` → 检测→修复循环
-- 冗余检测 → `merge_nodes()` → 检测→合并循环
+- 冗余检测 → `auto_consolidate()` → 检测→合并循环（自动化）
+
+### 自动冗余合并 (Cycle 269)
+
+> 冗余检测的行动闭环 — `redundancy_detect()` 的 act 半环
+
+#### `auto_consolidate(*, max_merges=5, min_score=0.5, content_threshold=0.65, structural_threshold=0.6, dry_run=False, node_ids=None) -> dict`
+
+自动合并 `redundancy_detect()` 识别的顶级冗余候选对。与 `auto_heal_gaps()` 对应缺口循环的角色对称。
+
+**合并策略：**
+
+1. 运行 `redundancy_detect()` 获取候选对
+2. 按 `min_score` 过滤 `merge_candidates`
+3. 对每个候选（最多 `max_merges` 个），将低度数节点合并到高度数节点（保证 survivor 是更重要的节点）
+4. 跳过已在本轮被合并的节点（防止双重合并）
+
+**参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `max_merges` | 5 | 最大合并操作次数 |
+| `min_score` | 0.5 | 最小综合分数 (0–1) 才会行动 |
+| `content_threshold` | 0.65 | 透传给 `redundancy_detect` |
+| `structural_threshold` | 0.6 | 透传给 `redundancy_detect` |
+| `dry_run` | False | 模拟运行，不实际修改 |
+| `node_ids` | None | 限制分析范围 |
+
+**返回：**
+
+| 部分 | 说明 |
+|------|------|
+| `merges_performed` | `[{source, target, score, content_sim, structural_sim, functional_dup, reason}]` |
+| `total_merges` | 实际合并次数 |
+| `redundancy_score_before` | 行动前冗余分数 |
+| `redundancy_score_after` | 行动后冗余分数（`dry_run` 时等于 before）|
+| `nodes_before / nodes_after` | 节点数变化 |
+| `actions` | 人类可读行动摘要 |
+| `skipped` | 被跳过的候选及原因 |
+
+---
+
+> **更新闭环关系：**
+>
+> ```
+> Loop 1 (缺口)                Loop 2 (冗余)
+>     │                             │
+>     ▼                             ▼
+> knowledge_gap_report        redundancy_detect
+>     │                             │
+>     ▼                             ▼
+> auto_heal_gaps              auto_consolidate
+>     │                             │
+>     └────────┬────────────────────┘
+>              ▼
+>    gap_redundancy_balance  ← 综合健康评估
+> ```
+
+### 语义簇检测 (Cycle 271)
+
+> 从配对冗余到群体级冗余 — `redundancy_detect()` 的自然进化
+
+#### `semantic_cluster_detect(*, node_ids=None, min_cluster_size=3, content_threshold=0.55, structural_threshold=0.5) -> dict`
+
+检测 N+ 个语义相似节点组成的**簇**。当 5+ 个节点形成冗余群时，配对合并序列不再最优 — 需要群体级分析。
+
+**两个聚类维度：**
+
+| 维度 | 方法 | 算法 |
+>------|------|------|
+| 内容簇 | 标签 trigram Jaccard ≥ `content_threshold` | 单链凝聚聚类 |
+| 结构簇 | 邻居集合 Jaccard ≥ `structural_threshold` | 单链凝聚聚类 |
+
+单链聚类（Single-Linkage）：两个簇在*任意*跨对超过阈值时合并。使用 Union-Find 实现，复杂度 O(n² α(n))。
+
+**返回：**
+
+| 部分 | 说明 |
+|------|------|
+| `content_clusters` | `[{members, size, avg_similarity, representative, labels}]` |
+| `structural_clusters` | 同格式 |
+| `combined_clusters` | 在*两个*维度上都显著的簇 — 最佳合并候选 |
+| `cluster_score` | 0-100，整体簇冗余度 |
+| `recommendations` | 行动建议 |
+
+**与 `redundancy_detect()` 的关系：**
+- `redundancy_detect()` → 配对分析（1:1）
+- `semantic_cluster_detect()` → 群体分析（N:1）
+- 进化路径：对 → 行动于对 → 群体
 
 ### 双循环质量综合评估 (Cycle 268)
 
@@ -3069,6 +3157,44 @@ auto_heal_gaps            merge_nodes
              ▼
    gap_redundancy_balance  ← 综合健康评估
 ```
+
+### 查询诊断 (Cycle 270)
+
+#### `query_explain(query, embedding=None, limit=10, fusion='adaptive', kge_weight=0.0) -> dict`
+
+查询执行计划诊断。返回与 `search_hybrid` 相同的排序结果，外加完整的诊断计划 — 展示每条检索路径如何贡献到每个结果。
+
+**用途：** 调试检索质量下降、理解为什么某条结果排在前面（或排在后面）、验证融合权重配置。
+
+**参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `query` | — | 文本查询 |
+| `embedding` | None | 可选查询向量 |
+| `limit` | 10 | 返回结果数 |
+| `fusion` | 'adaptive' | 融合模式 (`adaptive` \| `rrf` \| `wrrf`) |
+| `kge_weight` | 0.0 | KGE 路径权重 |
+
+**返回结构：**
+
+| 部分 | 说明 |
+|------|------|
+| `classification` | `{type, specificity, needs_retrieval}` — 查询分类 |
+| `weights` | `{bm25, vector, graph, kge}` — 实际使用的融合权重 |
+| `paths` | 每条检索路径的状态报告：`[{name, status, result_count, top_ids, elapsed_ms}]` |
+| `entropy_refinement` | 熵修正信息（如适用）|
+| `results` | 每个结果的分数分解：`[{node_id, label, kind, score, sources, score_breakdown}]` |
+| `summary` | `{total_candidates, unique_sources_used, top_score, bottom_score}` |
+
+**结果质量分类：**
+
+| 质量等级 | 分数条件 | 含义 |
+|---------|---------|------|
+| `excellent` | score ≥ 0.08 | 多源命中，高置信 |
+| `good` | score ≥ 0.04 | 合理命中 |
+| `partial` | score ≥ 0.02 | 弱命中或单源 |
+| `weak` | score < 0.02 | 可能不相关 |
 
 ---
 
