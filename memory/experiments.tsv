@@ -5,3 +5,72 @@ date	project	metric	before	after	delta	notes
 2026-05-06T22:06:24+08:00	8ba2aba	test_pass_rate	100% (11/11)	keep	F52-F54: subscriberCount, findKeys, waitForPattern
 date	project	action	tests_before	tests_after	pass_rate	result
 2026-05-07	my-rpg	extracted BattleCalc.ts + vitest tests	0	13	100%	✅ new test suite created
+2026-07-02T19:00:00+08:00	amg	test_count	1521	1599	+78	Cycles 170-172: KGE fix + bi-temporal + Q-value
+2026-07-03T19:00:00+08:00	amg	test_count	1599	1652	+53	Cycles 173-178: Lamport+conflict+forget+community
+2026-07-04T20:00:00+08:00	amg	test_count	1652	1751	+99	Cycles 179-184: cache+snapshot+memorywire+staleness+RRF+sleep
+2026-07-07T20:00:00+08:00	amg	test_count	1751	2150	+399	Cycles 185-200: betweenness fix + 14 centrality + spectral + walk-based
+2026-07-09T20:00:00+08:00	amg	test_count	2150	2246	+96	Cycles 201-212: PPR + auto_forget + hybrid RRF + rerank + unified retrieve
+2026-07-10T19:00:00+08:00	amg	test_count	2246	2407	+161	Cycles 213-220: Laplacian toolkit + 拓扑五族 + phantom detection + Randic/Harary
+2026-07-10T20:00:00+08:00	acs	test_count	2467	2498	+31	Cycle 187: cohort analysis + health forecast
+2026-07-11T19:00:00+08:00	amg	test_count	2407	2485	+78	Cycles 221-223: structure-gated PPR + retrieval-failure logging + select_governed + token-budget context
+2026-07-11T22:30:00+08:00	amg	test_count	2485	2537	+52	Cycle 224: retrieval_quality_eval IR metrics (+31) + select_governed expansion (+21)
+2026-07-11T22:00:00+08:00	cf	test_count	583	613	+30	F42-F45: API route detection + import health
+2026-07-11T22:00:00+08:00	atc	test_count	1209	1222	+13	F187-F188: ConcurrencyManager (mapSettled + withRetry)
+2026-07-12T00:00:00+08:00	amg	test_count	2537	2568	+31	Cycle 225: szeged_index + gutman_index (edge-partition + degree-distance)
+2026-07-12T01:00:00+08:00	acs	test_count	2498	2526	+28	Cycle 188: quality_heatmap + store_health_mutation_impact
+date	project	baseline_tests	baseline_pass	after_tests	after_pass	delta_tests	delta_pass	notes
+2026-07-12	agent-mesh-network	35	35	64	64	+29	+29	Added: stop idempotency, EventEmitter completeness, all MessageType variants, concurrent cap ops, config partial options, Task edge cases
+2026-07-12	edge-agent-runtime	211	211	211	211	0	0	Baseline only (Python, 211 passed, 0.19s)
+2026-07-12	edge-ai-agent	42	42	42	42	0	0	Baseline only (Python, 42 passed 1 skipped)
+2026-07-12	agent-role-orchestrator	186	186	186	186	0	0	Baseline only (Jest, 15 suites)
+2026-07-12	agent-context-analyzer	65	65	65	65	0	0	Baseline only (Jest, 5 suites)
+2026-07-12	agent-self-reflection	53	53	53	53	0	0	Baseline only (vitest, 4 files)
+2026-07-12T22:00:00+08:00	nano-agent	test_count	329	364	+35	F9-F12: run_batch/summary/validate_args/list_tools_by_prefix
+2026-07-12T22:25:00+08:00	amg	test_count	2568	2718	+150	Cycles 226-230: Schultz+Wiener/decision_chain/entropy_filter/subgraph_edge_type/causal_edges
+2026-07-12T23:00:00+08:00	amg	test_count	2718	2754	+36	Cycle 231: spread_activation (Collins & Loftus 1975 BFS propagation)
+2026-07-13T00:00:00+08:00	amg	test_count	2754	2813	+59	Cycle 232: generalized_randic_index(α) + zagreb_indices (parametric R_α family)
+2026-07-13T01:00:00+08:00	acs	test_count	2526	2557	+31	Cycle 189: store_health_alert_config + quality_improvement_tracker (feedback+monitoring layers)
+2026-07-14T00:00:00+08:00	amg	test_count	2904→2983	keep	Cycle 238: forgotten_index() + abc_index() + sum_connectivity_index()
+2026-07-14T00:00:00+08:00	amg	test_pass_rate	100%	keep	All 2983 passing, 0 regressions, 23.01s
+2026-07-13T19:00:00+08:00	amg	test_count	2813	2904	+91	Cycles 233-235: retrieval_quality_eval utilization_rate / temporal_score / crystallize_intents
+2026-07-13T20:00:00+08:00	amg	test_count	2904	2983	+79	Cycle 238: forgotten_index + abc_index + sum_connectivity_index (degree-power trio)
+2026-07-14T01:00:00+08:00	acs	test_count	2557	2593	+36	Cycle 190: store_health_dashboard + quality_improvement_batch_tracker + alert_history
+2026-07-14T21:00:00+08:00	amg	test_count	2983	3128	+145	Cycles 239-242: immutable_store+grep+expand / compact_node 3-level / serialize token-budget / RelationIntegrityChecker
+2026-07-14T22:25:00+08:00	amg	test_count	3128	3165	+37	Cycle 243: semantic_speed_gate + selective_filter (RoMem + Context Engineering)
+2026-07-14T23:00:00+08:00	amg	test_count	2038	2073	+35	Cycle 244: immutable_store reimplementation (fix workspace phantom, LCM-inspired)
+2026-07-15T00:00:00+08:00	amg	test_count	3165	3249	+84	Key Dev 2 cycle 239: ga_index + augmented_zagreb_index + harmonic_index (topological→16 families)
+2026-07-15T01:00:00+08:00	acs	test_count	2593	2636	+43	Key Dev 3 cycle 191: store_health_report_export + quality_decay_model + alert_correlation
+2026-07-15T22:15:00+08:00	amg	test_count	3326	3354	+28	Cycle 249: dual_mode_retrieve + binary_signature (SimHash). Hippocampus-inspired. c751e9d. 235th day.
+2026-07-15T23:00:00+08:00	amg	test_count	3354	3386	+32	Cycle 250: find_duplicate_nodes + deduplicate. SimHash near-dup detection + merge.
+2026-07-16T00:00:00+08:00	amg	test_count	3386	3444	+58	Cycle 251: lorenz_coefficient + redefined_randic_indices + redefined_zagreb_index. 0939b10. 236th day.
+2026-07-16T01:00:00+08:00	acs	test_count	2636	2678	+42	Cycle 192: store_health_diff + alert_prediction + store_health_scorecard. a70a130. 192nd day.
+2026-07-16T22:00:00+08:00	amg	test_count	3444	3621	+177	Cycles 252-255: write_governance_check/safe_supersede/governance_audit (+70) + community_topic_labels/semantic_summary/overview/query_global (+40) + lifecycle_operation_eval (+29) + prospective memory add_intention/check_prospective_cues/fulfill_intention/pending_intentions (+38)
+2026-07-16T22:12:00+08:00	amg	test_count	3621	3656	+35	Cycle 256: drift_search DRIFT-style hybrid search (global→local→refine with RRF merge). 7ac582d. 237th day.
+2026-07-16T23:00:00+08:00	amg	test_count	3656	3682	+26	Cycle 257: (commit 311ba6a, details in key-dev log)
+2026-07-17T00:00:00+08:00	amg	test_count	3682	3721	+39	Cycle 258: query() adaptive routing (auto→basic/global/drift/local/hybrid). _route_query 5 heuristic rules. 841b2b6. 238th day.
+2026-07-17T01:00:00+08:00	acs	test_count	2678	2727	+49	Cycle 193: store_trend_report + alert_prediction_accuracy + scorecard_preset_library. bb124bb. 193rd day.
+2026-07-17T03:00:00+08:00	multi	test_count	7+65	13+69	+6+4	Project testing loop: better-ralph-demo 7→13 tests (+6: complete success path, integration flow, edge cases, truncation, special chars) commit 66eb497 | agent-context-analyzer 65→69 tests (+4: refactor pattern detection, calculateTotalSavings edge cases, token boundary) commit 1267b8d
+2026-07-18T03:00:00+08:00	edge-agent-runtime	test_count	211	244	+33	Greenhouse factory + sensor failure + reasoner edges
+2026-07-18T03:10:00+08:00	agent-mesh-network	test_count	64	108	+44	Config merging + all 7 MeshMessage types + error paths
+2026-07-18T05:00:00+08:00	blog	published	0	1	keep	Knowledge gap detection blog post (~1800 words)
+2026-07-18T21:00:00+08:00	context-forge	test_count	619	663	+44	F46-F48: code complexity (cyclomatic, A-F grade) + file coupling (Jaccard) + tech debt assessment
+2026-07-18T22:00:00+08:00	nano-agent	test_count	415	459	+44	F17-F21: Memory.search_fuzzy + group_by_tag + Agent.add_tool/remove_tool + Memory.deduplicate + Memory.chain_search
+2026-07-18T23:00:00+08:00	atc	test_count	1280	1299	+19	F198-F200: ConcurrencyManager.awaitIdle + Cache.shift + EventBus.hasListeners. F200 milestone 🎯
+2026-07-18T23:10:00+08:00	amg	test_count	3945	3963	+18	Cycle 266: auto_heal_gaps() — orphan rescue + bridge construction + dry_run. 372a6f6. 242nd day.
+2026-07-18T23:30:00+08:00	acs	test_count	2727	2744	+17	Cycle 194: scorecard_preset_recommend + alert_prediction_tuned — self-optimizing analytics
+2026-07-19T00:12:00+08:00	amg	test_count	3963	3995	+32	Cycle 267: redundancy_detect() — 3D analysis (content dups + structural clones + functional dups). 441a53e. 243rd day. Dual-loop quality system complete.
+2026-07-19T01:00:00+08:00	acs	test_count	2744	2763	+19	Cycle 195: scorecard_ensemble — multi-preset consensus scoring + dispersion analysis. 2180a37. 195th day.
+2026-07-19T02:00:00+08:00	knowledge	organization	0	1	keep	MEMORY.md verified consistent. experiments.tsv phantom fixed (13 entries recovered).
+2026-07-19T05:03:00+08:00	blog	published	0	1	keep	MCP Graph Memory Server essay (~2800 words). GitHub Pages live.
+2026-07-19T20:00:00+08:00	research	deep_research	0	1	keep	#018: Production Agent Memory — AgentTether/MemLeak/OpenViking/Supermemory/Cognee/Git-as-memory. Insights #66-70.
+2026-07-19T22:08:00+08:00	amg	test_count	3995	4014	+19	Cycle 268: gap_redundancy_balance() — unified dual-loop health metric. aa7eb6e. 244th day. health_score + balance_ratio + 6 verdicts.
+2026-07-20T00:00:00+08:00	amg	test_count	4014	4034	+20	Cycle 269: auto_consolidate() — redundancy act-loop (detect→consolidate). merge_nodes 5-step dedup fix. 7d1a7f4. 245th day.
+2026-07-20T01:00:00+08:00	acs	test_count	2763	2784	+21	Cycle 196: alert_threshold_sensitivity — delta sweep fragility analysis. 6 per-dimension metrics. aabd36f. 196th day.
+2026-07-20T05:00:00+08:00	blog	published	0	1	keep	Cross-Modal Forgetting (~2800 words). MemLeak IPG taxonomy + three-step safe forgetting. GitHub Pages live.
+2026-07-20T20:00:00+08:00	research	deep_research	0	1	keep	#020: MCP SDK v2 Implementation Patterns — stateless protocol/outputSchema/MRTR/extensions/dual-transport. v2-native amg-mcp blueprint. Insights #81-87.
+2026-07-20T20:18:00+08:00	research	deep_research	0	1	keep	#021: MCP Memory Server Source Analysis — official server=500 lines JSONL+substring. 8 curated tools>9 thin. Resource subscriptions critical. Inspector=primary dev tool. 5-day Phase 1 plan. Insights #88-90.
+2026-07-20T22:00:00+08:00	amg	test_count	4034	4073	+39	Cycle 270: query_explain() — search plan diagnostics. Per-result score decomposition (graph+vector+bm25+recency+centrality). Match quality + execution path + timing. 4b5dd21. 246th day.
+2026-07-20T22:30:00+08:00	nano-agent	test_count	685	709	+24	F43-F44: import_jsonl + union. Set operations for Memory.
+2026-07-20T23:00:00+08:00	nano-agent	test_count	709	732	+23	F45-F46: subtract + to_prompt. Set difference + structured LLM prompt formatter.
+2026-07-21T00:00:00+08:00	amg	test_count	4073	4099	+26	Cycle 271: semantic_cluster_detect() — group-level redundancy via single-linkage clustering. Content clusters (trigram Jaccard) + structural clusters (neighbour Jaccard) + combined clusters. Union-Find O(n²α(n)). 96bf3b7. 247th day.
+2026-07-21T01:00:00+08:00	acs	test_count	2784	2810	+26	Cycle 197: threshold_hysteresis_config — raise/clear threshold bands. set/get/clear/evaluate. Dead band stickiness. Flapping risk detection. Completes fragility remediation loop. 838781d. 197th day.
