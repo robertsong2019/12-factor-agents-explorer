@@ -860,3 +860,81 @@ class Memory:
             "tag_distribution": dict(sorted(tag_counts.items(), key=lambda x: -x[1])),
             "time_span": time_span,
         }
+
+    # ---- F34: Importance histogram ----
+
+    def histogram(self, bins: int = 10) -> Dict[str, Any]:
+        """Distribution histogram of importance scores.
+
+        Args:
+            bins: Number of equal-width bins in [0, 1].
+
+        Returns:
+            Dict with bin_edges, counts, labels, max_bin, min_importance, max_importance.
+        """
+        if not self._entries:
+            return {"bins": [], "counts": [], "max_bin": None,
+                    "min_importance": None, "max_importance": None}
+
+        importances = [e.importance for e in self._entries]
+        lo, hi = 0.0, 1.0
+        width = (hi - lo) / bins
+        edges = [lo + i * width for i in range(bins + 1)]
+        counts = [0] * bins
+
+        for val in importances:
+            idx = min(int((val - lo) / width), bins - 1)
+            counts[idx] += 1
+
+        labels = [f"{edges[i]:.1f}-{edges[i+1]:.1f}" for i in range(bins)]
+        max_idx = counts.index(max(counts)) if counts else None
+
+        return {
+            "bin_edges": [round(e, 4) for e in edges],
+            "counts": counts,
+            "labels": labels,
+            "max_bin": labels[max_idx] if max_idx is not None else None,
+            "min_importance": min(importances),
+            "max_importance": max(importances),
+        }
+
+    # ---- F35: Correlation stats ----
+
+    def correlation_stats(self) -> Dict[str, Any]:
+        """Compute basic correlation statistics for the memory store.
+
+        Returns Pearson correlation between importance and content length,
+        tag frequency stats, and per-tag average importance.
+
+        Returns:
+            Dict with importance_length_r, tag_count, avg_importance_per_tag, total_chars.
+        """
+        if not self._entries:
+            return {"importance_length_r": None, "tag_count": 0,
+                    "avg_importance_per_tag": {}, "total_chars": 0}
+
+        n = len(self._entries)
+        importances = [e.importance for e in self._entries]
+        lengths = [len(e.content) for e in self._entries]
+
+        # Pearson correlation
+        mean_i = sum(importances) / n
+        mean_l = sum(lengths) / n
+        num = sum((importances[i] - mean_i) * (lengths[i] - mean_l) for i in range(n))
+        den_i = (sum((v - mean_i) ** 2 for v in importances)) ** 0.5
+        den_l = (sum((v - mean_l) ** 2 for v in lengths)) ** 0.5
+        r = num / (den_i * den_l) if den_i > 0 and den_l > 0 else 0.0
+
+        # Per-tag average importance
+        tag_imp: Dict[str, List[float]] = {}
+        for e in self._entries:
+            for t in e.tags:
+                tag_imp.setdefault(t, []).append(e.importance)
+        avg_per_tag = {t: round(sum(v) / len(v), 4) for t, v in tag_imp.items()}
+
+        return {
+            "importance_length_r": round(r, 4),
+            "tag_count": len(tag_imp),
+            "avg_importance_per_tag": avg_per_tag,
+            "total_chars": sum(lengths),
+        }
