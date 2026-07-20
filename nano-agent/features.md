@@ -62,6 +62,10 @@
 - [x] **F38**: `Memory.search_in_fields(query, fields)` — field-specific search (content/tags/metadata) with multi-field ranking ✅ 2026-07-20
 - [x] **F39**: `Memory.auto_tag(rules, overwrite)` — keyword-based automatic tagging ✅ 2026-07-20
 
+- [x] **F40**: `Memory.export_jsonl()` — JSON Lines export for streaming/ML pipelines ✅ 2026-07-20
+- [x] **F41**: `Memory.normalize_tags(mapping)` — batch rename/merge tags with dedup ✅ 2026-07-20
+- [x] **F42**: `Memory.entropy()` — Shannon entropy for content & tag diversity ✅ 2026-07-20
+
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
