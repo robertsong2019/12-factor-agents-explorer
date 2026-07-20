@@ -709,3 +709,154 @@ class Memory:
             full_text = context_parts[0] + "\n".join(truncated)
 
         return full_text
+
+    # ---- F31: Export formats ----
+
+    def export_markdown(self, tags: Optional[List[str]] = None) -> str:
+        """Export memories as a markdown document.
+
+        Args:
+            tags: If provided, only export entries with at least one matching tag.
+
+        Returns:
+            Markdown string with header, table of contents, and per-entry sections.
+        """
+        entries = self._filter_by_tags(tags) if tags else self._entries
+        if not entries:
+            return "# Memory Export\n\n_No entries._\n"
+
+        lines = [f"# Memory Export", ""]
+        lines.append(f"_ {len(entries)} entries | exported {datetime.now().strftime('%Y-%m-%d %H:%M')} _")
+        lines.append("")
+
+        # Table of contents
+        lines.append("## Table of Contents")
+        for i, entry in enumerate(entries):
+            title = entry.content[:50].replace("\n", " ")
+            lines.append(f"{i + 1}. {title}")
+        lines.append("")
+
+        # Entries
+        lines.append("## Entries")
+        lines.append("")
+        for i, entry in enumerate(entries):
+            lines.append(f"### {i + 1}. {entry.content[:60]}")
+            lines.append(f"- **Timestamp:** {entry.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+            lines.append(f"- **Importance:** {entry.importance:.2f}")
+            if entry.tags:
+                lines.append(f"- **Tags:** {', '.join(entry.tags)}")
+            if entry.metadata:
+                lines.append(f"- **Metadata:** {json.dumps(entry.metadata, ensure_ascii=False)}")
+            lines.append("")
+            lines.append(entry.content)
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def export_csv(self, tags: Optional[List[str]] = None) -> str:
+        """Export memories as CSV string.
+
+        Columns: index,timestamp,importance,tags,content,metadata
+        """
+        entries = self._filter_by_tags(tags) if tags else self._entries
+        lines = ["index,timestamp,importance,tags,content,metadata"]
+
+        for i, entry in enumerate(entries):
+            ts = entry.timestamp.strftime('%Y-%m-%dT%H:%M:%S')
+            tags_str = ";".join(entry.tags) if entry.tags else ""
+            # Escape CSV: wrap content and metadata in quotes, escape inner quotes
+            content_escaped = entry.content.replace('"', '""')
+            meta_escaped = json.dumps(entry.metadata, ensure_ascii=False).replace('"', '""')
+            lines.append(f'{i},{ts},{entry.importance:.4f},"{tags_str}","{content_escaped}","{meta_escaped}"')
+
+        return "\n".join(lines)
+
+    def _filter_by_tags(self, tags: List[str]) -> List[MemoryEntry]:
+        """Return entries matching at least one of the given tags."""
+        tag_set = set(tags)
+        return [e for e in self._entries if tag_set & set(e.tags)]
+
+    # ---- F32: Similarity clustering ----
+
+    def cluster(self, threshold: float = 0.5, limit: int = 0) -> Dict[int, List[MemoryEntry]]:
+        """Group similar memories into clusters using greedy similarity.
+
+        Uses SequenceMatcher ratio on content. Each entry joins the first
+        cluster whose average similarity exceeds threshold. Unmatched entries
+        form singleton clusters.
+
+        Args:
+            threshold: Similarity ratio (0-1) to consider entries as same cluster.
+            limit: Max entries to consider (0 = all).
+
+        Returns:
+            Dict mapping cluster_id to list of MemoryEntry.
+        """
+        entries = self._entries[:limit] if limit > 0 else self._entries
+        if not entries:
+            return {}
+
+        clusters: List[List[MemoryEntry]] = []
+
+        for entry in entries:
+            placed = False
+            for cluster in clusters:
+                # Average similarity to cluster members
+                sims = [
+                    SequenceMatcher(None, entry.content, m.content).ratio()
+                    for m in cluster
+                ]
+                avg_sim = sum(sims) / len(sims)
+                if avg_sim >= threshold:
+                    cluster.append(entry)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([entry])
+
+        return {i: c for i, c in enumerate(clusters)}
+
+    # ---- F33: Compact summary ----
+
+    def compact_summary(self, max_entries: int = 5) -> Dict[str, Any]:
+        """Produce a compact summary of the memory store.
+
+        Returns top entries by importance, tag distribution, and time span.
+        Useful for quick inspection or feeding to an LLM for higher-level synthesis.
+
+        Args:
+            max_entries: Number of top-important entries to include.
+
+        Returns:
+            Dict with keys: total, top_entries, tag_distribution, time_span.
+        """
+        total = len(self._entries)
+        top = self.top_important(max_entries)
+
+        # Tag distribution
+        tag_counts: Dict[str, int] = {}
+        for e in self._entries:
+            for t in e.tags:
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+
+        # Time span
+        if self._entries:
+            timestamps = [e.timestamp for e in self._entries]
+            time_span = {
+                "earliest": min(timestamps).isoformat(),
+                "latest": max(timestamps).isoformat(),
+            }
+        else:
+            time_span = None
+
+        return {
+            "total": total,
+            "top_entries": [
+                {"content": e.content, "importance": e.importance, "tags": e.tags}
+                for e in top
+            ],
+            "tag_distribution": dict(sorted(tag_counts.items(), key=lambda x: -x[1])),
+            "time_span": time_span,
+        }
