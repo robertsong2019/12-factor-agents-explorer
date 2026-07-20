@@ -967,3 +967,76 @@ class Memory:
         max_count = sorted_tags[0][1] if sorted_tags else 1
 
         return {t: round(c / max_count, 4) for t, c in sorted_tags}
+
+    # ---- F38: Field-specific search ----
+
+    def search_in_fields(self, query: str, fields: List[str], limit: int = 5) -> List[MemoryEntry]:
+        """Search within specific fields only.
+
+        Args:
+            query: Substring to search for.
+            fields: List of field names to search. Valid: 'content', 'tags', 'metadata'.
+            limit: Max results (0 = all matches).
+
+        Returns:
+            List of matching MemoryEntry, ranked by number of field matches.
+        """
+        query_lower = query.lower()
+        scored: List[Tuple[int, MemoryEntry]] = []
+
+        for entry in self._entries:
+            score = 0
+            for field in fields:
+                if field == "content":
+                    if query_lower in entry.content.lower():
+                        score += 1
+                elif field == "tags":
+                    if any(query_lower in t.lower() for t in entry.tags):
+                        score += 1
+                elif field == "metadata":
+                    meta_str = json.dumps(entry.metadata, ensure_ascii=False).lower()
+                    if query_lower in meta_str:
+                        score += 1
+            if score > 0:
+                scored.append((score, entry))
+
+        # Sort by score descending, then by timestamp descending
+        scored.sort(key=lambda x: (-x[0], -x[1].timestamp.timestamp()))
+        results = [e for _, e in scored]
+        return results[:limit] if limit > 0 else results
+
+    # ---- F39: Auto-tagging ----
+
+    def auto_tag(self, rules: Dict[str, List[str]], overwrite: bool = False) -> int:
+        """Automatically assign tags based on keyword rules.
+
+        Args:
+            rules: Dict mapping tag name to list of keywords. If any keyword
+                   appears in content (case-insensitive), the tag is applied.
+            overwrite: If True, replace existing tags. If False, append.
+
+        Returns:
+            Number of entries that received at least one new tag.
+        """
+        tagged_count = 0
+        for entry in self._entries:
+            new_tags: List[str] = []
+            content_lower = entry.content.lower()
+            for tag, keywords in rules.items():
+                if any(kw.lower() in content_lower for kw in keywords):
+                    if tag not in new_tags:
+                        new_tags.append(tag)
+
+            if new_tags:
+                if overwrite:
+                    entry.tags = new_tags
+                else:
+                    for t in new_tags:
+                        if t not in entry.tags:
+                            entry.tags.append(t)
+                tagged_count += 1
+
+        if self.persistence_path:
+            self._save()
+
+        return tagged_count
