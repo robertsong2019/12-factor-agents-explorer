@@ -51,6 +51,17 @@
 - [x] **F29**: `Memory.sample(n, weighted)` — importance-weighted random sampling ✅ 2026-07-19
 - [x] **F30**: `Memory.timeline(bucket)` — time-bucketed distribution (hour/day/week/month) ✅ 2026-07-19
 
+### Export & Analytics
+- [x] **F31**: `Memory.export_markdown()` / `Memory.export_csv()` — structured export with tag filtering ✅ 2026-07-20
+- [x] **F32**: `Memory.cluster(threshold)` — greedy similarity clustering using SequenceMatcher ✅ 2026-07-20
+- [x] **F33**: `Memory.compact_summary(max_entries)` — top entries + tag distribution + time span ✅ 2026-07-20
+- [x] **F34**: `Memory.histogram(bins)` — importance distribution histogram ✅ 2026-07-20
+- [x] **F35**: `Memory.correlation_stats()` — importance-length Pearson r + per-tag averages ✅ 2026-07-20
+- [x] **F36**: `Agent.conversation_stats()` — message counts by role, avg length, est tokens ✅ 2026-07-20
+- [x] **F37**: `Memory.tag_cloud(min_count, max_tags)` — normalized frequency-weighted tag cloud ✅ 2026-07-20
+- [x] **F38**: `Memory.search_in_fields(query, fields)` — field-specific search (content/tags/metadata) with multi-field ranking ✅ 2026-07-20
+- [x] **F39**: `Memory.auto_tag(rules, overwrite)` — keyword-based automatic tagging ✅ 2026-07-20
+
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
@@ -62,3 +73,7 @@
 **Round 8:** F24-F25 — Filter, weighted search ✅ 2026-07-19
 **Round 9:** F26-F27 — Paginate, diff ✅ 2026-07-19
 **Round 10:** F28-F30 — Intersect, sample, timeline ✅ 2026-07-19
+**Round 11:** F31-F33 — Export formats, cluster, compact_summary ✅ 2026-07-20
+**Round 12:** F34-F35 — Histogram, correlation_stats ✅ 2026-07-20
+**Round 13:** F36-F37 — Conversation_stats, tag_cloud ✅ 2026-07-20
+**Round 14:** F38-F39 — Search_in_fields, auto_tag ✅ 2026-07-20
