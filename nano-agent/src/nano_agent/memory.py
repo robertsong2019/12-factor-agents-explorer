@@ -1102,6 +1102,89 @@ class Memory:
 
         return changed
 
+    # ---- F43: JSONL import ----
+
+    def import_jsonl(self, data: str, merge: bool = True) -> int:
+        """Import memories from JSON Lines string (complement to export_jsonl).
+
+        Each line should be a self-contained JSON object with at least a
+        ``content`` key. Lines that are empty, invalid JSON, or missing
+        ``content`` are silently skipped.
+
+        Args:
+            data: JSONL string (one JSON object per line).
+            merge: If True, append to existing entries. If False, replace.
+
+        Returns:
+            Number of entries successfully imported.
+        """
+        if not isinstance(data, str):
+            return 0
+
+        if not merge:
+            self._entries.clear()
+
+        count = 0
+        for line in data.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(item, dict) or "content" not in item:
+                continue
+            try:
+                entry = MemoryEntry(
+                    content=item["content"],
+                    timestamp=datetime.fromisoformat(item["timestamp"]) if isinstance(item.get("timestamp"), str) else datetime.now(),
+                    metadata=item.get("metadata", {}),
+                    tags=item.get("tags", []),
+                    importance=item.get("importance", 0.5),
+                )
+                self._entries.append(entry)
+                count += 1
+            except (KeyError, ValueError):
+                continue
+
+        if len(self._entries) > self.max_entries:
+            self._entries = self._entries[-self.max_entries:]
+
+        if count > 0:
+            self._save()
+        return count
+
+    # ---- F44: Union (set union of two Memory stores) ----
+
+    def union(self, other: 'Memory') -> 'Memory':
+        """Return a new Memory containing entries from both stores.
+
+        Content-based deduplication: if an entry exists in both stores
+        (by content), the entry from ``self`` is kept (preserving its
+        metadata, tags, and importance).
+
+        Returns:
+            A new Memory instance.
+        """
+        result = Memory(max_entries=self.max_entries)
+        seen_contents: set = set()
+
+        for entry in self._entries:
+            if entry.content not in seen_contents:
+                result._entries.append(copy.deepcopy(entry))
+                seen_contents.add(entry.content)
+
+        for entry in other._entries:
+            if entry.content not in seen_contents:
+                result._entries.append(copy.deepcopy(entry))
+                seen_contents.add(entry.content)
+
+        if len(result._entries) > result.max_entries:
+            result._entries = result._entries[-result.max_entries:]
+
+        return result
+
     # ---- F42: Shannon entropy ----
 
     def entropy(self) -> Dict[str, Any]:

@@ -66,6 +66,9 @@
 - [x] **F41**: `Memory.normalize_tags(mapping)` — batch rename/merge tags with dedup ✅ 2026-07-20
 - [x] **F42**: `Memory.entropy()` — Shannon entropy for content & tag diversity ✅ 2026-07-20
 
+- [x] **F43**: `Memory.import_jsonl()` — Import from JSON Lines format, round-trip with F40 export_jsonl ✅ 2026-07-20
+- [x] **F44**: `Memory.union(other)` — Set union returning new Memory, content-based dedup preserving self entries ✅ 2026-07-20
+
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅

@@ -18,3 +18,4 @@ timestamp	commit	metric	value	status	description
 2026-07-20T21:15	7d9f4bb	test_count	636	keep	F36-F37: Agent.conversation_stats() + Memory.tag_cloud() (+15 tests)
 2026-07-20T21:20	16d0708	test_count	657	keep	F38-F39: search_in_fields() + auto_tag(rules) (+21 tests)
 2026-07-20T22:10+08:00	c3ea55e	test_count	657→685/+28	keep	F40 export_jsonl (JSONL streaming format) + F41 normalize_tags (batch rename/merge with dedup) + F42 entropy (Shannon diversity metric for content & tags)
+2026-07-20T22:30+08:00	e759040	test_count	685→709/+24	keep	F43 import_jsonl (JSONL round-trip import, merge/replace mode) + F44 union(other) (set union with content-based dedup, returns new Memory)
