@@ -258,3 +258,34 @@ class Agent:
         before = len(self.tools)
         self.tools = [t for t in self.tools if t.name != name]
         return len(self.tools) < before
+
+    def conversation_stats(self) -> Dict[str, Any]:
+        """Statistics about the current conversation history.
+
+        Returns message counts by role, average message length, and tool usage.
+        """
+        history = self._conversation_history
+        if not history:
+            return {"total_messages": 0, "by_role": {}, "avg_length": 0,
+                    "tool_calls": 0, "est_tokens": 0}
+
+        by_role: Dict[str, int] = {}
+        total_chars = 0
+        tool_calls = 0
+
+        for msg in history:
+            role = msg.get("role", "unknown")
+            by_role[role] = by_role.get(role, 0) + 1
+            content = msg.get("content", "")
+            total_chars += len(content)
+            # Detect tool calls in assistant messages
+            if role == "assistant" and "tool_call" in content.lower():
+                tool_calls += 1
+
+        return {
+            "total_messages": len(history),
+            "by_role": by_role,
+            "avg_length": round(total_chars / len(history), 1),
+            "tool_calls": tool_calls,
+            "est_tokens": total_chars // 4,  # rough estimate
+        }

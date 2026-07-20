@@ -938,3 +938,32 @@ class Memory:
             "avg_importance_per_tag": avg_per_tag,
             "total_chars": sum(lengths),
         }
+
+    # ---- F37: Tag cloud ----
+
+    def tag_cloud(self, min_count: int = 1, max_tags: int = 50) -> Dict[str, float]:
+        """Build a normalized tag cloud (weight 0-1 based on frequency).
+
+        Args:
+            min_count: Minimum occurrences to include.
+            max_tags: Maximum number of tags to return (sorted by frequency).
+
+        Returns:
+            Dict mapping tag to weight (0.0-1.0), where 1.0 = most frequent.
+        """
+        counts: Dict[str, int] = {}
+        for e in self._entries:
+            for t in e.tags:
+                counts[t] = counts.get(t, 0) + 1
+
+        # Filter by min_count
+        filtered = {t: c for t, c in counts.items() if c >= min_count}
+
+        if not filtered:
+            return {}
+
+        # Sort by count descending, take top max_tags
+        sorted_tags = sorted(filtered.items(), key=lambda x: -x[1])[:max_tags]
+        max_count = sorted_tags[0][1] if sorted_tags else 1
+
+        return {t: round(c / max_count, 4) for t, c in sorted_tags}
