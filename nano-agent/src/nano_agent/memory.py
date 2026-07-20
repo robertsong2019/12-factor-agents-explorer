@@ -1040,3 +1040,117 @@ class Memory:
             self._save()
 
         return tagged_count
+
+    # ---- F40: JSONL export ----
+
+    def export_jsonl(self, tags: Optional[List[str]] = None) -> str:
+        """Export memories as JSON Lines (one JSON object per line).
+
+        Each line is a self-contained JSON object, making this format ideal
+        for streaming pipelines, log ingestion, and ML data loading.
+
+        Args:
+            tags: If provided, only export entries with at least one matching tag.
+
+        Returns:
+            Newline-separated JSON strings (no trailing newline).
+        """
+        entries = self._filter_by_tags(tags) if tags else self._entries
+        if not entries:
+            return ""
+        return "\n".join(
+            json.dumps(entry.to_dict(), ensure_ascii=False) for entry in entries
+        )
+
+    # ---- F41: Tag normalization ----
+
+    def normalize_tags(self, mapping: Dict[str, str]) -> int:
+        """Batch rename or merge tags across all entries.
+
+        For each entry, any tag found in ``mapping`` is replaced with its
+        corresponding value. This is useful for consolidating variants
+        (e.g. {"bug": "issue", "bugs": "issue"}) or fixing typos.
+
+        After remapping, duplicate tags within a single entry are deduplicated
+        (preserving first occurrence order).
+
+        Args:
+            mapping: Dict of old_tag -> new_tag.
+
+        Returns:
+            Number of entries whose tag list changed.
+        """
+        if not mapping:
+            return 0
+
+        changed = 0
+        for entry in self._entries:
+            original = list(entry.tags)
+            new_tags: List[str] = []
+            seen: set = set()
+            for tag in entry.tags:
+                resolved = mapping.get(tag, tag)
+                if resolved not in seen:
+                    new_tags.append(resolved)
+                    seen.add(resolved)
+            if new_tags != original:
+                entry.tags = new_tags
+                changed += 1
+
+        if changed > 0 and self.persistence_path:
+            self._save()
+
+        return changed
+
+    # ---- F42: Shannon entropy ----
+
+    def entropy(self) -> Dict[str, Any]:
+        """Compute Shannon entropy of memory content as a diversity metric.
+
+        Treats each entry's content as a "token" and computes entropy over
+        the distribution of content values. Higher entropy = more diverse
+        memory store; entropy near 0 = highly repetitive.
+
+        Also computes tag-level entropy and character-level statistics.
+
+        Returns:
+            Dict with content_entropy, tag_entropy, unique_contents,
+            unique_tags, total_entries.
+        """
+        import math
+
+        n = len(self._entries)
+        if n == 0:
+            return {"content_entropy": 0.0, "tag_entropy": 0.0,
+                    "unique_contents": 0, "unique_tags": 0, "total_entries": 0}
+
+        # Content entropy (by exact content match)
+        content_counts: Dict[str, int] = {}
+        for e in self._entries:
+            content_counts[e.content] = content_counts.get(e.content, 0) + 1
+
+        def _shannon(counts: Dict[str, int], total: int) -> float:
+            h = 0.0
+            for c in counts.values():
+                if c > 0:
+                    p = c / total
+                    h -= p * math.log2(p)
+            return round(h, 4)
+
+        content_h = _shannon(content_counts, n)
+
+        # Tag entropy
+        tag_counts: Dict[str, int] = {}
+        for e in self._entries:
+            for t in e.tags:
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+        total_tags = sum(tag_counts.values())
+        tag_h = _shannon(tag_counts, total_tags) if total_tags > 0 else 0.0
+
+        return {
+            "content_entropy": content_h,
+            "tag_entropy": tag_h,
+            "unique_contents": len(content_counts),
+            "unique_tags": len(tag_counts),
+            "total_entries": n,
+        }

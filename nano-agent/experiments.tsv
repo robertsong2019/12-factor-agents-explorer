@@ -10,3 +10,10 @@ timestamp	commit	metric	value	status	description
 2026-07-18T22:10+08:00	5b2858b	test_count	415→440/+25	keep	nano-agent: F17 search_fuzzy (difflib SequenceMatcher, threshold+sorted) + F18 group_by_tag (multi-tag grouping, _untagged bucket) + F19 Agent.add_tool/remove_tool (runtime dynamic tool mgmt). 25 new tests, zero regressions.
 2026-07-18T22:10	F20	test_count	440→459	keep	nano-agent: Memory.deduplicate(threshold) — similarity-based dedup using SequenceMatcher, preserves earliest entry (+10 tests)
 2026-07-18T22:10	F21	test_count	459/459	keep	nano-agent: Memory.chain_search(queries) — multi-query merged search with match-count ranking + optional fuzzy fallback (+9 tests)
+2026-07-19T22:10+08:00	42d85af	test_count	459→487/+28	keep	nano-agent: F22 snapshot/restore (deep copy undo, corrupt-entry skip) + F23 search_regex (IGNORECASE, anchored/email/unicode patterns)
+2026-07-19T22:20+08:00	f5c5eec	test_count	487→511/+24	keep	nano-agent: F24 filter(predicate) functional filtering + F25 weighted_search (content+importance+recency 3-factor ranking with custom weights)
+2026-07-19T22:30+08:00	2c46c77	test_count	511→535/+24	keep	nano-agent: F26 paginate (page/page_size/asc/desc with total_pages) + F27 diff (added/removed/common, symmetric complement)
+2026-07-20T21:05	25521eb	test_count	602	keep	F31-F33: export_markdown/export_csv + cluster + compact_summary (+43 tests)
+2026-07-20T21:10	1aa73db	test_count	621	keep	F34-F35: histogram(bins) + correlation_stats() (+19 tests)
+2026-07-20T21:15	7d9f4bb	test_count	636	keep	F36-F37: Agent.conversation_stats() + Memory.tag_cloud() (+15 tests)
+2026-07-20T21:20	16d0708	test_count	657	keep	F38-F39: search_in_fields() + auto_tag(rules) (+21 tests)
