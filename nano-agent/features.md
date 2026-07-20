@@ -69,6 +69,9 @@
 - [x] **F43**: `Memory.import_jsonl()` — Import from JSON Lines format, round-trip with F40 export_jsonl ✅ 2026-07-20
 - [x] **F44**: `Memory.union(other)` — Set union returning new Memory, content-based dedup preserving self entries ✅ 2026-07-20
 
+- [x] **F45**: `Memory.subtract(other)` — Set difference returning new Memory (complement to union, content-based removal) ✅ 2026-07-20
+- [x] **F46**: `Memory.to_prompt(include_metadata, include_tags, max_entries)` — Structured LLM prompt formatter (importance-sorted, numbered entries with tags/metadata/timestamp) ✅ 2026-07-20
+
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
