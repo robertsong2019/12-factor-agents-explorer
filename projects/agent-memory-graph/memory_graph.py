@@ -6794,6 +6794,315 @@ class MemoryGraph:
                 })
         return results
 
+    def query_explain(self, query: str, embedding: list[float] = None,
+                     limit: int = 10, fusion: str = "adaptive",
+                     kge_weight: float = 0.0) -> dict:
+        """Query explanation: detailed search plan + per-result score decomposition.
+
+        Returns the same ranked results as search_hybrid, plus a full diagnostic
+        plan showing how each retrieval path contributed to every result.
+
+        Args:
+            query: Text query
+            embedding: Optional query vector
+            limit: Result count
+            fusion: Fusion mode ("adaptive" | "rrf" | "wrrf")
+            kge_weight: KGE path weight
+
+        Returns:
+            {
+                "query": str,
+                "classification": {type, specificity, needs_retrieval},
+                "weights": {bm25, vector, graph, kge},
+                "fusion_mode": str,
+                "k_constant": int,
+                "paths": [
+                    {"name": "bm25", "status": "active"|"skipped"|"fallback",
+                     "result_count": int, "top_ids": [str], "elapsed_ms": float},
+                    ...],
+                "entropy_refinement": {applied: bool, original_weights, refined_weights} | None,
+                "consensus_bonus": bool,
+                "results": [
+                    {"node_id", "label", "kind", "score", "sources",
+                     "score_breakdown": {bm25: float, vector: float, graph: float, kge: float,
+                                      consensus_bonus: float, raw_rrf: float}},
+                    ...],
+                "summary": {total_candidates, unique_sources_used, top_score, bottom_score}
+            }
+        """
+        import time as _time
+        t0 = _time.monotonic()
+
+        known_labels = [r[0] for r in self.conn.execute(
+            "SELECT DISTINCT label FROM nodes LIMIT 200"
+        ).fetchall()]
+        profile = self._classify_query(query, known_labels)
+
+        plan = {
+            "query": query,
+            "classification": {
+                "type": profile["type"],
+                "specificity": profile["specificity"],
+                "needs_retrieval": profile.get("needs_retrieval", True),
+            },
+            "weights": {},
+            "fusion_mode": fusion,
+            "k_constant": profile["k"] if fusion == "adaptive" else 60,
+            "paths": [],
+            "entropy_refinement": None,
+            "consensus_bonus": fusion in ("adaptive", "wrrf"),
+            "results": [],
+            "summary": {"total_candidates": 0, "unique_sources_used": set(),
+                         "top_score": 0.0, "bottom_score": 0.0},
+        }
+
+        # Trivial gate
+        if not profile.get("needs_retrieval", True):
+            plan["summary"]["total_candidates"] = 0
+            plan["summary"]["unique_sources_used"] = []
+            return plan
+
+        w_bm25, w_vec, w_graph = profile["weights"]
+        K = profile["k"] if fusion == "adaptive" else 60
+        plan["weights"] = {"bm25": w_bm25, "vector": w_vec, "graph": w_graph,
+                            "kge": kge_weight}
+
+        # Per-node per-path score tracking
+        node_path_scores: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        node_sources_map: dict[str, set] = defaultdict(set)
+
+        route_rankings: list[list[str]] = []
+        route_scores_list: list[dict[str, float]] = []
+
+        # Path 1: BM25
+        t1 = _time.monotonic()
+        text_results = self.search_bm25(query, limit=limit * 3)
+        bm25_status = "active"
+        if not text_results:
+            text_results = [
+                {"node_id": r["node"].id, "label": r["node"].label,
+                 "kind": r["node"].kind, "score": r["score"],
+                 "matched_fields": r["matched_fields"]}
+                for r in self.search_unified(query, limit=limit * 3)
+            ]
+            bm25_status = "fallback"
+        t1_elapsed = (_time.monotonic() - t1) * 1000
+        text_ranking = [item["node_id"] for item in text_results]
+        route_rankings.append(text_ranking)
+        text_raw_scores = {item["node_id"]: item.get("score", 0.0) for item in text_results}
+        route_scores_list.append(text_raw_scores)
+        for rank, item in enumerate(text_results):
+            nid = item["node_id"]
+            s = w_bm25 / (K + rank + 1)
+            node_path_scores[nid]["bm25"] = s
+            node_sources_map[nid].add("bm25" if "bm25" in item.get("matched_fields", []) else "text")
+        plan["paths"].append({
+            "name": "bm25", "status": bm25_status,
+            "result_count": len(text_results),
+            "top_ids": text_ranking[:5],
+            "elapsed_ms": round(t1_elapsed, 2),
+        })
+
+        # Path 2: Vector
+        vec_ranking = []
+        vec_raw_scores = {}
+        t2 = _time.monotonic()
+        if embedding is not None:
+            try:
+                vec_results = self.search_similar(embedding, limit=limit * 3)
+                vec_ranking = [item["node_id"] for item in vec_results]
+                vec_raw_scores = {item["node_id"]: item.get("score", item.get("distance", 0.0))
+                                  for item in vec_results}
+                route_rankings.append(vec_ranking)
+                route_scores_list.append(vec_raw_scores)
+                for rank, item in enumerate(vec_results):
+                    nid = item["node_id"]
+                    s = w_vec / (K + rank + 1)
+                    node_path_scores[nid]["vector"] = s
+                    node_sources_map[nid].add("vector")
+                t2_elapsed = (_time.monotonic() - t2) * 1000
+                plan["paths"].append({
+                    "name": "vector", "status": "active",
+                    "result_count": len(vec_results),
+                    "top_ids": vec_ranking[:5],
+                    "elapsed_ms": round(t2_elapsed, 2),
+                })
+            except (ImportError, ValueError):
+                route_rankings.append([])
+                route_scores_list.append({})
+                plan["paths"].append({"name": "vector", "status": "skipped",
+                                       "result_count": 0, "top_ids": [],
+                                       "elapsed_ms": 0.0})
+        else:
+            route_rankings.append([])
+            route_scores_list.append({})
+            plan["paths"].append({"name": "vector", "status": "skipped",
+                                   "result_count": 0, "top_ids": [],
+                                   "elapsed_ms": 0.0})
+
+        # Path 3: Graph
+        graph_ranking = []
+        graph_raw_scores = {}
+        t3 = _time.monotonic()
+        if text_results:
+            seed_id = text_results[0]["node_id"]
+            if self.has_node(seed_id):
+                neighbor_rows = self.conn.execute(
+                    "SELECT n.id, e.weight as ew FROM nodes n"
+                    " JOIN edges e ON n.id=e.target WHERE e.source=?"
+                    " ORDER BY e.weight DESC",
+                    (seed_id,)
+                ).fetchall()
+                graph_ranking = [r["id"] for r in neighbor_rows]
+                max_ew = max((float(r["ew"] or 1.0) for r in neighbor_rows), default=1.0)
+                graph_raw_scores = {
+                    r["id"]: float(r["ew"] or 1.0) / max_ew for r in neighbor_rows
+                }
+                route_rankings.append(graph_ranking)
+                route_scores_list.append(graph_raw_scores)
+                for rank, nid in enumerate(graph_ranking):
+                    ew_bonus = 1.0 + graph_raw_scores.get(nid, 0.0)
+                    s = w_graph * ew_bonus / (K + rank + 1)
+                    node_path_scores[nid]["graph"] = s
+                    node_sources_map[nid].add("graph")
+                t3_elapsed = (_time.monotonic() - t3) * 1000
+                plan["paths"].append({
+                    "name": "graph", "status": "active",
+                    "result_count": len(graph_ranking),
+                    "top_ids": graph_ranking[:5],
+                    "elapsed_ms": round(t3_elapsed, 2),
+                })
+            else:
+                route_rankings.append([])
+                route_scores_list.append({})
+                plan["paths"].append({"name": "graph", "status": "skipped",
+                                       "result_count": 0, "top_ids": [],
+                                       "elapsed_ms": round((_time.monotonic() - t3) * 1000, 2)})
+        else:
+            route_rankings.append([])
+            route_scores_list.append({})
+            plan["paths"].append({"name": "graph", "status": "skipped",
+                                   "result_count": 0, "top_ids": [],
+                                   "elapsed_ms": 0.0})
+
+        # Path 4: KGE
+        kge_ranking = []
+        if kge_weight > 0 and getattr(self, '_kge_trained', False):
+            t4 = _time.monotonic()
+            seed_id = text_results[0]["node_id"] if text_results else None
+            if seed_id and self.has_node(seed_id):
+                kge_results = self._kge_neighbors(seed_id, limit=limit * 3)
+                kge_ranking = [r["node_id"] for r in kge_results]
+                for rank, nid in enumerate(kge_ranking):
+                    node_path_scores[nid]["kge"] = kge_weight / (K + rank + 1)
+                    node_sources_map[nid].add("kge")
+                t4_elapsed = (_time.monotonic() - t4) * 1000
+                plan["paths"].append({
+                    "name": "kge", "status": "active",
+                    "result_count": len(kge_ranking),
+                    "top_ids": kge_ranking[:5],
+                    "elapsed_ms": round(t4_elapsed, 2),
+                })
+            else:
+                plan["paths"].append({"name": "kge", "status": "skipped",
+                                       "result_count": 0, "top_ids": [],
+                                       "elapsed_ms": 0.0})
+        else:
+            plan["paths"].append({"name": "kge", "status": "skipped",
+                                   "result_count": 0, "top_ids": [],
+                                   "elapsed_ms": 0.0})
+
+        # Entropy refinement
+        effective_w = [w_bm25, w_vec, w_graph]
+        if fusion == "adaptive" and len(route_rankings) >= 2:
+            entropy_w = self._entropy_refine(route_rankings, [w_bm25, w_vec, w_graph])
+            skew_w = self._score_skewness(route_scores_list)
+            refined = [0.6 * w + 0.2 * e + 0.2 * s
+                        for w, e, s in zip([w_bm25, w_vec, w_graph], entropy_w, skew_w)]
+            if max(abs(r - o) for r, o in zip(refined, [w_bm25, w_vec, w_graph])) > 0.05:
+                plan["entropy_refinement"] = {
+                    "applied": True,
+                    "original_weights": {"bm25": round(w_bm25, 4), "vector": round(w_vec, 4), "graph": round(w_graph, 4)},
+                    "refined_weights": {"bm25": round(refined[0], 4), "vector": round(refined[1], 4), "graph": round(refined[2], 4)},
+                }
+                effective_w = refined
+                # Recalculate with refined weights
+                node_path_scores = defaultdict(lambda: defaultdict(float))
+                for rank, nid in enumerate(text_ranking):
+                    node_path_scores[nid]["bm25"] = refined[0] / (K + rank + 1)
+                if vec_ranking:
+                    for rank, nid in enumerate(vec_ranking):
+                        node_path_scores[nid]["vector"] = refined[1] / (K + rank + 1)
+                if graph_ranking:
+                    for rank, nid in enumerate(graph_ranking):
+                        ew_bonus = 1.0 + graph_raw_scores.get(nid, 0.0)
+                        node_path_scores[nid]["graph"] = refined[2] * ew_bonus / (K + rank + 1)
+            else:
+                plan["entropy_refinement"] = {"applied": False, "original_weights": None, "refined_weights": None}
+        else:
+            plan["entropy_refinement"] = None
+
+        # WRRF recalculates with confidence weighting
+        if fusion == "wrrf":
+            node_path_scores = defaultdict(lambda: defaultdict(float))
+            for route_idx, raw_scores in enumerate(route_scores_list):
+                if not raw_scores:
+                    continue
+                max_s = max(raw_scores.values()) if raw_scores else 1.0
+                if max_s <= 0:
+                    continue
+                path_name = ["bm25", "vector", "graph"][route_idx] if route_idx < 3 else f"path_{route_idx}"
+                for rank, nid in enumerate(route_rankings[route_idx]):
+                    conf = raw_scores.get(nid, 0.0) / max_s
+                    node_path_scores[nid][path_name] = conf / (K + rank + 1)
+
+        # Build final results with per-node breakdown
+        all_nids = set(node_path_scores.keys())
+        final_scores = {}
+        for nid in all_nids:
+            raw_rrf = sum(node_path_scores[nid].values())
+            # Consensus bonus
+            n_src = len(node_sources_map[nid])
+            bonus = 0.0
+            if fusion in ("adaptive", "wrrf") and n_src > 1:
+                bonus = raw_rrf * 0.15 * (n_src - 1)
+            final_scores[nid] = raw_rrf + bonus
+
+        ranked = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+        results = []
+        for nid, score in ranked:
+            node = self.get_node(nid)
+            if not node:
+                continue
+            breakdown = dict(node_path_scores[nid])
+            n_src = len(node_sources_map[nid])
+            bonus = 0.0
+            if fusion in ("adaptive", "wrrf") and n_src > 1:
+                bonus = sum(breakdown.values()) * 0.15 * (n_src - 1)
+            breakdown["consensus_bonus"] = round(bonus, 6)
+            breakdown["raw_rrf"] = round(sum(node_path_scores[nid].values()), 6)
+            results.append({
+                "node_id": nid,
+                "label": node.label,
+                "kind": node.kind,
+                "score": round(score, 6),
+                "sources": sorted(node_sources_map[nid]),
+                "score_breakdown": {k: round(v, 6) for k, v in breakdown.items()},
+            })
+
+        all_sources = set()
+        for s in node_sources_map.values():
+            all_sources.update(s)
+        plan["results"] = results
+        plan["summary"] = {
+            "total_candidates": len(all_nids),
+            "unique_sources_used": sorted(all_sources),
+            "top_score": round(results[0]["score"], 6) if results else 0.0,
+            "bottom_score": round(results[-1]["score"], 6) if results else 0.0,
+            "total_elapsed_ms": round((_time.monotonic() - t0) * 1000, 2),
+        }
+        return plan
+
     def remove_embedding(self, node_id: str) -> bool:
         """删除节点的向量嵌入。返回是否实际删除了。"""
         self._ensure_rowid_table()
