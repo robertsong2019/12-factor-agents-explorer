@@ -1185,6 +1185,60 @@ class Memory:
 
         return result
 
+    # ---- F45: Set difference (subtract) ----
+
+    def subtract(self, other: 'Memory') -> 'Memory':
+        """Return a new Memory containing entries from ``self`` that are NOT in ``other``.
+
+        Content-based comparison: an entry is removed if its content matches
+        any entry in *other*.
+
+        Returns:
+            A new Memory instance with the difference set.
+        """
+        other_contents = {e.content for e in other._entries}
+        result = Memory(max_entries=self.max_entries)
+        for entry in self._entries:
+            if entry.content not in other_contents:
+                result._entries.append(copy.deepcopy(entry))
+        return result
+
+    # ---- F46: Structured prompt formatter ----
+
+    def to_prompt(self, include_metadata: bool = True, include_tags: bool = True, max_entries: int = 20) -> str:
+        """Format memory entries as a structured prompt block for LLM consumption.
+
+        Unlike ``to_context()`` (which is a simple timestamped list), this
+        produces a richer, structured format with importance scores, tags,
+        and metadata — designed to be injected into system prompts.
+
+        Args:
+            include_metadata: Include metadata dict in each entry line.
+            include_tags: Include tags in each entry line.
+            max_entries: Maximum entries to include (sorted by importance desc).
+
+        Returns:
+            A formatted string ready for prompt injection.
+        """
+        if not self._entries:
+            return ""
+
+        sorted_entries = sorted(self._entries, key=lambda e: e.importance, reverse=True)
+        selected = sorted_entries[:max_entries]
+
+        lines = [f"## Memory Store ({len(selected)} of {len(self._entries)} entries, sorted by importance)"]
+        for i, entry in enumerate(selected, 1):
+            parts = [f"{i}. [{entry.importance:.1f}] {entry.content}"]
+            if include_tags and entry.tags:
+                parts.append(f"   tags: {', '.join(entry.tags)}")
+            if include_metadata and entry.metadata:
+                meta_str = ", ".join(f"{k}={v}" for k, v in entry.metadata.items())
+                parts.append(f"   metadata: {meta_str}")
+            parts.append(f"   timestamp: {entry.timestamp.strftime('%Y-%m-%d %H:%M')}")
+            lines.append("\n".join(parts))
+
+        return "\n\n".join(lines)
+
     # ---- F42: Shannon entropy ----
 
     def entropy(self) -> Dict[str, Any]:
