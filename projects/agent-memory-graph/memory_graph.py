@@ -29223,6 +29223,330 @@ class MemoryGraph:
         ).fetchone()["c"]
         return out_c + in_c
 
+    # ─────────────────────────────────────────────────────────────
+    # Cycle 271: Semantic cluster detection — group-level redundancy
+    # ─────────────────────────────────────────────────────────────
+
+    def semantic_cluster_detect(self, *,                                # noqa: C901
+                                node_ids: list[str] = None,
+                                min_cluster_size: int = 3,
+                                content_threshold: float = 0.55,
+                                structural_threshold: float = 0.5,
+                                ) -> dict:
+        """Detect clusters of N+ semantically similar nodes.
+
+        While ``redundancy_detect`` finds *pairs* of redundant nodes,
+        this API finds entire **clusters** of nodes that are all similar
+        to each other — enabling batch consolidation decisions.
+
+        **Two clustering approaches:**
+
+        1. **Content clusters** — Groups of nodes whose labels are mutually
+           similar (trigram Jaccard ≥ ``content_threshold``).  Uses
+           single-linkage agglomerative clustering: two clusters merge
+           if *any* cross-pair exceeds the threshold.
+
+        2. **Structural clusters** — Groups of nodes that share most
+           neighbours (Jaccard ≥ ``structural_threshold``), indicating
+           they occupy the same structural niche.
+
+        **Returns:**
+
+        - **content_clusters**: List of cluster dicts, each with
+          ``members``, ``size``, ``avg_similarity``, ``representative``
+          (highest-degree node), and ``labels``.
+        - **structural_clusters**: Same format for structural groups.
+        - **combined_clusters**: Clusters that are significant in *both*
+          dimensions — prime consolidation candidates.
+        - **cluster_score**: 0-100 indicating overall cluster redundancy.
+        - **recommendations**: Actionable suggestions.
+
+        Args:
+            node_ids: Restrict analysis to a subgraph.
+            min_cluster_size: Minimum nodes to form a cluster (default 3).
+            content_threshold: Minimum trigram similarity for content edges.
+            structural_threshold: Minimum Jaccard for structural edges.
+        """
+        # ── Gather nodes ───────────────────────────────────────────
+        if node_ids is not None:
+            placeholders = ",".join("?" * len(node_ids))
+            node_rows = self.conn.execute(
+                f"SELECT * FROM nodes WHERE id IN ({placeholders})", node_ids
+            ).fetchall()
+        else:
+            node_rows = self.conn.execute("SELECT * FROM nodes").fetchall()
+
+        n = len(node_rows)
+        if n < min_cluster_size:
+            return {
+                "content_clusters": [],
+                "structural_clusters": [],
+                "combined_clusters": [],
+                "cluster_score": 0.0,
+                "total_nodes": n,
+                "recommendations": [
+                    f"Not enough nodes for cluster analysis "
+                    f"(need ≥{min_cluster_size}, got {n})."
+                ],
+            }
+
+        ids = [r["id"] for r in node_rows]
+
+        # ── Pre-compute neighbour sets and degrees ─────────────────
+        nbrs: dict[str, set[str]] = {}
+        degrees: dict[str, int] = {}
+        for r in node_rows:
+            nid = r["id"]
+            out_e = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION "
+                "SELECT source FROM edges WHERE target=?",
+                (nid, nid),
+            ).fetchall()
+            nbrs[nid] = {e[0] for e in out_e}
+            degrees[nid] = len(nbrs[nid])
+
+        # ── Helper: union-find for single-linkage clustering ───────
+        parent: dict[str, str] = {nid: nid for nid in ids}
+
+        def find(x: str) -> str:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: str, b: str) -> None:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        # ── 1. Content clusters via single-linkage ─────────────────
+        content_parent = dict(parent)  # fresh copy
+        content_edges: list[tuple[str, str, float]] = []
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = self._content_similarity(
+                    node_rows[i]["label"], node_rows[j]["label"]
+                )
+                if sim >= content_threshold:
+                    content_edges.append((ids[i], ids[j], sim))
+
+        # Reset parent for content clustering
+        parent = {nid: nid for nid in ids}
+        for a, b, _ in content_edges:
+            union(a, b)
+
+        # Collect content clusters
+        content_groups: dict[str, list[str]] = {}
+        for nid in ids:
+            root = find(nid)
+            content_groups.setdefault(root, []).append(nid)
+
+        content_clusters_raw = [
+            grp for grp in content_groups.values()
+            if len(grp) >= min_cluster_size
+        ]
+
+        # Build content cluster details
+        content_clusters = []
+        for grp in content_clusters_raw:
+            # Compute average pairwise similarity within cluster
+            sims = []
+            for i in range(len(grp)):
+                for j in range(i + 1, len(grp)):
+                    ni = self.get_node(grp[i])
+                    nj = self.get_node(grp[j])
+                    if ni and nj:
+                        s = self._content_similarity(ni.label, nj.label)
+                        sims.append(s)
+            avg_sim = sum(sims) / len(sims) if sims else 0.0
+
+            # Representative = highest-degree node
+            rep = max(grp, key=lambda x: degrees.get(x, 0))
+            rep_node = self.get_node(rep)
+
+            label_list = []
+            for nid in grp:
+                node = self.get_node(nid)
+                if node:
+                    label_list.append(node.label)
+
+            content_clusters.append({
+                "members": list(grp),
+                "size": len(grp),
+                "avg_similarity": round(avg_sim, 4),
+                "representative": rep,
+                "representative_label": rep_node.label if rep_node else "",
+                "labels": label_list,
+                "total_degree": sum(degrees.get(nid, 0) for nid in grp),
+            })
+
+        content_clusters.sort(key=lambda x: x["avg_similarity"], reverse=True)
+
+        # ── 2. Structural clusters via single-linkage ──────────────
+        struct_edges: list[tuple[str, str, float]] = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                a_id, b_id = ids[i], ids[j]
+                na, nb = nbrs[a_id], nbrs[b_id]
+                if not na and not nb:
+                    continue
+                union_set = na | nb
+                if not union_set:
+                    continue
+                jac = len(na & nb) / len(union_set)
+                if jac >= structural_threshold:
+                    struct_edges.append((a_id, b_id, jac))
+
+        # Reset parent for structural clustering
+        parent = {nid: nid for nid in ids}
+        for a, b, _ in struct_edges:
+            union(a, b)
+
+        # Collect structural clusters
+        struct_groups: dict[str, list[str]] = {}
+        for nid in ids:
+            root = find(nid)
+            struct_groups.setdefault(root, []).append(nid)
+
+        structural_clusters_raw = [
+            grp for grp in struct_groups.values()
+            if len(grp) >= min_cluster_size
+        ]
+
+        structural_clusters = []
+        for grp in structural_clusters_raw:
+            # Compute avg structural overlap
+            sims = []
+            for i in range(len(grp)):
+                for j in range(i + 1, len(grp)):
+                    na, nb = nbrs[grp[i]], nbrs[grp[j]]
+                    u = na | nb
+                    if u:
+                        sims.append(len(na & nb) / len(u))
+            avg_sim = sum(sims) / len(sims) if sims else 0.0
+
+            rep = max(grp, key=lambda x: degrees.get(x, 0))
+            rep_node = self.get_node(rep)
+
+            structural_clusters.append({
+                "members": list(grp),
+                "size": len(grp),
+                "avg_similarity": round(avg_sim, 4),
+                "representative": rep,
+                "representative_label": rep_node.label if rep_node else "",
+                "total_degree": sum(degrees.get(nid, 0) for nid in grp),
+            })
+
+        structural_clusters.sort(key=lambda x: x["avg_similarity"], reverse=True)
+
+        # ── 3. Combined clusters (significant in both dimensions) ──
+        content_member_sets = [
+            set(c["members"]) for c in content_clusters
+        ]
+        combined_clusters = []
+        for sc in structural_clusters:
+            sc_set = set(sc["members"])
+            for ci, cc_set in enumerate(content_member_sets):
+                overlap = sc_set & cc_set
+                # If ≥ min_cluster_size nodes appear in both a content
+                # and structural cluster, it's a combined cluster
+                if len(overlap) >= min_cluster_size:
+                    content_cl = content_clusters[ci]
+                    combined_clusters.append({
+                        "members": sorted(overlap),
+                        "size": len(overlap),
+                        "content_avg_similarity": content_cl["avg_similarity"],
+                        "structural_avg_similarity": sc["avg_similarity"],
+                        "representative": sc["representative"],
+                        "representative_label": sc["representative_label"],
+                        "consolidation_potential": round(
+                            0.5 * content_cl["avg_similarity"]
+                            + 0.5 * sc["avg_similarity"], 4
+                        ),
+                    })
+                    break  # each structural cluster matches at most one content cluster
+
+        combined_clusters.sort(
+            key=lambda x: x["consolidation_potential"], reverse=True
+        )
+
+        # ── 4. Cluster score (0-100) ───────────────────────────────
+        nodes_in_content = sum(c["size"] for c in content_clusters)
+        nodes_in_structural = sum(c["size"] for c in structural_clusters)
+        nodes_in_combined = sum(c["size"] for c in combined_clusters)
+
+        content_ratio = nodes_in_content / n if n else 0
+        structural_ratio = nodes_in_structural / n if n else 0
+        combined_ratio = nodes_in_combined / n if n else 0
+
+        cluster_score = round(
+            min(100, 35 * content_ratio * 3
+                + 35 * structural_ratio * 3
+                + 30 * combined_ratio * 5),
+            2,
+        )
+
+        # ── 5. Recommendations ────────────────────────────────────
+        recommendations = []
+
+        if combined_clusters:
+            top = combined_clusters[0]
+            recommendations.append(
+                f"🔴 Combined cluster found: {top['size']} nodes "
+                f"redundant in both content and structure "
+                f"(potential={top['consolidation_potential']:.2f}). "
+                f"Representative: '{top['representative_label']}'. "
+                f"Consider batch consolidation via auto_consolidate()."
+            )
+        if content_clusters:
+            top = content_clusters[0]
+            recommendations.append(
+                f"🟠 Content cluster: {top['size']} nodes with avg similarity "
+                f"{top['avg_similarity']:.2f}. Representative: '{top['representative_label']}'."
+            )
+        if structural_clusters:
+            top = structural_clusters[0]
+            recommendations.append(
+                f"🟡 Structural cluster: {top['size']} nodes with avg overlap "
+                f"{top['avg_similarity']:.2f}. Representative: '{top['representative_label']}'."
+            )
+        if not recommendations:
+            recommendations.append(
+                "✅ No significant clusters detected. "
+                "Graph diversity is healthy."
+            )
+
+        # Severity
+        if cluster_score >= 40:
+            recommendations.insert(
+                0,
+                f"⚠️ High cluster redundancy ({cluster_score}/100). "
+                f"Batch consolidation recommended.",
+            )
+        elif cluster_score >= 15:
+            recommendations.insert(
+                0,
+                f"📉 Moderate cluster redundancy ({cluster_score}/100).",
+            )
+        else:
+            recommendations.insert(
+                0,
+                f"✅ Low cluster redundancy ({cluster_score}/100).",
+            )
+
+        return {
+            "content_clusters": content_clusters,
+            "structural_clusters": structural_clusters,
+            "combined_clusters": combined_clusters,
+            "cluster_score": cluster_score,
+            "total_nodes": n,
+            "nodes_in_content_clusters": nodes_in_content,
+            "nodes_in_structural_clusters": nodes_in_structural,
+            "nodes_in_combined_clusters": nodes_in_combined,
+            "recommendations": recommendations,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
