@@ -3,8 +3,8 @@
 ## 待办任务
 
 ### 🔴 最高优先级（本周）
-- [ ] **MCP Memory Server Phase 1: TS wrapper** — **STARTS TODAY (Day 1)**. Day-by-day blueprint in Research #021. 8 curated tools wrapping 785+ APIs. SDK v2 stable July 28.
-  - Day 1 (today): 4 core tools — recall/remember/health/forget + resource subscriptions
+- [ ] **MCP Memory Server Phase 1: TS wrapper** — Day 1 ✅ DONE. Day-by-day blueprint in Research #021.
+  - ✅ Day 1: 4 core tools — recall/remember/health/forget + resource subscriptions (18 tests)
   - Day 2: +2 quality tools (query/consolidate)
   - Day 3: +2 advanced tools (gaps/skills)
   - Day 4: HTTP transport
@@ -28,6 +28,7 @@
 - [x] nano-agent F22-F46: 25 features (+273 tests, 459→732). Export/cluster/stats/set-ops/prompt.
 - [x] Deep Research #020: MCP SDK v2 Implementation Patterns
 - [x] Deep Research #021: MCP Memory Server Source Analysis — 5-day Phase 1 blueprint
+- [x] Deep Research #022: MCP SDK v2 Day-1 Implementation Patterns — factory/testing/subscriptions/.describe()/ctx logging. Runnable Day-1 server + test suite.
 - [x] Blog: Cross-Modal Forgetting (~2800 words, GitHub Pages live)
 - [x] README competitive comparison table (18 dimensions vs 5 competitors)
 
@@ -39,7 +40,8 @@
 - **context-forge**: **663 tests** (F48 tech debt)
 - **nano-agent**: **732 tests** (F46 to_prompt)
 - **四项目总计**: 8769 tests ✅
-- **amg 247天 / acs 197天 🏆**
+- **amg-mcp**: 18 tests — Phase 1 Day 1 complete ✅
+- **amg 247天 / acs 197天 🏆
 - **零回滚率**: amg 247天 / acs 197天 🏆
 
 ## 近期活动 (07-20 ~ 07-21)
