@@ -61,6 +61,11 @@
 - [x] **F47**: analyzeFileCoupling() — Jaccard similarity-based file coupling analysis, shared dependency tracking ✅ 2026-07-18
 - [x] **F48**: analyzeTechDebt() — weighted multi-signal tech debt score (TODOs+dead code+complexity+deps+secrets) with recommendations ✅ 2026-07-18
 
+### Error & Code Quality (Round 5 — 2026-07-21)
+- [ ] **F53**: analyzeErrorHandling() — detect empty catch blocks, swallowed errors, bare throws, unhandled async patterns
+- [ ] **F54**: analyzeDuplicateCode() — token-based near-duplicate code block detection across files
+- [ ] **F55**: analyzeCommentHealth() — comment-to-code ratio, stale/obsolete comments, doc coverage
+
 ## Priorities
 **Round 1 (Core):** F1, F2, F3 — Better codebase understanding
 **Round 2 (Output):** F5, F6 — Better visualization

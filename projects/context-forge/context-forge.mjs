@@ -5746,6 +5746,262 @@ export function formatSecurityReport(result) {
   return report;
 }
 
+/**
+ * F53: Analyze error handling patterns in source files.
+ * Detects anti-patterns: empty catch, swallowed errors, bare throw, unhandled promise,
+ * catch without type check, overly broad catch.
+ */
+export function analyzeErrorHandling(files = []) {
+  const patterns = {
+    empty_catch: {
+      regex: /catch\s*\([^)]*\)\s*\{\s*\}/g,
+      severity: 'high',
+      desc: 'Empty catch block — error silently swallowed',
+    },
+    catch_ignore: {
+      regex: /catch\s*\(\s*_\s*\)\s*\{/g,
+      severity: 'medium',
+      desc: 'Catch binds to underscore — intentional error suppression',
+    },
+    bare_throw: {
+      regex: /^\s*throw\s*;\s*$/gm,
+      severity: 'medium',
+      desc: 'Bare rethrow without context — loses stack info in some runtimes',
+    },
+    console_error_catch: {
+      regex: /catch\s*\([^)]*\)\s*\{\s*console\.\w+\s*\([^)]*\)\s*;?\s*\}/g,
+      severity: 'low',
+      desc: 'Catch only logs — error not propagated or handled',
+    },
+    unhandled_promise: {
+      regex: /\.then\s*\([^)]*\)\s*(?!\.catch)/g,
+      severity: 'medium',
+      desc: 'Promise .then() without corresponding .catch()',
+    },
+    async_no_try: {
+      regex: /async\s+function\s+\w+\s*\([^)]*\)\s*\{/g,
+      severity: 'info',
+      desc: 'Async function — verify try/catch coverage',
+    },
+    catch_all: {
+      regex: /catch\s*\(\s*\w+\s*\)\s*\{/g,
+      severity: 'low',
+      desc: 'Generic catch — no error type filtering',
+    },
+    throw_string: {
+      regex: /throw\s+["'`]/g,
+      severity: 'high',
+      desc: 'Throwing a string instead of Error object — loses stack trace',
+    },
+  };
+
+  const findings = [];
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const lines = file.content.split('\n');
+
+    for (const [type, config] of Object.entries(patterns)) {
+      const regex = new RegExp(config.regex.source, config.regex.flags);
+      let match;
+      while ((match = regex.exec(file.content)) !== null) {
+        const lineNum = file.content.substring(0, match.index).split('\n').length;
+        const lineText = lines[lineNum - 1] || '';
+        findings.push({
+          type,
+          severity: config.severity,
+          file: file.path,
+          line: lineNum,
+          description: config.desc,
+          snippet: lineText.trim().substring(0, 120),
+        });
+      }
+    }
+  }
+
+  // Group
+  const byType = {};
+  const bySeverity = { high: 0, medium: 0, low: 0, info: 0 };
+  for (const f of findings) {
+    if (!byType[f.type]) byType[f.type] = [];
+    byType[f.type].push(f);
+    if (bySeverity[f.severity] !== undefined) bySeverity[f.severity]++;
+  }
+
+  const affectedFiles = [...new Set(findings.map(f => f.file))];
+  const score = Math.max(0, 100 - findings.filter(f => f.severity === 'high').length * 10 - findings.filter(f => f.severity === 'medium').length * 5 - findings.filter(f => f.severity === 'low').length * 2);
+
+  return {
+    total: findings.length,
+    byType,
+    bySeverity,
+    affectedFiles,
+    fileCount: affectedFiles.length,
+    healthScore: score,
+    grade: score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F',
+  };
+}
+
+/**
+ * F53: Format error handling report as markdown.
+ */
+export function formatErrorHandlingReport(result) {
+  if (!result || result.total === 0) {
+    return '## Error Handling Analysis\n\n✅ No error handling issues detected.\n';
+  }
+
+  const sevEmoji = { high: '🔴', medium: '🟡', low: '🟢', info: '🔵' };
+  let report = '## Error Handling Analysis\n\n';
+  report += `**Health Grade:** ${result.grade} (${result.healthScore}/100)\n`;
+  report += `**Total findings:** ${result.total} across ${result.fileCount} file(s)\n\n`;
+
+  // Severity table
+  report += '| Severity | Count |\n|----------|-------|\n';
+  for (const sev of ['high', 'medium', 'low', 'info']) {
+    if (result.bySeverity[sev] > 0) {
+      report += `| ${sevEmoji[sev] || '•'} ${sev} | ${result.bySeverity[sev]} |\n`;
+    }
+  }
+  report += '\n';
+
+  for (const [type, items] of Object.entries(result.byType)) {
+    report += `### ${type.replace(/_/g, ' ')} (${items.length})\n\n`;
+    for (const item of items.slice(0, 10)) {
+      report += `- \`${item.file}:${item.line}\` — ${item.description}\n`;
+      if (item.snippet) report += `  \` ${item.snippet}\`\n`;
+    }
+    if (items.length > 10) {
+      report += `- _...and ${items.length - 10} more_\n`;
+    }
+    report += '\n';
+  }
+
+  return report;
+}
+
+/**
+ * F54: Detect near-duplicate code blocks across files.
+ * Uses line-based fingerprinting with configurable minimum block size.
+ */
+export function analyzeDuplicateCode(files = [], opts = {}) {
+  const minLines = opts.minLines || 6;
+  const minNormalizedLines = opts.minNormalizedLines || 4;
+  const skipEmpty = true;
+
+  // Build fingerprint index: normalized line sequences → [file, startLine]
+  const blocks = [];
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const lines = file.content.split('\n');
+    const normalized = lines.map(l => {
+      let line = l.trim();
+      // Strip comments
+      line = line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '').replace(/#.*$/, '').trim();
+      // Normalize whitespace
+      line = line.replace(/\s+/g, ' ');
+      // Strip string literals (replace with placeholder)
+      line = line.replace(/["'`][^"'`]*["'`]/g, '"..."');
+      return line;
+    });
+
+    // Sliding window over non-empty normalized lines
+    for (let i = 0; i <= normalized.length - minLines; i++) {
+      const window = normalized.slice(i, i + minLines);
+      if (skipEmpty && window.filter(l => l.length > 0).length < minNormalizedLines) continue;
+
+      // Create a hash: join non-empty lines
+      const nonEmpty = window.filter(l => l.length > 0);
+      if (nonEmpty.length < minNormalizedLines) continue;
+
+      const fingerprint = nonEmpty.join('|');
+      if (fingerprint.length < 30) continue; // Skip trivially short blocks
+
+      blocks.push({
+        fingerprint,
+        file: file.path,
+        startLine: i + 1,
+        endLine: i + minLines,
+        lineCount: minLines,
+      });
+    }
+  }
+
+  // Group by fingerprint
+  const fpMap = new Map();
+  for (const block of blocks) {
+    if (!fpMap.has(block.fingerprint)) {
+      fpMap.set(block.fingerprint, []);
+    }
+    fpMap.get(block.fingerprint).push(block);
+  }
+
+  // Find duplicates (same fingerprint appearing in 2+ places)
+  const duplicates = [];
+  for (const [fingerprint, occurrences] of fpMap) {
+    if (occurrences.length < 2) continue;
+
+    // Check if duplicates are in different files or far apart in same file
+    const uniqueFiles = [...new Set(occurrences.map(o => o.file))];
+    const isSameFileFar = occurrences.some((a, idx) => {
+      return occurrences.slice(idx + 1).some(b => b.file === a.file && Math.abs(b.startLine - a.startLine) > minLines);
+    });
+
+    if (uniqueFiles.length < 2 && !isSameFileFar) continue;
+
+    duplicates.push({
+      fingerprint: fingerprint.substring(0, 80) + (fingerprint.length > 80 ? '...' : ''),
+      occurrences,
+      fileCount: uniqueFiles.length,
+      totalLines: occurrences.length * occurrences[0].lineCount,
+    });
+  }
+
+  // Sort by impact (fileCount desc, then totalLines desc)
+  duplicates.sort((a, b) => b.fileCount - a.fileCount || b.totalLines - a.totalLines);
+
+  const affectedFiles = [...new Set(duplicates.flatMap(d => d.occurrences.map(o => o.file)))];
+  const wasteEstimate = duplicates.reduce((sum, d) => sum + (d.occurrences.length - 1) * d.occurrences[0].lineCount, 0);
+
+  return {
+    duplicateGroups: duplicates.length,
+    totalOccurrences: duplicates.reduce((s, d) => s + d.occurrences.length, 0),
+    affectedFiles,
+    fileCount: affectedFiles.length,
+    wastedLines: wasteEstimate,
+    topDuplicates: duplicates.slice(0, 20),
+  };
+}
+
+/**
+ * F54: Format duplicate code report as markdown.
+ */
+export function formatDuplicateCodeReport(result) {
+  if (!result || result.duplicateGroups === 0) {
+    return '## Duplicate Code Analysis\n\n✅ No significant duplicate code blocks detected.\n';
+  }
+
+  let report = '## Duplicate Code Analysis\n\n';
+  report += `**Duplicate groups:** ${result.duplicateGroups}\n`;
+  report += `**Total occurrences:** ${result.totalOccurrences}\n`;
+  report += `**Affected files:** ${result.fileCount}\n`;
+  report += `**Estimated wasted lines:** ~${result.wastedLines}\n\n`;
+
+  for (const dup of result.topDuplicates.slice(0, 10)) {
+    report += `### Duplicate block (${dup.fileCount} file(s), ${dup.occurrences[0].lineCount} lines each)\n\n`;
+    for (const occ of dup.occurrences) {
+      report += `- \`${occ.file}:${occ.startLine}-${occ.endLine}\`\n`;
+    }
+    report += `  \` ${dup.fingerprint}\`\n\n`;
+  }
+
+  if (result.duplicateGroups > 10) {
+    report += `_...and ${result.duplicateGroups - 10} more groups_\n`;
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
