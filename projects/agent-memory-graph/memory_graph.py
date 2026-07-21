@@ -29547,6 +29547,180 @@ class MemoryGraph:
             "recommendations": recommendations,
         }
 
+    # ─────────────────────────────────────────────────────────────
+    # Cycle 272: Auto-consolidate cluster — group-level merge action
+    # ─────────────────────────────────────────────────────────────
+
+    def auto_consolidate_cluster(self, *,                            # noqa: C901
+                                 cluster_index: int = 0,
+                                 cluster_type: str = "combined",
+                                 min_cluster_size: int = 3,
+                                 content_threshold: float = 0.55,
+                                 structural_threshold: float = 0.5,
+                                 dry_run: bool = False,
+                                 node_ids: list[str] = None) -> dict:
+        """Batch-consolidate an entire detected semantic cluster.
+
+        The **act** half of the cluster detect→consolidate loop,
+        mirroring ``auto_consolidate()`` for pairwise redundancy.
+
+        While ``semantic_cluster_detect()`` *finds* clusters of N+
+        similar nodes, this API *merges* an entire cluster in one
+        operation — choosing the highest-degree node as the survivor
+        and folding every other member into it.
+
+        **Merge strategy:**
+
+        1. Run ``semantic_cluster_detect`` with the given thresholds.
+        2. Select the cluster at ``cluster_index`` from the specified
+           ``cluster_type`` ("combined", "content", or "structural").
+        3. Sort members by degree (descending).  The highest-degree
+           node is the survivor; all others merge into it in order.
+        4. Use ``merge_nodes()`` for each merge.
+
+        **Why batch is better than pairwise for clusters:**
+
+        - *Optimal survivor*: The highest-degree node survives all
+          merges, accumulating edges from every member.
+        - *Deterministic order*: Degree-sorted merge sequence avoids
+          the random pair ordering problem of calling
+          ``auto_consolidate`` repeatedly.
+        - *Single call*: One API call replaces N-1 pairwise calls.
+
+        **Non-mutating when** ``dry_run=True``.
+
+        Args:
+            cluster_index: Index into the cluster list (0 = largest/best).
+            cluster_type: Which cluster list to use — "combined",
+                "content", or "structural".
+            min_cluster_size: Passed through to ``semantic_cluster_detect``.
+            content_threshold: Passed through to ``semantic_cluster_detect``.
+            structural_threshold: Passed through to ``semantic_cluster_detect``.
+            dry_run: If True, simulate without modifying.
+            node_ids: Restrict analysis to a subgraph.
+
+        Returns:
+            Dict with:
+
+            - **merges_performed**: List of ``{source, target, reason}``
+            - **survivor**: The surviving (highest-degree) node id
+            - **survivor_label**: Label of the survivor
+            - **total_merges**: Count of merge operations (= cluster_size - 1)
+            - **cluster_type / cluster_index**: Echo of parameters
+            - **cluster_score_before / after**: Before/after scores
+            - **nodes_before / after**: Node counts
+            - **actions**: Human-readable summary strings
+            - **dry_run**: Whether this was a simulation
+            - **error**: Present only if cluster not found
+        """
+        # ── Detect clusters ────────────────────────────────────────
+        report = self.semantic_cluster_detect(
+            node_ids=node_ids,
+            min_cluster_size=min_cluster_size,
+            content_threshold=content_threshold,
+            structural_threshold=structural_threshold,
+        )
+
+        cluster_score_before = report["cluster_score"]
+        nodes_before = report["total_nodes"]
+
+        # ── Select cluster list ───────────────────────────────────
+        key = f"{cluster_type}_clusters"
+        clusters = report.get(key, [])
+        if cluster_index >= len(clusters):
+            return {
+                "error": (
+                    f"No cluster at index {cluster_index} in "
+                    f"{cluster_type}_clusters "
+                    f"(have {len(clusters)} clusters)"
+                ),
+                "cluster_type": cluster_type,
+                "cluster_index": cluster_index,
+                "dry_run": dry_run,
+            }
+
+        cluster = clusters[cluster_index]
+        members = list(cluster["members"])
+
+        if len(members) < 2:
+            return {
+                "error": "Cluster has fewer than 2 members; nothing to merge",
+                "cluster_type": cluster_type,
+                "cluster_index": cluster_index,
+                "dry_run": dry_run,
+            }
+
+        # ── Sort by degree (descending) — survivor first ──────────
+        members_sorted = sorted(
+            members,
+            key=lambda nid: self._node_degree(nid),
+            reverse=True,
+        )
+        survivor = members_sorted[0]
+        to_merge = members_sorted[1:]
+
+        survivor_node = self.get_node(survivor)
+        survivor_label = survivor_node.label if survivor_node else ""
+
+        merges_performed = []
+        actions = []
+
+        for src_id in to_merge:
+            src_node = self.get_node(src_id)
+            src_label = src_node.label if src_node else src_id
+            src_deg = self._node_degree(src_id)
+
+            merge_rec = {
+                "source": src_id,
+                "target": survivor,
+                "source_label": src_label,
+                "source_degree": src_deg,
+                "reason": (
+                    f"degree {src_deg} < survivor "
+                    f"{self._node_degree(survivor)}"
+                ),
+            }
+            merges_performed.append(merge_rec)
+
+            if not dry_run:
+                self.merge_nodes(src_id, survivor)
+
+            actions.append(
+                f"Merge: {src_label} ({src_id}) → "
+                f"{survivor_label} ({survivor})"
+            )
+
+        total_merges = len(merges_performed)
+
+        # ── Capture after-state ───────────────────────────────────
+        if not dry_run and total_merges > 0:
+            report_after = self.semantic_cluster_detect(
+                node_ids=node_ids,
+                min_cluster_size=min_cluster_size,
+                content_threshold=content_threshold,
+                structural_threshold=structural_threshold,
+            )
+            cluster_score_after = report_after["cluster_score"]
+            nodes_after = report_after["total_nodes"]
+        else:
+            cluster_score_after = cluster_score_before
+            nodes_after = nodes_before - total_merges if not dry_run else nodes_before
+
+        return {
+            "merges_performed": merges_performed,
+            "survivor": survivor,
+            "survivor_label": survivor_label,
+            "total_merges": total_merges,
+            "cluster_type": cluster_type,
+            "cluster_index": cluster_index,
+            "cluster_score_before": round(cluster_score_before, 2),
+            "cluster_score_after": round(cluster_score_after, 2),
+            "nodes_before": nodes_before,
+            "nodes_after": nodes_after,
+            "actions": actions,
+            "dry_run": dry_run,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
