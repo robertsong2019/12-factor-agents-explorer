@@ -5137,6 +5137,215 @@ export function formatDebugCodeReport(result) {
 }
 
 // Only run main when executed directly (not imported)
+/**
+ * F50: Analyze import graph — build a file-level directed graph from import data
+ * and compute structural metrics: in-degree, out-degree, hub score, authority,
+ * strongly connected components, and orphan detection.
+ * Complements F20 (package-level dependency graph) with file-level analysis.
+ */
+export function analyzeImportGraph(importData) {
+  const { imports: byFile, allImports = [] } = importData;
+
+  // Collect all known files for path matching
+  const knownFiles = new Set();
+  for (const [file] of byFile) {
+    knownFiles.add(file);
+  }
+
+  // Build file → file adjacency by resolving relative imports
+  const fileImports = {}; // resolved file → [resolved targets]
+  const fileSet = new Set();
+
+  for (const [file, deps] of byFile) {
+    fileSet.add(file);
+    const resolved = [];
+    for (const dep of deps) {
+      // Resolve relative imports to file paths (best-effort)
+      if (dep.startsWith('.') || dep.startsWith('/')) {
+        const resolvedPath = resolveRelativeImport(file, dep, knownFiles);
+        if (resolvedPath) {
+          resolved.push(resolvedPath);
+          fileSet.add(resolvedPath);
+        }
+      }
+    }
+    fileImports[file] = [...new Set(resolved)];
+  }
+
+  // Compute in-degree and out-degree
+  const inDegree = {};
+  const outDegree = {};
+  for (const f of fileSet) {
+    inDegree[f] = 0;
+    outDegree[f] = 0;
+  }
+  for (const [src, targets] of Object.entries(fileImports)) {
+    outDegree[src] = (outDegree[src] || 0) + targets.length;
+    for (const tgt of targets) {
+      inDegree[tgt] = (inDegree[tgt] || 0) + 1;
+    }
+  }
+
+  // Hub score = normalized out-degree (files that import many others)
+  // Authority score = normalized in-degree (files imported by many others)
+  const maxIn = Math.max(1, ...Object.values(inDegree));
+  const maxOut = Math.max(1, ...Object.values(outDegree));
+
+  const nodes = [...fileSet].map(f => ({
+    file: f,
+    inDegree: inDegree[f] || 0,
+    outDegree: outDegree[f] || 0,
+    hubScore: Math.round(((outDegree[f] || 0) / maxOut) * 100) / 100,
+    authorityScore: Math.round(((inDegree[f] || 0) / maxIn) * 100) / 100,
+  }));
+
+  // Find orphans (no incoming or outgoing edges)
+  const orphans = nodes.filter(n => n.inDegree === 0 && n.outDegree === 0);
+
+  // Find sinks (imported by others but import nothing — leaf modules)
+  const sinks = nodes.filter(n => n.inDegree > 0 && n.outDegree === 0);
+
+  // Find sources (import others but nobody imports them — entry points)
+  const sources = nodes.filter(n => n.inDegree === 0 && n.outDegree > 0);
+
+  // Top authorities (most imported)
+  const topAuthorities = nodes
+    .filter(n => n.inDegree > 0)
+    .sort((a, b) => b.inDegree - a.inDegree)
+    .slice(0, 10);
+
+  // Top hubs (most importing)
+  const topHubs = nodes
+    .filter(n => n.outDegree > 0)
+    .sort((a, b) => b.outDegree - a.outDegree)
+    .slice(0, 10);
+
+  // Detect cycles via DFS
+  const cycles = [];
+  const visited = new Set();
+  const inStack = new Set();
+
+  function dfs(node, path) {
+    visited.add(node);
+    inStack.add(node);
+    const targets = fileImports[node] || [];
+    for (const tgt of targets) {
+      if (!fileSet.has(tgt)) continue;
+      if (inStack.has(tgt)) {
+        const cycleStart = path.indexOf(tgt);
+        if (cycleStart !== -1) {
+          cycles.push([...path.slice(cycleStart), tgt]);
+        }
+      } else if (!visited.has(tgt)) {
+        dfs(tgt, [...path, tgt]);
+      }
+    }
+    inStack.delete(node);
+  }
+
+  for (const f of fileSet) {
+    if (!visited.has(f)) dfs(f, [f]);
+  }
+
+  return {
+    totalFiles: fileSet.size,
+    totalEdges: Object.values(fileImports).reduce((sum, arr) => sum + arr.length, 0),
+    orphans,
+    sinks,
+    sources,
+    topAuthorities,
+    topHubs,
+    cycles: cycles.slice(0, 20),
+    cycleCount: cycles.length,
+    avgOutDegree: fileSet.size > 0
+      ? Math.round((Object.values(outDegree).reduce((a, b) => a + b, 0) / fileSet.size) * 100) / 100
+      : 0,
+  };
+}
+
+function resolveRelativeImport(fromFile, importPath, knownFiles = new Set()) {
+  // Normalize: strip './' and '../' relative to importing file's directory
+  const dir = fromFile.includes('/') ? fromFile.substring(0, fromFile.lastIndexOf('/')) : '';
+  const parts = importPath.replace(/^\.\//, '').split('/');
+  const resultParts = dir ? dir.split('/') : [];
+
+  for (const part of parts) {
+    if (part === '..') {
+      resultParts.pop();
+    } else if (part !== '.') {
+      resultParts.push(part);
+    }
+  }
+
+  const basePath = resultParts.join('/');
+
+  // Try to match against known files with common extensions
+  const extensions = ['', '.js', '.mjs', '.ts', '.jsx', '.tsx', '.py', '/index.js', '/index.mjs', '/index.ts'];
+  for (const ext of extensions) {
+    const candidate = basePath + ext;
+    if (knownFiles.has(candidate)) return candidate;
+  }
+
+  // If no match in knownFiles, return base path (for graph construction)
+  return basePath;
+}
+
+/**
+ * F50: Format import graph report as markdown.
+ */
+export function formatImportGraphReport(result) {
+  if (!result || result.totalFiles === 0) {
+    return '## Import Graph Analysis\n\n_No import data available._\n';
+  }
+
+  let report = '## Import Graph Analysis\n\n';
+  report += `| Metric | Value |\n|--------|-------|\n`;
+  report += `| Total Files | ${result.totalFiles} |\n`;
+  report += `| Total Edges | ${result.totalEdges} |\n`;
+  report += `| Avg Out-Degree | ${result.avgOutDegree} |\n`;
+  report += `| Cycles Detected | ${result.cycleCount} |\n\n`;
+
+  if (result.topAuthorities.length > 0) {
+    report += '### Top Authority Files (most imported)\n\n';
+    for (const node of result.topAuthorities) {
+      report += `- \`${node.file}\` — in-degree: ${node.inDegree}, authority: ${node.authorityScore}\n`;
+    }
+    report += '\n';
+  }
+
+  if (result.topHubs.length > 0) {
+    report += '### Top Hub Files (most importing)\n\n';
+    for (const node of result.topHubs) {
+      report += `- \`${node.file}\` — out-degree: ${node.outDegree}, hub: ${node.hubScore}\n`;
+    }
+    report += '\n';
+  }
+
+  if (result.orphans.length > 0) {
+    report += `### Orphan Files (${result.orphans.length})\n\n`;
+    for (const node of result.orphans.slice(0, 10)) {
+      report += `- \`${node.file}\`\n`;
+    }
+    if (result.orphans.length > 10) {
+      report += `- _...and ${result.orphans.length - 10} more_\n`;
+    }
+    report += '\n';
+  }
+
+  if (result.cycles.length > 0) {
+    report += `### Circular Dependencies (${result.cycleCount})\n\n`;
+    for (const cycle of result.cycles.slice(0, 5)) {
+      report += `- ${cycle.join(' → ')}\n`;
+    }
+    if (result.cycles.length > 5) {
+      report += `- _...and ${result.cycles.length - 5} more_\n`;
+    }
+  }
+
+  return report;
+}
+
+// Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
 }
