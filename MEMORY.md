@@ -28,9 +28,9 @@ Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-lo
 | agent-task-cli | **1299** | 200 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F200 milestone** 🎯 |
 | **四项目总计** | **8769** | — | — |
 
-其他: openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / context-forge 663 / nano-agent 732 / AMS v1.0-dev 645 / prompt-router 258 / edge-agent-runtime 244 / agent-mesh-network 108
+其他: openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / context-forge 743 / nano-agent 732 / AMS v1.0-dev 645 / prompt-router 258 / edge-agent-runtime 244 / agent-mesh-network 108
 
-**全项目总计**: 12222 tests (四核心 8769 + context-forge 663 + nano-agent 732 + edge-agent-runtime 244 + agent-mesh-network 108 + 其他 1706)
+**全项目总计**: 12304 tests (四核心 8769 + context-forge 743 + nano-agent 732 + edge-agent-runtime 244 + agent-mesh-network 108 + 其他 1706)
 
 ### 最高优先级
 **README → npm publish** (四项目)。这是当前最大未交付价值。amg 定位: "beyond recall — agency-grade graph memory — security-first"。8678 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，PlugMem 已有 OpenClaw plugin，竞争窗口收紧。
@@ -74,6 +74,7 @@ Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-lo
 ### 近期研究一览 (详细笔记在 catalyst-research/exploration-notes/)
 | 日期 | 主题 | 核心洞察 |
 |------|------|----------|
+| 07-21 | **MCP SDK v2 Day-1 Implementation (#022)** | Factory pattern mandatory/In-process testing handler.fetch/Resource subscriptions dual-era/.describe()=only model docs/ctx.mcpReq.log not console.log. Runnable Day-1 server+tests ✅ |
 | 07-20 | **MCP Memory Server Source Analysis (#021)** | Official server=500 lines JSONL+substring search=low bar. Resource subscriptions=missing feedback loop. 8 curated tools>9 thin. Inspector=primary dev tool. 5-day Phase 1 plan refined ✅ |
 | 07-20 | **MCP SDK v2 Implementation Patterns (#020)** | Stateless protocol=SQLite match/MRTR confirmation flows/outputSchema typed results/dual transport factory/extensions as distribution channel. v2-native amg-mcp blueprint ✅ |
 | 07-19 | **Memory Compression→Skill Extraction (#019)** | MemRefine budget compression/Focus sawtooth/MemSkill closed-loop evolution/Externalization theory. compress_to_skill blueprint ~140 tests ✅ |
@@ -204,6 +205,9 @@ Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-lo
 90. **MCP Inspector is the primary development tool, not custom test clients (#021)** — `npx @modelcontextprotocol/inspector npx tsx src/index.ts` launches a web app to list tools, call them with args, and see structured results. Fastest feedback loop for MCP server development. Don't build a test client — use Inspector.
 91. **Group-level redundancy detection is the natural evolution after pairwise analysis (c271)** — `redundancy_detect()` finds pairs, `auto_consolidate()` merges them pairwise. But when 5+ nodes form a redundant cluster, pairwise merge sequences are suboptimal. `semantic_cluster_detect()` uses single-linkage clustering (Union-Find) to find N+ groups. Combined clusters (redundant in BOTH content AND structure) are the highest-value consolidation targets. The progression pairs→act-on-pairs→groups mirrors the gap analysis evolution (report→heal→balanced health).
 92. **Hysteresis bands complete the alert fragility remediation loop (acs c197)** — c196 detects fragile thresholds (±delta sweep → volatility/elasticity/fragility). c197 provides the fix: separate raise_at/clear_at thresholds with dead-band stickiness. Stateful alerts (remembers history) > stateless alerts (check-and-forget). This is the Nagios/Prometheus pattern, proven in production monitoring for decades. The prediction confidence stack is now complete: accuracy (c193) → tune (c194) → sensitivity audit (c196) → fix fragility (c197).
+93. **serveStdio takes a factory function, not a server instance (#022)** — The #1 Day-1 mistake: creating McpServer at module scope. `serveStdio(buildServer)` calls the factory internally; `createMcpHandler(buildServer)` does the same for HTTP. Factory pattern enables per-request isolation for HTTP transport and is mandatory for dual-transport support. Every official SDK v2 example uses this pattern.
+94. **In-process testing via handler.fetch eliminates test infrastructure (#022)** — `createMcpHandler(buildServer)` returns a handler whose `.fetch` method can be passed directly as a transport's fetch option. No socket, no port, no process spawning. Tests run through the exact same code path as production, covering 2026-07-28 protocol features. This is the fastest test feedback loop for MCP server development — faster than MCP Inspector, faster than spawning stdio processes.
+95. **.describe() on every Zod field is the model documentation strategy (#022)** — The JSON Schema derived from inputSchema is the ONLY documentation the model receives about each parameter. Without `.describe()`, the LLM has no idea what to pass. Every `z.string()` needs `.describe('what this means')`. This is the difference between "tool works in Inspector with manual input" and "LLM calls tool correctly during conversation."
 
 ---
 
@@ -277,7 +281,7 @@ Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-lo
 - [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
 - [ ] lab/agent-observability: gen_ai.* + CostAggregator (研究完成 ✅)
 - [ ] AMS 生产化: EmbeddingProvider 接入
-- [ ] **MCP Memory Server: agent-memory-graph-mcp** — 研究完成 ✅ #017 + #020 + #021 (source analysis). 8 curated tools, v2-native (stateless, outputSchema, resource subscriptions). ~500 lines TypeScript. MCP Registry has ZERO graph memory servers. SDK v2 stable July 28 = timing window. **Phase 1: TS wrapper (July 21-25) day-by-day blueprint in #021, Phase 2: Registry publish (July 28) ride v2 stable**
+- [ ] **MCP Memory Server: agent-memory-graph-mcp** — 研究完成 ✅ #017 + #020 + #021 + #022 (Day-1 implementation patterns). 8 curated tools, v2-native (stateless, outputSchema, resource subscriptions, handler.fetch testing). ~500 lines TypeScript. MCP Registry has ZERO graph memory servers. SDK v2 stable July 28 = timing window. **Phase 1: TS wrapper (July 21-25) — Day-1 code in #022, blueprint in #021. Phase 2: Registry publish (July 28) ride v2 stable**
 
 ### 待评估
 - [ ] Agentic evaluation suite (MemoryBenchmarkHarness)
@@ -295,7 +299,7 @@ Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-lo
 | 3 | agent-context-store | 2810 | ✅ npm ready, 全分析闭环(二十三层): self-optimizing + preset ensemble + threshold sensitivity + hysteresis |
 | 4 | structured-output-toolkit | 561 | ✅ npm ready |
 | 5 | openclaw-langgraph-bridge | 261 | 🔄 Supervisor 完善 |
-| 6 | context-forge | 663 | 🔄 继续 features (F48 tech debt) |
+| 6 | context-forge | **743** | 🔄 继续 features (F52 security scanner) |
 | 7 | lab/agent-observability | 166 | 🔄 OTel 集成 |
 | 8 | nano-agent | 732 | 🔄 F46 to_prompt (extensive Memory/Agent feature set) |
 | 9 | Agent Memory Service | 645 | ✅ v1.0-dev |
@@ -344,8 +348,9 @@ curl -X POST "https://api.tavily.com/search" \
 ## Next Actions
 
 ### Immediate (Week of July 21-25)
-- [ ] **MCP Memory Server Phase 1**: TS wrapper for 8 curated tools wrapping 785+ APIs. **Day-by-day blueprint in Research #021**. SDK v2 stable July 28. **STARTS TODAY** (Day 1: 4 core tools — recall/remember/health/forget)
+- [ ] **MCP Memory Server Phase 1**: TS wrapper for 8 curated tools wrapping 785+ APIs. **Day-by-day blueprint in #021, Day-1 runnable code + test patterns in #022**. SDK v2 stable July 28. **Day 1 code ready in #022** — implement: buildServer() factory + 4 tools (recall/remember/health/forget) + resource subscription + in-process tests via handler.fetch.
 - [ ] README(agent-memory-graph) → npm publish — **#1 priority alongside MCP**
+- [ ] **lab/agent-observability OTel GenAI 对齐** (Research #023): 映射 SpanOperation→gen_ai.operation.name, 添加 gen_ai.* 属性体系, CostAggregator 升级. OTel 规范已含 7 个 memory 操作枚举. ~50 tests, 1 cycle.
 
 ### Short-term (August)
 - [ ] Implement `get_operation_history()` API in amg (MemOps-compatible operation traces)
