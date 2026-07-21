@@ -5578,6 +5578,174 @@ export function formatMaturityReport(result) {
   return report;
 }
 
+/**
+ * F52: Detect security issues in source code content.
+ * Pattern-based vulnerability detection: SQL injection, XSS, hardcoded credentials,
+ * eval usage, path traversal, prototype pollution, insecure deserialization.
+ * Complements F32 (filesystem secret scanning) with code-level analysis.
+ */
+export function detectSecurityIssues(files = []) {
+  // files: [{ path, content, lang }]
+  const patterns = {
+    sql_injection: {
+      regex: /(?:query|execute|exec)\s*\(\s*["'`]?(?:SELECT|INSERT|UPDATE|DELETE|DROP|UNION).*?\+\s*\w+/gi,
+      severity: 'high',
+      desc: 'Potential SQL injection — string concatenation in query',
+      cwe: 'CWE-89',
+    },
+    xss_reflected: {
+      regex: /(?:innerHTML|document\.write|dangerouslySetInnerHTML)\s*[=\(]/g,
+      severity: 'high',
+      desc: 'Potential XSS — direct DOM insertion',
+      cwe: 'CWE-79',
+    },
+    hardcoded_password: {
+      regex: /(?:password|passwd|pwd|secret|api_?key|token)\s*[:=]\s*["'`][^"'`]{4,}["'`]/gi,
+      severity: 'high',
+      desc: 'Hardcoded credential',
+      cwe: 'CWE-798',
+    },
+    eval_usage: {
+      regex: /\beval\s*\(/g,
+      severity: 'medium',
+      desc: 'eval() usage — code injection risk',
+      cwe: 'CWE-94',
+    },
+    path_traversal: {
+      regex: /(?:readFile|writeFile|readFileSync|writeFileSync|open|createReadStream)\s*\(\s*.*?\+\s*\w+|\.\.\/\.\.\//g,
+      severity: 'medium',
+      desc: 'Potential path traversal',
+      cwe: 'CWE-22',
+    },
+    prototype_pollution: {
+      regex: /(?:__proto__|prototype)\s*\[|Object\.assign\s*\(\s*\w+\.\w+\s*,/g,
+      severity: 'medium',
+      desc: 'Potential prototype pollution',
+      cwe: 'CWE-1321',
+    },
+    insecure_random: {
+      regex: /Math\.random\s*\(\)/g,
+      severity: 'low',
+      desc: 'Insecure random number generation (use crypto for security)',
+      cwe: 'CWE-330',
+    },
+    http_url: {
+      regex: /http:\/\/(?!localhost|127\.0\.0\.1|0\.0\.0\.0)/g,
+      severity: 'low',
+      desc: 'HTTP URL (not HTTPS)',
+      cwe: 'CWE-319',
+    },
+    disabled_tls: {
+      regex: /rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*["'`]0["'`]/g,
+      severity: 'high',
+      desc: 'TLS verification disabled',
+      cwe: 'CWE-295',
+    },
+    command_injection: {
+      regex: /(?:exec|execSync|spawn|spawnSync)\s*\(\s*.*?\$\{|(?:exec|execSync)\s*\(\s*["'`].*?\+/g,
+      severity: 'high',
+      desc: 'Potential command injection',
+      cwe: 'CWE-78',
+    },
+    regex_dos: {
+      regex: /new RegExp\s*\(\s*["'`].*?\+/g,
+      severity: 'medium',
+      desc: 'Dynamic RegExp construction (ReDoS risk)',
+      cwe: 'CWE-1333',
+    },
+  };
+
+  const findings = [];
+  let total = 0;
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const lines = file.content.split('\n');
+
+    for (const [type, config] of Object.entries(patterns)) {
+      let match;
+      const regex = new RegExp(config.regex.source, config.regex.flags);
+      while ((match = regex.exec(file.content)) !== null) {
+        const lineNum = file.content.substring(0, match.index).split('\n').length;
+        const lineText = lines[lineNum - 1] || '';
+
+        findings.push({
+          type,
+          severity: config.severity,
+          cwe: config.cwe,
+          file: file.path,
+          line: lineNum,
+          description: config.desc,
+          snippet: lineText.trim().substring(0, 120),
+        });
+        total++;
+      }
+    }
+  }
+
+  // Group by type
+  const byType = {};
+  for (const f of findings) {
+    if (!byType[f.type]) byType[f.type] = [];
+    byType[f.type].push(f);
+  }
+
+  // Count by severity
+  const bySeverity = { high: 0, medium: 0, low: 0 };
+  for (const f of findings) {
+    bySeverity[f.severity]++;
+  }
+
+  const affectedFiles = [...new Set(findings.map(f => f.file))];
+
+  return {
+    total,
+    byType,
+    bySeverity,
+    affectedFiles,
+    fileCount: affectedFiles.length,
+    riskLevel: bySeverity.high > 0 ? 'critical' : bySeverity.medium > 0 ? 'elevated' : 'low',
+  };
+}
+
+/**
+ * F52: Format security report as markdown.
+ */
+export function formatSecurityReport(result) {
+  if (!result || result.total === 0) {
+    return '## Security Analysis\n\n✅ No security issues detected.\n';
+  }
+
+  let report = '## Security Analysis\n\n';
+  const riskEmoji = { critical: '🔴', elevated: '🟡', low: '🟢' };
+  report += `**Risk Level:** ${riskEmoji[result.riskLevel] || '•'} ${result.riskLevel.toUpperCase()}\n`;
+  report += `**Total findings:** ${result.total} across ${result.fileCount} file(s)\n\n`;
+
+  // Severity table
+  report += '| Severity | Count |\n|----------|-------|\n';
+  for (const sev of ['high', 'medium', 'low']) {
+    if (result.bySeverity[sev] > 0) {
+      report += `| ${riskEmoji[sev] || '•'} ${sev} | ${result.bySeverity[sev]} |\n`;
+    }
+  }
+  report += '\n';
+
+  // Group by type with CWE references
+  for (const [type, items] of Object.entries(result.byType)) {
+    const cwe = items[0].cwe;
+    report += `### ${type.replace(/_/g, ' ')} (${items.length}) — [${cwe}]\n\n`;
+    for (const item of items.slice(0, 15)) {
+      report += `- \`${item.file}:${item.line}\` — ${item.snippet}\n`;
+    }
+    if (items.length > 15) {
+      report += `- _...and ${items.length - 15} more_\n`;
+    }
+    report += '\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
