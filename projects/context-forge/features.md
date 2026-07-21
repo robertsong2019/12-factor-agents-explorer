@@ -62,8 +62,8 @@
 - [x] **F48**: analyzeTechDebt() — weighted multi-signal tech debt score (TODOs+dead code+complexity+deps+secrets) with recommendations ✅ 2026-07-18
 
 ### Error & Code Quality (Round 5 — 2026-07-21)
-- [ ] **F53**: analyzeErrorHandling() — detect empty catch blocks, swallowed errors, bare throws, unhandled async patterns
-- [ ] **F54**: analyzeDuplicateCode() — token-based near-duplicate code block detection across files
+- [x] **F53**: analyzeErrorHandling() — 8-pattern error handling anti-pattern scanner (empty catch, catch-ignore, bare throw, console-only catch, throw string, generic catch-all, etc.) with health score + A-F grading ✅ 2026-07-21
+- [x] **F54**: analyzeDuplicateCode() — normalized line fingerprinting for cross-file duplicate detection, string literal + comment normalization, wasted lines estimate ✅ 2026-07-21
 - [ ] **F55**: analyzeCommentHealth() — comment-to-code ratio, stale/obsolete comments, doc coverage
 
 ## Priorities
