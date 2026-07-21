@@ -5345,6 +5345,239 @@ export function formatImportGraphReport(result) {
   return report;
 }
 
+/**
+ * F51: Analyze project maturity — comprehensive assessment combining dependency health,
+ * code quality signals, test coverage estimation, documentation, and complexity
+ * into a unified maturity scorecard with actionable recommendations.
+ * Wraps multiple existing analyses into a single assessment.
+ */
+export function analyzeMaturity(info, options = {}) {
+  const signals = {};
+  const recommendations = [];
+  let totalScore = 0;
+  let maxScore = 0;
+
+  // 1. Dependency Health (0-20)
+  maxScore += 20;
+  const deps = { ...(info.dependencies || info.pkg?.dependencies || {}) };
+  const devDeps = { ...(info.devDependencies || info.pkg?.devDependencies || {}) };
+  const depCount = Object.keys(deps).length;
+  const devDepCount = Object.keys(devDeps).length;
+  const allDepNames = [...Object.keys(deps), ...Object.keys(devDeps)];
+
+  // Check for pinned vs ranged versions
+  const pinned = allDepNames.filter(d => {
+    const v = deps[d] || devDeps[d];
+    return v && /^\d/.test(v);
+  }).length;
+  const pinRatio = allDepNames.length > 0 ? pinned / allDepNames.length : 1;
+  const depScore = Math.round(pinRatio * 20);
+  totalScore += depScore;
+
+  signals.dependencyHealth = {
+    score: depScore,
+    max: 20,
+    depCount,
+    devDepCount,
+    pinnedRatio: Math.round(pinRatio * 100) / 100,
+    status: depScore >= 16 ? 'good' : depScore >= 10 ? 'fair' : 'poor',
+  };
+  if (pinRatio < 0.5) {
+    recommendations.push({
+      area: 'dependencies',
+      priority: 'medium',
+      message: `${Math.round((1 - pinRatio) * 100)}% of dependencies use version ranges. Consider pinning for reproducible builds.`,
+    });
+  }
+
+  // 2. Testing Maturity (0-20)
+  maxScore += 20;
+  const configFiles = info.configFiles || [];
+  const hasTestFramework = configFiles.some(f => /jest|vitest|pytest|mocha|\.mocharc|karma/.test(f));
+  const hasTestDir = configFiles.some(f => /^(test|tests|spec|specs|__tests__)\//.test(f));
+  const hasCI = configFiles.some(f => f.includes('workflows') || f.includes('.gitlab-ci') || f.includes('.circleci'));
+  const hasCoverageConfig = configFiles.some(f => /coverage|codecov|nyc|c8/.test(f));
+
+  const testChecks = [hasTestFramework, hasTestDir, hasCI, hasCoverageConfig];
+  const testCheckCount = testChecks.filter(Boolean).length;
+  const testScore = Math.round((testCheckCount / 4) * 20);
+  totalScore += testScore;
+
+  signals.testing = {
+    score: testScore,
+    max: 20,
+    hasFramework: hasTestFramework,
+    hasTestDir,
+    hasCI,
+    hasCoverage: hasCoverageConfig,
+    status: testScore >= 15 ? 'good' : testScore >= 10 ? 'fair' : 'poor',
+  };
+  if (!hasTestFramework) {
+    recommendations.push({
+      area: 'testing',
+      priority: 'high',
+      message: 'No test framework detected. Add tests to improve reliability.',
+    });
+  }
+  if (!hasCI) {
+    recommendations.push({
+      area: 'testing',
+      priority: 'medium',
+      message: 'No CI configuration found. Automate testing with GitHub Actions or similar.',
+    });
+  }
+
+  // 3. Documentation (0-20)
+  maxScore += 20;
+  const hasReadme = configFiles.some(f => /readme/i.test(f));
+  const hasChangelog = configFiles.some(f => /changelog/i.test(f));
+  const hasContributing = configFiles.some(f => /contributing/i.test(f));
+  const hasLicense = configFiles.some(f => /license/i.test(f)) || !!info.license;
+  const hasDocs = configFiles.some(f => /docs?\//i.test(f));
+
+  const docChecks = { hasReadme, hasChangelog, hasContributing, hasLicense, hasDocs };
+  const docCount = Object.values(docChecks).filter(Boolean).length;
+  const docScore = Math.round((docCount / 5) * 20);
+  totalScore += docScore;
+
+  signals.documentation = {
+    score: docScore,
+    max: 20,
+    ...docChecks,
+    status: docScore >= 16 ? 'good' : docScore >= 8 ? 'fair' : 'poor',
+  };
+  if (!hasReadme) {
+    recommendations.push({
+      area: 'documentation',
+      priority: 'high',
+      message: 'No README file detected. Add a README for project discoverability.',
+    });
+  }
+  if (!hasLicense && !info.license) {
+    recommendations.push({
+      area: 'documentation',
+      priority: 'high',
+      message: 'No LICENSE file found. Add a license for legal clarity.',
+    });
+  }
+
+  // 4. Code Quality (0-20)
+  maxScore += 20;
+  const hasLinter = configFiles.some(f => /eslint|tslint|flake8|pylint|ruff|golangci/.test(f));
+  const hasFormatter = configFiles.some(f => /prettier|black|gofmt|rustfmt/.test(f));
+  const hasTypeChecking = configFiles.some(f => /tsconfig|mypy|pyright/.test(f));
+  const hasGitignore = configFiles.some(f => /\.gitignore/.test(f));
+  const hasEditorConfig = configFiles.some(f => /editorconfig/.test(f));
+
+  const qualityChecks = { hasLinter, hasFormatter, hasTypeChecking, hasGitignore, hasEditorConfig };
+  const qualityCount = Object.values(qualityChecks).filter(Boolean).length;
+  const qualityScore = Math.round((qualityCount / 5) * 20);
+  totalScore += qualityScore;
+
+  signals.codeQuality = {
+    score: qualityScore,
+    max: 20,
+    ...qualityChecks,
+    status: qualityScore >= 16 ? 'good' : qualityScore >= 8 ? 'fair' : 'poor',
+  };
+  if (!hasLinter) {
+    recommendations.push({
+      area: 'quality',
+      priority: 'medium',
+      message: 'No linter configured. Add ESLint/Pylint/Ruff for consistent code style.',
+    });
+  }
+
+  // 5. Project Structure (0-20)
+  maxScore += 20;
+  const scripts = info.scripts || info.pkg?.scripts || {};
+  const scriptCount = Object.keys(scripts).length;
+  const hasBuildScript = !!scripts.build || !!scripts.compile;
+  const hasTestScript = !!scripts.test;
+  const hasDevScript = !!scripts.dev || !!scripts.start;
+  const hasLintScript = !!scripts.lint || !!scripts['lint:check'];
+  const hasFormatScript = !!scripts.format || !!scripts['format:check'];
+
+  const structureChecks = { hasBuildScript, hasTestScript, hasDevScript, hasLintScript, hasFormatScript };
+  const structureCount = Object.values(structureChecks).filter(Boolean).length;
+  const structureScore = Math.round((structureCount / 5) * 20);
+  totalScore += structureScore;
+
+  signals.projectStructure = {
+    score: structureScore,
+    max: 20,
+    scriptCount,
+    ...structureChecks,
+    status: structureScore >= 16 ? 'good' : structureScore >= 8 ? 'fair' : 'poor',
+  };
+  if (!hasTestScript) {
+    recommendations.push({
+      area: 'structure',
+      priority: 'high',
+      message: 'No test script in package.json. Add "test" script for CI integration.',
+    });
+  }
+
+  // Overall score
+  const pct = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+  const grade = pct >= 90 ? 'A' : pct >= 80 ? 'B' : pct >= 70 ? 'C' : pct >= 60 ? 'D' : 'F';
+
+  return {
+    overallScore: pct,
+    grade,
+    maxScore,
+    achievedScore: totalScore,
+    signals,
+    recommendations: recommendations.sort((a, b) => {
+      const pri = { high: 0, medium: 1, low: 2 };
+      return pri[a.priority] - pri[b.priority];
+    }),
+    summary: `Project maturity: ${grade} (${pct}/100). ${recommendations.length} recommendation(s).`,
+  };
+}
+
+/**
+ * F51: Format maturity report as markdown.
+ */
+export function formatMaturityReport(result) {
+  if (!result || result.overallScore === undefined) {
+    return '## Project Maturity\n\n_No data available._\n';
+  }
+
+  let report = '## Project Maturity Assessment\n\n';
+  report += `**Overall Grade: ${result.grade} (${result.overallScore}/100)**\n\n`;
+
+  // Signal scores table
+  report += '| Area | Score | Status |\n|------|-------|--------|\n';
+  const areaLabels = {
+    dependencyHealth: 'Dependency Health',
+    testing: 'Testing',
+    documentation: 'Documentation',
+    codeQuality: 'Code Quality',
+    projectStructure: 'Project Structure',
+  };
+  for (const [key, signal] of Object.entries(result.signals)) {
+    const label = areaLabels[key] || key;
+    const statusEmoji = signal.status === 'good' ? '✅' : signal.status === 'fair' ? '🟡' : '🔴';
+    report += `| ${label} | ${signal.score}/${signal.max} | ${statusEmoji} ${signal.status} |\n`;
+  }
+  report += '\n';
+
+  // Recommendations
+  if (result.recommendations.length > 0) {
+    report += '### Recommendations\n\n';
+    const priEmoji = { high: '🔴', medium: '🟡', low: '🟢' };
+    for (const rec of result.recommendations) {
+      report += `- ${priEmoji[rec.priority] || '•'} **[${rec.priority.toUpperCase()}]** ${rec.message}\n`;
+    }
+    report += '\n';
+  } else {
+    report += '### Recommendations\n\n✅ No critical improvements needed.\n\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
