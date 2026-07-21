@@ -4999,6 +4999,143 @@ async function runAnalysis(root, options) {
   }
 }
 
+/**
+ * F49: Detect debug code — scans source files for leftover debug statements,
+ * debugger directives, commented-out code blocks, and development artifacts.
+ * Returns findings grouped by type with severity and file locations.
+ */
+export function detectDebugCode(files = []) {
+  // files: [{ path, content, lang }]
+  const patterns = {
+    debugger: {
+      regex: /\bdebugger\b/g,
+      severity: 'high',
+      desc: 'debugger statement',
+    },
+    console_log: {
+      regex: /console\.(log|debug|info|warn|error|trace)\s*\(/g,
+      severity: 'medium',
+      desc: 'console output',
+    },
+    print_stmt: {
+      regex: /\bprint\s*\(/g,
+      severity: 'low',
+      desc: 'print statement (may be legitimate in scripts)',
+    },
+    system_out: {
+      regex: /System\.out\.print(ln)?\s*\(/g,
+      severity: 'medium',
+      desc: 'System.out print',
+    },
+    commented_code: {
+      regex: /^\s*\/\/.*\b(if|for|while|function|return|const|let|var|def|class|import|export)\b/gm,
+      severity: 'low',
+      desc: 'commented-out code block',
+    },
+    todo_derelict: {
+      regex: /(?:TODO|FIXME|HACK|XXX)\s*[:\-]?\s*(\d{4}-\d{2}-\d{2})?/gi,
+      severity: 'medium',
+      desc: 'stale TODO/FIXME',
+    },
+    alert: {
+      regex: /\balert\s*\(/g,
+      severity: 'high',
+      desc: 'alert() call',
+    },
+  };
+
+  const findings = [];
+  let total = 0;
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const lines = file.content.split('\n');
+
+    for (const [type, config] of Object.entries(patterns)) {
+      let match;
+      const regex = new RegExp(config.regex.source, config.regex.flags);
+      while ((match = regex.exec(file.content)) !== null) {
+        // Find line number from match index
+        const lineNum = file.content.substring(0, match.index).split('\n').length;
+        const lineText = lines[lineNum - 1] || '';
+
+        // Skip if inside a string literal (rough heuristic)
+        const beforeMatch = lineText.substring(0, match.index - (lineNum > 1 ? file.content.split('\n').slice(0, lineNum - 1).join('\n').length + 1 : 0));
+
+        findings.push({
+          type,
+          severity: config.severity,
+          file: file.path,
+          line: lineNum,
+          description: config.desc,
+          snippet: lineText.trim().substring(0, 120),
+        });
+        total++;
+      }
+    }
+  }
+
+  // Group by type
+  const byType = {};
+  for (const f of findings) {
+    if (!byType[f.type]) byType[f.type] = [];
+    byType[f.type].push(f);
+  }
+
+  // Count by severity
+  const bySeverity = { high: 0, medium: 0, low: 0 };
+  for (const f of findings) {
+    bySeverity[f.severity]++;
+  }
+
+  // Unique files affected
+  const affectedFiles = [...new Set(findings.map(f => f.file))];
+
+  return {
+    total,
+    byType,
+    bySeverity,
+    affectedFiles,
+    fileCount: affectedFiles.length,
+  };
+}
+
+/**
+ * F49: Format debug code report as markdown.
+ */
+export function formatDebugCodeReport(result) {
+  if (!result || result.total === 0) {
+    return '## Debug Code Analysis\n\n✅ No debug statements found.\n';
+  }
+
+  let report = '## Debug Code Analysis\n\n';
+  report += `**Total findings:** ${result.total} across ${result.fileCount} file(s)\n\n`;
+
+  // Severity summary
+  const sevEmoji = { high: '🔴', medium: '🟡', low: '🟢' };
+  report += '| Severity | Count |\n|----------|-------|\n';
+  for (const sev of ['high', 'medium', 'low']) {
+    if (result.bySeverity[sev] > 0) {
+      report += `| ${sevEmoji[sev]} ${sev} | ${result.bySeverity[sev]} |\n`;
+    }
+  }
+  report += '\n';
+
+  // Group by type
+  for (const [type, items] of Object.entries(result.byType)) {
+    report += `### ${type.replace(/_/g, ' ')} (${items.length})\n\n`;
+    for (const item of items.slice(0, 20)) {
+      report += `- \`${item.file}:${item.line}\` — ${item.snippet}\n`;
+    }
+    if (items.length > 20) {
+      report += `- _...and ${items.length - 20} more_\n`;
+    }
+    report += '\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
