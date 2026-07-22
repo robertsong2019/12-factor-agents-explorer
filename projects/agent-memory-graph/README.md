@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-4099-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-4205-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -55,7 +55,10 @@
 - **双模检索** — binary_signature / similarity_search_binary / dual_mode_retrieve Hippocampus 启发的 SimHash 二进制签名预过滤 + 图重排序两阶段检索
 - **去重** — find_duplicate_nodes / deduplicate 基于 SimHash 汉明距离的近重复节点检测与合并
 - **洛伦兹系数与重定义指数** — lorenz_coefficient (度分布 Gini 系数) + redefined_randic_indices (Randić 2008 三变体) + redefined_zagreb_index (第三 Zagreb 指数)
-- **双循环质量系统** — 知识缺口分析 + 冗余检测 + 自动修复 + 统一健康评分 (gap_redundancy_balance)
+- **双循环质量系统** — 知识缺口分析 + 冗余检测 + 自动修复（逐对 & 整簇）+ 统一健康评分 (gap_redundancy_balance)
+- **情景模式挖掘** — 从 event/intention 节点发现重复行为模式，建议技能提升 (detect_skill_candidates)
+- **图采样统计** — 多次随机游走聚合分析：覆盖率、重访率、死端率 (walk_statistics)
+- **14 个度拓扑指数** — Sombor/Reduced Sombor 指数家族 (Gutman 2021)，覆盖化学图论主流指标
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## Why agent-memory-graph?
@@ -3195,6 +3198,176 @@ auto_heal_gaps            merge_nodes
 | `good` | score ≥ 0.04 | 合理命中 |
 | `partial` | score ≥ 0.02 | 弱命中或单源 |
 | `weak` | score < 0.02 | 可能不相关 |
+
+---
+
+#### `auto_consolidate_cluster(cluster_index=0, cluster_type='combined', min_cluster_size=3, content_threshold=0.55, structural_threshold=0.5, dry_run=False, node_ids=None) -> dict`
+
+批量合并整个语义簇。`semantic_cluster_detect()` 的行动闭环 — 一次性合并整个节点群，而非逐对处理。
+
+**用途：** 当冗余不是两两关系而是 N 个节点互相相似时（例如同一概念的 5 种表述），逐对合并效率低且合并顺序随机。本 API 选择最高度数节点作为幸存者，按度数排序依次吸收所有簇成员。
+
+**参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `cluster_index` | 0 | 簇索引（0 = 最大/最佳簇）|
+| `cluster_type` | 'combined' | 簇类型：`combined` \| `content` \| `structural` |
+| `min_cluster_size` | 3 | 最小簇大小（传递给 `semantic_cluster_detect`）|
+| `content_threshold` | 0.55 | 内容相似度阈值 |
+| `structural_threshold` | 0.5 | 结构相似度阈值 |
+| `dry_run` | False | 模拟模式，不修改图 |
+| `node_ids` | None | 限制分析范围 |
+
+**为什么批量优于逐对：**
+
+- *最优幸存者*：最高度数节点在所有合并中幸存，积累每个成员的边
+- *确定性顺序*：度数排序避免了 `auto_consolidate` 多次调用的随机配对问题
+- *单次调用*：1 次调用替代 N-1 次逐对调用
+
+**返回：** `merges_performed`、`survivor`（幸存节点 id）、`survivor_label`、`total_merges`、`cluster_score_before/after`、`nodes_before/after`、`dry_run`。
+
+> **双循环架构补充：** `auto_consolidate`（逐对）和 `auto_consolidate_cluster`（整簇）共同构成冗余修复的行动层，分别对应 `redundancy_detect`（逐对检测）和 `semantic_cluster_detect`（群体检测）。
+
+---
+
+#### `walk_statistics(num_walks=10, steps=20, restart_prob=0.15, seed=None) -> dict`
+
+多次随机游走的聚合统计。通过随机游走采样评估图的连通性、节点可达性和结构特征。
+
+**用途：** 评估记忆图的可达性 — 哪些节点容易被游走到（高可达 = 活跃记忆），哪些被遗漏（低可达 = 可能被遗忘的记忆）。
+
+**参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `num_walks` | 10 | 游走次数 |
+| `steps` | 20 | 每次游走的步数 |
+| `restart_prob` | 0.15 | 每步重启概率 |
+| `seed` | None | 随机种子（可复现）|
+
+**返回：**
+
+| 字段 | 说明 |
+|------|------|
+| `avg_unique_ratio` | 每次游走的平均唯一节点比例 |
+| `avg_revisit_step` | 平均首次重访步数（-1 = 无重访）|
+| `coverage` | 总唯一节点 / 总节点数 |
+| `most_visited` | 访问最多的前 10 个节点 `(node_id, visit_count)` |
+| `dead_end_rate` | 到达死端的游走比例 |
+| `walk_lengths` | 实际游走长度列表 |
+
+---
+
+#### `edge_type_stats() -> dict`
+
+按边关系类型聚合统计。展示每种关系类型的数量、权重分布、唯一源/目标节点数和互反性。
+
+**用途：** 快速了解记忆图中各类关系的分布 — 例如 `created` 关系有多少条、平均权重多少、是否双向（互反性）。
+
+**返回：**
+
+```python
+{
+    "created": {
+        "count": 45,
+        "avg_weight": 0.72,
+        "min_weight": 0.3,
+        "max_weight": 1.0,
+        "unique_sources": 12,
+        "unique_targets": 38,
+        "reciprocity": 0.08  # 8% 的 created 边有反向边
+    },
+    "related_to": { ... },
+    ...
+}
+```
+
+---
+
+#### `detect_skill_candidates(min_frequency=2) -> list`
+
+从情景记忆中挖掘重复行为模式。扫描 event 和 intention 类型节点中的动作动词（created、tested、deployed 等），返回有资格提升为 skill 类型的候选项。
+
+**用途：** `compress_to_skill()` 的只读基础 — 发现「反复执行的操作」并建议将其固化为技能节点，减少情景膨胀。
+
+**参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `min_frequency` | 2 | 最小出现次数，低于此值不作为模式 |
+
+**返回：** 按置信度降序排列的候选列表：
+
+```python
+[
+    {
+        "action": "created",
+        "frequency": 3,
+        "confidence": 0.6,        # min(1.0, frequency / 5)
+        "memory_ids": ["abc123", "def456", "ghi789"],
+        "suggested_compression": "'created' repeated 3× — promote to skill?"
+    },
+    ...
+]
+```
+
+> **置信度饱和：** 频率在 5 次时达到 100% 置信（`min(1.0, freq / 5)`），鼓励稳定模式而非偶发事件。
+
+---
+
+#### `sombor_index() -> float`
+
+Sombor 指数 SO（Gutman 2021）。
+
+$$SO = \sum_{(u,v) \in E} \sqrt{d_u^2 + d_v^2}$$
+
+度量度数对在度-度平面上距原点的几何距离。Sombor 指数是近年化学图论中备受关注的度拓扑描述子，在记忆图语境下衡量「度差异性的几何总量」。
+
+**参数公式验证：**
+
+| 图类型 | SO 公式 | 说明 |
+|--------|---------|------|
+| $K_n$ (n≥2) | $n(n-1)^2\sqrt{2}/2$ | 完全图 |
+| $C_n$ | $2n\sqrt{2}$ | 环图 |
+| $P_n$ (n≥3) | $2\sqrt{5} + (n-3) \cdot 2\sqrt{2}$ | 路径图 |
+| $K_{1,k}$ | $k\sqrt{k^2+1}$ | 星图 |
+
+**与其他度指数的关系：**
+
+- $SO > \text{sum\_connectivity}$（每项 $\geq 1/(d_u+d_v)$）
+- $SO < M_2$ Zagreb（当 $d_u, d_v \geq 1$ 时 $\sqrt{d_u^2+d_v^2} < d_u \cdot d_v$）
+
+**返回：** `float`，边数 < 1 时返回 `None`。
+
+---
+
+#### `reduced_sombor_index() -> float`
+
+Reduced Sombor 指数 RS（Gutman 2021）。
+
+$$RS = \sum_{(u,v) \in E} \sqrt{(d_u-1)^2 + (d_v-1)^2}$$
+
+使用 `d-1` 替代 `d`，使得 $K_2$（单键）的 RS = 0。这一特性区分了「真正有分支的图」和「仅有单键的图」— 强调分支性而非单纯连通性。
+
+**参数公式验证：**
+
+| 图类型 | RS 公式 | 说明 |
+|--------|---------|------|
+| $K_n$ (n≥3) | $n(n-1)(n-2)\sqrt{2}/2$ | 完全图 |
+| $C_n$ | $n\sqrt{2}$ | 环图 |
+| $P_n$ (n≥3) | $2 + (n-3)\sqrt{2}$ | 路径图 |
+| $K_{1,k}$ (k≥2) | $k(k-1)$ | 星图 |
+| $K_2$ | $0$ | ⭐ 区分属性 |
+
+**交叉关系：**
+
+- $RS \leq SO$（恒成立）
+- $RS(K_2) = 0$（唯一区分属性：可识别图中是否只有单键）
+
+**返回：** `float`，边数 < 1 时返回 `None`。
+
+> **度指数家族已扩展至 14 个指标：** sum_connectivity, randic_index, zagreb_m1, zagreb_m2, augmented_zagreb, forgotten_index, hyper_zagreb, first_redefined_zagreb, second_redefined_zagreb, third_redefined_zagreb, leleka_index, sombor_index, reduced_sombor_index, 及 harmonic_index。
 
 ---
 
