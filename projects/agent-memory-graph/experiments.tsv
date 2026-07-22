@@ -337,3 +337,5 @@ timestamp	commit	metric	value	status	description
 2026-07-21T00:00:00+08:00	96bf3b7	test_pass_rate	100%	keep	All 4099 passing, 0 regressions, 29.10s.
 2026-07-22T19:00:00+08:00	7080014	test_count	4121→4135	keep	Cycle 273: walk_statistics() — multi-walk aggregation. Coverage, revisit step, dead-end rate, most-visited nodes. +14 tests. 249th consecutive day.
 2026-07-22T19:30:00+08:00	b749eb4	test_count	4135→4144	keep	Cycle 274: edge_type_stats() — per-relation aggregate stats (count, weight range, unique src/tgt, reciprocity). +9 tests. 249th consecutive day.
+2026-07-23T00:00:00+08:00	81f1249	test_count	4163→4205	keep	Cycle 276: sombor_index() + reduced_sombor_index() — Sombor index family (Gutman 2021). SO=Σ√(d_u²+d_v²), RS=Σ√((d_u-1)²+(d_v-1)²). Extends degree-based index family to 14 metrics. Parametric formulas verified K_n/C_n/P_n/K_{1,k}. 42 tests. Zero regressions. 250th consecutive day.
+2026-07-23T00:00:00+08:00	81f1249	test_pass_rate	100%	keep	All 4205 passing, 0 regressions, 29.14s.
