@@ -24441,6 +24441,97 @@ class MemoryGraph:
 
         return result
 
+    # ── Skill Candidate Detection (Cycle 275) ─────────────────────
+
+    _ACTION_VERBS = frozenset({
+        'ran', 'created', 'built', 'tested', 'deployed', 'fixed',
+        'updated', 'checked', 'analyzed', 'implemented', 'refactored',
+        'debugged', 'configured', 'installed', 'wrote', 'deleted',
+        'moved', 'merged', 'reviewed', 'documented', 'designed',
+        'optimized', 'migrated', 'validated', 'published', 'released',
+    })
+
+    def detect_skill_candidates(self, *, min_frequency: int = 2) -> list[dict]:
+        """Mine episodic memories for repeated action patterns.
+
+        Scans event and intention nodes for recurring action verbs
+        and returns candidates eligible for promotion to skill type.
+
+        This is the read-only foundation for ``compress_to_skill()``.
+
+        Args:
+            min_frequency: Minimum occurrences to qualify as a pattern.
+
+        Returns:
+            List of candidate dicts, sorted by confidence (desc):
+
+            .. code-block:: python
+
+                {
+                    "action": "created",
+                    "frequency": 3,
+                    "confidence": 0.6,
+                    "memory_ids": ["abc123", ...],
+                    "suggested_compression": "'created' repeated 3× — promote to skill?",
+                }
+        """
+        import re
+
+        # Gather episodic nodes (events + intentions), sorted by time
+        rows = self.conn.execute(
+            "SELECT id, label, kind, created FROM nodes "
+            "WHERE kind IN ('event', 'intention') "
+            "ORDER BY created ASC"
+        ).fetchall()
+
+        if len(rows) < min_frequency:
+            return []
+
+        # Extract action verb from each label (first matching verb)
+        verb_pattern = re.compile(
+            r'\b(' + '|'.join(sorted(self._ACTION_VERBS)) + r')\b',
+            re.IGNORECASE,
+        )
+
+        verb_groups: dict[str, list[dict]] = {}
+        for row in rows:
+            label = row["label"] if "label" in row.keys() else row[1]
+            nid = row["id"] if "id" in row.keys() else row[0]
+            created = row["created"] if "created" in row.keys() else row[3]
+
+            match = verb_pattern.search(label)
+            verb = match.group(1).lower() if match else None
+
+            if verb:
+                verb_groups.setdefault(verb, []).append({
+                    "id": nid,
+                    "label": label,
+                    "created": created,
+                })
+
+        # Build candidates for verbs meeting threshold
+        candidates = []
+        for verb, sources in verb_groups.items():
+            freq = len(sources)
+            if freq < min_frequency:
+                continue
+            confidence = min(1.0, freq / 5.0)  # saturates at 5 occurrences
+            candidates.append({
+                "action": verb,
+                "frequency": freq,
+                "confidence": round(confidence, 3),
+                "memory_ids": [s["id"] for s in sources],
+                "suggested_compression": (
+                    f"'{verb}' repeated {freq}\u00d7 "
+                    f"across {freq} episodic memories \u2014 "
+                    f"promote to skill?"
+                ),
+            })
+
+        # Sort by confidence descending, then frequency
+        candidates.sort(key=lambda c: (-c["confidence"], -c["frequency"]))
+        return candidates
+
     # ── Skill Bank Governance (SkeMex / MUSE inspired) ───────────
 
     def govern_skill_bank(
