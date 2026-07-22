@@ -6160,6 +6160,85 @@ class MemoryGraph:
                 total += (ds + dt) * (ds * dt)
         return total
 
+    # ─── Sombor index family (Gutman 2021) ────────────────────────────
+
+    def sombor_index(self) -> Optional[float]:
+        """Sombor index SO.
+
+        SO = Σ_{(u,v) ∈ E} √(d_u² + d_v²)
+
+        Introduced by Gutman (2021), the Sombor index is a recent
+        degree-based topological descriptor that has attracted
+        significant attention in chemical graph theory.  It measures
+        the "geometric mean distance" of degree pairs from the origin
+        in the degree-degree plane.
+
+        **Parametric formulas:**
+        - K_n (n≥2): SO = m · (n-1)√2 = n(n-1)²√2 / 2
+        - C_n: SO = 2n√2
+        - P_n (n≥3): SO = 2√5 + (n-3)·2√2
+        - K_{1,k}: SO = k√(k²+1)
+        - K₂: SO = √2
+
+        Returns:
+            float, or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        total = 0.0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                total += math.sqrt(ds * ds + dt * dt)
+        return total
+
+    def reduced_sombor_index(self) -> Optional[float]:
+        """Reduced Sombor index RS.
+
+        RS = Σ_{(u,v) ∈ E} √((d_u - 1)² + (d_v - 1)²)
+
+        The reduced Sombor uses ``d-1`` instead of ``d``, which makes
+        it zero for the simple bond K₂ (both degrees = 1 → both
+        terms vanish).  This emphasises branching over mere
+        connectivity.
+
+        **Parametric formulas:**
+        - K_n (n≥3): RS = m · (n-2)√2 = n(n-1)(n-2)√2 / 2
+        - C_n: RS = n√2
+        - P_n (n≥3): RS = 2 + (n-3)√2
+        - K_{1,k} (k≥2): RS = k(k-1)
+        - K₂: RS = 0
+
+        Returns:
+            float, or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        total = 0.0
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                total += math.sqrt((ds - 1) ** 2 + (dt - 1) ** 2)
+        return total
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
