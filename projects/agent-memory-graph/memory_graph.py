@@ -532,6 +532,50 @@ class MemoryGraph:
             "by_kind": {r["kind"]: r["c"] for r in kinds}
         }
 
+    def edge_type_stats(self) -> dict:
+        """Aggregate statistics per edge relation type.
+
+        Returns:
+            {relation: {count, avg_weight, min_weight, max_weight,
+                        unique_sources, unique_targets, reciprocity}}
+        """
+        rows = self.conn.execute("""
+            SELECT relation,
+                   COUNT(*) as cnt,
+                   AVG(weight) as avg_w,
+                   MIN(weight) as min_w,
+                   MAX(weight) as max_w,
+                   COUNT(DISTINCT source) as n_src,
+                   COUNT(DISTINCT target) as n_tgt
+            FROM edges GROUP BY relation ORDER BY cnt DESC
+        """).fetchall()
+        result = {}
+        for r in rows:
+            rel = r["relation"]
+            # Reciprocity: fraction of edges that have a reverse
+            total = r["cnt"]
+            recip = 0
+            if total > 0:
+                recip_rows = self.conn.execute("""
+                    SELECT COUNT(*) c FROM edges e1
+                    WHERE e1.relation = ?
+                    AND EXISTS (
+                        SELECT 1 FROM edges e2
+                        WHERE e2.source = e1.target AND e2.target = e1.source
+                    )
+                """, (rel,)).fetchone()["c"]
+                recip = round(recip_rows / total, 4)
+            result[rel] = {
+                "count": total,
+                "avg_weight": round(r["avg_w"], 4) if r["avg_w"] is not None else 0.0,
+                "min_weight": round(r["min_w"], 4) if r["min_w"] is not None else 0.0,
+                "max_weight": round(r["max_w"], 4) if r["max_w"] is not None else 0.0,
+                "unique_sources": r["n_src"],
+                "unique_targets": r["n_tgt"],
+                "reciprocity": recip,
+            }
+        return result
+
     def merge_nodes(self, source_id: str, target_id: str) -> Optional[Node]:
         """Merge source into target. Target keeps its id, absorbs source's data and edges."""
         src = self.conn.execute("SELECT * FROM nodes WHERE id=?", (source_id,)).fetchone()

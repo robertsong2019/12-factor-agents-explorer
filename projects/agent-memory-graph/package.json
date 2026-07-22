@@ -1,0 +1,132 @@
+{
+  "name": "agent-memory-graph",
+  "version": "1.0.0",
+  "description": "Beyond recall — agency-grade graph memory for AI agents, security-first approach with complete evaluation suite",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "npm test -- --passWithNoTests --bail",
+    "test:verbose": "npm test -- --verbose",
+    "test:coverage": "npm test -- --coverage",
+    "build": "npm run test",
+    "dev": "npm run test -- --watch",
+    "lint": "eslint src/ --ext .js,.ts",
+    "lint:fix": "eslint src/ --ext .js,.ts --fix",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build",
+    "version": "npm run build"
+  },
+  "keywords": [
+    "agent-memory",
+    "knowledge-graph",
+    "graph-database",
+    "ai-memory",
+    "long-term-memory",
+    "episodic-memory",
+    "semantic-memory",
+    "graph-algorithms",
+    "sqlite",
+    "vector-search",
+    "graphrag",
+    "retrieval-augmented-generation",
+    "memory-management",
+    "ai-agents",
+    "multi-agent",
+    "crdt",
+    "temporal-graphs",
+    "community-detection",
+    "centrality",
+    "graph-neural-networks",
+    "memory-consolidation",
+    "proactive-memory",
+    "prospective-memory",
+    "memory-governance",
+    "memory-wire",
+    "mcp-server"
+  ],
+  "author": {
+    "name": "罗嵩",
+    "email": "robertsong2019@gmail.com",
+    "url": "https://robertsong2019.github.io"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/robertsong2019/agent-memory-graph.git"
+  },
+  "homepage": "https://robertsong2019.github.io/agent-memory-graph",
+  "bugs": {
+    "url": "https://github.com/robertsong2019/agent-memory-graph/issues"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/robertsong2019"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "dependencies": {
+    "sqlite3": "^5.1.6",
+    "sqlite-vec": "^0.1.7"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3",
+    "@types/node": "^20.10.5",
+    "prettier": "^3.1.1"
+  },
+  "peerDependencies": {
+    "sqlite3": "^5.1.6"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "src/**/*.ts"
+    ],
+    "coverageDirectory": "coverage",
+    "coverageReporters": [
+      "text",
+      "lcov",
+      "html"
+    ],
+    "testTimeout": 30000,
+    "verbose": true,
+    "passWithNoTests": true,
+    "bail": true
+  },
+  "eslintConfig": {
+    "extends": [
+      "eslint:recommended",
+      "@typescript-eslint/recommended"
+    ],
+    "parser": "@typescript-eslint/parser",
+    "parserOptions": {
+      "ecmaVersion": 2022,
+      "sourceType": "module"
+    },
+    "rules": {
+      "no-unused-vars": "error",
+      "no-console": "warn",
+      "prefer-const": "error",
+      "no-var": "error"
+    }
+  },
+  "prettier": {
+    "semi": true,
+    "singleQuote": true,
+    "tabWidth": 2,
+    "trailingComma": "es5",
+    "printWidth": 80,
+    "bracketSpacing": true,
+    "arrowParens": "avoid"
+  }
+}
