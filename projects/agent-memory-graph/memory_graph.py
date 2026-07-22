@@ -7472,6 +7472,79 @@ class MemoryGraph:
 
         return path
 
+    def walk_statistics(self, *, num_walks: int = 100, steps: int = 20,
+                         restart_prob: float = 0.15,
+                         seed: int = 42) -> dict:
+        """Run multiple random walks and aggregate statistics.
+
+        Provides insight into graph connectivity, node accessibility,
+        and structural properties via random walk sampling.
+
+        Args:
+            num_walks: Number of random walks to perform.
+            steps: Steps per walk.
+            restart_prob: Probability of restarting at each step.
+            seed: Random seed for reproducibility.
+
+        Returns:
+            dict with keys:
+              - avg_unique_ratio: avg fraction of unique nodes per walk
+              - avg_revisit_step: avg first-revisit step (-1 if none)
+              - coverage: total unique nodes visited / total nodes
+              - most_visited: list of (node_id, visit_count) top 10
+              - dead_end_rate: fraction of walks that hit dead ends
+              - walk_lengths: list of actual walk lengths
+        """
+        import random as _rng
+        _r = _rng.Random(seed)
+
+        all_nodes = [r["id"] for r in
+                      self.conn.execute("SELECT id FROM nodes").fetchall()]
+        total_nodes = len(all_nodes)
+        if total_nodes == 0:
+            return {"avg_unique_ratio": 0.0, "avg_revisit_step": -1,
+                    "coverage": 0.0, "most_visited": [],
+                    "dead_end_rate": 0.0, "walk_lengths": []}
+
+        visit_counts: dict[str, int] = {}
+        unique_ratios = []
+        revisit_steps = []
+        dead_ends = 0
+        walk_lengths = []
+        all_visited = set()
+
+        for _ in range(num_walks):
+            start = _r.choice(all_nodes)
+            path = self.random_walk(start, steps=steps,
+                                     restart_prob=restart_prob)
+            walk_lengths.append(len(path))
+            if len(path) < steps + 1:
+                dead_ends += 1
+
+            seen = set()
+            first_revisit = -1
+            for i, nid in enumerate(path):
+                visit_counts[nid] = visit_counts.get(nid, 0) + 1
+                all_visited.add(nid)
+                if nid in seen and first_revisit == -1:
+                    first_revisit = i
+                seen.add(nid)
+
+            unique_ratios.append(len(seen) / len(path) if path else 0.0)
+            revisit_steps.append(first_revisit)
+
+        top_visited = sorted(visit_counts.items(), key=lambda x: -x[1])[:10]
+        avg_revisit = [s for s in revisit_steps if s >= 0]
+
+        return {
+            "avg_unique_ratio": round(sum(unique_ratios) / len(unique_ratios), 4) if unique_ratios else 0.0,
+            "avg_revisit_step": round(sum(avg_revisit) / len(avg_revisit), 2) if avg_revisit else -1,
+            "coverage": round(len(all_visited) / total_nodes, 4),
+            "most_visited": top_visited,
+            "dead_end_rate": round(dead_ends / num_walks, 4),
+            "walk_lengths": walk_lengths,
+        }
+
     def graph_sample(self, start_id: str, max_nodes: int = 50,
                      strategy: str = "bfs") -> list[str]:
         """Extract a representative subgraph sample.
