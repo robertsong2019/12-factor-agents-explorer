@@ -6002,6 +6002,204 @@ export function formatDuplicateCodeReport(result) {
   return report;
 }
 
+/**
+ * F55: Analyze comment health across source files.
+ * Measures comment-to-code ratio, detects stale/obsolete comments,
+ * and evaluates documentation coverage for exported symbols.
+ */
+export function analyzeCommentHealth(files = [], opts = {}) {
+  const minFileLines = opts.minFileLines || 5;
+  const results = [];
+  let totalCodeLines = 0;
+  let totalCommentLines = 0;
+  let totalTodoFixme = 0;
+  let totalStaleComments = 0;
+  let totalExportedSymbols = 0;
+  let totalDocumentedExports = 0;
+
+  const stalePatterns = [
+    { regex: /TODO\b/gi, type: 'todo', severity: 'info', desc: 'TODO comment — pending work' },
+    { regex: /FIXME\b/gi, type: 'fixme', severity: 'medium', desc: 'FIXME comment — known issue' },
+    { regex: /HACK\b/gi, type: 'hack', severity: 'medium', desc: 'HACK comment — workaround' },
+    { regex: /XXX\b/gi, type: 'xxx', severity: 'low', desc: 'XXX comment — needs attention' },
+    { regex: /@deprecated/gi, type: 'deprecated', severity: 'high', desc: 'Deprecated marker' },
+  ];
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const lines = file.content.split('\n');
+    const fileLineCount = lines.length;
+    if (fileLineCount < minFileLines) continue;
+
+    let codeLines = 0;
+    let commentLines = 0;
+    let docLines = 0;
+    const issues = [];
+
+    let inBlockComment = false;
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+
+      if (inBlockComment) {
+        commentLines++;
+        if (trimmed.includes('*/')) inBlockComment = false;
+        for (const sp of stalePatterns) {
+          const re = new RegExp(sp.regex.source, sp.regex.flags);
+          if (re.test(trimmed)) {
+            issues.push({ type: sp.type, severity: sp.severity, line: i + 1, description: sp.desc, snippet: trimmed.substring(0, 120) });
+          }
+        }
+        continue;
+      }
+
+      // Full-line comment (including single-line block comments)
+      if (/^\/\//.test(trimmed) || /^#/.test(trimmed) || /^\/\*[\s\S]*\*\/\s*$/.test(trimmed)) {
+        commentLines++;
+        if (/\/\*\*/.test(trimmed)) docLines++;
+        for (const sp of stalePatterns) {
+          const re = new RegExp(sp.regex.source, sp.regex.flags);
+          if (re.test(trimmed)) {
+            issues.push({ type: sp.type, severity: sp.severity, line: i + 1, description: sp.desc, snippet: trimmed.substring(0, 120) });
+          }
+        }
+        continue;
+      }
+
+      // Multi-line block comment start (not closed on same line)
+      if (/\/\*/.test(trimmed) && !/\*\//.test(trimmed)) {
+        commentLines++;
+        inBlockComment = true;
+        if (/\/\*\*/.test(trimmed)) docLines++;
+        continue;
+      }
+
+      // Code line (possibly with trailing comment)
+      codeLines++;
+      for (const sp of stalePatterns) {
+        const re = new RegExp(sp.regex.source, sp.regex.flags);
+        if (re.test(trimmed)) {
+          issues.push({ type: sp.type, severity: sp.severity, line: i + 1, description: sp.desc, snippet: trimmed.substring(0, 120) });
+        }
+      }
+    }
+
+    // Doc coverage: find exported symbols with preceding JSDoc
+    const exportRegexSrc = '\\bexport\\s+(?:async\\s+)?(?:function|class|const|let|var)\\s+(\\w+)';
+    const exportMatches = [...file.content.matchAll(new RegExp(exportRegexSrc, 'g'))];
+    const exportedNames = exportMatches.map(m => m[1]);
+    let documented = 0;
+
+    for (const match of exportMatches) {
+      // Check only the lines immediately before the export keyword
+      const lineStart = file.content.lastIndexOf('\n', match.index);
+      const twoLinesBack = file.content.lastIndexOf('\n', lineStart - 1);
+      const preceding = file.content.substring(twoLinesBack + 1, match.index);
+      if (/^[\s\/*]*\*\/\s*$/.test(preceding.replace(/\n/g, '')) || /\/\*\*[\s\S]*?\*\/\s*$/.test(preceding)) {
+        documented++;
+      }
+    }
+
+    const ratio = codeLines > 0 ? (commentLines / codeLines) * 100 : 0;
+    const docCoverage = exportedNames.length > 0 ? (documented / exportedNames.length) * 100 : -1;
+
+    if (ratio < 5 && codeLines > 50) {
+      issues.unshift({ type: 'low_comment_ratio', severity: 'medium', line: 0, description: `Low comment ratio: ${ratio.toFixed(1)}% (${commentLines} comments / ${codeLines} code lines)`, snippet: '' });
+    }
+    if (ratio > 60 && codeLines > 20) {
+      issues.unshift({ type: 'over_commented', severity: 'info', line: 0, description: `High comment ratio: ${ratio.toFixed(1)}% — possible over-commenting`, snippet: '' });
+    }
+
+    totalCodeLines += codeLines;
+    totalCommentLines += commentLines;
+    totalTodoFixme += issues.filter(i => i.type === 'todo' || i.type === 'fixme' || i.type === 'hack').length;
+    totalStaleComments += issues.filter(i => i.type !== 'low_comment_ratio' && i.type !== 'over_commented').length;
+    totalExportedSymbols += exportedNames.length;
+    totalDocumentedExports += documented;
+
+    results.push({
+      file: file.path,
+      codeLines,
+      commentLines,
+      docLines,
+      ratio: parseFloat(ratio.toFixed(2)),
+      exportedSymbols: exportedNames.length,
+      documentedExports: documented,
+      docCoverage: docCoverage >= 0 ? parseFloat(docCoverage.toFixed(2)) : null,
+      issues,
+    });
+  }
+
+  const overallRatio = totalCodeLines > 0 ? (totalCommentLines / totalCodeLines) * 100 : 0;
+  const overallDocCoverage = totalExportedSymbols > 0 ? (totalDocumentedExports / totalExportedSymbols) * 100 : 0;
+
+  const docScore = totalExportedSymbols > 0 ? overallDocCoverage : 75;
+  const ratioScore = overallRatio >= 10 && overallRatio <= 35 ? 100 : overallRatio < 10 ? 40 : overallRatio > 50 ? 60 : 80;
+  const stalePenalty = Math.min(50, totalStaleComments * 5);
+  const healthScore = Math.max(0, Math.round(docScore * 0.4 + ratioScore * 0.3 + (100 - stalePenalty) * 0.3));
+
+  return {
+    files: results,
+    fileCount: results.length,
+    totalCodeLines,
+    totalCommentLines,
+    overallRatio: parseFloat(overallRatio.toFixed(2)),
+    totalExportedSymbols,
+    totalDocumentedExports,
+    overallDocCoverage: parseFloat(overallDocCoverage.toFixed(2)),
+    totalTodoFixme,
+    totalStaleComments,
+    healthScore,
+    grade: healthScore >= 90 ? 'A' : healthScore >= 75 ? 'B' : healthScore >= 60 ? 'C' : healthScore >= 40 ? 'D' : 'F',
+  };
+}
+
+/**
+ * F55: Format comment health report as markdown.
+ */
+export function formatCommentHealthReport(result) {
+  if (!result || result.fileCount === 0) {
+    return '## Comment Health Analysis\n\n⚠️ No files to analyze.\n';
+  }
+
+  let report = '## Comment Health Analysis\n\n';
+  report += `**Health Grade:** ${result.grade} (${result.healthScore}/100)\n`;
+  report += `**Overall comment ratio:** ${result.overallRatio}% (${result.totalCommentLines} comment lines / ${result.totalCodeLines} code lines)\n`;
+  report += `**Documentation coverage:** ${result.overallDocCoverage}% (${result.totalDocumentedExports}/${result.totalExportedSymbols} exports documented)\n`;
+  report += `**TODO/FIXME/HACK markers:** ${result.totalTodoFixme}\n`;
+  report += `**Stale/deprecated markers:** ${result.totalStaleComments}\n\n`;
+
+  const allIssues = result.files.flatMap(f => f.issues.map(i => ({ ...i, file: f.file })));
+  const highIssues = allIssues.filter(i => i.severity === 'high' || i.severity === 'medium');
+
+  if (highIssues.length > 0) {
+    report += '### Key Issues\n\n';
+    for (const issue of highIssues.slice(0, 15)) {
+      report += `- \`${issue.file}${issue.line ? ':' + issue.line : ''}\` — ${issue.description}\n`;
+    }
+    if (highIssues.length > 15) {
+      report += `- _...and ${highIssues.length - 15} more_\n`;
+    }
+    report += '\n';
+  }
+
+  const sorted = [...result.files].filter(f => f.codeLines > 10).sort((a, b) => b.ratio - a.ratio);
+  if (sorted.length > 0) {
+    report += '### Comment Ratio by File\n\n';
+    report += '| File | Code Lines | Comment % | Doc Coverage |\n';
+    report += '|------|-----------|----------|-------------|\n';
+    for (const f of sorted.slice(0, 15)) {
+      const dc = f.docCoverage !== null ? f.docCoverage + '%' : '—';
+      report += `| ${f.file} | ${f.codeLines} | ${f.ratio}% | ${dc} |\n`;
+    }
+    if (sorted.length > 15) {
+      report += `| _...${sorted.length - 15} more_ | | | |\n`;
+    }
+    report += '\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
