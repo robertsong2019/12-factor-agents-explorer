@@ -68,6 +68,8 @@
 
 ### Async & Concurrency (Round 6 — 2026-07-23)
 - [x] **F56**: analyzeAsyncPatterns() — async/await vs Promise chains vs callbacks, missing await, floating promises, unhandled rejections, callback hell ✅ 2026-07-23
+- [x] **F57**: analyzeExportHealth() — barrel files, re-export chains, unused exports, mixed export styles ✅ 2026-07-23
+- [x] **F58**: analyzeFunctionMetrics() — function length, parameter count, return paths, arrow/async detection ✅ 2026-07-23
 
 ## Priorities
 **Round 1 (Core):** F1, F2, F3 — Better codebase understanding
