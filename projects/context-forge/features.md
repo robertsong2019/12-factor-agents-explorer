@@ -66,6 +66,9 @@
 - [x] **F54**: analyzeDuplicateCode() — normalized line fingerprinting for cross-file duplicate detection, string literal + comment normalization, wasted lines estimate ✅ 2026-07-21
 - [x] **F55**: analyzeCommentHealth() — comment-to-code ratio, stale/obsolete comments, doc coverage ✅ 2026-07-22
 
+### Async & Concurrency (Round 6 — 2026-07-23)
+- [x] **F56**: analyzeAsyncPatterns() — async/await vs Promise chains vs callbacks, missing await, floating promises, unhandled rejections, callback hell ✅ 2026-07-23
+
 ## Priorities
 **Round 1 (Core):** F1, F2, F3 — Better codebase understanding
 **Round 2 (Output):** F5, F6 — Better visualization

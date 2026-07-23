@@ -6475,6 +6475,265 @@ export function formatAsyncPatternsReport(result) {
   return report;
 }
 
+/**
+ * F57: Analyze export health — barrel files, re-export chains,
+ * unused exports, export consistency (named vs default vs namespace).
+ */
+export function analyzeExportHealth(files = [], importData = null) {
+  const results = [];
+  let totalExports = 0;
+  let totalReExports = 0;
+  let totalBarrelFiles = 0;
+  let totalUnusedExports = 0;
+  let totalDefaultExports = 0;
+  let totalNamedExports = 0;
+  let totalNamespaceExports = 0;
+  let totalCircularReExports = 0;
+
+  // Collect all imported names across the project for unused-export detection
+  const allImportedPaths = new Set();
+  const allImportedNames = new Set();
+  if (importData && importData.allImports) {
+    for (const imp of importData.allImports) allImportedPaths.add(imp);
+  }
+  if (importData && importData.imports) {
+    for (const [file, imps] of importData.imports.entries()) {
+      for (const imp of imps) {
+        allImportedPaths.add(imp.path || imp);
+        if (imp.names) imp.names.forEach(n => allImportedNames.add(n));
+      }
+    }
+  }
+
+  const jsExtensions = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const ext = extname(file.path || '');
+    if (!jsExtensions.has(ext)) continue;
+
+    const content = file.content;
+    const lines = content.split('\n');
+    const issues = [];
+
+    // Count export types
+    const namedExports = [];
+    let defaultExportCount = 0;
+    let namespaceReExportCount = 0;
+    const reExports = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+
+      // Skip comments
+      if (/^\/\//.test(trimmed) || /^\*/.test(trimmed)) continue;
+
+      // export { a, b, c } — named exports
+      const namedMatch = trimmed.match(/^export\s+\{([^}]+)\}\s*(?:from\s+['"]([^'"]+)['"])?\s*;?$/);
+      if (namedMatch) {
+        const names = namedMatch[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+        if (namedMatch[2]) {
+          // Re-export from another module
+          reExports.push({ line: i + 1, names, from: namedMatch[2] });
+        } else {
+          namedExports.push(...names.map(n => ({ name: n, line: i + 1 })));
+        }
+        continue;
+      }
+
+      // export * from '...' — namespace re-export
+      const nsMatch = trimmed.match(/^export\s+\*\s*(?:as\s+(\w+))?\s+from\s+['"]([^'"]+)['"];?$/);
+      if (nsMatch) {
+        namespaceReExportCount++;
+        reExports.push({ line: i + 1, names: nsMatch[1] ? [nsMatch[1]] : ['*'], from: nsMatch[2], namespace: true });
+        continue;
+      }
+
+      // export default ...
+      if (/^export\s+default\s/.test(trimmed)) {
+        defaultExportCount++;
+        continue;
+      }
+
+      // export function/const/class/let/var name
+      const declMatch = trimmed.match(/^export\s+(?:async\s+)?(?:function\s*\*?|class|const|let|var)\s+(\w+)/);
+      if (declMatch) {
+        namedExports.push({ name: declMatch[1], line: i + 1 });
+        continue;
+      }
+    }
+
+    const totalFileReExports = reExports.length;
+    const totalFileExports = namedExports.length + defaultExportCount + namespaceReExportCount + totalFileReExports;
+
+    // Barrel file detection: file that only re-exports
+    const isBarrelFile = totalFileReExports > 0 && totalFileExports === totalFileReExports && namedExports.length === 0;
+    if (isBarrelFile) totalBarrelFiles++;
+
+    // Unused export detection (heuristic: if export name not found in any import across project)
+    let unusedCount = 0;
+    const unusedNames = [];
+    for (const exp of namedExports) {
+      // Check if this export name appears in any import statement across the project
+      if (allImportedNames.size > 0 && !allImportedNames.has(exp.name)) {
+        // Also check if the file path itself is imported (module-level import)
+        const basePath = (file.path || '').replace(/\.(js|mjs|cjs|ts|tsx|jsx)$/, '');
+        const fileName = basePath.split('/').pop();
+        if (!allImportedPaths.has(basePath) && !allImportedPaths.has('./' + fileName) && !allImportedPaths.has('../' + fileName)) {
+          unusedCount++;
+          unusedNames.push(exp.name);
+        }
+      }
+    }
+
+    if (unusedCount > 0 && unusedCount === namedExports.length && namedExports.length > 2) {
+      issues.push({
+        type: 'all_exports_unused',
+        severity: 'high',
+        line: 0,
+        description: `All ${unusedCount} named exports appear unused across the project`,
+        snippet: unusedNames.slice(0, 5).join(', ') + (unusedNames.length > 5 ? '...' : ''),
+      });
+    } else if (unusedCount > 0) {
+      issues.push({
+        type: 'unused_exports',
+        severity: 'low',
+        line: 0,
+        description: `${unusedCount} export(s) appear unused: ${unusedNames.slice(0, 5).join(', ')}`,
+        snippet: '',
+      });
+    }
+
+    // Barrel file warning
+    if (isBarrelFile && totalFileReExports > 3) {
+      issues.push({
+        type: 'large_barrel_file',
+        severity: 'low',
+        line: 0,
+        description: `Large barrel file with ${totalFileReExports} re-exports — consider splitting or using direct imports`,
+        snippet: '',
+      });
+    }
+
+    // Mixed default + named exports (inconsistent API)
+    if (defaultExportCount > 0 && namedExports.length > 0) {
+      issues.push({
+        type: 'mixed_export_style',
+        severity: 'info',
+        line: 0,
+        description: `File has both default export and ${namedExports.length} named exports — consider using only one style`,
+        snippet: '',
+      });
+    }
+
+    // Multiple default exports (error)
+    if (defaultExportCount > 1) {
+      issues.push({
+        type: 'multiple_defaults',
+        severity: 'high',
+        line: 0,
+        description: `File has ${defaultExportCount} default exports — only one is allowed`,
+        snippet: '',
+      });
+    }
+
+    if (totalFileExports === 0) continue;
+
+    results.push({
+      file: file.path,
+      namedExports: namedExports.length,
+      defaultExports: defaultExportCount,
+      namespaceReExports: namespaceReExportCount,
+      reExports: totalFileReExports,
+      totalExports: totalFileExports,
+      isBarrelFile,
+      unusedExports: unusedCount,
+      issues,
+    });
+
+    totalExports += totalFileExports;
+    totalReExports += totalFileReExports;
+    totalUnusedExports += unusedCount;
+    totalDefaultExports += defaultExportCount;
+    totalNamedExports += namedExports.length;
+    totalNamespaceExports += namespaceReExportCount;
+  }
+
+  // Health score
+  const hasExports = totalExports > 0;
+  const exportConsistency = totalNamedExports > 0 && totalDefaultExports === 0 ? 100 : totalDefaultExports > 0 && totalNamedExports === 0 ? 80 : 70;
+  const unusedPenalty = Math.min(60, totalUnusedExports * 5);
+  const barrelPenalty = Math.min(20, totalBarrelFiles * 3);
+  const healthScore = !hasExports ? 0 : Math.max(0, Math.round(exportConsistency * 0.3 + (100 - unusedPenalty) * 0.5 + (100 - barrelPenalty) * 0.2));
+
+  return {
+    files: results,
+    fileCount: results.length,
+    totalExports,
+    totalReExports,
+    totalBarrelFiles,
+    totalUnusedExports,
+    totalDefaultExports,
+    totalNamedExports,
+    totalNamespaceExports,
+    healthScore,
+    grade: healthScore >= 90 ? 'A' : healthScore >= 75 ? 'B' : healthScore >= 60 ? 'C' : healthScore >= 40 ? 'D' : 'F',
+  };
+}
+
+/**
+ * F57: Format export health report as markdown.
+ */
+export function formatExportHealthReport(result) {
+  if (!result || result.fileCount === 0) {
+    return '## Export Health Analysis\n\n⚠️ No exports found.\n';
+  }
+
+  let report = '## Export Health Analysis\n\n';
+  report += `**Health Grade:** ${result.grade} (${result.healthScore}/100)\n`;
+  report += `**Total exports:** ${result.totalExports}\n`;
+  report += `**Named exports:** ${result.totalNamedExports}\n`;
+  report += `**Default exports:** ${result.totalDefaultExports}\n`;
+  report += `**Namespace re-exports:** ${result.totalNamespaceExports}\n`;
+  report += `**Re-exports:** ${result.totalReExports}\n`;
+  report += `**Barrel files:** ${result.totalBarrelFiles}\n`;
+  report += `**Unused exports:** ${result.totalUnusedExports}\n\n`;
+
+  const allIssues = result.files.flatMap(f => f.issues.map(i => ({ ...i, file: f.file })));
+  const highIssues = allIssues.filter(i => i.severity === 'high');
+
+  if (highIssues.length > 0) {
+    report += '### Critical Issues\n\n';
+    for (const issue of highIssues.slice(0, 10)) {
+      report += `- \`${issue.file}\` — ${issue.description}\n`;
+    }
+    report += '\n';
+  }
+
+  if (result.totalBarrelFiles > 0) {
+    const barrels = result.files.filter(f => f.isBarrelFile);
+    report += '### Barrel Files\n\n';
+    for (const b of barrels) {
+      report += `- \`${b.file}\` — ${b.reExports} re-exports\n`;
+    }
+    report += '\n';
+  }
+
+  const sorted = [...result.files].sort((a, b) => b.totalExports - a.totalExports);
+  report += '### Per-file Breakdown\n\n';
+  report += '| File | Named | Default | Re-exports | Barrel | Unused |\n';
+  report += '|------|-------|---------|------------|--------|--------|\n';
+  for (const f of sorted.slice(0, 20)) {
+    report += `| ${f.file} | ${f.namedExports} | ${f.defaultExports} | ${f.reExports} | ${f.isBarrelFile ? '✅' : ''} | ${f.unusedExports} |\n`;
+  }
+  if (sorted.length > 20) {
+    report += `| _...${sorted.length - 20} more_ | | | | | |\n`;
+  }
+  report += '\n';
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
