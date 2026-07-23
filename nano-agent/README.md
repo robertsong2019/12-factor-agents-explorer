@@ -97,10 +97,16 @@ nano-agent/
 
 ### Memory
 记忆管理，支持：
-- 短期记忆（会话级）
-- 长期记忆（持久化）
-- 记忆检索和过滤
+- 短期记忆（会话级）与长期记忆（持久化）
 - 重要度评分与自动遗忘（F5-F8）
+- JSON / JSONL / Markdown / CSV 导出导入（F1-F3, F31, F40, F43）
+- 集合运算：merge / union / intersect / subtract / diff（F14, F28, F44-F45）
+- 模糊搜索、正则搜索、加权搜索、字段搜索（F17, F23, F25, F38）
+- 聚类、采样、时间线分桶、直方图（F29-F34）
+- 标签自动标注、标签标准化、标签云（F37, F39, F41）
+- 快照/恢复、分页、紧凑摘要（F22, F26, F33）
+- Shannon 熵、相关性统计（F35, F42）
+- LLM Prompt 格式化输出（F46）
 
 ### LLM
 统一的大语言模型接口，支持：
@@ -202,14 +208,45 @@ def my_function(param: str) -> str:
 ```python
 Memory(max_entries=100, persistence_path=None)
 ```
+
+**基础操作：**
 - `add(content, metadata)` — 添加记忆
 - `search(query, limit=5, tags=None)` — 关键词 + 标签搜索
-- `get_recent(n=5)` — 最近 n 条
-- `get_all()` — 全部记忆副本
-- `count()` — 记忆条目数
-- `remove(index)` — 按索引删除
-- `update(index, content, metadata)` — 按索引更新
-- `clear()` — 清空
+- `get_recent(n=5)` / `get_all()` / `count()` — 查询
+- `remove(index)` / `update(index, ...)` / `clear()` — 修改
+
+**重要度与遗忘（F5-F8）：**
+- `set_importance(index, score)` — 手动评分
+- `importance_decay(factor)` — 模拟时间衰减
+- `forget(threshold)` — 遗忘低分记忆
+- `top_important(n)` — Top-N 重要记忆
+
+**高级搜索（F17-F27, F38）：**
+- `search_fuzzy(query, threshold)` — difflib 模糊搜索
+- `search_regex(pattern)` — 正则搜索
+- `weighted_search(query)` — 内容+重要度+时间 三因子加权
+- `search_in_fields(query, fields)` — 字段级搜索
+- `chain_search(queries)` — 多查询融合排序
+- `filter(predicate)` — 回调函数过滤
+- `paginate(page, page_size, order)` — 分页
+
+**集合运算（F14, F28, F44-F45）：**
+- `merge(other)` / `union(other)` — 合并（去重）
+- `intersect(other)` — 交集
+- `subtract(other)` — 差集
+- `diff(other)` — 两路 diff
+
+**分析与导出（F1-F3, F29-F42）：**
+- `export_json()` / `import_json()` — JSON 序列化
+- `export_jsonl()` / `import_jsonl()` — JSON Lines 格式
+- `export_markdown()` / `export_csv()` — 结构化导出
+- `stats()` / `entropy()` / `correlation_stats()` — 统计分析
+- `cluster(threshold)` — 相似度聚类
+- `timeline(bucket)` — 时间分布
+- `snapshot()` / `restore()` — 快照恢复
+- `to_prompt(...)` — LLM Prompt 格式化
+
+> 完整特性列表见 [`features.md`](features.md)
 
 ### `LLMBackend`
 
