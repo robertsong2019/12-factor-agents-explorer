@@ -6200,6 +6200,281 @@ export function formatCommentHealthReport(result) {
   return report;
 }
 
+/**
+ * F56: Analyze async/concurrency patterns — detect async/await vs Promise chains
+ * vs callbacks, missing awaits, floating promises, unhandled rejections, and
+ * callback hell depth.
+ */
+export function analyzeAsyncPatterns(files = []) {
+  const results = [];
+  let totalAsyncFunctions = 0;
+  let totalAwaitUsage = 0;
+  let totalPromiseChains = 0;
+  let totalCallbacks = 0;
+  let totalFloatingPromises = 0;
+  let totalMissingAwait = 0;
+  let totalUnhandledRejections = 0;
+  let totalCallbackHell = 0;
+
+  const jsExtensions = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.vue', '.svelte']);
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const ext = extname(file.path || '');
+    if (!jsExtensions.has(ext)) continue;
+
+    const lines = file.content.split('\n');
+    const issues = [];
+    let asyncFuncCount = 0;
+    let awaitCount = 0;
+    let promiseChainCount = 0;
+    let callbackCount = 0;
+    let floatingPromiseCount = 0;
+    let missingAwaitCount = 0;
+    let unhandledRejectionCount = 0;
+    let callbackHellCount = 0;
+    let callbackDepth = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      const lineNum = i + 1;
+
+      // Track callback nesting depth (callback hell detection)
+      const openCallback = (trimmed.match(/(?:=>|function\s*)\s*\{/g) || []).length;
+      const closeCallback = (trimmed.match(/\}\s*\)/g) || []).length;
+
+      // Check for callback hell BEFORE updating depth (depth from previous lines)
+      if (callbackDepth >= 2 && /(err|callback|cb)/.test(trimmed)) {
+        callbackHellCount++;
+        issues.push({
+          type: 'callback_hell',
+          severity: 'medium',
+          line: lineNum,
+          description: `Deep callback nesting (depth: ${callbackDepth + 1}) — consider async/await`,
+          snippet: trimmed.substring(0, 120),
+        });
+      }
+
+      callbackDepth += openCallback - closeCallback;
+      if (callbackDepth < 0) callbackDepth = 0;
+
+      // Skip comments
+      if (/^\/\//.test(trimmed) || /^\*/.test(trimmed) || /^#/.test(trimmed)) continue;
+
+      // Async function declaration
+      if (/\basync\s+(?:function\s*\*?|\(|\w)/.test(trimmed) || /\basync\s+function\b/.test(trimmed)) {
+        asyncFuncCount++;
+      }
+
+      // Await usage
+      const awaitMatches = trimmed.match(/\bawait\s+/g);
+      if (awaitMatches) awaitCount += awaitMatches.length;
+
+      // Promise chain (.then/.catch/.finally without await on same line)
+      const thenMatches = trimmed.match(/\.then\s*\(/g);
+      const catchMatches = trimmed.match(/\.catch\s*\(/g);
+      const finallyMatches = trimmed.match(/\.finally\s*\(/g);
+      const chainOnLine = (thenMatches || []).length + (catchMatches || []).length + (finallyMatches || []).length;
+      if (chainOnLine > 0) {
+        promiseChainCount += chainOnLine;
+        // Check for unhandled rejection (no .catch in the chain)
+        if (/\.then\s*\(/.test(trimmed) && !/\.catch\s*\(/.test(trimmed) && !/\.finally\s*\(/.test(trimmed)) {
+          // Look ahead a few lines for .catch
+          let hasCatch = false;
+          for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+            if (/\.catch\s*\(/.test(lines[j]) || /\.finally\s*\(/.test(lines[j])) {
+              hasCatch = true;
+              break;
+            }
+            // If we hit a new statement, stop
+            if (/^\s*[\w$]/.test(lines[j]) && !/\.then\s*\(/.test(lines[j]) && !/^\s*\)/.test(lines[j]) && !/^\s*\}/.test(lines[j])) {
+              break;
+            }
+          }
+          if (!hasCatch) {
+            unhandledRejectionCount++;
+            issues.push({
+              type: 'unhandled_rejection',
+              severity: 'high',
+              line: lineNum,
+              description: 'Promise .then() chain without .catch() — potential unhandled rejection',
+              snippet: trimmed.substring(0, 120),
+            });
+          }
+        }
+      }
+
+      // new Promise without await/return
+      if (/\bnew\s+Promise\s*\(/.test(trimmed) && !/\bawait\b/.test(trimmed) && !/\breturn\b/.test(trimmed)) {
+        floatingPromiseCount++;
+        issues.push({
+          type: 'floating_promise',
+          severity: 'medium',
+          line: lineNum,
+          description: 'Promise created but not awaited or returned — fire-and-forget',
+          snippet: trimmed.substring(0, 120),
+        });
+      }
+
+      // Missing await: calling a function known to return a promise without await
+      // Pattern: function call ending in Async or matching a fetch() call without await
+      if (/\bfetch\s*\(/.test(trimmed) && !/\bawait\s+fetch\b/.test(trimmed) && !/\breturn\s+fetch\b/.test(trimmed) && !/\.then\s*\(/.test(trimmed) && !/\.catch\s*\(/.test(trimmed)) {
+        missingAwaitCount++;
+        issues.push({
+          type: 'missing_await',
+          severity: 'high',
+          line: lineNum,
+          description: 'fetch() called without await — response will be a Promise, not Response',
+          snippet: trimmed.substring(0, 120),
+        });
+      }
+
+      // Functions ending in Async without await
+      const asyncCallMatch = trimmed.match(/\b(\w*[Aa]sync\w*)\s*\(/);
+      if (asyncCallMatch && !/\bawait\b/.test(trimmed) && !/\breturn\b/.test(trimmed) && !/\bnew\s+Promise\b/.test(trimmed) && !/^\s*(?:export\s+)?(?:async\s+)?(?:function|class|const|let|var)\s/.test(trimmed) && !/\basync\s+function\b/.test(trimmed)) {
+        // Only flag clear cases: explicit Async naming convention
+        const funcName = asyncCallMatch[1];
+        if (/Async$/.test(funcName) || /async$/.test(funcName)) {
+          missingAwaitCount++;
+          issues.push({
+            type: 'missing_await',
+            severity: 'medium',
+            line: lineNum,
+            description: `'${funcName}()' appears to be async but called without await`,
+            snippet: trimmed.substring(0, 120),
+          });
+        }
+      }
+
+      // Callback pattern: function passed as last arg (heuristic)
+      if (/\bfunction\s*\(.*(?:err|error|callback|cb).*\)\s*\{/.test(trimmed) || /\(err,\s*(?:res|response|data|result|docs)\)\s*=>/.test(trimmed) || /,\s*function\s*\(/.test(trimmed)) {
+        callbackCount++;
+      }
+
+      // Single-line callback hell: deeply nested on one line
+      const arrowMatches = (trimmed.match(/=>/g) || []).length;
+      const fnMatches = (trimmed.match(/function\s*\(/g) || []).length;
+      const singleLineDepth = arrowMatches + fnMatches;
+      if (singleLineDepth >= 3 && /(err|callback|cb)/.test(trimmed)) {
+        callbackHellCount++;
+        issues.push({
+          type: 'callback_hell',
+          severity: 'medium',
+          line: lineNum,
+          description: `Deep callback nesting (${singleLineDepth} inline) — consider async/await`,
+          snippet: trimmed.substring(0, 120),
+        });
+      }
+    }
+
+    if (asyncFuncCount === 0 && awaitCount === 0 && promiseChainCount === 0 && callbackCount === 0 && floatingPromiseCount === 0 && missingAwaitCount === 0 && unhandledRejectionCount === 0 && callbackHellCount === 0) continue;
+
+    results.push({
+      file: file.path,
+      asyncFunctions: asyncFuncCount,
+      awaitUsage: awaitCount,
+      promiseChains: promiseChainCount,
+      callbacks: callbackCount,
+      floatingPromises: floatingPromiseCount,
+      missingAwaits: missingAwaitCount,
+      unhandledRejections: unhandledRejectionCount,
+      callbackHell: callbackHellCount,
+      issues,
+    });
+
+    totalAsyncFunctions += asyncFuncCount;
+    totalAwaitUsage += awaitCount;
+    totalPromiseChains += promiseChainCount;
+    totalCallbacks += callbackCount;
+    totalFloatingPromises += floatingPromiseCount;
+    totalMissingAwait += missingAwaitCount;
+    totalUnhandledRejections += unhandledRejectionCount;
+    totalCallbackHell += callbackHellCount;
+  }
+
+  // Health score calculation
+  const totalIssues = totalFloatingPromises + totalMissingAwait + totalUnhandledRejections + totalCallbackHell;
+  const hasAsyncCode = totalAsyncFunctions + totalAwaitUsage + totalPromiseChains + totalCallbacks + totalIssues;
+  const asyncAdoption = totalAsyncFunctions > 0 ? Math.min(100, Math.round((totalAwaitUsage / totalAsyncFunctions) * 50)) : (hasAsyncCode > 0 ? 50 : 0);
+  const issuePenalty = Math.min(80, totalIssues * 8);
+  const chainRatio = (totalAsyncFunctions + totalPromiseChains) > 0 ? totalPromiseChains / (totalAsyncFunctions + totalPromiseChains) : 0;
+  const chainPenalty = Math.round(chainRatio * 20); // Prefer async/await over .then chains
+  const healthScore = hasAsyncCode === 0 ? 0 : Math.max(0, Math.round(asyncAdoption * 0.3 + (100 - issuePenalty) * 0.5 + (100 - chainPenalty) * 0.2));
+
+  return {
+    files: results,
+    fileCount: results.length,
+    totalAsyncFunctions,
+    totalAwaitUsage,
+    totalPromiseChains,
+    totalCallbacks,
+    totalFloatingPromises,
+    totalMissingAwait,
+    totalUnhandledRejections,
+    totalCallbackHell,
+    healthScore,
+    grade: healthScore >= 90 ? 'A' : healthScore >= 75 ? 'B' : healthScore >= 60 ? 'C' : healthScore >= 40 ? 'D' : 'F',
+  };
+}
+
+/**
+ * F56: Format async patterns report as markdown.
+ */
+export function formatAsyncPatternsReport(result) {
+  if (!result || result.fileCount === 0) {
+    return '## Async Patterns Analysis\n\n⚠️ No async code detected.\n';
+  }
+
+  let report = '## Async Patterns Analysis\n\n';
+  report += `**Health Grade:** ${result.grade} (${result.healthScore}/100)\n`;
+  report += `**Async functions:** ${result.totalAsyncFunctions}\n`;
+  report += `**Await calls:** ${result.totalAwaitUsage}\n`;
+  report += `**Promise chains (.then):** ${result.totalPromiseChains}\n`;
+  report += `**Callback patterns:** ${result.totalCallbacks}\n\n`;
+
+  if (result.totalFloatingPromises > 0 || result.totalMissingAwait > 0 || result.totalUnhandledRejections > 0 || result.totalCallbackHell > 0) {
+    report += '### Risk Summary\n\n';
+    report += `| Issue | Count | Severity |\n`;
+    report += `|-------|-------|----------|\n`;
+    if (result.totalMissingAwait > 0) report += `| Missing await | ${result.totalMissingAwait} | High |\n`;
+    if (result.totalUnhandledRejections > 0) report += `| Unhandled rejections | ${result.totalUnhandledRejections} | High |\n`;
+    if (result.totalFloatingPromises > 0) report += `| Floating promises | ${result.totalFloatingPromises} | Medium |\n`;
+    if (result.totalCallbackHell > 0) report += `| Callback hell | ${result.totalCallbackHell} | Medium |\n`;
+    report += '\n';
+  }
+
+  const allIssues = result.files.flatMap(f => f.issues.map(i => ({ ...i, file: f.file })));
+  const highIssues = allIssues.filter(i => i.severity === 'high');
+
+  if (highIssues.length > 0) {
+    report += '### Critical Issues\n\n';
+    for (const issue of highIssues.slice(0, 15)) {
+      report += `- \`${issue.file}:${issue.line}\` — ${issue.description}\n`;
+      if (issue.snippet) report += `  \`\`${issue.snippet}\`\`\n`;
+    }
+    if (highIssues.length > 15) {
+      report += `- _...and ${highIssues.length - 15} more_\n`;
+    }
+    report += '\n';
+  }
+
+  const sorted = [...result.files].sort((a, b) => b.issues.length - a.issues.length);
+  if (sorted.length > 0) {
+    report += '### Per-file Breakdown\n\n';
+    report += '| File | Async Fn | Await | .then | Callbacks | Issues |\n';
+    report += '|------|----------|-------|-------|-----------|--------|\n';
+    for (const f of sorted.slice(0, 15)) {
+      report += `| ${f.file} | ${f.asyncFunctions} | ${f.awaitUsage} | ${f.promiseChains} | ${f.callbacks} | ${f.issues.length} |\n`;
+    }
+    if (sorted.length > 15) {
+      report += `| _...${sorted.length - 15} more_ | | | | | |\n`;
+    }
+    report += '\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
