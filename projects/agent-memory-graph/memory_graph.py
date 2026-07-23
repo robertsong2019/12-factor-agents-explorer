@@ -24611,6 +24611,169 @@ class MemoryGraph:
         candidates.sort(key=lambda c: (-c["confidence"], -c["frequency"]))
         return candidates
 
+    def auto_compress_skills(self, *,                          # noqa: C901
+                             min_frequency: int = 2,
+                             min_confidence: float = 0.4,
+                             max_skills: int = 5,
+                             dry_run: bool = False) -> dict:
+        """Auto-promote detected skill candidates into procedural skills.
+
+        The **act** half of the detect→compress skill loop,
+        mirroring ``auto_heal_gaps()`` for gaps and ``auto_consolidate()``
+        for redundancy.
+
+        While ``detect_skill_candidates`` *identifies* recurring action
+        patterns, this API *acts* on them by calling ``compress_to_skill()``
+        for each qualifying candidate.
+
+        **Compression strategy:**
+
+        1. Run ``detect_skill_candidates`` with the given ``min_frequency``.
+        2. Filter candidates by ``min_confidence``.
+        3. For each candidate (up to ``max_skills``), call
+           ``compress_to_skill()`` on the candidate's memory IDs.
+        4. Skip candidates whose memory IDs are already linked to
+           an existing skill node (avoids double-compression).
+
+        **Non-mutating when** ``dry_run=True``:
+        All actions are simulated; no nodes are created.
+
+        Args:
+            min_frequency: Minimum pattern occurrences to qualify.
+            min_confidence: Minimum candidate confidence [0–1].
+            max_skills: Maximum number of skills to create.
+            dry_run: If True, report what *would* be done.
+
+        Returns:
+            Dict with:
+
+            - **skills_created**: List of ``{name, action, frequency,
+              confidence, source_count, skill_id}``
+            - **total_created**: Count of skills created
+            - **candidates_found**: Total candidates from detection
+            - **skipped**: Candidates skipped (below threshold or
+              already compressed)
+            - **actions**: Human-readable summary strings
+            - **dry_run**: Whether this was a dry run
+        """
+        report = self.detect_skill_candidates(
+            min_frequency=min_frequency,
+        )
+
+        skills_created = []
+        actions = []
+        skipped = []
+        created_count = 0
+
+        # Track memory IDs already compressed in this run
+        consumed_ids: set[str] = set()
+
+        for cand in report:
+            if created_count >= max_skills:
+                break
+
+            if cand["confidence"] < min_confidence:
+                skipped.append({
+                    "action": cand["action"],
+                    "reason": (
+                        f"confidence {cand['confidence']:.3f} "
+                        f"< {min_confidence}"
+                    ),
+                })
+                continue
+
+            mem_ids = cand["memory_ids"]
+
+            # Skip if all source IDs were already consumed in this run
+            # or already linked to an existing skill via 'abstracts' edge
+            already_skilled = set()
+            for mid in mem_ids:
+                if mid in consumed_ids:
+                    already_skilled.add(mid)
+                    continue
+                # Check if this memory is already abstracted by a skill
+                for edge in self.edges_of(mid):
+                    if edge.relation == "abstracts":
+                        already_skilled.add(mid)
+                        break
+
+            if all(mid in already_skilled for mid in mem_ids):
+                skipped.append({
+                    "action": cand["action"],
+                    "reason": "all source memories already compressed",
+                })
+                continue
+
+            # Filter out already-consumed or already-skilled IDs
+            available_ids = [
+                mid for mid in mem_ids
+                if mid not in consumed_ids and mid not in already_skilled
+            ]
+
+            if not available_ids:
+                skipped.append({
+                    "action": cand["action"],
+                    "reason": "no new source memories available",
+                })
+                continue
+
+            skill_name = f"auto: {cand['action']}"
+
+            if dry_run:
+                skills_created.append({
+                    "name": skill_name,
+                    "action": cand["action"],
+                    "frequency": cand["frequency"],
+                    "confidence": cand["confidence"],
+                    "source_count": len(available_ids),
+                    "skill_id": None,
+                })
+                actions.append(
+                    f"[dry-run] Would create skill '{skill_name}' "
+                    f"from {len(available_ids)} episodes "
+                    f"(confidence={cand['confidence']:.3f})"
+                )
+            else:
+                skill = self.compress_to_skill(
+                    available_ids,
+                    skill_name,
+                    description=cand["suggested_compression"],
+                    confidence=cand["confidence"],
+                )
+                if skill is not None:
+                    skills_created.append({
+                        "name": skill_name,
+                        "action": cand["action"],
+                        "frequency": cand["frequency"],
+                        "confidence": cand["confidence"],
+                        "source_count": len(available_ids),
+                        "skill_id": skill.id,
+                    })
+                    actions.append(
+                        f"Created skill '{skill_name}' "
+                        f"from {len(available_ids)} episodes "
+                        f"(confidence={cand['confidence']:.3f})"
+                    )
+                else:
+                    skipped.append({
+                        "action": cand["action"],
+                        "reason": "compress_to_skill returned None",
+                    })
+                    continue
+
+            # Mark source IDs as consumed
+            consumed_ids.update(available_ids)
+            created_count += 1
+
+        return {
+            "skills_created": skills_created,
+            "total_created": created_count,
+            "candidates_found": len(report),
+            "skipped": skipped,
+            "actions": actions,
+            "dry_run": dry_run,
+        }
+
     # ── Skill Bank Governance (SkeMex / MUSE inspired) ───────────
 
     def govern_skill_bank(
