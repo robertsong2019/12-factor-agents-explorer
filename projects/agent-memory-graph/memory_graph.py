@@ -6239,6 +6239,118 @@ class MemoryGraph:
                 total += math.sqrt((ds - 1) ** 2 + (dt - 1) ** 2)
         return total
 
+    def sombor_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalized Sombor edge contributions.
+
+        For each edge e = (u, v), compute the Sombor contribution
+        s_e = √(d_u² + d_v²), normalise to p_e = s_e / SO, then
+        calculate Shannon entropy:
+
+            H_SO = −Σ p_e · ln(p_e)
+
+        When *normalized* is True the result is divided by ln(m)
+        (m = edge count) so the output lies in (0, 1].  A value of 1.0
+        means every edge contributes equally to the Sombor index
+        (e.g. regular graphs or cycles).
+
+        **Properties:**
+        - Regular graph K_n: H_SO = ln(m), normalised = 1.0
+        - Cycle C_n: H_SO = ln(n), normalised = 1.0
+        - Star K_{1,k}: H_SO = ln(k) (all edges identical), normalised = 1.0
+        - Path P_n: H_SO < ln(n-1) because interior and boundary edges
+          contribute differently
+
+        Returns:
+            float in (0, ln m] or (0, 1], or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                contributions.append(math.sqrt(ds * ds + dt * dt))
+        if not contributions:
+            return None
+        so = sum(contributions)
+        if so <= 0:
+            return None
+        m = len(contributions)
+        entropy = 0.0
+        for c in contributions:
+            p = c / so
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
+    def reduced_sombor_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Reduced Sombor edge contributions.
+
+        For each edge e = (u, v), compute the reduced Sombor contribution
+        rs_e = √((d_u−1)² + (d_v−1)²), normalise to p_e = rs_e / RS,
+        then calculate Shannon entropy:
+
+            H_RS = −Σ p_e · ln(p_e)
+
+        When *normalized* is True the result is divided by ln(m)
+        so the output lies in (0, 1].
+
+        **Special case:** If RS = 0 (only K₂ edges, each contributing
+        zero), the entropy is defined as 0.0 — there is no heterogeneity
+        to measure.
+
+        **Properties:**
+        - K₂: RS = 0, entropy = 0.0 (by convention)
+        - Regular graph K_n (n≥3): H_RS = ln(m), normalised = 1.0
+        - Cycle C_n: H_RS = ln(n), normalised = 1.0
+        - Star K_{1,k} (k≥2): all rs_e = k−1, entropy = ln(k), normalised = 1.0
+
+        Returns:
+            float in (0, ln m] or (0, 1], or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                contributions.append(math.sqrt((ds - 1) ** 2 + (dt - 1) ** 2))
+        if not contributions:
+            return None
+        rs = sum(contributions)
+        m = len(contributions)
+        if rs <= 0:
+            # All contributions are zero (only K₂ edges)
+            return 0.0 if normalized else 0.0
+        entropy = 0.0
+        for c in contributions:
+            p = c / rs
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
