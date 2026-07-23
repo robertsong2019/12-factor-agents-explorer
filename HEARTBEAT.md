@@ -4,13 +4,13 @@
 
 ### 🔴 最高优先级（本周）
 - [x] **MCP Memory Server Phase 1 Day 5** — ✅ DONE: cross-era integration tests (93→122). Legacy↔Auto persistence, all 14 tools legacy-verified, outputSchema consistency, edge-case parity.
-- [ ] **agent-memory-graph: README + npm publish** — **4205 tests**, 800+ APIs, 七十四合一
+- [ ] **agent-memory-graph: README + npm publish** — **4223 tests**, 800+ APIs, 七十四合一
 - [ ] **agent-context-store: README + npm publish** — **2864 tests**, 590+ APIs, 二十五层
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
 - [ ] **agent-task-cli: README + npm publish** — **1319 tests**, F203
 
 ### 中优先级（本月）
-- [ ] agent-memory-graph: compress_to_skill() (foundation done: c275 detect_skill_candidates +19 tests)
+- [x] agent-memory-graph: auto_compress_skills() ✅ Cycle 277 — detect→compress loop complete (+18 tests, 4205→4223)
 - [ ] agent-memory-graph: EvoMemBench adapter (4-setting benchmark)
 - [ ] lab/agent-observability: OTel GenAI 对齐 (Research #023 ✅, 3 action items ready)
 - [ ] openclaw-langgraph-bridge: Gateway 集成测试 (261 tests)
@@ -29,18 +29,19 @@
 - [x] Knowledge org (07-22 02:00): 6th/7th phantom fix, MEMORY.md insights #96-99
 
 ## 系统状态
-- **agent-memory-graph**: **4205 tests** — 800+ APIs。七十四合一: dual-loop quality system FULLY COMPLETE ✅✅ + evaluation quartet ✅ + detect_skill_candidates (compress_to_skill foundation) ✅ + Sombor index family (14 degree metrics) ✅ + walk_statistics ✅ + edge_type_stats ✅ + 全检索管线 ✅ + 19 centrality + 拓扑指数十九族 + immutable_store + compact_node + serialize + write_governance_check + drift_search + prospective_memory + SimHash dual-mode
+- **agent-memory-graph**: **4223 tests** — 800+ APIs。七十四合一: dual-loop quality system FULLY COMPLETE ✅✅ (gaps→auto_heal, redundancy→auto_consolidate, skills→auto_compress_skills) + evaluation quartet ✅ + detect_skill_candidates + auto_compress_skills ✅ + Sombor index family (14 degree metrics) ✅ + walk_statistics ✅ + edge_type_stats ✅ + 全检索管线 ✅ + 19 centrality + 拓扑指数十九族 + immutable_store + compact_node + serialize + write_governance_check + drift_search + prospective_memory + SimHash dual-mode
 - **agent-context-store**: **2864 tests** — 590+ APIs。全分析闭环(二十五层): **detect→configure→recommend→validate pipeline COMPLETE** ✅ (sensitivity→hysteresis→recommender→backtest)
 - **structured-output-toolkit**: **571 tests**
 - **agent-task-cli**: **1319 tests** — F203
 - **context-forge**: **786 tests** (F55 comment health, 6008 lines)
 - **nano-agent**: **732 tests** (F46 to_prompt)
 - **amg-mcp**: **122 tests** — Phase 1 Day 5 complete ✅ (14 tools, dual transport, dual-era verified, cross-era integration)
-- **四项目总计**: 8978 tests ✅
-- **全项目总计**: 12648 tests
-- **零回滚率**: amg 250天 🏆 / acs 199天 🏆
+- **四项目总计**: 8996 tests ✅
+- **全项目总计**: 12666 tests
+- **零回滚率**: amg 251天 🏆 / acs 199天 🏆
 
 ## 近期活动 (07-23)
+- **amg Cycle 277** ✅ (07-23 23:00): auto_compress_skills() — detect→compress skill loop act-half. Mirrors dual-loop pattern. Idempotent. +18 tests (4205→4223). 251st day. e481e60.
 - **amg-mcp Day 5/10** ✅ (07-23 23:10): Cross-era integration tests (+29 tests, 93→122). Legacy↔Auto persistence, all 14 tools, outputSchema consistency, edge-case parity. bf3e3c0.
 
 ## 近期活动 (07-22 ~ 07-23)
