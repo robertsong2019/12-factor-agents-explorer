@@ -6734,6 +6734,267 @@ export function formatExportHealthReport(result) {
   return report;
 }
 
+/**
+ * F58: Analyze function metrics — function length, parameter count,
+ * return statements, and overall function quality scoring.
+ */
+export function analyzeFunctionMetrics(files = []) {
+  const results = [];
+  let totalFunctions = 0;
+  let totalLongFunctions = 0;
+  let totalHighParamFunctions = 0;
+  let totalArrowFunctions = 0;
+  let totalAsyncFunctions = 0;
+  let totalFunctionsNoReturn = 0;
+
+  const jsExtensions = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
+  const longThreshold = 50; // lines
+  const paramThreshold = 5;
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const ext = extname(file.path || '');
+    if (!jsExtensions.has(ext)) continue;
+
+    const lines = file.content.split('\n');
+    const functions = [];
+    const issues = [];
+
+    // Regex patterns for function detection
+    const funcPatterns = [
+      // function declaration: function name(a, b) {
+      { regex: /^\s*(?:export\s+)?(?:async\s+)?function\s*\*?\s*(\w+)\s*\(([^)]*)\)/, type: 'declaration' },
+      // function expression: const name = function(a, b) {
+      { regex: /^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function\s*\*?\s*\(([^)]*)\)/, type: 'expression' },
+      // arrow function: const name = (a, b) => {
+      { regex: /^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(([^)]*)\)\s*=>/, type: 'arrow' },
+      // arrow without parens: const name = x => {
+      { regex: /^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(\w+)\s*=>/, type: 'arrow' },
+      // method shorthand: name(a, b) {
+      { regex: /^\s+(?:async\s+)?(\w+)\s*\(([^)]*)\)\s*\{/, type: 'method' },
+    ];
+
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i];
+
+      // Skip comments
+      const stripped = trimmed.trim();
+      if (/^\/\//.test(stripped) || /^\*/.test(stripped)) continue;
+
+      let matched = false;
+      for (const pattern of funcPatterns) {
+        const match = trimmed.match(pattern.regex);
+        if (!match) continue;
+
+        matched = true;
+        const name = match[1] || '<anonymous>';
+        const paramsStr = match[2] || '';
+        const isArrow = pattern.type === 'arrow';
+        const isAsync = /\basync\b/.test(trimmed);
+
+        // Parse params
+        const params = paramsStr.split(',').map(p => p.trim()).filter(p => p && p !== '' && !/^\/\//.test(p));
+        // Handle destructuring/rest as 1 param
+        const paramCount = params.length;
+
+        // Find function body end (matching braces)
+        let braceCount = 0;
+        let bodyStarted = false;
+        let endLine = i;
+        let returnCount = 0;
+        let bodyLines = 0;
+
+        for (let j = i; j < lines.length; j++) {
+          const line = lines[j];
+          for (const ch of line) {
+            if (ch === '{') { braceCount++; bodyStarted = true; }
+            if (ch === '}') braceCount--;
+          }
+          // Count returns (only after body starts)
+          if (bodyStarted && j > i) {
+            bodyLines++;
+            const lineTrim = line.trim();
+            // Count return statements (not inside strings/comments)
+            if (/\breturn\b/.test(lineTrim) && !/^\/\//.test(lineTrim)) {
+              returnCount++;
+            }
+          }
+          if (bodyStarted && braceCount === 0) {
+            endLine = j;
+            break;
+          }
+          // Safety: if arrow without braces (single expression)
+          if (isArrow && !line.includes('{') && j > i) {
+            endLine = i;
+            bodyLines = 1;
+            returnCount = 0; // implicit return, no return statement
+            break;
+          }
+        }
+
+        const funcLength = endLine - i + 1;
+
+        const fnInfo = {
+          name,
+          line: i + 1,
+          params: paramCount,
+          length: funcLength,
+          returns: returnCount,
+          isArrow,
+          isAsync,
+          type: pattern.type,
+        };
+
+        functions.push(fnInfo);
+
+        // Flag issues
+        if (funcLength > longThreshold) {
+          issues.push({
+            type: 'long_function',
+            severity: 'medium',
+            line: i + 1,
+            description: `${name}() is ${funcLength} lines long (threshold: ${longThreshold})`,
+            snippet: '',
+          });
+        }
+
+        if (paramCount > paramThreshold) {
+          issues.push({
+            type: 'too_many_params',
+            severity: 'medium',
+            line: i + 1,
+            description: `${name}() has ${paramCount} parameters (threshold: ${paramThreshold})`,
+            snippet: paramsStr.substring(0, 80),
+          });
+        }
+
+        // Functions with no return and > 20 lines might be doing too much
+        if (returnCount === 0 && funcLength > 20 && !isAsync) {
+          issues.push({
+            type: 'no_return_long',
+            severity: 'low',
+            line: i + 1,
+            description: `${name}() is ${funcLength} lines with no return statement`,
+            snippet: '',
+          });
+        }
+
+        break; // Only match first pattern per line
+      }
+    }
+
+    if (functions.length === 0) continue;
+
+    const longCount = functions.filter(f => f.length > longThreshold).length;
+    const highParamCount = functions.filter(f => f.params > paramThreshold).length;
+    const noReturnCount = functions.filter(f => f.returns === 0 && f.length > 20 && !f.isAsync).length;
+
+    results.push({
+      file: file.path,
+      functionCount: functions.length,
+      arrowFunctions: functions.filter(f => f.isArrow).length,
+      asyncFunctions: functions.filter(f => f.isAsync).length,
+      longFunctions: longCount,
+      highParamFunctions: highParamCount,
+      noReturnFunctions: noReturnCount,
+      avgLength: functions.length > 0 ? Math.round(functions.reduce((s, f) => s + f.length, 0) / functions.length) : 0,
+      maxLength: Math.max(...functions.map(f => f.length)),
+      avgParams: functions.length > 0 ? parseFloat((functions.reduce((s, f) => s + f.params, 0) / functions.length).toFixed(1)) : 0,
+      functions: functions.map(f => ({ name: f.name, line: f.line, params: f.params, length: f.length, returns: f.returns, isArrow: f.isArrow, isAsync: f.isAsync })),
+      issues,
+    });
+
+    totalFunctions += functions.length;
+    totalLongFunctions += longCount;
+    totalHighParamFunctions += highParamCount;
+    totalArrowFunctions += functions.filter(f => f.isArrow).length;
+    totalAsyncFunctions += functions.filter(f => f.isAsync).length;
+    totalFunctionsNoReturn += noReturnCount;
+  }
+
+  // Health score
+  const hasFunctions = totalFunctions > 0;
+  const longRatio = hasFunctions ? totalLongFunctions / totalFunctions : 0;
+  const highParamRatio = hasFunctions ? totalHighParamFunctions / totalFunctions : 0;
+  const longPenalty = Math.round(longRatio * 50);
+  const paramPenalty = Math.round(highParamRatio * 30);
+  const noReturnPenalty = Math.min(20, totalFunctionsNoReturn * 2);
+  const healthScore = !hasFunctions ? 0 : Math.max(0, Math.round((100 - longPenalty - paramPenalty - noReturnPenalty)));
+
+  return {
+    files: results,
+    fileCount: results.length,
+    totalFunctions,
+    totalLongFunctions,
+    totalHighParamFunctions,
+    totalArrowFunctions,
+    totalAsyncFunctions,
+    totalFunctionsNoReturn,
+    healthScore,
+    grade: healthScore >= 90 ? 'A' : healthScore >= 75 ? 'B' : healthScore >= 60 ? 'C' : healthScore >= 40 ? 'D' : 'F',
+  };
+}
+
+/**
+ * F58: Format function metrics report as markdown.
+ */
+export function formatFunctionMetricsReport(result) {
+  if (!result || result.fileCount === 0) {
+    return '## Function Metrics Analysis\n\n⚠️ No functions found.\n';
+  }
+
+  let report = '## Function Metrics Analysis\n\n';
+  report += `**Health Grade:** ${result.grade} (${result.healthScore}/100)\n`;
+  report += `**Total functions:** ${result.totalFunctions}\n`;
+  report += `**Arrow functions:** ${result.totalArrowFunctions}\n`;
+  report += `**Async functions:** ${result.totalAsyncFunctions}\n`;
+  report += `**Long functions (>50 lines):** ${result.totalLongFunctions}\n`;
+  report += `**High-parameter functions (>5):** ${result.totalHighParamFunctions}\n`;
+  report += `**Long functions with no return:** ${result.totalFunctionsNoReturn}\n\n`;
+
+  const allIssues = result.files.flatMap(f => f.issues.map(i => ({ ...i, file: f.file })));
+  const mediumIssues = allIssues.filter(i => i.severity === 'medium' || i.severity === 'high');
+
+  if (mediumIssues.length > 0) {
+    report += '### Key Issues\n\n';
+    for (const issue of mediumIssues.slice(0, 15)) {
+      report += `- \`${issue.file}:${issue.line}\` — ${issue.description}\n`;
+    }
+    if (mediumIssues.length > 15) {
+      report += `- _...and ${mediumIssues.length - 15} more_\n`;
+    }
+    report += '\n';
+  }
+
+  // Longest functions
+  const allFns = result.files.flatMap(f => f.functions.map(fn => ({ ...fn, file: f.file })));
+  const longest = [...allFns].sort((a, b) => b.length - a.length);
+  if (longest.length > 0 && longest[0].length > 20) {
+    report += '### Longest Functions\n\n';
+    report += '| Function | File | Lines | Params | Returns |\n';
+    report += '|----------|------|-------|--------|---------|\n';
+    for (const fn of longest.slice(0, 15)) {
+      if (fn.length < 15) break;
+      report += `| ${fn.name}() | ${fn.file}:${fn.line} | ${fn.length} | ${fn.params} | ${fn.returns} |\n`;
+    }
+    report += '\n';
+  }
+
+  const sorted = [...result.files].sort((a, b) => b.functionCount - a.functionCount);
+  report += '### Per-file Summary\n\n';
+  report += '| File | Functions | Avg Length | Max Length | Avg Params | Issues |\n';
+  report += '|------|-----------|------------|------------|------------|--------|\n';
+  for (const f of sorted.slice(0, 20)) {
+    report += `| ${f.file} | ${f.functionCount} | ${f.avgLength} | ${f.maxLength} | ${f.avgParams} | ${f.issues.length} |\n`;
+  }
+  if (sorted.length > 20) {
+    report += `| _...${sorted.length - 20} more_ | | | | | |\n`;
+  }
+  report += '\n';
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
