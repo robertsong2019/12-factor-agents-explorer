@@ -8011,6 +8011,204 @@ export function formatLoggingHealthReport(result) {
   return report;
 }
 
+
+// ── F64: Performance Anti-Patterns ──────────────────────────────────
+
+export function analyzePerformancePatterns(files = []) {
+  if (!files) files = [];
+  const jsExtensions = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
+  const allIssues = [];
+  const fileResults = [];
+  let totalSyncIO = 0;
+  let totalNestedLoops = 0;
+  let totalPromiseInLoop = 0;
+  let totalMissingAwait = 0;
+  let totalUnboundedOps = 0;
+  let totalFiles = 0;
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const ext = extname(file.path || '');
+    if (!jsExtensions.has(ext)) continue;
+    if (/\.test\.|\.spec\.|__tests__|(?:^|\/)tests?\//.test(file.path || '')) continue;
+
+    totalFiles++;
+    const lines = file.content.split('\n');
+    const issues = [];
+    let syncIOCount = 0;
+    let nestedLoopCount = 0;
+    let promiseInLoopCount = 0;
+    let missingAwaitCount = 0;
+    let unboundedOpsCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      if (/^\/\//.test(trimmed) || /^\*/.test(trimmed)) continue;
+
+      // 1. Sync I/O: readFileSync, writeFileSync, execSync, existsSync
+      if (/\b(?:readFileSync|writeFileSync|appendFileSync|execSync|spawnSync|existsSync|statSync|readdirSync)\b/.test(trimmed)) {
+        syncIOCount++;
+        totalSyncIO++;
+        issues.push({
+          line: i + 1,
+          type: 'sync_io',
+          severity: 'medium',
+          description: 'Synchronous I/O call blocks event loop',
+          code: trimmed.substring(0, 100),
+        });
+      }
+
+      // 2. Nested loops (for/while/forEach/map/filter inside another)
+      // Detect: line with loop keyword, and previous non-blank line also has loop keyword
+      const isLoop = /\b(?:for|while|forEach|\.map|\.filter|\.reduce|\.some|\.every)\b/.test(trimmed);
+      if (isLoop && i > 0) {
+        // Look back up to 10 lines for matching indentation + loop
+        let lookBack = i - 1;
+        let depth = 0;
+        while (lookBack >= 0 && lookBack >= i - 15) {
+          const prevLine = lines[lookBack].trim();
+          if (prevLine === '' || /^\/\//.test(prevLine)) { lookBack--; continue; }
+          // Check if previous line is a loop at a lower or equal indentation
+          if (/\b(?:for|while|forEach|\.map|\.filter|\.reduce)\b/.test(prevLine)) {
+            nestedLoopCount++;
+            totalNestedLoops++;
+            issues.push({
+              line: i + 1,
+              type: 'nested_loop',
+              severity: 'low',
+              description: 'Nested loop detected — potential O(n²) complexity',
+              code: trimmed.substring(0, 100),
+            });
+            break;
+          }
+          depth++;
+          if (depth > 5) break;
+          lookBack--;
+        }
+      }
+
+      // 3. Promise creation inside loop (anti-pattern for sequential async)
+      if (/\b(?:for|while|forEach)\b/.test(trimmed)) {
+        // Look ahead 1-5 lines for `new Promise` or `.then(` or `await fetch`
+        const lookAhead = lines.slice(i + 1, Math.min(i + 6, lines.length)).join('\n');
+        if (/new Promise|\.then\s*\(|await\s+fetch\s*\(/.test(lookAhead)) {
+          // Only flag if it's inside the loop body (indented more)
+          promiseInLoopCount++;
+          totalPromiseInLoop++;
+          issues.push({
+            line: i + 1,
+            type: 'promise_in_loop',
+            severity: 'medium',
+            description: 'Async operation inside loop — consider Promise.all for parallelism',
+            code: trimmed.substring(0, 100),
+          });
+        }
+      }
+
+      // 4. Missing await (async function call without await)
+      // Detect: function call that returns promise but no await
+      const asyncCallNoAwait = /^(?:const|let|var)\s+\w+\s*=\s*(?!await\b)(\w+\.(?:fetch|axios|get|post|put|delete|save|find|findOne|update|create|destroy)\b)/.exec(trimmed);
+      if (asyncCallNoAwait) {
+        missingAwaitCount++;
+        totalMissingAwait++;
+        issues.push({
+          line: i + 1,
+          type: 'missing_await',
+          severity: 'high',
+          description: 'Possible missing await on async operation',
+          code: trimmed.substring(0, 100),
+        });
+      }
+
+      // 5. Unbounded operations: .map/.filter without length limit on potentially large arrays
+      const unboundedMatch = /\.(?:map|filter|reduce|forEach|flat|flatMap)\s*\(/.exec(trimmed);
+      if (unboundedMatch && /\.(?:querySelectorAll|getElementsByTagName|readdir|readdirSync)\s*\(/.test(trimmed)) {
+        unboundedOpsCount++;
+        totalUnboundedOps++;
+        issues.push({
+          line: i + 1,
+          type: 'unbounded_operation',
+          severity: 'low',
+          description: 'Unbounded array operation on potentially large result set',
+          code: trimmed.substring(0, 100),
+        });
+      }
+    }
+
+    if (issues.length > 0) {
+      fileResults.push({
+        path: file.path,
+        syncIOCount,
+        nestedLoopCount,
+        promiseInLoopCount,
+        missingAwaitCount,
+        unboundedOpsCount,
+        issues,
+      });
+    }
+  }
+
+  // Score: sync_io=3, nested_loop=1, promise_in_loop=4, missing_await=5, unbounded=1
+  const deductions = totalSyncIO * 3 + totalNestedLoops * 1 + totalPromiseInLoop * 4 + totalMissingAwait * 5 + totalUnboundedOps * 1;
+  const score = Math.max(0, 100 - deductions);
+
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 80) grade = 'B';
+  else if (score >= 70) grade = 'C';
+  else if (score >= 60) grade = 'D';
+  else grade = 'F';
+
+  return {
+    grade,
+    score,
+    totalFiles,
+    summary: {
+      syncIO: totalSyncIO,
+      nestedLoops: totalNestedLoops,
+      promiseInLoop: totalPromiseInLoop,
+      missingAwait: totalMissingAwait,
+      unboundedOps: totalUnboundedOps,
+    },
+    files: fileResults,
+  };
+}
+
+export function formatPerformanceReport(result) {
+  if (!result) return '## Performance Patterns Analysis\n\nNo data.\n';
+
+  let report = '## Performance Patterns Analysis\n\n';
+  report += `**Grade:** ${result.grade} (${result.score}/100)\n`;
+  report += `**Files analyzed:** ${result.totalFiles}\n\n`;
+
+  const s = result.summary;
+  report += '### Summary\n\n';
+  report += '| Pattern | Count |\n';
+  report += '|---------|-------|\n';
+  report += `| Sync I/O | ${s.syncIO} |\n`;
+  report += `| Nested Loops | ${s.nestedLoops} |\n`;
+  report += `| Promise in Loop | ${s.promiseInLoop} |\n`;
+  report += `| Missing Await | ${s.missingAwait} |\n`;
+  report += `| Unbounded Ops | ${s.unboundedOps} |\n\n`;
+
+  if (result.files.length > 0) {
+    report += '### Files with Issues\n\n';
+    for (const f of result.files.slice(0, 15)) {
+      report += `**${f.path}** — ${f.issues.length} issue(s)\n`;
+      for (const issue of f.issues.slice(0, 5)) {
+        report += `  - L${issue.line}: [${issue.severity}] ${issue.description}\n`;
+      }
+      if (f.issues.length > 5) {
+        report += `  - _...and ${f.issues.length - 5} more_\n`;
+      }
+      report += '\n';
+    }
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
