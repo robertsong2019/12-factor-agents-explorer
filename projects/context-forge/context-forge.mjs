@@ -5136,6 +5136,174 @@ export function formatDebugCodeReport(result) {
   return report;
 }
 
+
+// ── F63: Environment Variable Health ─────────────────────────────────
+
+export function analyzeEnvHealth(files = [], options = {}) {
+  if (!files) files = [];
+  const envExampleVars = new Set();
+  const sourceEnvVars = new Set();
+  const hardcodedValueIssues = [];
+  const fileResults = [];
+  let hasEnvExample = false;
+  let envExampleFile = null;
+
+  const jsExtensions = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
+  const envPattern = /process\.env\.([A-Z_][A-Z0-9_]*)/g;
+  const hardcodedPattern = /(?:const|let|var)\s+\w*(?:API_KEY|SECRET|TOKEN|PASSWORD|DATABASE_URL|DB_URL|PRIVATE_KEY)\w*\s*=\s*['"]([^'"]{6,})['"]/gi;
+
+  // Parse .env.example / .env.sample if present
+  for (const file of files) {
+    if (!file.path || !file.content) continue;
+    const basename = file.path.split('/').pop();
+    if (basename === '.env.example' || basename === '.env.sample' || basename === '.env.template') {
+      hasEnvExample = true;
+      envExampleFile = file.path;
+      for (const line of file.content.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const match = /^([A-Z_][A-Z0-9_]*)\s*=/.exec(trimmed);
+        if (match) envExampleVars.add(match[1]);
+      }
+    }
+  }
+
+  // Scan source files for process.env usage and hardcoded secrets
+  for (const file of files) {
+    if (!file.content) continue;
+    const basename = (file.path || '').split('/').pop();
+
+    // Skip .env files themselves for source scanning, skip test files
+    if (basename.startsWith('.env')) continue;
+    if (/\.test\.|\.spec\.|__tests__|(?:^|\/)tests?\//.test(file.path || '')) continue;
+
+    const ext = extname(file.path || '');
+    if (!jsExtensions.has(ext) && ext !== '.py' && ext !== '.go') continue;
+
+    const lines = file.content.split('\n');
+    const envUsages = [];
+    const hardcoded = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Skip comments
+      if (/^\/\//.test(trimmed) || /^#/.test(trimmed) || /^\*/.test(trimmed)) continue;
+
+      // Detect process.env.VAR_NAME
+      let match;
+      const reEnv = new RegExp(envPattern.source, 'g');
+      while ((match = reEnv.exec(line)) !== null) {
+        const varName = match[1];
+        sourceEnvVars.add(varName);
+        envUsages.push({ line: i + 1, var: varName, code: trimmed.substring(0, 100) });
+      }
+
+      // Detect hardcoded secret-like values
+      const reHardcoded = new RegExp(hardcodedPattern.source, 'gi');
+      while ((match = reHardcoded.exec(line)) !== null) {
+        hardcoded.push({
+          line: i + 1,
+          type: 'hardcoded_secret',
+          severity: 'high',
+          description: `Potential hardcoded secret in variable assignment`,
+          code: trimmed.substring(0, 100),
+        });
+      }
+    }
+
+    if (envUsages.length > 0 || hardcoded.length > 0) {
+      fileResults.push({
+        path: file.path,
+        envUsages,
+        hardcoded,
+        issueCount: envUsages.length + hardcoded.length,
+      });
+    }
+
+    // Collect hardcoded issues globally
+    for (const h of hardcoded) {
+      hardcodedValueIssues.push({ ...h, file: file.path });
+    }
+  }
+
+  // Find undocumented env vars (used in source but not in .env.example)
+  const undocumented = [...sourceEnvVars].filter(v => !envExampleVars.has(v));
+
+  // Find stale env vars (in .env.example but not used in source)
+  const stale = [...envExampleVars].filter(v => !sourceEnvVars.has(v));
+
+  // Score calculation
+  // Deduct: undocumented var = 5pts, hardcoded secret = 15pts, no .env.example = 20pts
+  let deductions = undocumented.length * 5 + hardcodedValueIssues.length * 15;
+  if (sourceEnvVars.size > 0 && !hasEnvExample) deductions += 20;
+  const score = Math.max(0, 100 - deductions);
+
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 80) grade = 'B';
+  else if (score >= 70) grade = 'C';
+  else if (score >= 60) grade = 'D';
+  else grade = 'F';
+
+  return {
+    grade,
+    score,
+    hasEnvExample,
+    envExampleFile,
+    totalSourceEnvVars: sourceEnvVars.size,
+    totalExampleVars: envExampleVars.size,
+    undocumented,
+    stale,
+    hardcodedSecrets: hardcodedValueIssues,
+    files: fileResults,
+  };
+}
+
+export function formatEnvHealthReport(result) {
+  if (!result) return '## Environment Variable Health\n\nNo data.\n';
+
+  let report = '## Environment Variable Health\n\n';
+  report += `**Grade:** ${result.grade} (${result.score}/100)\n`;
+  report += `**.env.example:** ${result.hasEnvExample ? `✅ ${result.envExampleFile}` : '❌ Not found'}\n`;
+  report += `**Source env vars:** ${result.totalSourceEnvVars}\n`;
+  report += `**Example vars:** ${result.totalExampleVars}\n\n`;
+
+  if (result.undocumented.length > 0) {
+    report += '### ⚠️ Undocumented Environment Variables\n\n';
+    report += 'Used in source but missing from .env.example:\n\n';
+    for (const v of result.undocumented) {
+      report += `- \`${v}\`\n`;
+    }
+    report += '\n';
+  }
+
+  if (result.stale.length > 0) {
+    report += '### Stale Environment Variables\n\n';
+    report += 'In .env.example but not used in source:\n\n';
+    for (const v of result.stale) {
+      report += `- \`${v}\`\n`;
+    }
+    report += '\n';
+  }
+
+  if (result.hardcodedSecrets.length > 0) {
+    report += `### 🔴 Hardcoded Secrets (${result.hardcodedSecrets.length})\n\n`;
+    for (const h of result.hardcodedSecrets.slice(0, 10)) {
+      report += `- \`${h.file}:${h.line}\` — ${h.description}\n`;
+    }
+    report += '\n';
+  }
+
+  if (result.undocumented.length === 0 && result.hardcodedSecrets.length === 0) {
+    report += '✅ All environment variables are properly documented.\n';
+  }
+
+  return report;
+}
+
+
 // Only run main when executed directly (not imported)
 /**
  * F50: Analyze import graph — build a file-level directed graph from import data
