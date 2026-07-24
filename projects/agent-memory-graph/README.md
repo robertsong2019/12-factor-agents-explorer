@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-4205-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-4394-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -58,7 +58,7 @@
 - **双循环质量系统** — 知识缺口分析 + 冗余检测 + 自动修复（逐对 & 整簇）+ 统一健康评分 (gap_redundancy_balance)
 - **情景模式挖掘** — 从 event/intention 节点发现重复行为模式，建议技能提升 (detect_skill_candidates)
 - **图采样统计** — 多次随机游走聚合分析：覆盖率、重访率、死端率 (walk_statistics)
-- **14 个度拓扑指数** — Sombor/Reduced Sombor 指数家族 (Gutman 2021)，覆盖化学图论主流指标
+- **19 度拓扑指数 + 5 熵指数** — Sombor/Reduced Sombor/Randić/Zagreb M₁/ABC/GA 六族 (Cycles 278-280)，度加权 Shannon 熵分析，覆盖化学图论主流指标
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## Why agent-memory-graph?
@@ -92,7 +92,7 @@ agent-memory-graph 的定位：**beyond recall — agency-grade graph memory —
 | **memorywire** | ✅ 5ops×4types | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **零依赖** | ✅ 仅 Python 标准库 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **LoCoMo Score** | 未测 | 49.0% | N/A | N/A | **92.21%** | 90.2% |
-| **Tests** | **4034** | ~500 | ~300 | ~800 | N/A | N/A |
+| **Tests** | **4394** | ~500 | ~300 | ~800 | N/A | N/A |
 
 ### 独特价值
 
@@ -3368,6 +3368,45 @@ $$RS = \sum_{(u,v) \in E} \sqrt{(d_u-1)^2 + (d_v-1)^2}$$
 **返回：** `float`，边数 < 1 时返回 `None`。
 
 > **度指数家族已扩展至 14 个指标：** sum_connectivity, randic_index, zagreb_m1, zagreb_m2, augmented_zagreb, forgotten_index, hyper_zagreb, first_redefined_zagreb, second_redefined_zagreb, third_redefined_zagreb, leleka_index, sombor_index, reduced_sombor_index, 及 harmonic_index。
+
+### 熵指数家族 (Cycles 278–280)
+
+基于度加权的 Shannon 熵，衡量记忆网络的度分布均匀性。H = -Σ p_e·ln(p_e)，归一化后 [0,1]。正则图 → 1.0（完全均匀），路径图 < 1.0（不均匀）。
+
+#### `sombor_entropy(normalized=True) -> float | None`
+
+Shannon 熵 of normalized Sombor edge contributions。p_e = √(d_u²+d_v²)/SO。
+
+#### `reduced_sombor_entropy(normalized=True) -> float | None`
+
+Reduced Sombor 版本，处理 K₂ 零贡献问题。p_e = √((d_u-1)²+(d_v-1)²)/RSO。
+
+#### `randic_entropy(normalized=True) -> float | None`
+
+Shannon 熵 of normalized Randić edge contributions。p_e = (1/√(d_u·d_v))/R_α(-1/2)。Cycle 279。
+
+#### `zagreb_m1_entropy(normalized=True) -> float | None`
+
+Shannon 熵 of normalized Zagreb M₁ edge contributions。p_e = (d_u+d_v)/M₁。Cycle 279。
+
+#### `abc_entropy(normalized=True) -> float | None`
+
+Shannon 熵 of normalized ABC edge contributions。p_e = √((d_u+d_v-2)/(d_u·d_v))/ABC。ABC 独有特性：对 K₂ 边过滤。Cycle 280。
+
+#### `ga_entropy(normalized=True) -> float | None`
+
+Shannon 熵 of normalized GA edge contributions。p_e = (2√(d_u·d_v)/(d_u+d_v))/GA。Cycle 280。
+
+**熵家族汇总：**
+
+| 指数 | Cycle | 边权重 | K₂ 处理 |
+|------|-------|--------|--------|
+| sombor_entropy | 278 | √(d_u²+d_v²) | 包含 |
+| reduced_sombor_entropy | 278 | √((d_u-1)²+(d_v-1)²) | 零贡献 |
+| randic_entropy | 279 | 1/√(d_u·d_v) | 包含 |
+| zagreb_m1_entropy | 279 | d_u+d_v | 包含 |
+| abc_entropy | 280 | √((d_u+d_v-2)/(d_u·d_v)) | 过滤 |
+| ga_entropy | 280 | 2√(d_u·d_v)/(d_u+d_v) | 包含 |
 
 ---
 
