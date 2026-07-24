@@ -84,3 +84,7 @@
 - [x] **F62**: analyzeLoggingHealth() — console.log pollution detector (5-level console.* tracking), catch-without-log scanner with multi-line look-ahead, A-F grading. formatLoggingHealthReport(). ✅ 2026-07-24
 - [x] **F63**: analyzeEnvHealth() — .env.example coverage analysis, undocumented/stale env var detection, hardcoded secret scanner. A-F grading. formatEnvHealthReport(). ✅ 2026-07-24
 - [x] **F64**: analyzePerformancePatterns() — 5-pattern scanner: sync I/O, nested loops, promise-in-loop, missing await, unbounded ops. A-F grading. formatPerformanceReport(). ✅ 2026-07-24
+
+### TypeScript & Code Quality (Round 9 — 2026-07-24)
+- [x] **F65**: analyzeTypeSafety() — TS type safety: explicit/implicit any, @ts-ignore/@ts-nocheck/@ts-expect-error, type assertions (as + angle-bracket), missing return types, non-null assertions. A-F grading. formatTypeSafetyReport(). ✅ 2026-07-24
+- [x] **F66**: analyzeCodeSmells() — 7 smells: long files, deep nesting, too many params, magic numbers, god files, empty catch, TODO/FIXME. A-F grading. formatCodeSmellReport(). ✅ 2026-07-24
