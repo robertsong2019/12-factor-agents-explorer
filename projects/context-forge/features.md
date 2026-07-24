@@ -75,3 +75,7 @@
 **Round 1 (Core):** F1, F2, F3 — Better codebase understanding
 **Round 2 (Output):** F5, F6 — Better visualization
 **Round 3 (DX):** F11, F12 — Better workflow
+### DevOps & Risk (Round 7 — 2026-07-24)
+- [x] **F59**: analyzeCliHealth() — CLI completeness analysis: 8 checks (help/version/usage/arg validation/exit codes/subcommands/stderr/color), A-F grading, framework detection (commander/yargs vs manual). formatCliHealthReport(). ✅ 2026-07-24
+- [x] **F60**: analyzeDependencyRisk() — 5-category dependency risk assessment: version pinning (pinned/caret/tilde/range/wildcard), dev/prod ratio, risky pattern detection (code execution/legacy heavyweight/duplicate functionality), dependency count. A-F grading. formatDependencyRiskReport(). ✅ 2026-07-24
+- [x] **F61**: analyzeTestCoverage() — test coverage estimation: test/source file mapping, framework detection (jest/mocha/vitest/node_test/pytest/go_test/ava), untested file identification with line counts. A-F grading. formatTestCoverageReport(). ✅ 2026-07-24
