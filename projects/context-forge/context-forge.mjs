@@ -8459,6 +8459,225 @@ export function formatTypeSafetyReport(result) {
   return report;
 }
 
+// ─── F66: Code Smells Analysis ─────────────────────────────────────────
+
+export function analyzeCodeSmells(files = []) {
+  let totalLongFiles = 0;
+  let totalDeepNesting = 0;
+  let totalTooManyParams = 0;
+  let totalMagicNumbers = 0;
+  let totalGodFiles = 0;
+  let totalEmptyCatch = 0;
+  let totalTodoComments = 0;
+
+  const fileResults = [];
+
+  for (const file of files) {
+    const issues = [];
+    const lines = file.content.split('\n');
+    const lineCount = lines.length;
+
+    // Long file detection (>500 lines)
+    if (lineCount > 500) {
+      issues.push({
+        line: 1,
+        severity: 'medium',
+        description: `Long file: ${lineCount} lines (consider splitting)`,
+      });
+      totalLongFiles++;
+    }
+
+    // God file detection: count exports
+    const exportCount = (file.content.match(/\bexport\s+(function|const|class|default|\{)/g) || []).length;
+    if (exportCount >= 10) {
+      issues.push({
+        line: 1,
+        severity: 'medium',
+        description: `God file: ${exportCount} exports (consider splitting)`,
+      });
+      totalGodFiles++;
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineNum = i + 1;
+
+      // Deep nesting detection: count leading whitespace
+      const indent = line.match(/^(\s*)/)[1].length;
+      const tabIndent = line.match(/^(\t*)/)[1].length;
+      const effectiveIndent = Math.max(indent, tabIndent * 4);
+      // 4+ levels of nesting (2-space: 8+ = 4 levels, 4-space: 8+ = 2 levels but conservative)
+      if (effectiveIndent >= 8 && /\S/.test(line) && !line.trim().startsWith('//') && !line.trim().startsWith('*')) {
+        issues.push({
+          line: lineNum,
+          severity: 'low',
+          description: `Deep nesting: ${Math.floor(effectiveIndent / 4)}+ levels`,
+        });
+        totalDeepNesting++;
+      }
+
+      // Too many parameters: function with 5+ params
+      const funcMatch = line.match(/function\s+\w+\s*\(([^)]*)\)/);
+      if (funcMatch) {
+        const params = funcMatch[1].split(',').map(p => p.trim()).filter(p => p && !p.startsWith('...'));
+        if (params.length >= 5) {
+          issues.push({
+            line: lineNum,
+            severity: 'medium',
+            description: `Too many parameters: ${params.length} (consider using an options object)`,
+          });
+          totalTooManyParams++;
+        }
+      }
+
+      // Arrow function with many params
+      const arrowMatch = line.match(/\(([^)]*)\)\s*=>/);
+      if (arrowMatch) {
+        const params = arrowMatch[1].split(',').map(p => p.trim()).filter(p => p && !p.startsWith('...'));
+        if (params.length >= 5) {
+          issues.push({
+            line: lineNum,
+            severity: 'medium',
+            description: `Too many parameters in arrow: ${params.length}`,
+          });
+          totalTooManyParams++;
+        }
+      }
+
+      // Magic numbers in comparisons (not 0, 1, -1)
+      const magicMatches = line.match(/(===?|!==?|>=?|<=?|>[^=]|<[^=])\s*(\d+(?:\.\d+)?)/g);
+      if (magicMatches) {
+        for (const mm of magicMatches) {
+          const num = parseFloat(mm.match(/[\d.]+$/)[0]);
+          if (num !== 0 && num !== 1 && num !== -1) {
+            issues.push({
+              line: lineNum,
+              severity: 'low',
+              description: `Magic number: ${num} in comparison (extract to named constant)`,
+            });
+            totalMagicNumbers++;
+          }
+        }
+      }
+
+      // Empty catch block
+      if (/catch\s*\([^)]*\)\s*\{\s*\}/.test(line)) {
+        issues.push({
+          line: lineNum,
+          severity: 'high',
+          description: 'Empty catch block: silently swallows errors',
+        });
+        totalEmptyCatch++;
+      }
+      // Multi-line empty catch: catch(e) { followed by closing } on next line
+      if (/catch\s*\([^)]*\)\s*\{\s*$/.test(line)) {
+        // Check next non-empty line
+        for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
+          const nextLine = lines[j].trim();
+          if (nextLine === '}') {
+            issues.push({
+              line: lineNum,
+              severity: 'high',
+              description: 'Empty catch block: silently swallows errors',
+            });
+            totalEmptyCatch++;
+            break;
+          }
+          if (nextLine !== '') break;
+        }
+      }
+
+      // TODO/FIXME comments
+      if (/\/\/\s*(TODO|FIXME|HACK|XXX)\b/i.test(line) || /\*\s*(TODO|FIXME|HACK|XXX)\b/i.test(line)) {
+        issues.push({
+          line: lineNum,
+          severity: 'low',
+          description: `${line.match(/(TODO|FIXME|HACK|XXX)/i)[0]} comment: unresolved work marker`,
+        });
+        totalTodoComments++;
+      }
+    }
+
+    if (issues.length > 0) {
+      fileResults.push({ path: file.path, issues });
+    }
+  }
+
+  // Scoring
+  let penalty = 0;
+  penalty += totalLongFiles * 10;
+  penalty += totalDeepNesting * 3;
+  penalty += totalTooManyParams * 5;
+  penalty += totalMagicNumbers * 1;
+  penalty += totalGodFiles * 10;
+  penalty += totalEmptyCatch * 15;
+  penalty += totalTodoComments * 2;
+
+  const totalFiles = files.length;
+  const maxPenalty = totalFiles * 40;
+  let score = maxPenalty > 0 ? Math.max(0, 100 - Math.round((penalty / maxPenalty) * 100)) : 100;
+  if (totalFiles === 0) score = 100;
+
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 80) grade = 'B';
+  else if (score >= 70) grade = 'C';
+  else if (score >= 60) grade = 'D';
+  else grade = 'F';
+
+  return {
+    grade,
+    score,
+    totalFiles,
+    summary: {
+      longFiles: totalLongFiles,
+      deepNesting: totalDeepNesting,
+      tooManyParams: totalTooManyParams,
+      magicNumbers: totalMagicNumbers,
+      godFiles: totalGodFiles,
+      emptyCatch: totalEmptyCatch,
+      todoComments: totalTodoComments,
+    },
+    files: fileResults,
+  };
+}
+
+export function formatCodeSmellReport(result) {
+  if (!result) return '## Code Smell Analysis\n\nNo data.\n';
+
+  let report = '## Code Smell Analysis\n\n';
+  report += `**Grade:** ${result.grade} (${result.score}/100)\n`;
+  report += `**Files analyzed:** ${result.totalFiles}\n\n`;
+
+  const s = result.summary;
+  report += '### Summary\n\n';
+  report += '| Smell | Count |\n';
+  report += '|-------|-------|\n';
+  report += `| Long Files (>500 lines) | ${s.longFiles} |\n`;
+  report += `| Deep Nesting (4+ levels) | ${s.deepNesting} |\n`;
+  report += `| Too Many Params (5+) | ${s.tooManyParams} |\n`;
+  report += `| Magic Numbers | ${s.magicNumbers} |\n`;
+  report += `| God Files (10+ exports) | ${s.godFiles} |\n`;
+  report += `| Empty Catch Blocks | ${s.emptyCatch} |\n`;
+  report += `| TODO/FIXME Comments | ${s.todoComments} |\n\n`;
+
+  if (result.files.length > 0) {
+    report += '### Files with Issues\n\n';
+    for (const f of result.files.slice(0, 15)) {
+      report += `**${f.path}** — ${f.issues.length} issue(s)\n`;
+      for (const issue of f.issues.slice(0, 5)) {
+        report += `  - L${issue.line}: [${issue.severity}] ${issue.description}\n`;
+      }
+      if (f.issues.length > 5) {
+        report += `  - _...and ${f.issues.length - 5} more_\n`;
+      }
+      report += '\n';
+    }
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
