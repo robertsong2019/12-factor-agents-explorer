@@ -6469,6 +6469,134 @@ class MemoryGraph:
             entropy /= math.log(m)
         return entropy
 
+    def abc_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Atom-Bond Connectivity edge contributions.
+
+        For each edge e = (u, v), compute the ABC contribution
+        a_e = √((d_u + d_v − 2) / (d_u · d_v)), normalise to
+        p_e = a_e / ABC, then calculate Shannon entropy::
+
+            H_ABC = −Σ p_e · ln(p_e)
+
+        Edges where d_u + d_v − 2 = 0 (both endpoints degree 1, as in
+        K₂) contribute 0 to the ABC index and are **skipped** in the
+        entropy calculation (they carry no information).
+
+        When *normalized* is True the result is divided by ln(m)
+        (m = number of edges with non-zero contribution) so the output
+        lies in (0, 1].
+
+        **Properties:**
+        - Regular graph K_n (n≥3): all edges identical → H = ln(m), normalised = 1.0
+        - Cycle C_n: all edges (2,2), a_e = √(1/2) → normalised = 1.0
+        - Star K_{1,k} (k≥2): all edges (1,k), a_e = √((k−1)/k) → normalised = 1.0
+        - Path P_n (n≥4): endpoint edges (1,2) give √(1/2), interior edges (2,2) give √(1/2) → normalised = 1.0
+        - Paw graph (K₃ + pendant): edges differ in contribution → normalised < 1.0
+
+        The ABC entropy is unique among degree-based entropies because it
+        **filters out** trivial edges (K₂ subgraphs).  This makes it
+        especially sensitive to structural complexity beyond simple
+        chains.
+
+        Returns:
+            float in (0, ln m] or (0, 1], or ``None`` for < 1 non-trivial edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                numerator = ds + dt - 2
+                denominator = ds * dt
+                if numerator > 0 and denominator > 0:
+                    contributions.append((numerator / denominator) ** 0.5)
+                # numerator == 0 → K₂ edge, contributes 0, skip
+        if not contributions:
+            return None
+        a_total = sum(contributions)
+        if a_total <= 0:
+            return None
+        m = len(contributions)
+        entropy = 0.0
+        for c in contributions:
+            p = c / a_total
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
+    def ga_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Geometric-Arithmetic edge contributions.
+
+        For each edge e = (u, v), compute the GA contribution
+        g_e = 2·√(d_u · d_v) / (d_u + d_v), normalise to
+        p_e = g_e / GA, then calculate Shannon entropy::
+
+            H_GA = −Σ p_e · ln(p_e)
+
+        When *normalized* is True the result is divided by ln(m)
+        (m = edge count) so the output lies in (0, 1].
+
+        **Properties:**
+        - Regular graph K_n: all edges identical (g_e = 1) → normalised = 1.0
+        - Cycle C_n: all edges (2,2), g_e = 1 → normalised = 1.0
+        - Star K_{1,k}: all edges (1,k), g_e = 2√k/(k+1) → normalised = 1.0
+        - Path P_n (n≥4): endpoint edges (1,2) give 2√2/3 ≈ 0.9428,
+          interior edges (2,2) give 1 → normalised < 1.0
+        - Paw graph: contributions differ → normalised < 1.0
+
+        The GA entropy measures heterogeneity in the ratio of geometric
+        to arithmetic means of endpoint degrees.  Since GA = 1 iff
+        d_u = d_v, the GA entropy is high when most edges connect
+        equal-degree nodes and low when degree disparity varies across
+        edges.  It complements the Randić entropy (which uses the
+        product form directly) by taking the ratio perspective.
+
+        Returns:
+            float in (0, ln m] or (0, 1], or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                contributions.append(2.0 * (ds * dt) ** 0.5 / (ds + dt))
+        if not contributions:
+            return None
+        g_total = sum(contributions)
+        if g_total <= 0:
+            return None
+        m = len(contributions)
+        entropy = 0.0
+        for c in contributions:
+            p = c / g_total
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
