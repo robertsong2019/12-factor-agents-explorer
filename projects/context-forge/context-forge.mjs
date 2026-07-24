@@ -6995,6 +6995,211 @@ export function formatFunctionMetricsReport(result) {
   return report;
 }
 
+export function analyzeCliHealth(files = []) {
+  if (!files) files = [];
+  const jsExtensions = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
+  const cliFiles = [];
+  let totalChecks = 0;
+  let totalPassed = 0;
+  let totalIssues = 0;
+
+  const allChecks = [];
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const ext = extname(file.path || '');
+    if (!jsExtensions.has(ext)) continue;
+
+    // Identify CLI entry points: files with process.argv references or shebang
+    const hasShebang = file.content.startsWith('#!');
+    const hasProcessArgv = /process\.argv/.test(file.content);
+    const hasCommander = /commander|yargs|meow|clipanion|inquirer/.test(file.content);
+    const hasCliKeyword = /\bcli\b|\bcommand[\s-]?line/i.test(file.path || '');
+
+    if (!hasShebang && !hasProcessArgv && !hasCommander && !hasCliKeyword) continue;
+
+    const lines = file.content.split('\n');
+    const issues = [];
+    const passed = [];
+    const checks = []
+;
+    const lineText = (n) => lines[n - 1] ? lines[n - 1].trim() : '';
+
+    // 1. Help flag
+    const helpFlag = lines.findIndex(l => /--help|-h\b/.test(l) && !/^\s*\/\//.test(l));
+    if (helpFlag >= 0) {
+      passed.push({ check: 'help_flag', line: helpFlag + 1 });
+      checks.push({ name: 'help_flag', status: 'pass', line: helpFlag + 1 });
+    } else {
+      issues.push({ type: 'missing_help', severity: 'high', description: 'No --help or -h flag detected' });
+      checks.push({ name: 'help_flag', status: 'fail' });
+    }
+
+    // 2. Version flag
+    const versionFlag = lines.findIndex(l => /--version|-v\b/.test(l) && !/^\s*\/\//.test(l));
+    if (versionFlag >= 0) {
+      passed.push({ check: 'version_flag', line: versionFlag + 1 });
+      checks.push({ name: 'version_flag', status: 'pass', line: versionFlag + 1 });
+    } else {
+      issues.push({ type: 'missing_version', severity: 'low', description: 'No --version or -v flag detected' });
+      checks.push({ name: 'version_flag', status: 'fail' });
+    }
+
+    // 3. Usage/examples
+    const hasUsage = lines.some(l => /usage:|examples?:|\$\s/.test(l));
+    if (hasUsage) {
+      passed.push({ check: 'usage_docs' });
+      checks.push({ name: 'usage_docs', status: 'pass' });
+    } else {
+      issues.push({ type: 'missing_usage', severity: 'medium', description: 'No usage examples in CLI output' });
+      checks.push({ name: 'usage_docs', status: 'fail' });
+    }
+
+    // 4. Error handling for arg parsing
+    const hasArgValidation = lines.some(l => /invalid|missing.*argument|required.*arg|ValidationError|parseArgs/.test(l));
+    if (hasArgValidation) {
+      passed.push({ check: 'arg_validation' });
+      checks.push({ name: 'arg_validation', status: 'pass' });
+    } else {
+      issues.push({ type: 'no_arg_validation', severity: 'medium', description: 'No argument validation detected' });
+      checks.push({ name: 'arg_validation', status: 'fail' });
+    }
+
+    // 5. Exit codes
+    const hasExitCode = lines.some(l => /process\.exit\s*\(\s*[1-9]/.test(l));
+    if (hasExitCode) {
+      passed.push({ check: 'error_exit_code' });
+      checks.push({ name: 'error_exit_code', status: 'pass' });
+    } else {
+      issues.push({ type: 'no_error_exit', severity: 'medium', description: 'No non-zero exit code on errors' });
+      checks.push({ name: 'error_exit_code', status: 'fail' });
+    }
+
+    // 6. Subcommand structure
+    const hasSubcommands = lines.some(l => /command\s*\(|subcommand|action\s*[:=]|\.(command|subcommand)\b/.test(l));
+    if (hasSubcommands) {
+      passed.push({ check: 'subcommands' });
+      checks.push({ name: 'subcommands', status: 'pass' });
+    }
+
+    // 7. Stderr usage for errors
+    const hasStderr = lines.some(l => /process\.stderr|console\.error/.test(l));
+    if (hasStderr) {
+      passed.push({ check: 'stderr_errors' });
+      checks.push({ name: 'stderr_errors', status: 'pass' });
+    } else {
+      issues.push({ type: 'no_stderr', severity: 'low', description: 'Errors may go to stdout instead of stderr' });
+      checks.push({ name: 'stderr_errors', status: 'fail' });
+    }
+
+    // 8. Color/output formatting
+    const hasColor = lines.some(l => /chalk|kleur|picocolors|\x1b\[|\\u001b\[/.test(l));
+    if (hasColor) {
+      passed.push({ check: 'color_output' });
+      checks.push({ name: 'color_output', status: 'pass' });
+    }
+
+    const filePassed = passed.length;
+    const fileChecks = checks.length;
+    const fileScore = fileChecks > 0 ? Math.round((filePassed / fileChecks) * 100) : 0;
+
+    let grade;
+    if (fileScore >= 90) grade = 'A';
+    else if (fileScore >= 75) grade = 'B';
+    else if (fileScore >= 60) grade = 'C';
+    else if (fileScore >= 40) grade = 'D';
+    else grade = 'F';
+
+    totalChecks += fileChecks;
+    totalPassed += filePassed;
+    totalIssues += issues.length;
+
+    cliFiles.push({
+      file: file.path,
+      grade,
+      score: fileScore,
+      checks: fileChecks,
+      passedChecks: passed,
+      passedCount: filePassed,
+      issues,
+      isEntry: hasShebang || hasProcessArgv,
+      framework: hasCommander ? 'commander/yargs' : 'manual',
+    });
+
+    allChecks.push(...checks.map(c => ({ ...c, file: file.path })));
+  }
+
+  const healthScore = totalChecks > 0 ? Math.round((totalPassed / totalChecks) * 100) : 0;
+  let overallGrade;
+  if (healthScore >= 90) overallGrade = 'A';
+  else if (healthScore >= 75) overallGrade = 'B';
+  else if (healthScore >= 60) overallGrade = 'C';
+  else if (healthScore >= 40) overallGrade = 'D';
+  else overallGrade = 'F';
+
+  // Aggregate missing checks across all CLI files
+  const missingChecks = {};
+  for (const c of allChecks) {
+    if (c.status === 'fail') {
+      missingChecks[c.name] = (missingChecks[c.name] || 0) + 1;
+    }
+  }
+
+  return {
+    cliFileCount: cliFiles.length,
+    healthScore,
+    grade: overallGrade,
+    totalChecks,
+    totalPassed,
+    totalIssues,
+    missingChecks,
+    files: cliFiles,
+  };
+}
+
+export function formatCliHealthReport(result) {
+  if (!result || result.cliFileCount === 0) {
+    return '## CLI Health Analysis\n\n⚠️ No CLI entry points found.\n';
+  }
+
+  let report = '## CLI Health Analysis\n\n';
+  report += `**Health Grade:** ${result.grade} (${result.healthScore}/100)\n`;
+  report += `**CLI files:** ${result.cliFileCount}\n`;
+  report += `**Checks passed:** ${result.totalPassed}/${result.totalChecks}\n\n`;
+
+  if (result.totalIssues > 0) {
+    report += '### Common Missing Features\n\n';
+    const sorted = Object.entries(result.missingChecks).sort((a, b) => b[1] - a[1]);
+    for (const [check, count] of sorted) {
+      const label = check.replace(/_/g, ' ');
+      report += `- **${label}** — missing in ${count} file(s)\n`;
+    }
+    report += '\n';
+  }
+
+  report += '### Per-file Breakdown\n\n';
+  report += '| File | Grade | Score | Checks | Framework |\n';
+  report += '|------|-------|-------|--------|-----------|\n';
+  for (const f of [...result.files].sort((a, b) => a.score - b.score)) {
+    report += `| ${f.file} | ${f.grade} | ${f.score}/100 | ${f.passed}/${f.checks} | ${f.framework} |\n`;
+  }
+  report += '\n';
+
+  const worst = result.files.filter(f => f.issues.length > 0).sort((a, b) => a.score - b.score);
+  if (worst.length > 0) {
+    report += '### Issues\n\n';
+    for (const f of worst.slice(0, 10)) {
+      report += `**${f.file}** (${f.grade}):\n`;
+      for (const issue of f.issues) {
+        report += `  - [${issue.severity}] ${issue.description}\n`;
+      }
+      report += '\n';
+    }
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
