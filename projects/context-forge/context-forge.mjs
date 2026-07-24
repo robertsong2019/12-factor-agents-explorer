@@ -7200,6 +7200,259 @@ export function formatCliHealthReport(result) {
   return report;
 }
 
+export function analyzeDependencyRisk(info = {}) {
+  if (!info) info = {};
+  const deps = { ...(info.dependencies || info.pkg?.dependencies || {}) };
+  const devDeps = { ...(info.devDependencies || info.pkg?.devDependencies || {}) };
+  const allDeps = [];
+  for (const [name, version] of Object.entries(deps)) {
+    allDeps.push({ name, version, type: 'prod' });
+  }
+  for (const [name, version] of Object.entries(devDeps)) {
+    allDeps.push({ name, version, type: 'dev' });
+  }
+
+  const issues = [];
+  let riskScore = 0;
+  let maxScore = 0;
+  const categories = {};
+
+  // 1. Version pinning (0-25)
+  maxScore += 25;
+  let pinnedCount = 0;
+  let caretCount = 0;
+  let tildeCount = 0;
+  let rangeCount = 0;
+  let starCount = 0;
+  const unpinnedDeps = [];
+
+  for (const dep of allDeps) {
+    const v = dep.version;
+    if (/^\d+\.\d+\.\d+$/.test(v)) {
+      pinnedCount++;
+    } else if (/^\^/.test(v)) {
+      caretCount++;
+    } else if (/^~/.test(v)) {
+      tildeCount++;
+    } else if (/[<>]/.test(v)) {
+      rangeCount++;
+    } else if (/\*/.test(v)) {
+      starCount++;
+      unpinnedDeps.push(dep);
+    } else {
+      unpinnedDeps.push(dep);
+    }
+  }
+
+  const totalDeps = allDeps.length;
+  const pinRatio = totalDeps > 0 ? pinnedCount / totalDeps : 1;
+  const wildcards = starCount;
+  const pinScore = Math.round(pinRatio * 20) - (wildcards * 5);
+  const clampedPinScore = Math.max(0, Math.min(25, pinScore));
+  riskScore += clampedPinScore;
+
+  categories.versionPinning = {
+    score: clampedPinScore,
+    max: 25,
+    pinned: pinnedCount,
+    caret: caretCount,
+    tilde: tildeCount,
+    range: rangeCount,
+    wildcard: starCount,
+    pinRatio: Math.round(pinRatio * 100) / 100,
+  };
+
+  if (starCount > 0) {
+    issues.push({
+      type: 'wildcard_versions',
+      severity: 'critical',
+      description: `${starCount} dependencies use wildcard (*) versions — unpredictable updates`,
+      packages: unpinnedDeps.map(d => `${d.name}@${d.version}`),
+    });
+  }
+
+  // 2. Dev-to-prod ratio (0-15)
+  maxScore += 15;
+  const prodCount = Object.keys(deps).length;
+  const devOnlyCount = Object.keys(devDeps).length;
+  const ratio = prodCount > 0 ? devOnlyCount / prodCount : 0;
+  let ratioScore;
+  if (ratio <= 3) ratioScore = 15;
+  else if (ratio <= 5) ratioScore = 12;
+  else if (ratio <= 8) ratioScore = 8;
+  else if (ratio <= 12) ratioScore = 5;
+  else ratioScore = 2;
+  riskScore += ratioScore;
+
+  categories.devProdRatio = {
+    score: ratioScore,
+    max: 15,
+    prodCount,
+    devCount: devOnlyCount,
+    ratio: Math.round(ratio * 100) / 100,
+  };
+
+  if (ratio > 8) {
+    issues.push({
+      type: 'high_dev_ratio',
+      severity: 'medium',
+      description: `Dev dependencies outnumber prod ${devOnlyCount}:${prodCount} (ratio ${ratio.toFixed(1)}:1)`,
+    });
+  }
+
+  // 3. Known risky patterns (0-25)
+  maxScore += 25;
+  const riskyPatterns = [
+    { pattern: /eval|vm2|shelljs|exec-sync/, risk: 'code_execution', severity: 'high' },
+    { pattern: /request|axios|node-fetch/, risk: 'http_client', severity: 'low' },
+    { pattern: /lodash|underscore|moment/, risk: 'legacy_heavyweight', severity: 'medium' },
+    { pattern: /babel|webpack|rollup|esbuild|vite/, risk: 'build_toolchain', severity: 'low' },
+    { pattern: /typescript|ts-node|tsx/, risk: 'type_system', severity: 'low' },
+  ];
+
+  const flaggedDeps = [];
+  let patternPenalty = 0;
+  for (const dep of allDeps) {
+    for (const { pattern, risk, severity } of riskyPatterns) {
+      if (pattern.test(dep.name)) {
+        flaggedDeps.push({ name: dep.name, risk, severity });
+        if (severity === 'high') patternPenalty += 5;
+        else if (severity === 'medium') patternPenalty += 2;
+      }
+    }
+  }
+  const riskPatternScore = Math.max(0, 25 - patternPenalty);
+  riskScore += riskPatternScore;
+
+  categories.riskyPatterns = {
+    score: riskPatternScore,
+    max: 25,
+    flagged: flaggedDeps,
+  };
+
+  // 4. Duplicate functionality (0-15)
+  maxScore += 15;
+  const functionalityGroups = {
+    testing: ['jest', 'mocha', 'vitest', 'ava', 'tape', 'jasmine', 'pytest'],
+    linting: ['eslint', 'tslint', 'biome', 'standard', 'jshint'],
+    formatting: ['prettier', 'dprint', 'standardjs'],
+    http: ['express', 'fastify', 'koa', 'hapi', '@nestjs/core'],
+    logging: ['winston', 'pino', 'bunyan', 'log4js', 'morgan'],
+    validation: ['joi', 'zod', 'ajv', 'yup', 'class-validator'],
+  };
+
+  const duplicates = [];
+  for (const [category, packages] of Object.entries(functionalityGroups)) {
+    const found = allDeps.filter(d => packages.includes(d.name));
+    if (found.length > 1) {
+      duplicates.push({ category, packages: found.map(d => d.name) });
+    }
+  }
+  const dupScore = Math.max(0, 15 - duplicates.length * 5);
+  riskScore += dupScore;
+
+  categories.duplicateFunctionality = {
+    score: dupScore,
+    max: 15,
+    duplicates,
+  };
+
+  for (const dup of duplicates) {
+    issues.push({
+      type: 'duplicate_functionality',
+      severity: 'low',
+      description: `Multiple ${dup.category} packages: ${dup.packages.join(', ')}`,
+    });
+  }
+
+  // 5. Zero-dependency check (0-20)
+  maxScore += 20;
+  const zeroDepScore = totalDeps === 0 ? 20 : totalDeps <= 5 ? 18 : totalDeps <= 15 ? 14 : totalDeps <= 30 ? 10 : totalDeps <= 50 ? 6 : 3;
+  riskScore += zeroDepScore;
+
+  categories.dependencyCount = {
+    score: zeroDepScore,
+    max: 20,
+    total: totalDeps,
+    prod: prodCount,
+    dev: devOnlyCount,
+  };
+
+  if (totalDeps > 50) {
+    issues.push({
+      type: 'excessive_deps',
+      severity: 'medium',
+      description: `${totalDeps} total dependencies — consider reducing`,
+    });
+  }
+
+  const finalScore = maxScore > 0 ? Math.round((riskScore / maxScore) * 100) : 100;
+  let grade;
+  if (finalScore >= 90) grade = 'A';
+  else if (finalScore >= 75) grade = 'B';
+  else if (finalScore >= 60) grade = 'C';
+  else if (finalScore >= 40) grade = 'D';
+  else grade = 'F';
+
+  return {
+    riskScore: finalScore,
+    grade,
+    totalDependencies: totalDeps,
+    prodDependencies: prodCount,
+    devDependencies: devOnlyCount,
+    categories,
+    issues,
+    flaggedCount: flaggedDeps.length,
+    duplicateCount: duplicates.length,
+  };
+}
+
+export function formatDependencyRiskReport(result) {
+  if (!result) return '## Dependency Risk Analysis\n\n⚠️ No dependency data.\n';
+
+  let report = '## Dependency Risk Analysis\n\n';
+  report += `**Risk Grade:** ${result.grade} (${result.riskScore}/100)\n`;
+  report += `**Total dependencies:** ${result.totalDependencies} (${result.prodDependencies} prod, ${result.devDependencies} dev)\n`;
+  report += `**Flagged:** ${result.flaggedCount} • **Duplicate categories:** ${result.duplicateCount}\n\n`;
+
+  const catLabels = {
+    versionPinning: 'Version Pinning',
+    devProdRatio: 'Dev/Prod Ratio',
+    riskyPatterns: 'Risky Patterns',
+    duplicateFunctionality: 'Duplicate Functionality',
+    dependencyCount: 'Dependency Count',
+  };
+
+  report += '### Risk Categories\n\n';
+  report += '| Category | Score | Key Metrics |\n';
+  report += '|----------|-------|-------------|\n';
+  for (const [key, cat] of Object.entries(result.categories)) {
+    const label = catLabels[key] || key;
+    let metrics = '';
+    if (key === 'versionPinning') metrics = `${cat.pinned} pinned, ${cat.wildcard} wildcard`;
+    else if (key === 'devProdRatio') metrics = `${cat.prod} prod : ${cat.dev} dev`;
+    else if (key === 'riskyPatterns') metrics = `${cat.flagged.length} flagged`;
+    else if (key === 'duplicateFunctionality') metrics = `${cat.duplicates.length} duplicates`;
+    else if (key === 'dependencyCount') metrics = `${cat.total} total`;
+    report += `| ${label} | ${cat.score}/${cat.max} | ${metrics} |\n`;
+  }
+  report += '\n';
+
+  if (result.issues.length > 0) {
+    report += '### Issues\n\n';
+    const sorted = [...result.issues].sort((a, b) => {
+      const order = { critical: 0, high: 1, medium: 2, low: 3 };
+      return (order[a.severity] || 9) - (order[b.severity] || 9);
+    });
+    for (const issue of sorted) {
+      report += `- **[${issue.severity}]** ${issue.description}\n`;
+    }
+    report += '\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
