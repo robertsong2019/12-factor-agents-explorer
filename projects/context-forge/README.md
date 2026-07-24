@@ -51,6 +51,18 @@ context-forge /path/to/my-project --dry-run
 - 🔐 **Secret scanner** — detect API keys, tokens, passwords, private keys with risk levels (F32)
 - 📖 **Doc readability** — A-F grade scoring, heading hierarchy, paragraph/sentence analysis (F33)
 - 🪦 **Dead code detector** — find unused exports by cross-referencing imports (F34)
+
+### Code Health Audit (F59–F67)
+
+- 🖥️ **CLI health** — 8 checks: help/version/usage/arg validation/exit codes/subcommands/stderr/color (F59)
+- 📦 **Dependency risk** — version pinning, dev/prod ratio, risky patterns, count scoring (F60)
+- 🧪 **Test coverage** — test/source mapping, framework detection, untested file identification (F61)
+- 📝 **Logging health** — console.log pollution detector, catch-without-log scanner (F62)
+- 🔧 **Env health** — .env.example coverage, undocumented/stale var detection, secret scanner (F63)
+- ⚡ **Performance patterns** — sync I/O, nested loops, promise-in-loop, missing await, unbounded ops (F64)
+- 🛡️ **Type safety** — any detection, @ts-ignore, type assertions, missing return types (F65)
+- 💩 **Code smells** — long files, deep nesting, too many params, magic numbers, god files, empty catch (F66)
+- 📖 **README health** — 10-section quality analyzer, placeholder detection, broken link scanner (F67)
 - ⚡ **Zero deps** — single file, runs with Node.js
 
 ## Usage
@@ -533,6 +545,160 @@ console.log(formatNamingReport(analysis))
 | `conventions` | `Array<{convention, count, example}>` | Per-convention stats |
 | `inconsistencies` | `Array<{dir, expected, found, files}>` | Mismatched directories |
 | `byDirectory` | `Array<{dir, conventions}>` | Per-directory breakdown |
+
+---
+
+## Code Health Audit (F59–F67)
+
+Nine specialized analyzers that grade your codebase health from A to F across different dimensions. Each returns a structured report with `formatXxxReport()` for CLI output.
+
+### CLI Health (F59)
+
+Analyze CLI completeness: help/version flags, usage docs, arg validation, exit codes, subcommands, stderr usage, and color output. Detects CLI frameworks (commander/yargs vs manual).
+
+```javascript
+import { analyzeCliHealth, formatCliHealthReport } from './context-forge.mjs'
+
+const report = await analyzeCliHealth('./bin', { maxDepth: 3 })
+console.log(formatCliHealthReport(report))
+// 🖥️ CLI Health: B (6/8 checks passed)
+// ✅ Help flag (--help) found in 3/3 files
+// ✅ Version flag (--version) found in 2/3 files
+// ⚠️ Exit codes: 1/3 files use process.exit() without code
+```
+
+**Returns:** `{ grade, score, checks: [{name, passed, files}], framework }`
+
+### Dependency Risk (F60)
+
+5-category dependency risk assessment: version pinning (pinned/caret/tilde/range/wildcard), dev/prod ratio, risky pattern detection (code execution, legacy heavyweight, duplicate functionality), and dependency count scoring.
+
+```javascript
+import { analyzeDependencyRisk, formatDependencyRiskReport } from './context-forge.mjs'
+
+const report = await analyzeDependencyRisk('./package.json')
+console.log(formatDependencyRiskReport(report))
+// 📦 Dependency Risk: A (Low risk)
+// Pinning: 95% pinned | Dev/Prod: 60/40
+// ⚠️ eval in dependency-xyz@1.2.3
+```
+
+**Returns:** `{ grade, categories: {pinning, devRatio, riskPatterns, count}, riskyDeps: [] }`
+
+### Test Coverage Estimation (F61)
+
+Estimate test coverage by mapping test files to source files. Detects test frameworks (jest/mocha/vitest/node_test/pytest/go_test/ava) and identifies untested files with line counts.
+
+```javascript
+import { analyzeTestCoverage, formatTestCoverageReport } from './context-forge.mjs'
+
+const report = await analyzeTestCoverage('./src', './test')
+console.log(formatTestCoverageReport(report))
+// 🧪 Test Coverage: C (45% files tested)
+// Framework: jest | 18/40 source files have tests
+// ⚠️ 22 untested files (avg 85 lines)
+```
+
+**Returns:** `{ grade, framework, tested, untested, coverage, untestedFiles: [] }`
+
+### Logging Health (F62)
+
+Detect console.log pollution (5-level `console.*` tracking) and catch blocks without logging. Multi-line look-ahead catches `catch (e) {}` patterns.
+
+```javascript
+import { analyzeLoggingHealth, formatLoggingHealthReport } from './context-forge.mjs'
+
+const report = await analyzeLoggingHealth('./src', { maxDepth: 5 })
+console.log(formatLoggingHealthReport(report))
+// 📝 Logging Health: D
+// Found 47 console.log, 12 console.error, 3 console.warn
+// ⚠️ 8 catch blocks without any logging
+```
+
+**Returns:** `{ grade, consoleCounts: {log, error, warn, info, debug}, catchWithoutLog: [] }`
+
+### Environment Health (F63)
+
+`.env.example` coverage analysis, undocumented/stale env var detection, and hardcoded secret scanner.
+
+```javascript
+import { analyzeEnvHealth, formatEnvHealthReport } from './context-forge.mjs'
+
+const report = await analyzeEnvHealth('./', { envFile: '.env.example' })
+console.log(formatEnvHealthReport(report))
+// 🔧 Env Health: B
+// .env.example: 12/15 vars documented (80%)
+// ⚠️ 3 undocumented: API_KEY, SECRET, TOKEN
+```
+
+**Returns:** `{ grade, documented, undocumented, stale, hardcodedSecrets: [] }`
+
+### Performance Patterns (F64)
+
+5-pattern scanner: synchronous I/O (`readFileSync`/`writeFileSync`/`execSync`), nested loops (O(n²) detection), promise-in-loop, missing await on async calls, and unbounded array operations.
+
+```javascript
+import { analyzePerformancePatterns, formatPerformanceReport } from './context-forge.mjs'
+
+const report = await analyzePerformancePatterns('./src', { maxDepth: 5 })
+console.log(formatPerformanceReport(report))
+// ⚡ Performance: C (8 issues found)
+// ⚠️ sync I/O: 5 calls (readFileSync in 3 files)
+// ⚠️ nested loops: 2 occurrences
+// ⚠️ promise-in-loop: 1 occurrence
+```
+
+**Returns:** `{ grade, patterns: {syncIO, nestedLoops, promiseInLoop, missingAwait, unboundedOps} }`
+
+### Type Safety (F65)
+
+TypeScript type safety analysis: explicit/implicit `any` detection, `@ts-ignore`/`@ts-nocheck`/`@ts-expect-error` tracking, type assertions (`as` + angle-bracket), missing return types on exports, and non-null assertions.
+
+```javascript
+import { analyzeTypeSafety, formatTypeSafetyReport } from './context-forge.mjs'
+
+const report = await analyzeTypeSafety('./src', { maxDepth: 5 })
+console.log(formatTypeSafetyReport(report))
+// 🛡️ Type Safety: B
+// Explicit any: 3 | Implicit any: 8
+// @ts-ignore: 2 | Type assertions: 15
+```
+
+**Returns:** `{ grade, explicitAny, implicitAny, tsIgnores, typeAssertions, missingReturnTypes, nonNullAssertions }`
+
+### Code Smells (F66)
+
+7-pattern scanner: long files (>500 lines), deep nesting (4+ levels), too many params (5+), magic numbers in comparisons, god files (10+ exports), empty catch blocks, and TODO/FIXME comments.
+
+```javascript
+import { analyzeCodeSmells, formatCodeSmellReport } from './context-forge.mjs'
+
+const report = await analyzeCodeSmells('./src', { maxDepth: 5 })
+console.log(formatCodeSmellReport(report))
+// 💩 Code Smells: C (12 issues)
+// ⚠️ 3 files > 500 lines (largest: 892)
+// ⚠️ 5 deeply nested blocks (4+ levels)
+// ⚠️ 4 TODO/FIXME comments
+```
+
+**Returns:** `{ grade, smells: {longFiles, deepNesting, tooManyParams, magicNumbers, godFiles, emptyCatch, todos} }`
+
+### README Health (F67)
+
+10-section README quality analyzer: title/description/install/usage/license/contributing/tests/badges/examples/apiDocs. Placeholder content detection, broken markdown link scanner, and markdown element statistics.
+
+```javascript
+import { analyzeReadmeHealth, formatReadmeHealthReport } from './context-forge.mjs'
+
+const report = await analyzeReadmeHealth('./README.md')
+console.log(formatReadmeHealthReport(report))
+// 📖 README Health: A
+// Sections: 9/10 present (missing: contributing)
+// ✅ No placeholders | ✅ No broken links
+// Stats: 45 headings, 120 code blocks, 30 links, 5 images
+```
+
+**Returns:** `{ grade, sections: {title, description, ...}, placeholders, brokenLinks, stats: {headings, codeBlocks, links, images} }`
 
 ---
 
