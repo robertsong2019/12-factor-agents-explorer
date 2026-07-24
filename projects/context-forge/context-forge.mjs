@@ -7664,6 +7664,185 @@ export function formatTestCoverageReport(result) {
   return report;
 }
 
+
+// ── F62: Logging Health ─────────────────────────────────────────────
+
+export function analyzeLoggingHealth(files = []) {
+  if (!files) files = [];
+  const jsExtensions = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx']);
+  const allIssues = [];
+  const fileResults = [];
+  let totalConsoleLog = 0;
+  let totalConsoleWarn = 0;
+  let totalConsoleError = 0;
+  let totalConsoleInfo = 0;
+  let totalConsoleDebug = 0;
+  let totalCatchWithoutLog = 0;
+  let totalFiles = 0;
+
+  for (const file of files) {
+    if (!file.content) continue;
+    const ext = extname(file.path || '');
+    if (!jsExtensions.has(ext)) continue;
+
+    // Skip test files
+    if (/\.test\.|\.spec\.|__tests__|(?:^|\/)tests?\//.test(file.path || '')) continue;
+
+    totalFiles++;
+    const lines = file.content.split('\n');
+    const issues = [];
+    let consoleLogCount = 0;
+    let consoleWarnCount = 0;
+    let consoleErrorCount = 0;
+    let consoleInfoCount = 0;
+    let consoleDebugCount = 0;
+    let catchWithoutLogCount = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Skip comments
+      if (/^\/\//.test(trimmed) || /^\*/.test(trimmed)) continue;
+
+      // Detect console.* calls
+      const consoleLogMatch = /console\.log\s*\(/.exec(trimmed);
+      const consoleWarnMatch = /console\.warn\s*\(/.exec(trimmed);
+      const consoleErrorMatch = /console\.error\s*\(/.exec(trimmed);
+      const consoleInfoMatch = /console\.info\s*\(/.exec(trimmed);
+      const consoleDebugMatch = /console\.debug\s*\(/.exec(trimmed);
+
+      if (consoleLogMatch) {
+        consoleLogCount++;
+        totalConsoleLog++;
+        issues.push({
+          line: i + 1,
+          type: 'console_log',
+          severity: 'medium',
+          description: `console.log in production code`,
+          code: trimmed.substring(0, 100),
+        });
+      }
+
+      if (consoleWarnMatch) {
+        consoleWarnCount++;
+        totalConsoleWarn++;
+      }
+      if (consoleErrorMatch) {
+        consoleErrorCount++;
+        totalConsoleError++;
+      }
+      if (consoleInfoMatch) {
+        consoleInfoCount++;
+        totalConsoleInfo++;
+      }
+      if (consoleDebugMatch) {
+        consoleDebugCount++;
+        totalConsoleDebug++;
+      }
+
+      // Detect catch blocks without logging
+      const catchMatch = /\}\s*catch\s*\(|^catch\s*\(/.exec(trimmed);
+      if (catchMatch || /^catch\s*\(/.test(trimmed)) {
+        // Look ahead 1-5 lines for a console.* or log.* or logger.* call
+        const catchIdx = trimmed.indexOf('catch');
+        const restOfLine = catchIdx >= 0 ? trimmed.substring(catchIdx) : trimmed;
+        const lookAhead = restOfLine + '\n' + lines.slice(i + 1, Math.min(i + 6, lines.length)).join('\n')
+        if (!/console\.|log(?:ger|ging)?\.|\bwinston\b|\bpino\b|\bbunyan\b|\bdebug\b/.test(lookAhead)) {
+          catchWithoutLogCount++;
+          totalCatchWithoutLog++;
+          issues.push({
+            line: i + 1,
+            type: 'catch_without_log',
+            severity: 'high',
+            description: 'catch block without any error logging',
+            code: trimmed.substring(0, 100),
+          });
+        }
+      }
+    }
+
+    if (consoleLogCount > 0 || catchWithoutLogCount > 0 || consoleWarnCount > 0 || consoleErrorCount > 0) {
+      fileResults.push({
+        path: file.path,
+        consoleLogCount,
+        consoleWarnCount,
+        consoleErrorCount,
+        consoleInfoCount,
+        consoleDebugCount,
+        catchWithoutLogCount,
+        issues,
+      });
+    }
+  }
+
+  // Calculate score
+  // Deduct: console.log = 3pts each, catch_without_log = 5pts each
+  const deductions = totalConsoleLog * 3 + totalCatchWithoutLog * 5;
+  const score = Math.max(0, 100 - deductions);
+
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 80) grade = 'B';
+  else if (score >= 70) grade = 'C';
+  else if (score >= 60) grade = 'D';
+  else grade = 'F';
+
+  return {
+    grade,
+    score,
+    totalFiles,
+    summary: {
+      consoleLog: totalConsoleLog,
+      consoleWarn: totalConsoleWarn,
+      consoleError: totalConsoleError,
+      consoleInfo: totalConsoleInfo,
+      consoleDebug: totalConsoleDebug,
+      catchWithoutLog: totalCatchWithoutLog,
+    },
+    files: fileResults,
+    issues: allIssues,
+  };
+}
+
+export function formatLoggingHealthReport(result) {
+  if (!result) return '## Logging Health Analysis\n\n⚠️ No file data.\n';
+
+  let report = '## Logging Health Analysis\n\n';
+  report += `**Grade:** ${result.grade} (${result.score}/100)\n`;
+  report += `**Files analyzed:** ${result.totalFiles}\n\n`;
+
+  const s = result.summary;
+  report += '### Summary\n\n';
+  report += `| Metric | Count |\n`;
+  report += `|--------|-------|\n`;
+  report += `| console.log | ${s.consoleLog} |\n`;
+  report += `| console.warn | ${s.consoleWarn} |\n`;
+  report += `| console.error | ${s.consoleError} |\n`;
+  report += `| console.info | ${s.consoleInfo} |\n`;
+  report += `| console.debug | ${s.consoleDebug} |\n`;
+  report += `| catch without log | ${s.catchWithoutLog} |\n\n`;
+
+  if (result.files.length > 0) {
+    report += '### Files with Issues\n\n';
+    for (const f of result.files.slice(0, 15)) {
+      report += `**${f.path}** — ${f.issues.length} issue(s)\n`;
+      for (const issue of f.issues.slice(0, 5)) {
+        report += `  - L${issue.line}: [${issue.severity}] ${issue.description}\n`;
+      }
+      if (f.issues.length > 5) {
+        report += `  - _...and ${f.issues.length - 5} more_\n`;
+      }
+      report += '\n';
+    }
+    if (result.files.length > 15) {
+      report += `_...and ${result.files.length - 15} more files_\n\n`;
+    }
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
