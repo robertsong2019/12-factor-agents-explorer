@@ -79,3 +79,8 @@
 - [x] **F59**: analyzeCliHealth() — CLI completeness analysis: 8 checks (help/version/usage/arg validation/exit codes/subcommands/stderr/color), A-F grading, framework detection (commander/yargs vs manual). formatCliHealthReport(). ✅ 2026-07-24
 - [x] **F60**: analyzeDependencyRisk() — 5-category dependency risk assessment: version pinning (pinned/caret/tilde/range/wildcard), dev/prod ratio, risky pattern detection (code execution/legacy heavyweight/duplicate functionality), dependency count. A-F grading. formatDependencyRiskReport(). ✅ 2026-07-24
 - [x] **F61**: analyzeTestCoverage() — test coverage estimation: test/source file mapping, framework detection (jest/mocha/vitest/node_test/pytest/go_test/ava), untested file identification with line counts. A-F grading. formatTestCoverageReport(). ✅ 2026-07-24
+
+### Code Hygiene (Round 8 — 2026-07-24)
+- [x] **F62**: analyzeLoggingHealth() — console.log pollution detector (5-level console.* tracking), catch-without-log scanner with multi-line look-ahead, A-F grading. formatLoggingHealthReport(). ✅ 2026-07-24
+- [x] **F63**: analyzeEnvHealth() — .env.example coverage analysis, undocumented/stale env var detection, hardcoded secret scanner. A-F grading. formatEnvHealthReport(). ✅ 2026-07-24
+- [x] **F64**: analyzePerformancePatterns() — 5-pattern scanner: sync I/O, nested loops, promise-in-loop, missing await, unbounded ops. A-F grading. formatPerformanceReport(). ✅ 2026-07-24
