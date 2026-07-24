@@ -7453,6 +7453,217 @@ export function formatDependencyRiskReport(result) {
   return report;
 }
 
+export function analyzeTestCoverage(files = [], options = {}) {
+  if (!files) files = [];
+  const srcExtensions = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.go', '.rs', '.java']);
+  const testPatterns = [
+    /\.test\./i,
+    /\.spec\./i,
+    /\.bench\./i,
+    /^test\//i,
+    /\/__tests__\//i,
+    /_test\./i,
+    /_spec\./i,
+    /Test\.(java|go)$/i,
+    /^test_.*\.py$/i,
+    /.*_test\.py$/i,
+  ];
+
+  const frameworks = {
+    jest: /from\s+['"]jest['"]|require\(['"]jest['"]\)|describe\s*\(|it\s*\(|test\s*\(/,
+    mocha: /from\s+['"]mocha['"]|describe\s*\(|it\s*\(/,
+    vitest: /from\s+['"]vitest['"]|import.*vitest/,
+    node_test: /from\s+['"]node:test['"]|import.*node:test/,
+    pytest: /import pytest|def test_|assert /,
+    go_test: /func Test\w+/,
+    cargo_test: /#\[cfg\(test\)\]|#\[test\]/,
+    ava: /import test from ['"]ava['"]/,
+    tape: /require\(['"]tape['"]\)/,
+  };
+
+  const sourceFiles = [];
+  const testFiles = [];
+
+  for (const file of files) {
+    if (!file.path) continue;
+    const ext = extname(file.path);
+    if (!srcExtensions.has(ext)) continue;
+
+    const isTest = testPatterns.some(p => p.test(file.path));
+
+    if (isTest) {
+      testFiles.push({ path: file.path, content: file.content || '', ext });
+    } else {
+      sourceFiles.push({ path: file.path, content: file.content || '', ext });
+    }
+  }
+
+  // Detect frameworks
+  const detectedFrameworks = new Set();
+  for (const tf of testFiles) {
+    for (const [name, pattern] of Object.entries(frameworks)) {
+      if (pattern.test(tf.content)) {
+        detectedFrameworks.add(name);
+      }
+    }
+  }
+
+  // Map test files to source files
+  const mappings = [];
+  const testedSources = new Set();
+
+  for (const tf of testFiles) {
+    // Derive source name from test name
+    const baseName = tf.path
+      .replace(/\.test\./i, '.')
+      .replace(/\.spec\./i, '.')
+      .replace(/\.bench\./i, '.')
+      .replace(/_test\./i, '.')
+      .replace(/_spec\./i, '.')
+      .replace(/\/__tests__\//, '/')
+      .replace(/^test\//, 'src/')
+      .replace(/^tests\//, 'src/')
+      .replace(/Test\.(java|go)$/, '.$1', 'i')
+      .replace(/^test_(.*)\.py$/i, '$1.py')
+      .replace(/(.*)_test\.py$/i, '$1.py');
+
+    // Find matching source file
+    const matchedSource = sourceFiles.find(sf => sf.path === baseName || sf.path.endsWith(baseName.replace(/^.*\//, '')));
+    if (matchedSource) {
+      mappings.push({ test: tf.path, source: matchedSource.path });
+      testedSources.add(matchedSource.path);
+    } else {
+      mappings.push({ test: tf.path, source: null });
+    }
+  }
+
+  // Find untested source files
+  const untested = sourceFiles
+    .filter(sf => !testedSources.has(sf.path))
+    .map(sf => sf.path);
+
+  // Calculate metrics
+  const testCount = testFiles.length;
+  const sourceCount = sourceFiles.length;
+  const testedCount = testedSources.size;
+  const untestedCount = untested.length;
+  const coverageRatio = sourceCount > 0 ? testedCount / sourceCount : 0;
+  const testToSourceRatio = sourceCount > 0 ? testCount / sourceCount : 0;
+
+  // Score calculation (0-100)
+  let score = 0;
+  // Coverage component (0-60)
+  score += Math.round(coverageRatio * 60);
+  // Framework detection (0-15)
+  score += detectedFrameworks.size > 0 ? 15 : 0;
+  // Test-to-source ratio (0-25)
+  if (testToSourceRatio >= 0.8) score += 25;
+  else if (testToSourceRatio >= 0.5) score += 18;
+  else if (testToSourceRatio >= 0.3) score += 12;
+  else if (testToSourceRatio >= 0.1) score += 6;
+
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 75) grade = 'B';
+  else if (score >= 60) grade = 'C';
+  else if (score >= 40) grade = 'D';
+  else grade = 'F';
+
+  // Identify critical untested files (large source files)
+  const untestedWithSize = untested.map(p => {
+    const sf = sourceFiles.find(s => s.path === p);
+    const lines = sf ? sf.content.split('\n').length : 0;
+    return { path: p, lines };
+  }).sort((a, b) => b.lines - a.lines);
+
+  const issues = [];
+  if (untestedCount > 0 && sourceCount > 0) {
+    const untestedPct = Math.round((untestedCount / sourceCount) * 100);
+    if (untestedPct > 50) {
+      issues.push({
+        type: 'low_coverage',
+        severity: 'high',
+        description: `${untestedPct}% of source files (${untestedCount}/${sourceCount}) have no corresponding test file`,
+      });
+    } else if (untestedPct > 25) {
+      issues.push({
+        type: 'moderate_coverage',
+        severity: 'medium',
+        description: `${untestedPct}% of source files (${untestedCount}/${sourceCount}) untested`,
+      });
+    }
+  }
+
+  if (detectedFrameworks.size === 0 && testCount > 0) {
+    issues.push({
+      type: 'unknown_framework',
+      severity: 'low',
+      description: 'Test files found but no known testing framework detected',
+    });
+  }
+
+  return {
+    grade,
+    score,
+    testFileCount: testCount,
+    sourceFileCount: sourceCount,
+    testedCount,
+    untestedCount,
+    coverageRatio: Math.round(coverageRatio * 100) / 100,
+    testToSourceRatio: Math.round(testToSourceRatio * 100) / 100,
+    frameworks: [...detectedFrameworks],
+    mappings,
+    untested: untestedWithSize.slice(0, 20),
+    issues,
+  };
+}
+
+export function formatTestCoverageReport(result) {
+  if (!result) return '## Test Coverage Analysis\n\n⚠️ No file data.\n';
+
+  let report = '## Test Coverage Analysis\n\n';
+  report += `**Grade:** ${result.grade} (${result.score}/100)\n`;
+  report += `**Test files:** ${result.testFileCount}\n`;
+  report += `**Source files:** ${result.sourceFileCount}\n`;
+  report += `**Tested:** ${result.testedCount} (${Math.round(result.coverageRatio * 100)}%)\n`;
+  report += `**Frameworks:** ${result.frameworks.length > 0 ? result.frameworks.join(', ') : 'none detected'}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Issues\n\n';
+    for (const issue of result.issues) {
+      report += `- **[${issue.severity}]** ${issue.description}\n`;
+    }
+    report += '\n';
+  }
+
+  if (result.untested.length > 0) {
+    report += '### Untested Source Files\n\n';
+    report += '| File | Lines |\n';
+    report += '|------|-------|\n';
+    for (const f of result.untested.slice(0, 15)) {
+      report += `| ${f.path} | ${f.lines} |\n`;
+    }
+    if (result.untested.length > 15) {
+      report += `| _...and ${result.untested.length - 15} more_ | |\n`;
+    }
+    report += '\n';
+  }
+
+  if (result.mappings.length > 0) {
+    report += '### Test → Source Mappings\n\n';
+    for (const m of result.mappings.slice(0, 15)) {
+      const target = m.source || '⚠️ no match';
+      report += `- ${m.test} → ${target}\n`;
+    }
+    if (result.mappings.length > 15) {
+      report += `- _...and ${result.mappings.length - 15} more_\n`;
+    }
+    report += '\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
