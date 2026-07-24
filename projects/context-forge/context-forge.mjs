@@ -8209,6 +8209,256 @@ export function formatPerformanceReport(result) {
   return report;
 }
 
+// ─── F65: Type Safety Analysis ─────────────────────────────────────────
+
+export function analyzeTypeSafety(files = []) {
+  const tsExtensions = new Set(['.ts', '.tsx']);
+  const tsFiles = files.filter(f => {
+    const ext = f.path.slice(f.path.lastIndexOf('.'));
+    return tsExtensions.has(ext);
+  });
+
+  let totalAny = 0;
+  let totalImplicitAny = 0;
+  let totalTsIgnore = 0;
+  let totalTsNocheck = 0;
+  let totalTsExpectError = 0;
+  let totalTypeAssertions = 0;
+  let totalMissingReturnType = 0;
+  let totalNonNullAssertions = 0;
+
+  const fileResults = [];
+
+  for (const file of tsFiles) {
+    const issues = [];
+    const lines = file.content.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineNum = i + 1;
+
+      // @ts-nocheck
+      if (/\/\/\s*@ts-nocheck/.test(line) || /\/\*\s*@ts-nocheck/.test(line)) {
+        issues.push({ line: lineNum, severity: 'high', description: '@ts-nocheck disables type checking for entire file' });
+        totalTsNocheck++;
+      }
+
+      // @ts-ignore
+      if (/\/\/\s*@ts-ignore/.test(line)) {
+        issues.push({ line: lineNum, severity: 'high', description: '@ts-ignore suppresses type error' });
+        totalTsIgnore++;
+      }
+
+      // @ts-expect-error
+      if (/\/\/\s*@ts-expect-error/.test(line)) {
+        issues.push({ line: lineNum, severity: 'medium', description: '@ts-expect-error suppresses type error' });
+        totalTsExpectError++;
+      }
+
+      // Explicit `: any` annotations
+      const anyMatches = line.match(/:\s*any\b/g);
+      if (anyMatches) {
+        for (const _ of anyMatches) {
+          issues.push({ line: lineNum, severity: 'high', description: "Explicit 'any' type annotation" });
+          totalAny++;
+        }
+      }
+
+      // `as any` assertions
+      const asAnyMatches = line.match(/\bas\s+any\b/g);
+      if (asAnyMatches) {
+        for (const _ of asAnyMatches) {
+          issues.push({ line: lineNum, severity: 'high', description: "'as any' type assertion" });
+          totalTypeAssertions++;
+          totalAny++;
+        }
+      }
+
+      // `as Type` assertions (non-any)
+      const asMatches = line.match(/\bas\s+[a-zA-Z_]\w*/g);
+      if (asMatches) {
+        for (const m of asMatches) {
+          if (!/\bas\s+any/.test(m)) {
+            issues.push({ line: lineNum, severity: 'low', description: `Type assertion (${m})` });
+            totalTypeAssertions++;
+          }
+        }
+      }
+
+      // Angle-bracket assertions <Type>expr (heuristic: <string>, <number>, etc.)
+      const angleMatches = line.match(/<(string|number|boolean|any|unknown|object|never|void)\s*>/g);
+      if (angleMatches) {
+        for (const m of angleMatches) {
+          issues.push({ line: lineNum, severity: m.includes('any') ? 'high' : 'low', description: `Angle-bracket type assertion ${m}` });
+          totalTypeAssertions++;
+        }
+      }
+
+      // Non-null assertion `!.` (but not `!==` and not `!` at end of expression as negation)
+      const nonNullMatches = line.match(/\w\!\./g);
+      if (nonNullMatches) {
+        for (const _ of nonNullMatches) {
+          issues.push({ line: lineNum, severity: 'medium', description: 'Non-null assertion (!) — consider optional chaining' });
+          totalNonNullAssertions++;
+        }
+      }
+
+      // Implicit any: function parameter without type annotation
+      // Match: function foo(param) or function foo(param, other) — param has no `: Type`
+      const funcParamMatches = line.match(/function\s+\w+\s*\(([^)]*)\)/g);
+      if (funcParamMatches) {
+        for (const fpm of funcParamMatches) {
+          const paramsStr = fpm.match(/\(([^)]*)\)/)[1];
+          if (paramsStr.trim()) {
+            const params = paramsStr.split(',');
+            for (const param of params) {
+              const trimmed = param.trim();
+              if (!trimmed) continue;
+              // Skip destructuring, rest params, typed params, default values with type
+              if (trimmed.startsWith('{') || trimmed.startsWith('...') || trimmed.startsWith('[')) continue;
+              if (/:\s*\w/.test(trimmed)) continue; // has type annotation
+              // Remove default value
+              const paramName = trimmed.split('=')[0].trim();
+              if (paramName && !/^(@|\/\/)/.test(paramName)) {
+                issues.push({ line: lineNum, severity: 'medium', description: `Implicit any: parameter '${paramName}' has no type annotation` });
+                totalImplicitAny++;
+              }
+            }
+          }
+        }
+      }
+
+      // Arrow function implicit any params: (param) => or (param, x) =>
+      const arrowMatches = line.match(/\(([^)]*)\)\s*=>/g);
+      if (arrowMatches) {
+        for (const am of arrowMatches) {
+          const paramsStr = am.match(/\(([^)]*)\)/)[1];
+          if (paramsStr.trim()) {
+            const params = paramsStr.split(',');
+            for (const param of params) {
+              const trimmed = param.trim();
+              if (!trimmed) continue;
+              if (trimmed.startsWith('{') || trimmed.startsWith('...') || trimmed.startsWith('[')) continue;
+              if (/:\s*\w/.test(trimmed)) continue;
+              const paramName = trimmed.split('=')[0].trim();
+              if (paramName) {
+                issues.push({ line: lineNum, severity: 'medium', description: `Implicit any: arrow param '${paramName}' has no type annotation` });
+                totalImplicitAny++;
+              }
+            }
+          }
+        }
+      }
+
+      // Missing return type on exported functions
+      // export function foo(...)  {  — no `: ReturnType` before `{`
+      const exportFuncMatch = line.match(/export\s+(async\s+)?function\s+(\w+)\s*\(([^)]*)\)\s*\{/);
+      if (exportFuncMatch) {
+        // Check if there's a return type between ) and {
+        const afterParen = line.slice(line.lastIndexOf(')'));
+        if (!/:\s*\w/.test(afterParen)) {
+          issues.push({ line: lineNum, severity: 'low', description: `Exported function '${exportFuncMatch[2]}' missing return type` });
+          totalMissingReturnType++;
+        }
+      }
+
+      // Exported arrow const without return type: export const foo = (x) =>
+      const exportArrowMatch = line.match(/export\s+const\s+(\w+)\s*=\s*(async\s*)?\(([^)]*)\)\s*=>/);
+      if (exportArrowMatch) {
+        // Check if params have `: Type` AND there's a return type `: Type` before =>
+        const fullMatch = exportArrowMatch[0];
+        // If no `: Type` between ) and =>, it's missing return type
+        const betweenParenAndArrow = fullMatch.slice(fullMatch.lastIndexOf(')'));
+        if (!/:\s*\w/.test(betweenParenAndArrow)) {
+          issues.push({ line: lineNum, severity: 'low', description: `Exported arrow '${exportArrowMatch[1]}' missing return type` });
+          totalMissingReturnType++;
+        }
+      }
+    }
+
+    if (issues.length > 0) {
+      fileResults.push({ path: file.path, issues });
+    }
+  }
+
+  // Scoring: weighted penalties
+  let penalty = 0;
+  penalty += totalAny * 8;           // explicit any: heavy
+  penalty += totalImplicitAny * 4;    // implicit any: moderate
+  penalty += totalTsNocheck * 20;     // @ts-nocheck: severe
+  penalty += totalTsIgnore * 10;      // @ts-ignore: heavy
+  penalty += totalTsExpectError * 5;  // @ts-expect-error: moderate
+  penalty += totalTypeAssertions * 2; // assertions: light
+  penalty += totalMissingReturnType * 1; // missing return: cosmetic
+  penalty += totalNonNullAssertions * 3;  // non-null: moderate
+
+  const totalFiles = tsFiles.length;
+  const maxPenalty = totalFiles * 50; // 50 points per file baseline
+  let score = maxPenalty > 0 ? Math.max(0, 100 - Math.round((penalty / maxPenalty) * 100)) : 100;
+  if (totalFiles === 0) score = 100;
+
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 80) grade = 'B';
+  else if (score >= 70) grade = 'C';
+  else if (score >= 60) grade = 'D';
+  else grade = 'F';
+
+  return {
+    grade,
+    score,
+    totalFiles,
+    summary: {
+      anyUsage: totalAny,
+      implicitAny: totalImplicitAny,
+      tsIgnore: totalTsIgnore,
+      tsNocheck: totalTsNocheck,
+      tsExpectError: totalTsExpectError,
+      typeAssertions: totalTypeAssertions,
+      missingReturnType: totalMissingReturnType,
+      nonNullAssertions: totalNonNullAssertions,
+    },
+    files: fileResults,
+  };
+}
+
+export function formatTypeSafetyReport(result) {
+  if (!result) return '## Type Safety Analysis\n\nNo data.\n';
+
+  let report = '## Type Safety Analysis\n\n';
+  report += `**Grade:** ${result.grade} (${result.score}/100)\n`;
+  report += `**TS files analyzed:** ${result.totalFiles}\n\n`;
+
+  const s = result.summary;
+  report += '### Summary\n\n';
+  report += '| Issue | Count |\n';
+  report += '|-------|-------|\n';
+  report += `| Explicit 'any' | ${s.anyUsage} |\n`;
+  report += `| Implicit 'any' | ${s.implicitAny} |\n`;
+  report += `| @ts-ignore | ${s.tsIgnore} |\n`;
+  report += `| @ts-nocheck | ${s.tsNocheck} |\n`;
+  report += `| @ts-expect-error | ${s.tsExpectError} |\n`;
+  report += `| Type Assertions | ${s.typeAssertions} |\n`;
+  report += `| Missing Return Types | ${s.missingReturnType} |\n`;
+  report += `| Non-null Assertions | ${s.nonNullAssertions} |\n\n`;
+
+  if (result.files.length > 0) {
+    report += '### Files with Issues\n\n';
+    for (const f of result.files.slice(0, 15)) {
+      report += `**${f.path}** — ${f.issues.length} issue(s)\n`;
+      for (const issue of f.issues.slice(0, 5)) {
+        report += `  - L${issue.line}: [${issue.severity}] ${issue.description}\n`;
+      }
+      if (f.issues.length > 5) {
+        report += `  - _...and ${f.issues.length - 5} more_\n`;
+      }
+      report += '\n';
+    }
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
