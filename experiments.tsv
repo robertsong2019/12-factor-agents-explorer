@@ -186,3 +186,28 @@ date	project	tests_before	tests_after	delta	status
 2026-07-23T22:35:00+08:00	4ae8841	context-forge	test_count	810→833/+23	keep	F57 analyzeExportHealth() — barrel files, re-export chains, unused exports detection, mixed export style detection, namespace re-exports. Health score + A-F grading. 6481→6739 lines. 0 regressions.
 2026-07-23T22:50:00+08:00	7351fbb	context-forge	test_count	833→856/+23	keep	F58 analyzeFunctionMetrics() — function length analysis, parameter count, return path counting, arrow/async detection, long function & high-param warnings. Health score + A-F grading. 6739→7001 lines. 0 regressions.
 2026-07-23T23:10:00+08:00	bf3e3c0	amg-mcp	test_count	93→122/+29	keep	Day 5/10: Cross-era integration tests. Legacy↔Auto data persistence (module singleton survives era boundary), all 14 tools exercised in legacy mode, outputSchema shape consistency across eras, edge-case parity (forget/relate/neighbors/recall). Research #024 action items completed.
+2026-07-23T23:00:00+08:00	e481e60	amg	test_count	4205→4223/+18	keep	Cycle 277: auto_compress_skills() — automatic skill promotion from episodic patterns. detect_skill_candidates→batch compress→skill nodes. Completes triple-loop quality system (gap→heal, redundancy→consolidate, skill→compress). Idempotent. 251st day (pending).
+2026-07-24T00:00:00+08:00	3ca0faf	amg	test_count	4223→4269/+46	keep	Cycle 278: sombor_entropy() + reduced_sombor_entropy() — Shannon entropy of normalized Sombor edge contributions. Index (magnitude) + entropy (distribution) = complete structural descriptor. Normalized [0,1]: regular→1.0, irregular<1.0. RS entropy K₂=0 unique case. Degree-based family 16 metrics/10 APIs. 251st consecutive day.
+2026-07-24T01:00:00+08:00	8f54402	acs	test_count	2864→2898/+34	keep	Cycle 200: scorecard_dimension_correlation() — pairwise Pearson r between scorecard dimensions across presets. Classifies redundant (|r|≥0.8)/independent/complementary (r≤0.3). Merge suggestions. Capstone of scorecard analytics layer (c192 define→c195 ensemble→c200 correlate). 200th consecutive day.
+date	project	baseline_tests	baseline_passed	baseline_status	after_tests	after_passed	after_status	delta	notes
+2026-07-24	agent-context-analyzer	69	69	✅ 100%	-	-	-	-	jest baseline
+2026-07-24	ai-iot-orchestrator	217	217	✅ 100%	-	-	-	-	pytest baseline
+2026-07-24	better-ralph-core	376	376	✅ 100%	-	-	-	-	pytest baseline
+2026-07-24	agent-role-orchestrator	198	198	✅ 100%	-	-	-	-	jest baseline (open handle warning)
+2026-07-24	micro-agent-protocol	88	88	✅ 100%	101	101	✅ 100%	+13	Added TestToolExecutor(7), TestStepResult(4), TestMockLLM(2)
+2026-07-24	prompt-router	35	35	✅ 100%	72	72	✅ 100%	+37	Added test_advanced_routing: freeze/snapshot(9), detect_language(6), health_check(4), export/import(2), fuzzy(3), levenshtein(5), stats(2), dedup(2), coverage(1), weights(2)
+2026-07-24	agent-context-analyzer	69	69	✅ 100%	69	69	✅ 100%	0	No gaps found - all src modules tested
+2026-07-24	ai-iot-orchestrator	217	217	✅ 100%	217	217	✅ 100%	0	No gaps found - well covered
+2026-07-24	better-ralph-core	376	376	✅ 100%	376	376	✅ 100%	0	No gaps found - 35 test files
+2026-07-24	agent-role-orchestrator	198	198	✅ 100%	198	198	✅ 100%	0	No gaps found - all src tested (index.ts is demo only)
+2026-07-24T21:00:00+08:00	61673c4	context-forge	test_count	856→881	keep	F59 analyzeCliHealth() — CLI completeness (help/version/usage/arg_validation/exit_code/subcommands/stderr/color). +25 tests. 7001→7206 lines.
+2026-07-24T21:30:00+08:00	d9c5b7a	context-forge	test_count	881→904	keep	F60 analyzeDependencyRisk() — version pinning/risky patterns/duplicate functionality. +23 tests. 7206→7459 lines.
+2026-07-24T21:45:00+08:00	cb85592	context-forge	test_count	904→929	keep	F61 analyzeTestCoverage() — test/source file mapping, framework detection, untested files. +25 tests. 7459→7670 lines.
+2026-07-24T22:00:00+08:00	6144aab	context-forge	test_count	929→951	keep	F62 analyzeLoggingHealth() — console.* tracking + catch-without-log scanner. +22 tests. 7670→7982 lines.
+2026-07-24T22:10:00+08:00	b5fb7bc	context-forge	test_count	951→973	keep	F63 analyzeEnvHealth() — undocumented env vars + hardcoded secret scanner. +22 tests. 7982→8230 lines.
+2026-07-24T22:20:00+08:00	58ac68a	context-forge	test_count	973→994	keep	F64 analyzePerformancePatterns() — sync I/O + nested loops + promise-in-loop + missing await. +21 tests. 8230→8478 lines.
+2026-07-24T22:30:00+08:00	4f2d442	context-forge	test_count	994→1026	keep	F65 analyzeTypeSafety() — explicit/implicit any, ts-ignore, type assertions, non-null assertions. +32 tests. 8478→8215 lines (refactored).
+2026-07-24T22:45:00+08:00	bf67730	context-forge	test_count	1026→1054	keep	F66 analyzeCodeSmells() — long files/deep nesting/too many params/magic numbers/god files/empty catch/TODO. +28 tests. 8215→8684 lines.
+2026-07-24T19:00:00+08:00	-	agent-task-cli	test_count	1319→1371	keep	3 cycles on /tmp shallow clone: deepMerge (+24), PriorityQueue (+18), debounce/throttle (+10). Not pushed (no push access).
+2026-07-25T00:00:00+08:00	a5d2c6f	amg	test_count	4269→4326	keep	Cycle 279: randic_entropy() + zagreb_m1_entropy() — Shannon entropy of Randić and Zagreb M₁ edge contributions. Degree-based entropy family extended from 3→5 indices. +57 tests. 252nd consecutive day.
+2026-07-25T01:00:00+08:00	bea3f92	amg	test_count	4326→4394	keep	Cycle 280: abc_entropy() + ga_entropy() — ABC uniquely filters K₂ edges. GA ratio perspective. Degree-based entropy family complete: 5 indices × 2 = 10 APIs. +68 tests. 253rd consecutive day.

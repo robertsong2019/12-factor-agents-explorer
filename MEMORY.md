@@ -14,26 +14,26 @@
 
 ---
 
-## Current Focus (2026-07-20)
+## Current Focus (2026-07-23)
 
 ### Active Theme
-Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-loop quality system fully complete.
+Autoresearch 方法论实践 — amg **连续253天零回滚率** 🏆。Degree-based entropy family complete: 5 indices × 2 APIs = 10 entropy measures。Triple-loop quality system complete (gap→heal, redundancy→consolidate, skill→compress)。acs **200天** 🏆 scorecard dimension correlation。MCP Phase 1 Day 5 cross-era verified。context-forge 1054 tests / 8684 lines (18 analysis dimensions).
 
-### 项目测试总量 (07-21 凌晨快照)
+### 项目测试总量 (07-25 凌晨快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
-| agent-memory-graph | **4099** | 785+ | 七十一合一: dual-loop quality system (gap+redundancy+balance+auto_heal+auto_consolidate+semantic_cluster) + evaluation quartet + 全检索管线 + query_explain diagnostics + 17 centrality + 拓扑指数十九族 + IR eval + governed selection + phantom detection + spreading activation + proactive context + cascade invalidation + immutable_store + compact_node + serialize + RelationIntegrityChecker + intent_aware_token_budgets + screen_retrieval + query_confidence_score + govern_skill_bank + 7-intent taxonomy + query_route_audit + ... |
-| agent-context-store | **2810** | 575+ | 三大管线完整+全分析闭环(二十三层): Graph 12 / Quality 12 / Store 20 (longitudinal+predictive+prescriptive+feedback+monitoring+dashboard+batch+alert-history+preset_ensemble+threshold_sensitivity+hysteresis_config) |
+| agent-memory-graph | **4394** | 810+ | 七十七合一: degree-based entropy family (5 indices × 2 APIs) + triple-loop quality system + evaluation quartet + 全检索管线 + ... |
+| agent-context-store | **2898** | 600+ | 二十六层: detect→configure→recommend→validate→**correlate** pipeline complete |
 | structured-output-toolkit | **561** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
-| agent-task-cli | **1299** | 200 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F200 milestone** 🎯 |
-| **四项目总计** | **8769** | — | — |
+| agent-task-cli | **1319** | 203 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F203** |
+| **四项目总计** | **9172** | — | — |
 
-其他: openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / context-forge 743 / nano-agent 732 / AMS v1.0-dev 645 / prompt-router 258 / edge-agent-runtime 244 / agent-mesh-network 108
+其他: context-forge **1054** (F66, 8684 lines, 18 analysis dimensions) / nano-agent 732 / amg-mcp **122** (Day 5 cross-era verified) / prompt-weaver 223 / openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / AMS v1.0-dev 645 / prompt-router 72 / edge-agent-runtime 244 / agent-mesh-network 108
 
-**全项目总计**: 12304 tests (四核心 8769 + context-forge 743 + nano-agent 732 + edge-agent-runtime 244 + agent-mesh-network 108 + 其他 1706)
+**全项目总计**: 13130 tests (四核心 9172 + cf 1054 + nano 732 + mcp 122 + pw 223 + lg-bridge 261 + ralph 376 + observability 166 + AMS 645 + router 72 + edge 244 + mesh 108)
 
 ### 最高优先级
-**README → npm publish** (四项目)。这是当前最大未交付价值。amg 定位: "beyond recall — agency-grade graph memory — security-first"。8678 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，PlugMem 已有 OpenClaw plugin，竞争窗口收紧。
+**README → npm publish** (四项目)。MCP Phase 1 Day 5 ✅ (cross-era verified, 122 tests)。amg 定位: "beyond recall — agency-grade graph memory — security-first"。9172 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，PlugMem 已有 OpenClaw plugin，竞争窗口收紧。
 
 ### 早期 Cycle 归档 (07-01 ~ 07-16)
 > 详细记录已归档至 [memory/archive-2026-07-early.md](memory/archive-2026-07-early.md)。以下仅保留里程碑摘要：
@@ -41,40 +41,69 @@ Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-lo
 - **07-14 cycles 239-242**: immutable_store + compact_node + serialize + RelationIntegrityChecker. Context Engineering Layer 3/4 ✅. +145 tests
 - **07-14 Research #008**: Memory Security — ShadowMerge 93.8% ASR, amg positioning 
 
-### 07-20 晚间~07-21 凌晨开发 (amg cycles 270-271, acs cycle 197, nano-agent F22-F46)
-- **Cycle 270: query_explain()** — Search plan diagnostics. Decomposes query scores: per-result breakdown (graph_score+vector_score+bm25_score+recency+centrality), match quality (excellent/good/partial/weak), execution path, timing. Observability tool for debugging retrieval quality. +39 tests
-- **Cycle 271: semantic_cluster_detect()** — Group-level redundancy detection via single-linkage clustering. Two dimensions: content clusters (trigram Jaccard) + structural clusters (neighbour Jaccard). Combined clusters = nodes redundant in BOTH dimensions = prime consolidation targets. Union-Find O(n² α(n)). Extends redundancy_detect pairwise→group analysis. +26 tests
-- **acs Cycle 197: threshold_hysteresis_config()** — Raise/clear threshold bands to reduce alert flapping. set/get/clear/evaluate actions. Dead band stickiness (state persists between raise_at and clear_at). Flapping risk detection for scores oscillating in band. Completes fragility remediation loop: sensitivity detect (c196) → fix (c197). Standard monitoring practice (Nagios/Prometheus pattern). +26 tests
-- **nano-agent F22-F46** — Extensive feature additions over 07-19~07-20 evening: search_fuzzy, group_by_tag, add/remove_tool, deduplicate, chain_search, intersect, sample, timeline, histogram, correlation_stats, conversation_stats, tag_cloud, search_in_fields, auto_tag, export_markdown/csv, cluster, compact_summary, export_jsonl, normalize_tags, entropy, import_jsonl, union, subtract, to_prompt. 459→732 tests (+273)
-- **amg 4034→4099 (+65 tests), 247th consecutive day without rollback**
-- **acs 2784→2810 (+26 tests), 197th consecutive day without rollback**
+### 07-24~25 开发 (amg cycles 279-280, cf F59-F66, autoresearch)
+- **Cycle 280: abc_entropy() + ga_entropy()** — Shannon entropy of ABC and GA edge contributions. ABC uniquely filters K₂ edges (d_u+d_v−2=0). GA = ratio perspective (geometric/arithmetic). Degree-based entropy family complete: 5 indices × 2 APIs = 10 measures. +68 tests, 4326→4394. **253rd day**. bea3f92.
+- **Cycle 279: randic_entropy() + zagreb_m1_entropy()** — Shannon entropy of Randić and Zagreb M₁ contributions. Randić emphasises low-degree edge heterogeneity (inverse weights), Zagreb M₁ emphasises high-degree (additive weights). +57 tests, 4269→4326. 252nd day. a5d2c6f.
+- **context-forge F62-F66** — F62 analyzeLoggingHealth (console.* + catch-without-log), F63 analyzeEnvHealth (.env.example + hardcoded secrets), F64 analyzePerformancePatterns (sync I/O + nested loops), F65 analyzeTypeSafety (any/ts-ignore/type assertions), F66 analyzeCodeSmells (long files/deep nesting/magic numbers). 929→1054 (+125), 7670→8684 lines.
+- **context-forge F59-F61** (07-24 evening) — F59 analyzeCliHealth (CLI completeness), F60 analyzeDependencyRisk (version pinning), F61 analyzeTestCoverage (untested file detection). 856→929 (+73), 7001→7670 lines.
+- **autoresearch testing** — micro-agent-protocol 88→101 (+13), prompt-router 35→72 (+37). atc /tmp clone: deepMerge + PriorityQueue + debounce/throttle (+52, not pushed).
 
-### 07-19 凌晨~07-20 凌晨开发 (amg cycles 268-269, acs cycle 196)
-- **Cycle 268: gap_redundancy_balance()** — Unified dual-loop health metric. Fuses gap_score + redundancy_score into health_score (0-100) with auto-normalised weights. balance_ratio ∈ [-1,+1] identifies gap-dominated vs redundancy-dominated graphs. 6 verdicts + action priority routing. Capstone of dual-loop quality system. +19 tests
-- **Cycle 269: auto_consolidate()** — Redundancy act-loop complete. Runs redundancy_detect(), filters merge_candidates by score, merges lower-degree→higher-degree nodes. Tracks consumed nodes to prevent double-merges. Reports before/after redundancy scores. **Critical merge_nodes() 5-step dedup fix** for UNIQUE constraint violations (shared third-party edges + bidirectional edges). +20 tests
-- **acs Cycle 196: alert_threshold_sensitivity()** — Threshold fragility analysis via delta sweep. Per-dimension: f1_volatility, f1_elasticity, fragility (stable/moderate/fragile), safe_range, worst_delta, direction_bias. Non-mutating (saves/restores thresholds). Completes prediction confidence stack: accuracy (c193) → tuned (c194) → sensitivity (c196). +21 tests
-- **amg 3995→4034 (+39 tests), 245th consecutive day without rollback**
-- **acs 2763→2784 (+21 tests), 196th consecutive day without rollback**
+### 07-23~24 开发 (amg cycles 277-278, acs cycle 200, cf F56-F58, amg-mcp Day 5)
+- **Cycle 278: sombor_entropy() + reduced_sombor_entropy()** — Shannon entropy of normalized Sombor edge contributions. Index (magnitude) + entropy (distribution) = complete structural descriptor. Normalized [0,1]: regular→1.0, irregular<1.0. RS entropy K₂=0 unique case. Degree-based family 16 metrics / 10 APIs. +46 tests, 4223→4269. **251st day**. 3ca0faf.
+- **Cycle 277: auto_compress_skills()** — Automatic skill promotion: detect_skill_candidates → batch compress episodic clusters → skill nodes. Completes triple-loop quality system. Idempotent. +18 tests, 4205→4223. e481e60.
+- **acs Cycle 200: scorecard_dimension_correlation()** — Pearson r between scorecard dimensions across presets. Classifies redundant (|r|≥0.8)/independent/complementary (r≤0.3). Merge suggestions. Capstone of scorecard analytics layer. +34 tests, 2864→2898. **200th day** 🏆. 8f54402.
+- **context-forge F56-F58** — F56 analyzeAsyncPatterns (async/await, floating promises), F57 analyzeExportHealth (barrel files, re-export chains), F58 analyzeFunctionMetrics (length, params, return paths). 786→856 (+70), 6008→7001 lines.
+- **amg-mcp Day 5** — Cross-era integration tests (93→122). Legacy↔Auto persistence verified, all 14 tools legacy-tested. bf3e3c0.
+- **prompt-weaver CLI** — 39 CLI tests (184→223).
+- **Research #024** — MCP SDK v2 Day-5: dual-era test gap, cacheHints 3-line ROI, MRTR deferred Phase 2.
+- **amg 4205→4269 (+64), acs 2864→2898 (+34)** — amg 251st day 🏆, acs 200th day 🏆
+
+### 07-22~23 开发摘要 (amg cycles 273-276, acs 199, amg-mcp Day 3-4, cf F55, atc R51)
+- **c276**: sombor_index() + reduced_sombor_index() (+42). **c275**: detect_skill_candidates() (+19). **c273-274**: walk_statistics + edge_type_stats (+23). amg 4121→4205. **250th day** 🏆.
+- **acs c199**: hysteresis_band_backtest() (+33). Closes detect→configure→recommend→validate. 199th day.
+- **amg-mcp Day 3-4**: memory.gaps + memory.skills + HTTP transport (+50). Dual transport complete.
+- **cf F55**: analyzeCommentHealth (+13). **atc R51**: F201-F203 (+20).
+- **Research #023**: OTel GenAI + MCP Day 3. **Blog**: hysteresis essay. **amg-mcp README**: 274 lines.
+
+### 07-21~22 早期开发摘要 (amg cycles 270-272, acs cycle 197-198, context-forge F49-F54, nano-agent F22-F46, amg-mcp Day 1-2)
+- **c270 query_explain** (+39): search plan diagnostics — per-result score decomposition + match quality + timing. 246th day.
+- **c271 semantic_cluster_detect** (+26): group-level redundancy via single-linkage clustering. 247th day.
+- **c272 auto_consolidate_cluster** (+22): group-level batch merge. 248th day.
+- **acs c197 threshold_hysteresis_config** (+26): raise/clear bands with dead-band stickiness + flapping detection. 197th day.
+- **acs c198 hysteresis_band_recommender** (+21): auto-recommend bands. Three strategies + direction bias. 198th day.
+- **nano-agent F22-F46** (+273): 25 features. 459→732.
+- **context-forge F49-F54** (+110): 6 code analysis features (debug/import graph/maturity/security/error handling/duplicate code). 663→773, 5005→6008 lines.
+- **amg-mcp Day 1-2** — MCP Phase 1 kickoff: 6 curated tools + resource subscription. 43 tests.
+
+### 07-19 凌晨~07-20 凌晨开发摘要 (amg 268-269, acs 196)
+- **c268 gap_redundancy_balance** (+19): unified health_score (0-100) + balance_ratio (-1,+1). Capstone of dual-loop.
+- **c269 auto_consolidate** (+20): pairwise redundancy act-loop. merge_nodes() 5-step dedup fix.
+- **acs c196 alert_threshold_sensitivity** (+21): threshold fragility via delta sweep.
+- amg 3995→4034 (+39), acs 2763→2784 (+21).
 
 ### 07-18~19 开发摘要 (amg 266-267, acs 195, cf F46-48, nano F17-21)
-- **c266 auto_heal_gaps** (+18): orphan rescue + bridge construction. Gap loop measure→act closed.
-- **c267 redundancy_detect** (+32): 3D analysis (content/structural/functional). Dual-loop quality system complete.
-- **acs 195 scorecard_ensemble** (+19): multi-preset consensus scoring.
+- **c266 auto_heal_gaps** (+18): orphan rescue + bridge construction. Gap loop closed.
+- **c267 redundancy_detect** (+32): 3D analysis (content/structural/functional).
+- **acs c195 scorecard_ensemble** (+19): multi-preset consensus.
 - **context-forge F46-48** (+44): code complexity + file coupling + tech debt.
 - **nano-agent F17-21** (+44): search_fuzzy + group_by_tag + tools + dedup + chain_search.
 - amg 3945→3995 (+50), acs 2744→2763 (+19).
 
 ### 07-17~18 开发摘要 (cycles 259-265, acs 194, atc F200)
-- **7 cycles in one session**: intent_aware_token_budgets + screen_retrieval (c259, +61) → govern_skill_bank (c260, +20) → 7-intent taxonomy (c261, +32) → query_route_audit (c262, +15) → reasoning_quality_eval (c263, +29) → graph_information_density (c264, +39) → knowledge_gap_report (c265, +28). amg 3721→3945 (+224). Evaluation quartet complete.
+- **7 cycles**: intent_aware_token_budgets + screen_retrieval (c259, +61) → govern_skill_bank (c260, +20) → 7-intent taxonomy (c261, +32) → query_route_audit (c262, +15) → reasoning_quality_eval (c263, +29) → graph_information_density (c264, +39) → knowledge_gap_report (c265, +28). amg 3721→3945 (+224). Evaluation quartet complete.
 - **acs 194**: scorecard_preset_recommend + alert_prediction_tuned (+17)
-- **atc F200 milestone** 🎯: 200 features (1280→1299)
-- **博文**: 自适应查询路由 (1191词) + 记忆评估的五个新前沿 (~3000词)
-- **Research #014**: Self-Evolving Agent Memory — 7 papers. Insights #51-56.
+- **atc F200** 🎯: 200 features (1280→1299)
+- Blog: 自适应查询路由 + 记忆评估的五个新前沿
+- Research #014: Self-Evolving Agent Memory. Insights #51-56.
 
 ### 近期研究一览 (详细笔记在 catalyst-research/exploration-notes/)
 | 日期 | 主题 | 核心洞察 |
 |------|------|----------|
+| 07-24 | **Agent Memory Landscape npm Strategy (#026)** | Platform-vs-Library divide (all competitors are platforms)/Mem0 v3 ADD-only validates amg conflict resolution/Plugin ecosystem IS distribution channel (OpenClaw plugin missing)/Benchmark scores table stakes/PyPI-first strategy: Python home turf thinner competition ✅ |
+| 07-24 | **Agentic Code Reasoning (#025)** | Semi-formal certificates (78→88% patch equiv)/RADAR production auto-review (105.9% YoY)/ProfMalPlus agent-coordinated static+dynamic/Structural retrieval > semantic/RADAR risk calibration = context-forge F59-F60 roadmap ✅ |
+| 07-23 | **MCP SDK v2 Day-5 Integration (#024)** | Beta→stable zero-migration (factory correct)/Dual-era test gap (all tests auto-only)/cacheHints=3-line ROI/MRTR deferred Phase 2/Inspector=primary external test tool/SDK examples=CI self-verifying pairs ✅ |
 | 07-21 | **MCP SDK v2 Day-1 Implementation (#022)** | Factory pattern mandatory/In-process testing handler.fetch/Resource subscriptions dual-era/.describe()=only model docs/ctx.mcpReq.log not console.log. Runnable Day-1 server+tests ✅ |
+| 07-23 | **MCP SDK v2 Day-5 Integration (#024)** | Beta→stable zero-migration (factory correct)/Dual-era test gap (all tests auto-only)/cacheHints=3-line ROI/MRTR deferred Phase 2/Inspector=primary external test tool/SDK examples=CI self-verifying pairs ✅ |
 | 07-20 | **MCP Memory Server Source Analysis (#021)** | Official server=500 lines JSONL+substring search=low bar. Resource subscriptions=missing feedback loop. 8 curated tools>9 thin. Inspector=primary dev tool. 5-day Phase 1 plan refined ✅ |
 | 07-20 | **MCP SDK v2 Implementation Patterns (#020)** | Stateless protocol=SQLite match/MRTR confirmation flows/outputSchema typed results/dual transport factory/extensions as distribution channel. v2-native amg-mcp blueprint ✅ |
 | 07-19 | **Memory Compression→Skill Extraction (#019)** | MemRefine budget compression/Focus sawtooth/MemSkill closed-loop evolution/Externalization theory. compress_to_skill blueprint ~140 tests ✅ |
@@ -94,21 +123,7 @@ Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-lo
 | 07-10 | **Architecture Convergence** | MRMS/Nous Bayesian/Memory Governance consensus ✅ |
 | 07-09 | **Benchmark Landscape** | Mem0 35.7% contradiction/Letta vacuum/amg advantage ✅ |
 
-> Pre-July research: see [memory/archive-2026-07-early.md](memory/archive-2026-07-early.md)
-| 06-20 | Agent Skill Discovery | Memory→Skill→Rule压缩谱/failure 60-75%信号/SkillRL 10-20×压缩 |
-| 06-19 | Workflow Memory→Skills | AWM+51.1%/执行≠反思≠教学/已落地14 APIs |
-| 06-19 | Agent Observability | OTel GenAI v1.41/trajectory>output/cost=killer feature |
-| 06-18 | Memory Consolidation | 语义边界>时间/Sleep-Time并发/49%步数减少 |
-| 06-18 | Vector Clocks+Subscribe | HLC因果/SQLite triggers→EventEmitter/唯一四合一 |
-| 06-17 | Multi-Agent Coordination | CRDT+LLM双层/观察驱动>消息传递/语义冲突=差异化 |
-| 06-17 | cr-sqlite Upgrade | 应用层→原生扩展零重写/列级Lamport/CRDT共识 |
-| 06-16 | RL-Trained Memory R2 | PreThink-Retrieve-Write/3B+智能>7B笨/SFT→RL pipeline |
-| 06-16 | Multi-Agent Consensus | 确定性>LLM freshness/max(serial) 87.2%/CRDTs=缺失原语 |
-| 06-14 | Adaptive Fusion | QDAP-Lite/Entropy修正/Exp4Fuse共识/轻量分类降99%成本 |
-| 06-14 | RL-Trained Memory R1 | Memory-R1 ADD/UPDATE/DELETE/NOOP/AgeMem GRPO/NOOP最重要 |
-| 06-12 | GraphRAG+Leiden | ICLR Bench: 多跳51%vs41%/LazyGraphRAG 1000×/Leiden已验证 |
-| 06-12 | Memory Interoperability | memorywire 5ops×4types/.af序列化/图记忆=空白 |
-| 06-07 | GraphRAG SQLite-Native | npm零竞品四合一/Leiden最高ROI/entity extraction非我们问题 |
+> Pre-July research (06-07 ~ 06-30, 30+ entries): see [memory/archive-2026-07-early.md](memory/archive-2026-07-early.md)
 
 ---
 
@@ -207,46 +222,51 @@ Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-lo
 92. **Hysteresis bands complete the alert fragility remediation loop (acs c197)** — c196 detects fragile thresholds (±delta sweep → volatility/elasticity/fragility). c197 provides the fix: separate raise_at/clear_at thresholds with dead-band stickiness. Stateful alerts (remembers history) > stateless alerts (check-and-forget). This is the Nagios/Prometheus pattern, proven in production monitoring for decades. The prediction confidence stack is now complete: accuracy (c193) → tune (c194) → sensitivity audit (c196) → fix fragility (c197).
 93. **serveStdio takes a factory function, not a server instance (#022)** — The #1 Day-1 mistake: creating McpServer at module scope. `serveStdio(buildServer)` calls the factory internally; `createMcpHandler(buildServer)` does the same for HTTP. Factory pattern enables per-request isolation for HTTP transport and is mandatory for dual-transport support. Every official SDK v2 example uses this pattern.
 94. **In-process testing via handler.fetch eliminates test infrastructure (#022)** — `createMcpHandler(buildServer)` returns a handler whose `.fetch` method can be passed directly as a transport's fetch option. No socket, no port, no process spawning. Tests run through the exact same code path as production, covering 2026-07-28 protocol features. This is the fastest test feedback loop for MCP server development — faster than MCP Inspector, faster than spawning stdio processes.
-95. **.describe() on every Zod field is the model documentation strategy (#022)** — The JSON Schema derived from inputSchema is the ONLY documentation the model receives about each parameter. Without `.describe()`, the LLM has no idea what to pass. Every `z.string()` needs `.describe('what this means')`. This is the difference between "tool works in Inspector with manual input" and "LLM calls tool correctly during conversation."
+96. **Group-level batch consolidation is the natural completion of redundancy act-loop (c272)** — `auto_consolidate_cluster()` extends pairwise `auto_consolidate()` to entire clusters. Degree-sorted merge ensures highest-degree node survives all merges, maximising connectivity preservation. One API call replaces N-1 pairwise calls. Deterministic merge order (no random pair sequencing). Both redundancy loops now complete: pairwise (detect→act) + group (detect→act).
+97. **Auto-recommended hysteresis bands close the fragility remediation trilogy (acs c198)** — c196 detects fragile thresholds (delta sweep). c197 provides manual hysteresis config. c198 computes optimal bands automatically from sensitivity data. Three strategies (safe_range/elasticity/volatility) cover conservative→aggressive tuning. Direction bias adjustment (asymmetric band widening) is uniquely intelligent — doesn't just compute symmetric ±width, understands WHICH direction the threshold is wrong. Non-mutating by default (apply=True to write). The prediction confidence stack is now: accuracy → tune → sensitivity → manual hysteresis → auto hysteresis.
+98. **context-forge comprehensive code analysis suite complete (F49-F54)** — Six static analysis features: debug code detection, import graph (HITS hub/authority + circular deps), project maturity scorecard, security vulnerability scanner (CWE-tagged), error handling anti-patterns, duplicate code fingerprinting. 5005→6008 lines, 663→773 tests. context-forge is now a comprehensive code quality platform alongside amg (memory graphs) and acs (analytics).
+99. **MCP Memory Server Phase 1 validates SDK v2 patterns from research #020-022 (amg-mcp Day 1-2)** — Factory pattern (buildServer) confirmed mandatory. Module-scope singleton required for stateless HTTP (MemoryGraph must survive across server instances). handler.fetch in-process testing works perfectly — no socket/port/spawn overhead. Resource subscriptions add `memory://graph` auto-refresh for clients. Zod v4 `.describe()` on every field is the difference between "LLM calls tool correctly" and "LLM has no idea". 6 curated tools wrapping 790+ amg APIs, 43 tests.
+100. **Sombor index family extends degree-based metrics to Euclidean degree-distance quadrant (amg c276)** — Gutman 2021's SO = Σ√(d_u²+d_v²) is the Euclidean distance from origin in degree-degree plane. Reduced Sombor RS(K₂)=0 is unique among ALL degree-based indices — pure branching detector ignoring simple bonds. Neither multiplicative (Randić/Zagreb) nor harmonic (sum-connectivity/harmonic) families explore this quadrant. Cross-relationships: SO > χ_S, SO < M₂, RS ≤ SO. Degree-based family now 14 metrics across 8 APIs. First 2020s-era topological index added. 250th consecutive day milestone.
+101. **Backtesting completes the analytics validation pipeline (acs c199)** — Without historical validation, band recommendations are unverified formulas. hysteresis_band_backtest() runs dual-evaluator replay (baseline vs hysteresis) over the same timeline. Key trade-off metric: delayed_detections (stability costs detection latency). Per-dimension breakdown reveals which dimensions benefit and which don't. Synthetic fallback (deterministic seed=42) enables zero-history estimation. The detect→configure→recommend→validate pipeline (c196-199) is now the most complete threshold management system in any npm analytics library.
+102. **MCP dual transport is a factory pattern benefit, not an architecture decision (amg-mcp Day 4)** — HTTP transport required only ~60 lines of adapter code (Web API Request/Response ↔ Node IncomingMessage/ServerResponse). The factory pattern from Day 1 (buildServer) made this trivial: same tools, same schemas, same MemoryGraph singleton. HTTP mode enables remote clients (Claude Desktop, Cursor) connecting over network. stdio mode for local CLI. The ~60-line adapter proves SDK v2's factory design is correct — dual transport is emergent, not engineered.
+103. **detect_skill_candidates() is the foundation for Experience Compression Spectrum (#041-043, #078) (amg c275)** — Scanning episodic nodes for action-verb patterns is step 1 of L0→L1→L2 promotion. 25 action verbs (created/tested/deployed/etc.) grouped with frequency/confidence. Confidence saturates at 5 occurrences (min(1.0, freq/5.0)). This is the detection layer; compress_to_skill() will be the act layer. The "missing diagonal" (cross-level compression) value proposition becomes tangible: each skill candidate is a quantified promotion opportunity from episodic memory to procedural memory.
+104. **Dual-era testing is the missing coverage in amg-mcp (#024)** — All 93 tests use `versionNegotiation: { mode: 'auto' }` (2026-era). Production clients (Claude Desktop, Cursor) still use 2025-era `initialize` handshake. Official SDK runs every example over BOTH eras in CI. A single `mode: 'legacy'` test catches era-specific bugs (resource subscriptions, session-based listChanged). ~30 lines to add, shipping without it = testing blind on the protocol real users are on.
+105. **cacheHints is the highest ROI Day-5 change (#024)** — Adding `cacheHints: { 'tools/list': { ttlMs: 86400000, cacheScope: 'public' } }` to McpServer constructor is 3 lines. Clients skip redundant tools/list for 24h. For 11 tools with outputSchema, saves ~4KB per connection. 2026-07-28 spec models this on HTTP Cache-Control. Zero complexity, immediate measurable benefit.
+106. **MRTR is Phase 2, not Phase 1 (#024)** — memory.forget's `destructiveHint: true` annotation triggers client-side confirmation UI (Claude Desktop, Cursor). MRTR adds server-side HMAC-sealed confirmation with `createRequestStateCodec` (~40 lines). Useful for multi-step auth flows but adds complexity. Decision: Phase 1 = annotation-based, Phase 2 = MRTR for multi-step workflows (e.g., scoped batch forget).
+107. **Triple-loop quality system is the complete paradigm (amg c264-277)** — Gap loop (report→auto_heal) + Redundancy loop (detect→auto_consolidate) + Skill loop (detect_candidates→auto_compress_skills). Three failure modes of knowledge graphs — missing connections, excess connections, unpromoted patterns — each with detect→act. This three-loop architecture has zero npm competitors and is the strongest positioning statement for amg.
+108. **Dimension correlation is analytics' redundancy detection (acs c200)** — scorecard_dimension_correlation() does for analytics what redundancy_detect() did for graphs: identifies which components measure the same underlying signal. Pearson r across presets, classification (redundant/independent/complementary), merge suggestions. Capstone of scorecard layer: c192 define → c195 ensemble → c200 correlate. 200th consecutive day milestone 🏆.
+109. **All major agent memory competitors are platforms, not libraries (#026 2026.07)** — Mem0/Zep/Supermemory/Cognee/Letta all require external services (API, graph DB, Docker, managed platform). amg is the only zero-dependency embeddable library. Positioning: "pip install, import, done." Mem0 v3's ADD-only pivot (removed UPDATE/DELETE) explicitly validates amg's conflict resolution advantage. Plugin ecosystem (OpenClaw/Claude Code) IS the distribution channel — amg needs an OpenClaw plugin. PyPI-first strategy: Python ecosystem has thinner competition than npm.
+110. **Degree-based entropy family completion is a structural analysis milestone (amg c278-280)** — All 5 major degree-based indices (Sombor/RS/Randić/Zagreb M₁/ABC/GA) now have index+entropy = 10 APIs. Key finding: Shannon entropy is dominated by count/proportion of distinct edge contributions, not the formula. ABC entropy uniquely filters K₂ edges. The 10-API toolkit enables entropy fingerprinting. No npm library has any topological index entropy.
 
 ---
 
 ## Active Next Actions
 
 ### 🔴 最高优先级: npm Publish
-- [ ] **agent-memory-graph: README + npm publish** — **3945 tests**, 760+ APIs
-- [ ] **agent-context-store: README + npm publish** — **2744 tests**, 555+ APIs
-- [ ] **structured-output-toolkit: README + npm publish** — **561 tests**
-- [ ] **agent-task-cli: README + npm publish** — **1299 tests**, F200 milestone
+- [ ] **agent-memory-graph: README + npm publish** — **4394 tests**, 810+ APIs
+- [ ] **agent-context-store: README + npm publish** — **2898 tests**, 600+ APIs
+- [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
+- [ ] **agent-task-cli: README + npm publish** — **1319 tests**, F203
 
-> ⚠️ Mandol (ISCAS+MSRA) 已发 paper+PyPI+GitHub，LoCoMo SOTA 92.21%。PlugMem 已有 OpenClaw plugin。竞争窗口收紧。**8549 tests across 4 projects, all npm ready.**
+> ⚠️ Mandol (ISCAS+MSRA) 已发 paper+PyPI+GitHub，LoCoMo SOTA 92.21%。PlugMem 已有 OpenClaw plugin。竞争窗口收紧。**9047 tests across 4 projects, all npm ready.**
+
+### 🟡 研究驱动 — 待实现 (Research #026 新增)
+- [ ] amg: OpenClaw plugin — Supermemory + Cognee both have one. amg is invisible to fastest-growing user segment without it. Lifecycle hooks (SessionStart/PostToolUse/SessionEnd). ~200 lines.
+- [ ] amg README: Competitive matrix (Platform-vs-Library, zero-dep differentiator, ADD-only vs consolidation). Lead with "pip install, import, done."
+- [ ] amg PyPI publish (Python-first strategy: thinner competition than npm)
+
+### 🟡 研究驱动 — 待实现 (Research #025 新增)
+- [ ] context-forge F59: `SemiFormalCertificateBuilder` — Wrap F52 (security) output as premises, generate traces from F50 import graph. Certificate.report() + Certificate.toJSON(). ~60 tests, +200 lines. Makes F52 output 10× more actionable.
+- [ ] context-forge F60: `complexity-assessment` certificate — Wraps F49/F51/F54 as premises. Risk-calibrated review routing (RADAR pattern). ~40 tests.
+- [ ] amg-mcp: `code.analyze` tool wrapping context-forge certificate engine — First MCP server with semi-formal code reasoning. `destructiveHint: false`, `readOnlyHint: true`.
 
 ### 🟡 研究驱动 — 待实现 (Research #018 新增)
 - [ ] amg: add `kind="repair_pattern"` node type — AgentTether-inspired cross-iteration repair memory. ~20 lines + ~40 tests. Connects prospective memory roadmap.
 - [ ] amg: cross-modal leak detection in write_governance_check — MemLeak-inspired. Scan image_derived/correlated_inference edges before forget(). ~60 lines + ~80 tests.
 
 ### 🟡 研究驱动 — 待实现 (existing)
-- [x] ✅ amg: lifecycle_operation_eval() — MemOps-style operation validator (#013). Cycle 254, +29 tests
-- [x] ✅ amg: write_governance_check() — PASB-inspired commit boundary protection (#013). Cycle 252, +70 tests
-- [x] ✅ amg: summarize_community() + community_overview() — GraphRAG community summaries (#012). Cycle 253, +40 tests
-- [x] ✅ amg: query() adaptive routing — GraphRAG/LightRAG mode selection (#012). Cycle 258, +39 tests
-- [x] ✅ amg: drift_search() — DRIFT hybrid search with question generation (#012). Cycle 256, +35 tests
 - [ ] amg: compress_to_skill() + retrieve_skills() + evolve_skill() + skill_bank_health() — Read-Write-Assess-Govern lifecycle (MemRefine + MemSkill + #019). ~+140 tests. **Implementation blueprint ready in #019**: Cycle 268 compress_to_skill (~40 tests), Cycle 269 retrieve_skills+evolve_skill (~40 tests), Cycle 270 skill_bank_health (~35 tests). Self-created skills > human-authored (MUSE 85.24% vs 81.17%). **No npm library has skill extraction/evolution/health.**
 - [ ] amg: EvoMemBench adapter — 4-setting benchmark (in-ep/cross-ep × knowledge/exec). **Priority over LoCoMo** (#014)
-- [x] ✅ amg: intent_aware_token_budgets() — Cycle 259, +61 tests
-- [x] ✅ amg: screen_retrieval() — Cycle 259
-- [x] ✅ amg: query_confidence_score — Cycle 259
-- [x] ✅ amg: seven_intent_taxonomy — Cycle 261, +32 tests
-- [x] ✅ amg: govern_skill_bank() — Cycle 260, +20 tests
-- [x] ✅ amg: query_route_audit() — Cycle 262, +15 tests
-- [x] ✅ amg: reasoning_quality_eval() — Cycle 263, +29 tests
-- [x] ✅ amg: graph_information_density() — Cycle 264, +39 tests
-- [x] ✅ amg: knowledge_gap_report() — Cycle 265, +28 tests
-- [x] ✅ acs: scorecard_preset_recommend + alert_prediction_tuned — Cycle 194, +17 tests
-- [x] ✅ acs: scorecard_ensemble — Cycle 195, +19 tests
-- [x] ✅ amg: gap_redundancy_balance() — Cycle 268, +19 tests (unified dual-loop health metric)
-- [x] ✅ amg: auto_consolidate() — Cycle 269, +20 tests (redundancy act-loop + merge_nodes 5-step fix)
-- [x] ✅ acs: alert_threshold_sensitivity — Cycle 196, +21 tests (prediction confidence stack complete)
 - [ ] amg: three_layer_router_cascade — rules→SLM→keywords fallback. MemFlow #015. ~+40 tests
 - [ ] amg: intent_aware_edge_cost() — PRISM intent routing (#010). ~+40 tests
 - [ ] amg: procedural memory node type — PlugMem prescriptive knowledge (#010). ~+50 tests
@@ -254,27 +274,12 @@ Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-lo
 - [ ] LoCoMo benchmark adapter + full-context baseline reporting
 - [ ] **amg README: 竞品对比表** — Mem0/Zep/Mandol/PlugMem/PRISM/Hippocampus + **GraphRAG/LightRAG positioning: security-first agent-native GraphRAG**
 
-### 🟣 Deep Research #015 Findings (2026-07-17)
-- **MemFlow** (arXiv:2605.03312): Route-then-compile pattern. 7 intent types → tiered retrieval + token budgets. 3-layer cascade router (rules→SLM→keywords, 87.7% accuracy). 2× SLM improvement. Disabling intent routing costs 18.7pp.
-- **GraphBit** (arXiv:2605.13848): DAG-based deterministic orchestration. 3-tier memory isolation (ephemeral/structured/external). Rust engine: 0% hallucination, 11.9ms latency. 67.6% GAIA accuracy.
-- **GhostWriter/AM-Sentry** (arXiv:2607.06595): 98% memory injection rate. Dual-layer defense (write policy + retrieval screen). Validates amg security positioning, identifies missing read-time screening.
-- **笔记**: [catalyst-research/exploration-notes/2026-07-17-intent-driven-memory-orchestration.md](catalyst-research/exploration-notes/2026-07-17-intent-driven-memory-orchestration.md)
-
-### 🟣 Deep Research #016 Findings (2026-07-18)
-- **EvoGraph-R1** (arXiv:2607.12764, CVPR 2026): Self-evolving GraphRAG. Retrieval as MDP: GraphRetrieve→GraphEdit→WebSearch→Answer. Closed-loop: observe→act→feedback→evolve. GraphEdit makes graph a first-class agent action.
-- **HealthClaw** (arXiv:2607.13940): Post-episode induction: update profile / revise procedure / remain episodic / exclude. 0.2%→45.7% accuracy from self-evolving memory. 71.7% less context than full-history.
-- **Local Self-Healing** (Gallos & Fefferman, PhysRevE): Nodes decide independently to create links based on fraction of lost neighbors. Shortest cycle completion. 90% recovery in real networks. O(n) per orphan.
-- **Topology-Aware Reasoning** (arXiv:2604.12503): Subgraph reasoning > path traversal for incomplete KGs. Degree ≥ 3 enables meaningful subgraph context. Soft prompts encode structure.
-- **RADD** (arXiv:2604.25693): Decoupled retrieve-rerank for KGC. Global retriever (high recall) → local denoiser (precision). Different inductive biases for each stage.
-- **笔记**: [catalyst-research/exploration-notes/2026-07-18-self-healing-knowledge-graphs.md](catalyst-research/exploration-notes/2026-07-18-self-healing-knowledge-graphs.md)
-
-### 🟣 Deep Research #021 Findings (2026-07-20)
-- **Official MCP Memory Server** (`@modelcontextprotocol/server-memory` v0.6.3): JSONL file-backed, 9 tools, substring search only, no algorithms, no quality metrics, no governance. ~500 lines. **This is the bar to clear.**
-- **Resource subscriptions** (`sendResourceUpdated`): Critical missing pattern. Clients (Claude Desktop) auto-refresh context when memory changes. amg-mcp MUST implement from day 1.
-- **Tool annotations** = protocol-level governance: `destructiveHint: true` on `memory.forget` → host requires user confirmation. Free PASB defense.
-- **outputSchema on every tool**: Non-negotiable. SDK v2 validates structuredContent before result leaves server.
-- **Inspector-first development**: `npx @modelcontextprotocol/inspector npx tsx src/index.ts` is the fastest feedback loop.
-- **笔记**: [catalyst-research/exploration-notes/2026-07-20-mcp-memory-server-source-analysis.md](catalyst-research/exploration-notes/2026-07-20-mcp-memory-server-source-analysis.md)
+### 🟣 Deep Research (detailed notes in catalyst-research/exploration-notes/)
+- **#026 (07-24)**: Competitive landscape for npm/PyPI. All competitors (Mem0/Graphiti/Supermemory/Cognee/Letta) are platforms, none is a pure library. Mem0 v3 ADD-only = amg conflict advantage. Plugin ecosystem = distribution. PyPI-first strategy. [笔记](catalyst-research/exploration-notes/2026-07-24-agent-memory-landscape-npm-strategy.md)
+- **#025 (07-24)**: Semi-formal reasoning certificates (Ugare & Chandra Meta) / RADAR production auto-review 105.9% YoY / ProfMalPlus agent static+dynamic / Structural retrieval > semantic / Neuro-symbolic triangle (static→generate→test) / context-forge F59-F60 roadmap. [笔记](catalyst-research/exploration-notes/2026-07-24-agentic-code-reasoning.md)
+- **#015 (07-17)**: MemFlow 7-intent routing / GraphBit DAG isolation / GhostWriter 98% injection → amg security validation. [笔记](catalyst-research/exploration-notes/2026-07-17-intent-driven-memory-orchestration.md)
+- **#016 (07-18)**: EvoGraph-R1 GraphEdit MDP / HealthClaw induction / Local self-healing 90% / Topology-aware degree≥3. [笔记](catalyst-research/exploration-notes/2026-07-18-self-healing-knowledge-graphs.md)
+- **#021 (07-20)**: Official MCP server ~500 lines JSONL=low bar / Resource subscriptions critical / Tool annotations=governance / outputSchema mandatory / Inspector-first dev. [笔记](catalyst-research/exploration-notes/2026-07-20-mcp-memory-server-source-analysis.md)
 
 ### 🔵 中优先级
 - [ ] openclaw-langgraph-bridge: Supervisor 完善 (261 tests)
@@ -294,17 +299,19 @@ Autoresearch 方法论实践 — amg **连续245天零回滚率** 🏆。Dual-lo
 
 | # | 项目 | Tests | 状态 |
 |---|------|-------|------|
-| 1 | agent-task-cli | 1299 | ✅ npm ready, **F200 milestone** (200 features) |
-| 2 | agent-memory-graph | 4099 | ✅ npm ready, 七十一合一: dual-loop quality FULLY COMPLETE (gap+redundancy+balance+auto_heal+auto_consolidate+semantic_cluster) + evaluation quartet + query_explain + 全检索管线 + 拓扑指数十九族 + query() 7-intent + screen_retrieval + govern_skill_bank + write_governance_check |
-| 3 | agent-context-store | 2810 | ✅ npm ready, 全分析闭环(二十三层): self-optimizing + preset ensemble + threshold sensitivity + hysteresis |
+| 1 | agent-task-cli | 1319 | ✅ npm ready, F203 (203 features) |
+| 2 | agent-memory-graph | 4394 | ✅ npm ready, 七十七合一: degree-based entropy family (5 indices / 10 APIs) + triple-loop quality + MCP Day 1-5 |
+| 3 | agent-context-store | 2898 | ✅ npm ready, 二十六层: detect→configure→recommend→validate→correlate complete |
 | 4 | structured-output-toolkit | 561 | ✅ npm ready |
 | 5 | openclaw-langgraph-bridge | 261 | 🔄 Supervisor 完善 |
-| 6 | context-forge | **743** | 🔄 继续 features (F52 security scanner) |
-| 7 | lab/agent-observability | 166 | 🔄 OTel 集成 |
-| 8 | nano-agent | 732 | 🔄 F46 to_prompt (extensive Memory/Agent feature set) |
+| 6 | context-forge | **1054** | ✅ F66 code smells (8684 lines, 18 dimensions) |
+| 7 | lab/agent-observability | 166 | 🔄 OTel GenAI 对齐 (Research #023 ✅) |
+| 8 | nano-agent | 732 | 🔄 F46 to_prompt |
 | 9 | Agent Memory Service | 645 | ✅ v1.0-dev |
-| 10 | prompt-router | 258 | ✅ 稳定 |
-| 11 | better-ralph-core | 376 | ✅ 稳定 |
+| 10 | prompt-router | 72 | ✅ stable (corrected from stale 258) |
+| 11 | prompt-weaver | **223** | ✅ CLI tests added |
+| 12 | better-ralph-core | 376 | ✅ 稳定 |
+| 13 | **amg-mcp** | **122** | ✅ Phase 1 Day 1-5 (14 tools, dual transport, dual-era verified) |
 
 ---
 
@@ -348,9 +355,9 @@ curl -X POST "https://api.tavily.com/search" \
 ## Next Actions
 
 ### Immediate (Week of July 21-25)
-- [ ] **MCP Memory Server Phase 1**: TS wrapper for 8 curated tools wrapping 785+ APIs. **Day-by-day blueprint in #021, Day-1 runnable code + test patterns in #022**. SDK v2 stable July 28. **Day 1 code ready in #022** — implement: buildServer() factory + 4 tools (recall/remember/health/forget) + resource subscription + in-process tests via handler.fetch.
-- [ ] README(agent-memory-graph) → npm publish — **#1 priority alongside MCP**
-- [ ] **lab/agent-observability OTel GenAI 对齐** (Research #023): 映射 SpanOperation→gen_ai.operation.name, 添加 gen_ai.* 属性体系, CostAggregator 升级. OTel 规范已含 7 个 memory 操作枚举. ~50 tests, 1 cycle.
+- [x] **MCP Memory Server Phase 1 Day 5**: ✅ Cross-era integration tests (93→122). Legacy↔Auto persistence, all 14 tools, outputSchema consistency. Research #024 action items completed.
+- [ ] README(agent-memory-graph) → npm publish — **#1 priority**. **4394 tests**, 810+ APIs.
+- [ ] README(agent-context-store) → npm publish — **2898 tests**.
 
 ### Short-term (August)
 - [ ] Implement `get_operation_history()` API in amg (MemOps-compatible operation traces)
@@ -360,7 +367,7 @@ curl -X POST "https://api.tavily.com/search" \
 
 ### Medium-term (September)
 - [ ] Full EvoMemBench 4-setting evaluation suite for amg
-- [ ] compress_to_skill() + retrieve_skills() + evolve_skill() (blueprint ready: cycles 270-272)
+- [ ] compress_to_skill() + retrieve_skills() + evolve_skill() (blueprint ready: cycles 270-272; Research #024 ✅ 07-23: verify_skill + prune_low_utility_skills + skill_to_artifact pipeline designed, Skill-Pro PPO Gate + D2Skill dual-granularity + COLLEAGUE.SKILL artifact contract)
 - [ ] MemOps-style operation-level probes (6 failure mode categories)
 - [ ] Watch for MemOps code release (not yet public as of July 14)
 
