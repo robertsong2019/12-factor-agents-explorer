@@ -8678,6 +8678,244 @@ export function formatCodeSmellReport(result) {
   return report;
 }
 
+// ─── F67: README Health Analysis ───────────────────────────────────────
+
+/**
+ * Analyze README file quality and completeness.
+ *
+ * Checks for 10 essential README sections:
+   * - Title (# heading)
+   * - Description (what the project does)
+   * - Installation (how to install)
+   * - Usage (how to use)
+   * - License (license info)
+   * - Contributing (contribution guidelines)
+   * - Tests (how to run tests)
+   * - Badges (shields.io or similar)
+   * - Examples (code examples)
+   * - API/Documentation (API docs or link)
+ *
+ * Also checks for common issues:
+   * - Placeholder content (TODO, coming soon, etc.)
+   * - Missing title
+   * - Too short (<100 chars)
+   * - Broken markdown links
+   * - Missing code blocks in usage
+   *
+   * @param {Object} readmeFile - { path, content } or null if no README
+   * @returns {Object} analysis result with grade, score, sections, issues
+   */
+export function analyzeReadmeHealth(readmeFile = null) {
+  const result = {
+    found: false,
+    path: null,
+    score: 0,
+    grade: 'F',
+    sections: {
+      title: false,
+      description: false,
+      installation: false,
+      usage: false,
+      license: false,
+      contributing: false,
+      tests: false,
+      badges: false,
+      examples: false,
+      apiDocs: false,
+    },
+    issues: [],
+    stats: {
+      length: 0,
+      headings: 0,
+      codeBlocks: 0,
+      links: 0,
+      images: 0,
+    },
+  };
+
+  if (!readmeFile || readmeFile.content === null || readmeFile.content === undefined) {
+    result.issues.push({ severity: 'critical', message: 'No README file found' });
+    result.score = 0;
+    result.grade = 'F';
+    return result;
+  }
+
+  const content = readmeFile.content;
+  const lower = content.toLowerCase();
+  result.found = true;
+  result.path = readmeFile.path || 'README.md';
+  result.stats.length = content.length;
+
+  // Count markdown elements
+  result.stats.headings = (content.match(/^#{1,6}\s/gm) || []).length;
+  result.stats.codeBlocks = (content.match(/```/g) || []).length / 2;
+  result.stats.links = (content.match(/\[([^\]]+)\]\(([^)]+)\)/g) || []).length;
+  result.stats.images = (content.match(/!\[([^\]]*)\]\(([^)]+)\)/g) || []).length;
+
+  // --- Section detection ---
+
+  // Title: first H1 heading
+  const h1Match = content.match(/^#\s+(.+)$/m);
+  if (h1Match) {
+    result.sections.title = true;
+  } else {
+    result.issues.push({ severity: 'high', message: 'Missing H1 title heading' });
+  }
+
+  // Description: paragraph text after title, or section with "description"/"about"/"overview"
+  const hasDescSection = /^#{1,3}\s.*(description|about|overview|introduction|what)/im.test(content);
+  const hasIntroPara = h1Match && content.slice(h1Match.index + h1Match[0].length).trim().length > 30;
+  if (hasDescSection || hasIntroPara) {
+    result.sections.description = true;
+  } else {
+    result.issues.push({ severity: 'high', message: 'Missing project description' });
+  }
+
+  // Installation
+  if (/install/i.test(lower) && /(npm|yarn|pnpm|pip|cargo|go install|brew|apt|docker|clone|\$\s)/i.test(content)) {
+    result.sections.installation = true;
+  } else if (/^#{1,4}\s.*(install|setup|getting started|quick start)/im.test(content)) {
+    result.sections.installation = true;
+  } else {
+    result.issues.push({ severity: 'medium', message: 'Missing installation instructions' });
+  }
+
+  // Usage
+  if (/^#{1,4}\s.*(usage|how to use|example|quickstart|getting started)/im.test(content)) {
+    result.sections.usage = true;
+  } else if (/```/.test(content) && /(usage|run|execute|example|import|require)/i.test(lower)) {
+    result.sections.usage = true;
+  } else {
+    result.issues.push({ severity: 'medium', message: 'Missing usage section or examples' });
+  }
+
+  // License
+  if (/license|licence|mit|apache|gpl|bsd|isc|mozilla/i.test(lower)) {
+    result.sections.license = true;
+  } else {
+    result.issues.push({ severity: 'high', message: 'Missing license information' });
+  }
+
+  // Contributing
+  if (/contribut|pull request|pr|developing|development guide/i.test(lower)) {
+    result.sections.contributing = true;
+  }
+
+  // Tests
+  if (/test|spec|jest|mocha|vitest|pytest|\bnpm test\b|\bnpx test\b|\brun test/i.test(lower)) {
+    result.sections.tests = true;
+  }
+
+  // Badges
+  if (/shields\.io|badge|\[!\[|\(https:\/\/img\.shields|codecov|travis|github\.com\/.*\/actions/i.test(content)) {
+    result.sections.badges = true;
+  }
+
+  // Examples / code blocks
+  if (result.stats.codeBlocks >= 2) {
+    result.sections.examples = true;
+  }
+
+  // API docs
+  if (/api|documentation|docs\.|\[.*docs?\]|\(docs?\/|reference/i.test(lower) && result.stats.length > 30) {
+    result.sections.apiDocs = true;
+  }
+
+  // --- Issue detection ---
+
+  // Placeholder content
+  if (/todo|coming soon|placeholder|insert (your|the)|lorem ipsum|tbd|wip/i.test(content)) {
+    const placeholders = (content.match(/todo|coming soon|placeholder|insert (your|the)|lorem ipsum|tbd|wip/gi) || []).length;
+    result.issues.push({ severity: 'low', message: `Contains ${placeholders} placeholder(s) (TODO, coming soon, etc.)` });
+  }
+
+  // Too short
+  if (result.stats.length < 100) {
+    result.issues.push({ severity: 'high', message: `README is very short (${result.stats.length} chars)` });
+  }
+
+  // Broken markdown links (empty link text or empty URL)
+  const brokenLinks = (content.match(/\[\s*\]\([^)]*\)|\[[^\]]+\]\(\s*\)/g) || []).length;
+  if (brokenLinks > 0) {
+    result.issues.push({ severity: 'low', message: `${brokenLinks} broken markdown link(s)` });
+  }
+
+  // Usage without code blocks
+  if (result.sections.usage && result.stats.codeBlocks === 0) {
+    result.issues.push({ severity: 'medium', message: 'Usage section has no code examples' });
+  }
+
+  // --- Scoring ---
+  const sectionWeights = {
+    title: 20,
+    description: 20,
+    installation: 15,
+    usage: 15,
+    license: 10,
+    contributing: 5,
+    tests: 5,
+    badges: 3,
+    examples: 4,
+    apiDocs: 3,
+  };
+
+  let score = 0;
+  for (const [key, present] of Object.entries(result.sections)) {
+    if (present) score += sectionWeights[key];
+  }
+
+  // Penalty for issues
+  for (const issue of result.issues) {
+    if (issue.severity === 'critical') score -= 30;
+    else if (issue.severity === 'high') score -= 5;
+    else if (issue.severity === 'medium') score -= 3;
+    else if (issue.severity === 'low') score -= 1;
+  }
+
+  result.score = Math.max(0, Math.min(100, score));
+  result.grade = result.score >= 90 ? 'A' : result.score >= 80 ? 'B' : result.score >= 70 ? 'C' : result.score >= 60 ? 'D' : 'F';
+
+  return result;
+}
+
+export function formatReadmeHealthReport(result) {
+  if (!result) return '## README Health Analysis\n\nNo data.\n';
+  if (!result.found) return '## README Health Analysis\n\n❌ **No README file found.**\n';
+
+  let report = '## README Health Analysis\n\n';
+  report += `**File:** ${result.path}\n`;
+  report += `**Grade:** ${result.grade} (${result.score}/100)\n`;
+  report += `**Length:** ${result.stats.length} chars, ${result.stats.headings} headings, ${result.stats.codeBlocks} code blocks\n\n`;
+
+  report += '### Sections\n\n';
+  const labels = {
+    title: 'Title (H1)',
+    description: 'Description',
+    installation: 'Installation',
+    usage: 'Usage',
+    license: 'License',
+    contributing: 'Contributing',
+    tests: 'Tests',
+    badges: 'Badges',
+    examples: 'Code Examples',
+    apiDocs: 'API / Docs',
+  };
+  for (const [key, label] of Object.entries(labels)) {
+    const icon = result.sections[key] ? '✅' : '⬜';
+    report += `${icon} ${label}\n`;
+  }
+
+  if (result.issues.length > 0) {
+    report += '\n### Issues\n\n';
+    for (const issue of result.issues) {
+      const icon = issue.severity === 'critical' ? '🔴' : issue.severity === 'high' ? '🟠' : issue.severity === 'medium' ? '🟡' : '🔵';
+      report += `${icon} [${issue.severity}] ${issue.message}\n`;
+    }
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
