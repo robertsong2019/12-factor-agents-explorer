@@ -6351,6 +6351,124 @@ class MemoryGraph:
             entropy /= math.log(m)
         return entropy
 
+    def randic_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Randić edge contributions.
+
+        For each edge e = (u, v), compute the Randić contribution
+        r_e = 1/√(d_u · d_v), normalise to p_e = r_e / R, then
+        calculate Shannon entropy::
+
+            H_R = −Σ p_e · ln(p_e)
+
+        When *normalized* is True the result is divided by ln(m)
+        (m = edge count) so the output lies in (0, 1].
+
+        **Properties:**
+        - Regular graph K_n: H_R = ln(m), normalised = 1.0
+        - Cycle C_n: H_R = ln(n), normalised = 1.0
+        - Star K_{1,k}: H_R = ln(k) (all edges identical), normalised = 1.0
+        - Path P_n (n≥4): normalised < 1.0 (interior and boundary edges differ)
+
+        The Randić entropy measures how uniformly the "connectivity
+        weight" 1/√(d_u·d_v) is distributed across edges.  Unlike the
+        Sombor entropy (which uses √(d_u²+d_v²) and emphasises
+        high-degree edges), the Randić entropy emphasises
+        low-degree edges — a different structural perspective.
+
+        Returns:
+            float in (0, ln m] or (0, 1], or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds > 0 and dt > 0:
+                contributions.append(1.0 / math.sqrt(ds * dt))
+        if not contributions:
+            return None
+        r_total = sum(contributions)
+        if r_total <= 0:
+            return None
+        m = len(contributions)
+        entropy = 0.0
+        for c in contributions:
+            p = c / r_total
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
+    def zagreb_m1_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Zagreb M₁ edge contributions.
+
+        For each edge e = (u, v), compute the Zagreb M₁ contribution
+        z_e = d_u + d_v, normalise to p_e = z_e / M₁_edges, then
+        calculate Shannon entropy::
+
+            H_M1 = −Σ p_e · ln(p_e)
+
+        where M₁_edges = Σ_{(u,v)∈E} (d_u + d_v) is the edge-sum form
+        of the first Zagreb index (equivalently Σ d_v² over vertices).
+
+        When *normalized* is True the result is divided by ln(m)
+        (m = edge count) so the output lies in (0, 1].
+
+        **Properties:**
+        - Regular graph K_n: H_M1 = ln(m), normalised = 1.0
+        - Cycle C_n: H_M1 = ln(n), normalised = 1.0
+        - Star K_{1,k}: H_M1 = ln(k) (all edges (1,k) → same sum), normalised = 1.0
+        - Path P_n (n≥4): normalised < 1.0
+
+        The Zagreb M₁ entropy uses the simplest degree sum d_u+d_v as
+        edge weight — making it the most intuitive entropy measure.
+        Together with Randić entropy (inverse geometric mean) and
+        Sombor entropy (Euclidean norm), it forms a trio spanning
+        different mathematical perspectives on degree heterogeneity.
+
+        Returns:
+            float in (0, ln m] or (0, 1], or ``None`` for < 1 edge.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            contributions.append(float(ds + dt))
+        if not contributions:
+            return None
+        z_total = sum(contributions)
+        if z_total <= 0:
+            return None
+        m = len(contributions)
+        entropy = 0.0
+        for c in contributions:
+            p = c / z_total
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
