@@ -9794,6 +9794,182 @@ export function formatErrorMessagesReport(result) {
   return report;
 }
 
+// ─── F73: Hardcoded Strings / Magic Constants ───────────────────
+
+/**
+ * Detect string literals that appear multiple times and should be constants.
+ * Also flags: magic numbers (non-obvious numeric literals), hardcoded
+ * URLs, hardcoded file paths, repeated event names.
+ *
+ * @param {Array} files - Array of { path, content } objects
+ * @param {Object} options - { minRepeats: 3, ignoreImports: true }
+ * @returns {Object} Analysis result
+ */
+export function analyzeHardcodedStrings(files = [], options = {}) {
+  const minRepeats = options.minRepeats || 3;
+  const issues = [];
+  const stringCounts = new Map(); // string -> [{file, line}]
+  let totalStrings = 0;
+
+  // Patterns to detect
+  const urlRe = /['"](https?:\/\/[^'"\s]+)['"]/g;
+  const filePathRe = /['"](\/?(?:usr|tmp|var|home|opt|etc|root|proc|sys|dev)\/[^'"\s]+)['"]/g;
+  const stringLiteralRe = /['"]([A-Za-z][A-Za-z0-9_\-\s]{4,})['"]/g;
+  const magicNumberRe = /\b(?!0\b|1\b|2\b|-1\b|0x[0-9a-fA-F]+\b)(\d{4,})\b/g; // 4+ digit numbers, excluding common 0,1,2
+
+  for (const file of files) {
+    if (!file.content || typeof file.content !== 'string') continue;
+    const lines = file.content.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Skip comments, imports, requires
+      if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue;
+      if (/^import\s|require\(/.test(trimmed)) continue;
+
+      // ─── URLs ───────────────────────────────────────────────
+      let m;
+      while ((m = urlRe.exec(line)) !== null) {
+        issues.push({
+          file: file.path, line: i + 1, severity: 'medium',
+          label: 'hardcoded-url', value: m[1].slice(0, 80),
+          desc: 'Hardcoded URL — consider extracting to a config or constant',
+        });
+        totalStrings++;
+      }
+
+      // ─── File paths ─────────────────────────────────────────
+      while ((m = filePathRe.exec(line)) !== null) {
+        issues.push({
+          file: file.path, line: i + 1, severity: 'low',
+          label: 'hardcoded-path', value: m[1],
+          desc: 'Hardcoded system file path — consider using a config or env variable',
+        });
+        totalStrings++;
+      }
+
+      // ─── Magic numbers (4+ digits) ──────────────────────────
+      magicNumberRe.lastIndex = 0;
+      while ((m = magicNumberRe.exec(line)) !== null) {
+        // Skip if inside a comment
+        const beforeMatch = line.slice(0, m.index);
+        if (beforeMatch.includes('//') || beforeMatch.includes('*')) continue;
+        issues.push({
+          file: file.path, line: i + 1, severity: 'low',
+          label: 'magic-number', value: m[1],
+          desc: `Magic number ${m[1]} — consider naming it as a constant`,
+        });
+        totalStrings++;
+      }
+
+      // ─── Repeated string literals ───────────────────────────
+      stringLiteralRe.lastIndex = 0;
+      while ((m = stringLiteralRe.exec(line)) !== null) {
+        const str = m[1].trim();
+        if (str.length < 5) continue; // too short to matter
+
+        // Skip common patterns that aren't magic strings
+        if (/^(http|https|ftp|www\.|mailto:)/.test(str)) continue;
+        if (/^\d+$/.test(str)) continue;
+
+        totalStrings++;
+        if (!stringCounts.has(str)) {
+          stringCounts.set(str, []);
+        }
+        stringCounts.get(str).push({ file: file.path, line: i + 1 });
+      }
+    }
+  }
+
+  // Find strings that repeat >= minRepeats
+  const repeatedStrings = [];
+  for (const [str, locations] of stringCounts) {
+    if (locations.length >= minRepeats) {
+      repeatedStrings.push({
+        value: str.slice(0, 80),
+        count: locations.length,
+        locations: locations.slice(0, 5),
+        severity: locations.length >= 5 ? 'high' : 'medium',
+        label: 'repeated-string',
+        desc: `String "${str.slice(0, 40)}" appears ${locations.length} times — extract to a named constant`,
+      });
+    }
+  }
+
+  // Sort by count descending
+  repeatedStrings.sort((a, b) => b.count - a.count);
+
+  // Combine all issues
+  const allIssues = [...issues, ...repeatedStrings];
+
+  const score = totalStrings === 0 ? 100
+    : Math.max(0, 100 - Math.round((allIssues.length / Math.max(totalStrings, 1)) * 100));
+
+  return {
+    score,
+    stats: {
+      totalStringsAnalyzed: totalStrings,
+      hardcodedUrls: issues.filter(i => i.label === 'hardcoded-url').length,
+      hardcodedPaths: issues.filter(i => i.label === 'hardcoded-path').length,
+      magicNumbers: issues.filter(i => i.label === 'magic-number').length,
+      repeatedStrings: repeatedStrings.length,
+      totalIssues: allIssues.length,
+      highSeverity: allIssues.filter(i => i.severity === 'high').length,
+      mediumSeverity: allIssues.filter(i => i.severity === 'medium').length,
+      lowSeverity: allIssues.filter(i => i.severity === 'low').length,
+    },
+    issues: allIssues,
+    repeatedStrings,
+  };
+}
+
+export function formatHardcodedStringsReport(result) {
+  let report = '## Hardcoded Strings / Magic Constants Analysis\n\n';
+  report += `**Score:** ${result.score}/100 (string hygiene)\n`;
+  report += `**Strings analyzed:** ${result.stats.totalStringsAnalyzed}\n\n`;
+
+  if (result.stats.totalStringsAnalyzed === 0 && result.stats.totalIssues === 0) {
+    report += 'No string literals found to analyze.\n';
+    return report;
+  }
+
+  report += '### Issue Breakdown\n\n';
+  report += `- Hardcoded URLs: ${result.stats.hardcodedUrls}\n`;
+  report += `- Hardcoded paths: ${result.stats.hardcodedPaths}\n`;
+  report += `- Magic numbers: ${result.stats.magicNumbers}\n`;
+  report += `- Repeated strings (≥3 times): ${result.stats.repeatedStrings}\n\n`;
+
+  if (result.repeatedStrings.length > 0) {
+    report += '### Top Repeated Strings\n\n';
+    for (const rs of result.repeatedStrings.slice(0, 15)) {
+      report += `- \`${rs.value}\` — **${rs.count} times** [${rs.severity}]\n`;
+      for (const loc of rs.locations.slice(0, 3)) {
+        report += `  - ${loc.file}:${loc.line}\n`;
+      }
+      if (rs.locations.length > 3) {
+        report += `  - ... and ${rs.locations.length - 3} more\n`;
+      }
+    }
+    report += '\n';
+  }
+
+  const otherIssues = result.issues.filter(i => i.label !== 'repeated-string');
+  if (otherIssues.length > 0) {
+    report += '### Other Issues\n\n';
+    for (const issue of otherIssues.slice(0, 20)) {
+      report += `- **${issue.file}:${issue.line}** [${issue.severity}] ${issue.label}: ${issue.desc}\n`;
+    }
+    if (otherIssues.length > 20) {
+      report += `- ... and ${otherIssues.length - 20} more\n`;
+    }
+    report += '\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });

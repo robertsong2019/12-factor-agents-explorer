@@ -41,4 +41,4 @@ timestamp	commit	metric	value	status	description
 2026-07-25T19:30	F69	analyzeDeprecationUsage()	Deprecated Node.js APIs/JS patterns/packages (moment/lodash). +22 tests	keep	1138→1160	56a7faf
 2026-07-25T19:45	F70	analyzeFileHeaders()	License/module/description header coverage, style distribution. +20 tests	keep	1160→1180	cad80cc
 2026-07-25T21:05	F71	analyzeRegexComplexity()	ReDoS risk: nested quantifiers/overlapped alternation/adjacent quantifiers/long patterns. +24 tests	keep	1180→1204	e7483b1
-2026-07-25T21:20	F72	analyzeErrorMessages()	Error msg quality: empty/generic/string-throw/concat/weak-catch detection. +28 tests	keep	1204→1232	
+2026-07-25T21:20	F72	analyzeErrorMessages()	Error msg quality: empty/generic/string-throw/concat/weak-catch detection. +28 tests	keep	1204→1232	2026-07-25T21:35	F73	analyzeHardcodedStrings()	Magic strings: URLs/paths/magic-numbers/repeated-strings detection. +26 tests	keep	1232→1258	
