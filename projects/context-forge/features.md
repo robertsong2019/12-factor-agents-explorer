@@ -71,6 +71,10 @@
 - [x] **F57**: analyzeExportHealth() — barrel files, re-export chains, unused exports, mixed export styles ✅ 2026-07-23
 - [x] **F58**: analyzeFunctionMetrics() — function length, parameter count, return paths, arrow/async detection ✅ 2026-07-23
 
+### Code Structure (Round 11 — 2026-07-25)
+- [x] **F75**: analyzeGuardClauses() — deep nesting detection (4+ levels), if/else wrapping detection for guard clause refactoring, indentation analysis. A-F grading. formatGuardClausesReport(). ✅ 2026-07-25
+- [x] **F76**: analyzeParameterObjects() — 4+ scalar param detection, boolean param confusion, consecutive optional param detection. Destructured/rest params excluded. A-F grading. formatParameterObjectsReport(). ✅ 2026-07-25
+
 ## Priorities
 **Round 1 (Core):** F1, F2, F3 — Better codebase understanding
 **Round 2 (Output):** F5, F6 — Better visualization

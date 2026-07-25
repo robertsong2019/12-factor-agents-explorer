@@ -10158,6 +10158,293 @@ export function formatImportHygieneReport(result) {
   return report;
 }
 
+// ─── F75: Guard Clause Opportunities ───────────────────────────
+
+export function analyzeGuardClauses(files = []) {
+  const issues = [];
+  let totalNestedIfs = 0;
+  let guardOpportunities = 0;
+  let deepNestingCount = 0;
+
+  for (const file of files) {
+    if (!file.content || typeof file.content !== 'string') continue;
+    if (!/\.(js|mjs|ts|jsx|tsx|py|java|go|c|cpp|rs)$/.test(file.path)) continue;
+
+    const lines = file.content.split('\n');
+    const lineCount = lines.length;
+
+    for (let i = 0; i < lineCount; i++) {
+      const trimmed = lines[i].trim();
+
+      // Detect if/else pattern that wraps entire function body
+      // Pattern: function body where first statement is `if (cond) { ... } else { ... }` covering most of the body
+      const fnMatch = trimmed.match(/^(?:export\s+)?(?:async\s+)?(?:function\s+\w+|(?:const|let)\s+\w+\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>)\s*\{?/);
+      if (fnMatch) {
+        // Look ahead for a pattern: if (cond) { ... } else { ... } that spans most of the function
+        let braceDepth = 0;
+        let fnStart = i;
+        let fnEnd = i;
+        let foundOpenBrace = false;
+
+        // Find function body bounds
+        for (let j = i; j < Math.min(i + 200, lineCount); j++) {
+          for (const ch of lines[j]) {
+            if (ch === '{') { braceDepth++; foundOpenBrace = true; }
+            if (ch === '}') braceDepth--;
+          }
+          if (foundOpenBrace && braceDepth === 0) { fnEnd = j; break; }
+        }
+
+        // Look for `if (...) {` as first real statement
+        for (let j = fnStart + 1; j <= Math.min(fnStart + 5, fnEnd); j++) {
+ const t = lines[j]?.trim();
+          if (!t || t.startsWith('//') || t.startsWith('*') || t === '{') continue;
+
+          if (t.match(/^if\s*\(/)) {
+            // Check if there's an else covering remaining body
+            const ifStart = j;
+            let ifBraceDepth = 0;
+            let ifEnd = j;
+
+            for (let k = j; k <= fnEnd; k++) {
+              for (const ch of lines[k]) {
+                if (ch === '{') ifBraceDepth++;
+                if (ch === '}') ifBraceDepth--;
+              }
+              if (ifBraceDepth === 0 && k > j) { ifEnd = k; break; }
+            }
+
+            // Check for else after the if block
+            const afterIf = lines[ifEnd]?.trim();
+            if (afterIf && afterIf.match(/^else\s*\{?/)) {
+              // This is an if-else wrapping the function body — guard clause opportunity
+              const fnBodyLines = fnEnd - fnStart;
+              const ifBlockLines = ifEnd - ifStart;
+
+              if (fnBodyLines > 10 && ifBlockLines > 3) {
+                guardOpportunities++;
+                totalNestedIfs++;
+                issues.push({
+                  file: file.path,
+                  line: i + 1,
+                  severity: 'medium',
+                  label: 'Guard clause opportunity',
+                  desc: `Function wraps entire body in if/else starting at line ${j + 1}. Consider early return: invert condition and return early.`,
+                });
+              }
+            }
+          }
+          break; // Only check first real statement
+        }
+      }
+
+      // Detect deep nesting (3+ levels of if/for/while)
+      if (trimmed.match(/^(?:if|for|while|switch)\s*\(/)) {
+        let depth = 0;
+        for (let j = 0; j <= i; j++) {
+          const t = lines[j].trim();
+          if (t.match(/^(?:if|for|while|switch)\s*\(/)) depth++;
+          if (t === '}' && depth > 0) depth--;
+        }
+        // Simpler: count indentation level
+        const indent = lines[i].length - lines[i].trimStart().length;
+        const indentLevel = Math.floor(indent / 2); // assuming 2-space indent
+
+        if (indentLevel >= 3) {
+          deepNestingCount++;
+          totalNestedIfs++;
+          if (indentLevel >= 4) {
+            issues.push({
+              file: file.path,
+              line: i + 1,
+              severity: 'high',
+              label: 'Deep nesting',
+              desc: `${indentLevel}+ levels of nesting at line ${i + 1}. Consider extracting to a helper function or using guard clauses.`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  const score = Math.max(0, 100 - guardOpportunities * 8 - deepNestingCount * 3);
+  const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F';
+
+  return {
+    stats: {
+      totalNestedIfs,
+      guardOpportunities,
+      deepNestingCount,
+    },
+    issues,
+    score,
+    grade,
+  };
+}
+
+export function formatGuardClausesReport(result) {
+  let report = '## 🛡️ Guard Clause Analysis\n\n';
+
+  report += `**Health Score: ${result.score}/100 (${result.grade})**\n\n`;
+
+  report += '### Summary\n\n';
+  report += `- Guard clause opportunities: ${result.stats.guardOpportunities}\n`;
+  report += `- Deep nesting instances: ${result.stats.deepNestingCount}\n`;
+  report += `- Total nested conditionals: ${result.stats.totalNestedIfs}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Issues Found\n\n';
+    for (const issue of result.issues.slice(0, 30)) {
+      report += `- **${issue.file}:${issue.line}** [${issue.severity}] ${issue.label}: ${issue.desc}\n`;
+    }
+    if (result.issues.length > 30) {
+      report += `- ... and ${result.issues.length - 30} more\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'Functions use guard clauses well, and nesting is manageable. ✅\n\n';
+  }
+
+  return report;
+}
+
+// ─── F76: Parameter Object Opportunities ────────────────────────
+
+export function analyzeParameterObjects(files = []) {
+  const issues = [];
+  let totalFunctions = 0;
+  let longParamFunctions = 0;
+  let booleanParamFunctions = 0;
+  let consecutiveOptionalFunctions = 0;
+
+  for (const file of files) {
+    if (!file.content || typeof file.content !== 'string') continue;
+    if (!/\.(js|mjs|ts|jsx|tsx)$/.test(file.path)) continue;
+
+    const lines = file.content.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+
+      // Match function definitions with parameter lists
+      // arrow: const fn = (a, b, c, d) =>
+      // function: function fn(a, b, c, d) {
+      // method: fn(a: T, b: T, c: T, d: T)
+      const arrowMatch = trimmed.match(/(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?\(([^)]*)\)\s*(?::|=>)/);
+      const funcMatch = trimmed.match(/(?:export\s+)?(?:async\s+)?function\s*\w*\s*\(([^)]*)\)/);
+      const methodMatch = trimmed.match(/(?:async\s+)?(?:get|set|static)?\s*\w+\s*\(([^)]*)\)\s*\{/);
+
+      const paramStr = arrowMatch?.[1] || funcMatch?.[1] || methodMatch?.[1];
+      if (!paramStr || paramStr.trim() === '') continue;
+
+      // Skip if it's a call (not a definition) — heuristic: has => or { or : after params
+      if (!arrowMatch && !funcMatch && !methodMatch) continue;
+
+      // Parse parameters
+      const params = paramStr.split(',').map(p => p.trim()).filter(p => p.length > 0);
+      if (params.length === 0) continue;
+
+      totalFunctions++;
+
+      // Count non-destructured, non-rest params
+      const scalarParams = params.filter(p =>
+        !p.startsWith('{') && !p.startsWith('[') && !p.startsWith('...')
+      );
+
+      // 4+ scalar params → consider parameter object
+      if (scalarParams.length >= 4) {
+        longParamFunctions++;
+        const severity = scalarParams.length >= 6 ? 'high' : 'medium';
+        issues.push({
+          file: file.path,
+          line: i + 1,
+          severity,
+          label: `${scalarParams.length} parameters`,
+          desc: `Function has ${scalarParams.length} scalar parameters (${params.join(', ')}). Consider grouping into a parameter object for clarity and maintainability.`,
+        });
+      }
+
+      // 2+ consecutive boolean params — hard to read at call site
+      let boolCount = 0;
+      let maxConsecutiveBool = 0;
+      for (const p of scalarParams) {
+        const isBool = /:?\s*(?:boolean|bool)\b/.test(p) || /^(?:is|has|can|should|will|do)[A-Z]/.test(p);
+        if (isBool) {
+          boolCount++;
+          maxConsecutiveBool++;
+        } else {
+          maxConsecutiveBool = 0;
+        }
+      }
+      if (maxConsecutiveBool >= 2 || boolCount >= 3) {
+        booleanParamFunctions++;
+        issues.push({
+          file: file.path,
+          line: i + 1,
+          severity: 'low',
+          label: 'Boolean parameter confusion',
+          desc: `Function has ${boolCount} boolean parameters. Boolean params at call sites are hard to read: fn(true, false, true). Consider a flags object or enum.`,
+        });
+      }
+
+      // Trailing optional params — indicates parameter object opportunity
+      const optionalParams = params.filter(p => p.includes('?=') || p.includes('=') || p.includes('?'));
+      if (optionalParams.length >= 3) {
+        consecutiveOptionalFunctions++;
+        issues.push({
+          file: file.path,
+          line: i + 1,
+          severity: 'low',
+          label: 'Many optional parameters',
+          desc: `Function has ${optionalParams.length} optional parameters. This makes call sites error-prone. Consider a config object with defaults.`,
+        });
+      }
+    }
+  }
+
+  const score = Math.max(0, 100 - longParamFunctions * 10 - booleanParamFunctions * 5 - consecutiveOptionalFunctions * 3);
+  const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F';
+
+  return {
+    stats: {
+      totalFunctions,
+      longParamFunctions,
+      booleanParamFunctions,
+      consecutiveOptionalFunctions,
+    },
+    issues,
+    score,
+    grade,
+  };
+}
+
+export function formatParameterObjectsReport(result) {
+  let report = '## 📦 Parameter Object Analysis\n\n';
+
+  report += `**Health Score: ${result.score}/100 (${result.grade})**\n\n`;
+
+  report += '### Summary\n\n';
+  report += `- Total functions analyzed: ${result.stats.totalFunctions}\n`;
+  report += `- Functions with 4+ params: ${result.stats.longParamFunctions}\n`;
+  report += `- Functions with boolean param confusion: ${result.stats.booleanParamFunctions}\n`;
+  report += `- Functions with many optionals: ${result.stats.consecutiveOptionalFunctions}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Issues Found\n\n';
+    for (const issue of result.issues.slice(0, 30)) {
+      report += `- **${issue.file}:${issue.line}** [${issue.severity}] ${issue.label}: ${issue.desc}\n`;
+    }
+    if (result.issues.length > 30) {
+      report += `- ... and ${result.issues.length - 30} more\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'Function signatures are clean and use parameter objects where appropriate. ✅\n\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
