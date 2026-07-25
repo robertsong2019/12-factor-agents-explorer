@@ -6597,6 +6597,178 @@ class MemoryGraph:
             entropy /= math.log(m)
         return entropy
 
+    # ── Cycle 281: Entropy profile + Tsallis entropy ──────────────────
+
+    def entropy_profile(self) -> Optional[dict]:
+        """Comparative degree-based entropy dashboard.
+
+        Computes all six degree-based Shannon entropies in normalised
+        form and returns a structured comparison:
+
+        - ``values``: {index_name: normalised_entropy}
+        - ``raw_values``: {index_name: raw_entropy}
+        - ``min``, ``max``, ``range``, ``mean``, ``std``: diversity stats
+        - ``most_heterogeneous``: index with lowest entropy (most uneven)
+        - ``most_homogeneous``: index with highest entropy (most even)
+        - ``fingerprint``: tuple of 6 rounded values for graph comparison
+
+        The six indices are: ``sombor``, ``reduced_sombor``, ``randic``,
+        ``zagreb_m1``, ``abc``, ``ga``.
+
+        Returns ``None`` if the graph has fewer than 2 edges.
+        """
+        labels = [
+            ("sombor", self.sombor_entropy(normalized=True)),
+            ("reduced_sombor", self.reduced_sombor_entropy(normalized=True)),
+            ("randic", self.randic_entropy(normalized=True)),
+            ("zagreb_m1", self.zagreb_m1_entropy(normalized=True)),
+            ("abc", self.abc_entropy(normalized=True)),
+            ("ga", self.ga_entropy(normalized=True)),
+        ]
+        # Filter out None values (e.g. abc may be None for K₂-only graphs)
+        valid = [(name, val) for name, val in labels if val is not None]
+        if len(valid) < 2:
+            return None
+        vals = [v for _, v in valid]
+        names = [n for n, _ in valid]
+        vmin = min(vals)
+        vmax = max(vals)
+        vrange = vmax - vmin
+        vmean = sum(vals) / len(vals)
+        vvar = sum((v - vmean) ** 2 for v in vals) / len(vals)
+        vstd = vvar ** 0.5
+        # Identify extremes
+        most_heterogeneous = names[vals.index(vmin)]
+        most_homogeneous = names[vals.index(vmax)]
+        # Raw values
+        raw = {
+            "sombor": self.sombor_entropy(normalized=False),
+            "reduced_sombor": self.reduced_sombor_entropy(normalized=False),
+            "randic": self.randic_entropy(normalized=False),
+            "zagreb_m1": self.zagreb_m1_entropy(normalized=False),
+            "abc": self.abc_entropy(normalized=False),
+            "ga": self.ga_entropy(normalized=False),
+        }
+        raw_valid = {k: v for k, v in raw.items() if v is not None}
+        # Fingerprint: 6 decimal places
+        fingerprint = tuple(round(v, 6) for _, v in valid)
+        return {
+            "values": {n: v for n, v in valid},
+            "raw_values": raw_valid,
+            "min": vmin,
+            "max": vmax,
+            "range": vrange,
+            "mean": vmean,
+            "std": vstd,
+            "most_heterogeneous": most_heterogeneous,
+            "most_homogeneous": most_homogeneous,
+            "fingerprint": fingerprint,
+            "index_count": len(valid),
+        }
+
+    def tsallis_entropy(self, q: float = 2.0, normalized: bool = True,
+                        index: str = "sombor") -> Optional[float]:
+        """Tsallis generalized entropy of degree-based edge contributions.
+
+        For entropic index *q* and edge contributions c_e from a chosen
+        degree-based topological index, the Tsallis entropy is::
+
+            S_q = (1 − Σ p_e^q) / (q − 1),   q ≠ 1
+            S_1 = −Σ p_e · ln(p_e)            (Shannon)
+
+        When q → 1 the Tsallis entropy converges to the Shannon entropy.
+        For q > 1, the entropy is *subextensive* (emphasises dominant
+        edge contributions).  For q < 1, it is *superextensive*
+        (emphasises rare edge contributions).
+
+        The *index* parameter selects which degree-based contributions
+        to use:
+
+        - ``"sombor"`` — √(d_u²+d_v²) contributions
+        - ``"reduced_sombor"`` — √((d_u-1)²+(d_v-1)²) contributions
+        - ``"randic"`` — 1/√(d_u·d_v) contributions
+        - ``"zagreb_m1"`` — (d_u+d_v) contributions
+        - ``"abc"`` — √((d_u+d_v−2)/(d_u·d_v)) contributions (K₂ skipped)
+        - ``"ga"`` — 2√(d_u·d_v)/(d_u+d_v) contributions
+
+        Normalisation divides by ln(m)^(2−q) for q ≠ 1 to keep values
+        bounded, following the standard Tsallis normalisation for
+        discrete distributions.
+
+        **Properties:**
+        - For any regular graph: all contributions equal → S_q = (m^(1−q) − 1)/(q−1)·m^(1−q)
+        - q = 1 → Shannon entropy (use the dedicated ``*_entropy()`` methods)
+        - q = 2 → Collatz/Tsallis: S_2 = 1 − Σ p_e² (a.k.a. Gini-Simpson)
+        - q → ∞ → max(p_e) (Berger-Parker index)
+
+        Args:
+            q: entropic index (q ≠ 1; use dedicated methods for Shannon).
+               Defaults to 2.0.
+            normalized: divide by maximum possible entropy for this q.
+            index: which degree-based contributions to use.
+
+        Returns:
+            float, or ``None`` for < 1 edge.
+        """
+        if q == 1.0:
+            raise ValueError("q=1 is Shannon entropy; use *_entropy() methods instead")
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds <= 0 or dt <= 0:
+                continue
+            if index == "sombor":
+                contributions.append(math.sqrt(ds * ds + dt * dt))
+            elif index == "reduced_sombor":
+                contributions.append(math.sqrt((ds - 1) ** 2 + (dt - 1) ** 2))
+            elif index == "randic":
+                contributions.append(1.0 / math.sqrt(ds * dt))
+            elif index == "zagreb_m1":
+                contributions.append(float(ds + dt))
+            elif index == "abc":
+                num = ds + dt - 2
+                den = ds * dt
+                if num > 0 and den > 0:
+                    contributions.append(math.sqrt(num / den))
+                # K₂ edges skipped
+            elif index == "ga":
+                contributions.append(2.0 * math.sqrt(ds * dt) / (ds + dt))
+            else:
+                raise ValueError(f"unknown index '{index}'; choose from "
+                                 f"sombor/reduced_sombor/randic/zagreb_m1/abc/ga")
+        if not contributions:
+            return None
+        total = sum(contributions)
+        if total <= 0:
+            return None
+        m = len(contributions)
+        probs = [c / total for c in contributions]
+        # Tsallis entropy: S_q = (1 − Σ p^q) / (q − 1)
+        sum_pq = sum(p ** q for p in probs)
+        tsallis = (1.0 - sum_pq) / (q - 1.0)
+        if normalized:
+            # Maximum Tsallis entropy for uniform distribution over m items:
+            # S_q^max = (1 − m·(1/m)^q) / (q−1) = (m^(1−q) − 1) / (q−1) / m^(1−q)
+            # Simplify: S_q^max = (1 − m^(1−q)) / (q−1)
+            # Actually: uniform p_e = 1/m for all e
+            # Σ p^q = m · (1/m)^q = m^(1−q)
+            # S_q^max = (1 − m^(1−q)) / (q − 1)
+            s_max = (1.0 - m ** (1.0 - q)) / (q - 1.0)
+            if s_max > 0:
+                tsallis /= s_max
+        return tsallis
+
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。
 
