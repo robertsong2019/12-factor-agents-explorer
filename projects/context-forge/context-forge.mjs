@@ -9970,6 +9970,194 @@ export function formatHardcodedStringsReport(result) {
   return report;
 }
 
+// ─── F74: Import Hygiene (sorting/duplicates/unused) ────────────
+
+/**
+ * Analyze import statements for common hygiene issues:
+ * unsorted imports, duplicate imports from same module, side-effect-only imports.
+ *
+ * @param {Array} files - Array of { path, content } objects
+ * @returns {Object} Analysis result
+ */
+export function analyzeImportHygiene(files = []) {
+  const issues = [];
+  let totalImports = 0;
+  let sortedFiles = 0;
+  let unsortedFiles = 0;
+
+  for (const file of files) {
+    if (!file.content || typeof file.content !== 'string') continue;
+
+    // Only check JS/TS files
+    if (!/\.(js|mjs|ts|jsx|tsx)$/.test(file.path)) continue;
+
+    const lines = file.content.split('\n');
+    const importLines = []; // { line: num, text: fullLine, source: modulePath, isSideEffect }
+
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+
+      // ES module imports
+      const importMatch = trimmed.match(/^import\s+(.+?)?\s*from\s+['"]([^'"]+)['"]/);
+      const sideEffectMatch = trimmed.match(/^import\s+['"]([^'"]+)['"]/);
+      const dynamicMatch = trimmed.match(/\bimport\s*\(/);
+
+      if (importMatch) {
+        totalImports++;
+        importLines.push({
+          lineNum: i + 1,
+          text: trimmed,
+          source: importMatch[2],
+          isSideEffect: false,
+        });
+      } else if (sideEffectMatch) {
+        totalImports++;
+        importLines.push({
+          lineNum: i + 1,
+          text: trimmed,
+          source: sideEffectMatch[1],
+          isSideEffect: true,
+        });
+      }
+      // Skip dynamic import() — different concern
+    }
+
+    if (importLines.length < 2) continue;
+
+    // ─── Check sorting ─────────────────────────────────────────
+    const sources = importLines.map(imp => imp.source);
+    const sortedSources = [...sources].sort();
+    let isSorted = true;
+    for (let j = 0; j < sources.length; j++) {
+      if (sources[j] !== sortedSources[j]) {
+        isSorted = false;
+        break;
+      }
+    }
+
+    if (isSorted) {
+      sortedFiles++;
+    } else {
+      unsortedFiles++;
+      issues.push({
+        file: file.path,
+        line: importLines[0].lineNum,
+        severity: 'low',
+        label: 'unsorted-imports',
+        desc: `Imports in ${file.path} are not alphabetically sorted by source (first import at line ${importLines[0].lineNum})`,
+      });
+    }
+
+    // ─── Check duplicate imports from same module ──────────────
+    const sourceCounts = new Map();
+    for (const imp of importLines) {
+      if (imp.isSideEffect) continue;
+      if (!sourceCounts.has(imp.source)) {
+        sourceCounts.set(imp.source, []);
+      }
+      sourceCounts.get(imp.source).push(imp.lineNum);
+    }
+
+    for (const [source, lineNums] of sourceCounts) {
+      if (lineNums.length > 1) {
+        issues.push({
+          file: file.path,
+          line: lineNums[0],
+          severity: 'medium',
+          label: 'duplicate-import',
+          desc: `Multiple imports from "${source}" at lines ${lineNums.join(', ')} — consolidate into a single import`,
+        });
+      }
+    }
+
+    // ─── Check side-effect imports position ────────────────────
+    // Side-effect imports should typically come first or last
+    const sideEffectImports = importLines.filter(imp => imp.isSideEffect);
+    const nonSideEffect = importLines.filter(imp => !imp.isSideEffect);
+    if (sideEffectImports.length > 0 && nonSideEffect.length > 0) {
+      const lastSideEffect = sideEffectImports[sideEffectImports.length - 1];
+      const firstRegular = nonSideEffect[0];
+      if (lastSideEffect.lineNum > firstRegular.lineNum) {
+        // Side-effect import after regular import — not necessarily wrong but worth noting
+        issues.push({
+          file: file.path,
+          line: lastSideEffect.lineNum,
+          severity: 'low',
+          label: 'mixed-import-order',
+          desc: `Side-effect import "${lastSideEffect.source}" appears after regular imports — consider grouping side-effect imports separately`,
+        });
+      }
+    }
+
+    // ─── Check import from self ────────────────────────────────
+    const fileName = file.path.split('/').pop().replace(/\.[^.]+$/, '');
+    for (const imp of importLines) {
+      const importBase = imp.source.split('/').pop().replace(/\.[^.]+$/, '');
+      if (importBase === fileName && imp.source.startsWith('.')) {
+        issues.push({
+          file: file.path,
+          line: imp.lineNum,
+          severity: 'medium',
+          label: 'self-import',
+          desc: `File imports from itself (or same basename): "${imp.source}"`,
+        });
+      }
+    }
+  }
+
+  const score = totalImports === 0 ? 100
+    : Math.max(0, 100 - Math.round((issues.length / Math.max(totalImports, 1)) * 100));
+
+  return {
+    score,
+    stats: {
+      totalImports,
+      filesChecked: sortedFiles + unsortedFiles,
+      sortedFiles,
+      unsortedFiles,
+      duplicateImports: issues.filter(i => i.label === 'duplicate-import').length,
+      sideEffectImports: issues.filter(i => i.label === 'mixed-import-order').length,
+      selfImports: issues.filter(i => i.label === 'self-import').length,
+      totalIssues: issues.length,
+    },
+    issues,
+  };
+}
+
+export function formatImportHygieneReport(result) {
+  let report = '## Import Hygiene Analysis\n\n';
+  report += `**Score:** ${result.score}/100 (import organization)\n`;
+  report += `**Imports analyzed:** ${result.stats.totalImports}\n`;
+  report += `**Files checked:** ${result.stats.filesChecked}\n\n`;
+
+  if (result.stats.totalImports === 0) {
+    report += 'No import statements found.\n';
+    return report;
+  }
+
+  report += '### Summary\n\n';
+  report += `- Sorted files: ${result.stats.sortedFiles}\n`;
+  report += `- Unsorted files: ${result.stats.unsortedFiles}\n`;
+  report += `- Duplicate imports: ${result.stats.duplicateImports}\n`;
+  report += `- Side-effect import ordering: ${result.stats.sideEffectImports}\n`;
+  report += `- Self-imports: ${result.stats.selfImports}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Issues Found\n\n';
+    for (const issue of result.issues.slice(0, 30)) {
+      report += `- **${issue.file}:${issue.line}** [${issue.severity}] ${issue.label}: ${issue.desc}\n`;
+    }
+    if (result.issues.length > 30) {
+      report += `- ... and ${result.issues.length - 30} more\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'All imports are well-organized and sorted. ✅\n\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
