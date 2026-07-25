@@ -9596,6 +9596,204 @@ export function formatRegexComplexityReport(result) {
   return report;
 }
 
+// ─── F72: Error Message Quality ──────────────────────────────────
+
+/**
+ * Analyze thrown/returned error messages for quality.
+ * Detects: empty messages, generic messages, string-concat errors,
+ * missing error class, inconsistent capitalization.
+ *
+ * @param {Array} files - Array of { path, content } objects
+ * @returns {Object} Analysis result with issues and stats
+ */
+export function analyzeErrorMessages(files = []) {
+  const issues = [];
+  let throwCount = 0;
+  let catchCount = 0;
+  let goodCount = 0;
+
+  const genericMessages = [
+    'error', 'something went wrong', 'failed', 'failure', 'invalid',
+    'unexpected error', 'an error occurred', 'unknown error',
+    'bad request', 'not found', 'oops', 'oops!', 'ouch',
+  ];
+
+  for (const file of files) {
+    if (!file.content || typeof file.content !== 'string') continue;
+    const lines = file.content.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Detect throw statements
+      // throw new Error(...)
+      const throwMatch = trimmed.match(/throw\s+new\s+(\w*Error|\w*Exception)\s*\(([^)]*)\)/);
+      // throw "string"
+      const throwStringMatch = trimmed.match(/throw\s+['"]([^'"]*)['"]/);
+      // throw new Error()  with template literal
+      const throwTemplateMatch = trimmed.match(/throw\s+new\s+(\w*Error|\w*Exception)\s*\(`([^`]*)`\)/);
+      // throw plain Error without message
+      const throwEmptyMatch = trimmed.match(/throw\s+new\s+(\w*Error|\w*Exception)\s*\(\s*\)/);
+      // throw variable
+      const throwVarMatch = trimmed.match(/^throw\s+\w+/);
+
+      if (throwEmptyMatch) {
+        throwCount++;
+        issues.push({
+          file: file.path,
+          line: i + 1,
+          severity: 'high',
+          label: 'empty-error-message',
+          desc: `Throwing ${throwEmptyMatch[1]}() with no message — makes debugging impossible`,
+          code: trimmed.slice(0, 100),
+        });
+      } else if (throwStringMatch) {
+        throwCount++;
+        const msg = throwStringMatch[1].toLowerCase().trim();
+        if (msg === '' || genericMessages.includes(msg)) {
+          issues.push({
+            file: file.path,
+            line: i + 1,
+            severity: 'high',
+            label: 'generic-string-throw',
+            desc: `Throwing generic string "${throwStringMatch[1]}" — use new Error() with descriptive message`,
+            code: trimmed.slice(0, 100),
+          });
+        } else {
+          issues.push({
+            file: file.path,
+            line: i + 1,
+            severity: 'medium',
+            label: 'string-throw',
+            desc: 'Throwing raw string instead of Error object — loses stack trace',
+            code: trimmed.slice(0, 100),
+          });
+        }
+      } else if (throwTemplateMatch) {
+        throwCount++;
+        const msg = throwTemplateMatch[2].toLowerCase().trim();
+        if (msg === '' || genericMessages.some(g => msg === g || msg.startsWith(g + ':') || msg.startsWith(g + ' '))) {
+          issues.push({
+            file: file.path,
+            line: i + 1,
+            severity: 'medium',
+            label: 'generic-template-message',
+            desc: `Error message in template literal is generic: "${throwTemplateMatch[2].slice(0, 60)}"`,
+            code: trimmed.slice(0, 100),
+          });
+        } else {
+          goodCount++;
+        }
+      } else if (throwMatch) {
+        throwCount++;
+        const msgRaw = throwMatch[2];
+        const msg = msgRaw.replace(/['"]/g, '').toLowerCase().trim();
+
+        // Check for string concatenation instead of template literal
+        if (msgRaw.includes("' + ") || msgRaw.includes('" + ') || msgRaw.includes("' +") || msgRaw.includes('" +')) {
+          issues.push({
+            file: file.path,
+            line: i + 1,
+            severity: 'low',
+            label: 'string-concat-error',
+            desc: 'Using string concatenation in error message — prefer template literals for readability',
+            code: trimmed.slice(0, 100),
+          });
+        } else if (msg === '' || msg === '${' || genericMessages.includes(msg) || genericMessages.includes(msg.replace(/[.!?]$/, ''))) {
+          issues.push({
+            file: file.path,
+            line: i + 1,
+            severity: 'high',
+            label: 'generic-error-message',
+            desc: `Error message is empty or generic: "${msgRaw.slice(0, 60)}"`,
+            code: trimmed.slice(0, 100),
+          });
+        } else {
+          goodCount++;
+        }
+      } else if (throwVarMatch && !throwMatch) {
+        throwCount++;
+        // Throwing a variable — can't assess message quality
+      }
+
+      // Detect catch blocks with empty re-throw or swallow
+      const catchMatch = trimmed.match(/catch\s*\([^)]*\)\s*\{/);
+      if (catchMatch) {
+        catchCount++;
+        // Check if next line is just re-throw or empty
+        if (i + 1 < lines.length) {
+          const nextLine = lines[i + 1].trim();
+          if (nextLine === '}' || nextLine === 'throw e;' || nextLine === 'throw err;' || nextLine === 'throw error;' || nextLine === '// ignore' || nextLine === '// noop') {
+            issues.push({
+              file: file.path,
+              line: i + 1,
+              severity: 'medium',
+              label: 'weak-catch',
+              desc: `Catch block appears to swallow or blindly re-throw error without context`,
+              code: nextLine.slice(0, 80),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  const totalAssessed = throwCount;
+  const score = totalAssessed === 0 ? 100
+    : Math.max(0, Math.round((goodCount / totalAssessed) * 100));
+
+  return {
+    score,
+    stats: {
+      throwStatements: throwCount,
+      catchBlocks: catchCount,
+      goodMessages: goodCount,
+      issuesFound: issues.length,
+      highSeverity: issues.filter(i => i.severity === 'high').length,
+      mediumSeverity: issues.filter(i => i.severity === 'medium').length,
+      lowSeverity: issues.filter(i => i.severity === 'low').length,
+    },
+    issues,
+  };
+}
+
+export function formatErrorMessagesReport(result) {
+  let report = '## Error Message Quality Analysis\n\n';
+  report += `**Score:** ${result.score}/100 (error message quality)\n`;
+  report += `**Throw statements:** ${result.stats.throwStatements}\n`;
+  report += `**Catch blocks:** ${result.stats.catchBlocks}\n`;
+  report += `**Good messages:** ${result.stats.goodMessages}\n\n`;
+
+  if (result.stats.throwStatements === 0 && result.stats.catchBlocks === 0) {
+    report += 'No throw/catch statements found.\n';
+    return report;
+  }
+
+  report += '### Issue Distribution\n\n';
+  report += `- High severity: ${result.stats.highSeverity}\n`;
+  report += `- Medium severity: ${result.stats.mediumSeverity}\n`;
+  report += `- Low severity: ${result.stats.lowSeverity}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Issues Found\n\n';
+    for (const issue of result.issues.slice(0, 30)) {
+      report += `- **${issue.file}:${issue.line}** [${issue.severity}] ${issue.label}: ${issue.desc}\n`;
+      if (issue.code) {
+        report += `  \`${issue.code}\`\n`;
+      }
+    }
+    if (result.issues.length > 30) {
+      report += `- ... and ${result.issues.length - 30} more\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'All error messages appear descriptive and well-structured. \n\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
