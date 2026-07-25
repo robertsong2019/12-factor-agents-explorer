@@ -8642,6 +8642,270 @@ export function analyzeCodeSmells(files = []) {
   };
 }
 
+// F68: Naming Convention Analysis
+export function analyzeNamingConventions(files = [], options = {}) {
+  const {
+    snakeCaseAllowed = false,
+    kebabFileNames = true,
+    maxIssuesPerFile = 20,
+  } = options;
+
+  const stats = {
+    totalFiles: files.length,
+    filesWithIssues: 0,
+    totalIssues: 0,
+    conventions: {
+      camelCase: { count: 0, label: 'camelCase' },
+      PascalCase: { count: 0, label: 'PascalCase' },
+      snake_case: { count: 0, label: 'snake_case' },
+      SCREAMING_SNAKE: { count: 0, label: 'SCREAMING_SNAKE' },
+      kebab_case: { count: 0, label: 'kebab-case' },
+      other: { count: 0, label: 'other' },
+    },
+    violations: {
+      inconsistentVariables: 0,
+      pascalFunctions: 0,
+      camelClasses: 0,
+      lowerConstants: 0,
+      camelEnums: 0,
+      snakeVariables: 0,
+      singleLetterNames: 0,
+      abbreviatedNames: 0,
+    },
+  };
+
+  const fileResults = [];
+
+  const isPython = (f) => (f.path || '').endsWith('.py');
+
+  const isCamelCase = (s) => /^[a-z][a-zA-Z0-9]*$/.test(s) && s !== s.toUpperCase();
+  const isPascalCase = (s) => /^[A-Z][a-zA-Z0-9]*$/.test(s);
+  const isSnakeCase = (s) => /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(s);
+  const isScreamingSnake = (s) => /^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(s);
+  const isKebabCase = (s) => /^[a-z][a-z0-9]*(-[a-z0-9]+)+$/.test(s);
+
+  const classifyName = (name) => {
+    if (isScreamingSnake(name)) return 'SCREAMING_SNAKE';
+    if (isPascalCase(name)) return 'PascalCase';
+    if (isSnakeCase(name)) return 'snake_case';
+    if (isCamelCase(name)) return 'camelCase';
+    if (isKebabCase(name)) return 'kebab_case';
+    return 'other';
+  };
+
+  const ABBREVS = new Set(['tmp', 'temp', 'arr', 'obj', 'str', 'num', 'val', 'val2', 'val3', 'cnt', 'len', 'btn', 'lbl', 'msg', 'err2', 'el', 'elem', 'ctx2', 'fn', 'cb', 'ref2', 'ret', 'idx2', 'i2', 'j2']);
+
+  // Component-like PascalCase names to skip (React/Vue convention)
+  const COMPONENT_SUFFIXES = /(?:Component|Element|Node|Type|Provider|Context|Route|Page|Layout|Modal|Dialog|Form|Button|Input|List|Table|Card|Header|Footer|Nav|Sidebar|Menu|Tab|Toast|Dropdown|Tooltip|Badge|Avatar|Icon|Image|Video|Canvas|Chart|Map|Grid|Flex|Box|Container|Wrapper|Section|Article|Main|Navigation|Link|Handler|Manager|Service|Factory|Builder|Store|Reducer|Middleware|Controller|Gateway|Adapter|Bridge|Proxy|Wrapper|Helper|Util|Utils|Config|Settings|Options|Props|State|Hook|Plugin|Extension|Module|Package|Registry|Resolver|Validator|Formatter|Parser|Compiler|Interpreter|Executor|Runner|Worker|Task|Job|Queue|Scheduler|Emitter|Listener|Observer|Subscriber|Publisher|Stream|Buffer|Cache|Store|Repository|DAO|Entity|Model|Schema|Migration|Seed|Fixture|Mock|Stub|Spy|Factory|Instance|Singleton|Prototype|Mixin|Trait|Decorator|Aspect|Interceptor|Filter|Pipe|Transformer|Converter|Mapper|Adapter|Codec|Serializer|Deserializer|Encoder|Decoder|Reader|Writer|Loader|Saver|Exporter|Importer|Generator|Creator|Builder|Maker|Producer|Consumer|Sender|Receiver|Client|Server|Socket|Connection|Session|Context|Scope|Namespace|Module|Bundle|Chunk|Slice|Segment|Fragment|Portion|Part|Piece|Bit|Byte|Word|Token|Symbol|Character|String|Number|Integer|Float|Double|Decimal|Boolean|Null|Undefined|Void|Never|Any|Unknown|Object|Array|Map|Set|WeakMap|WeakSet|Promise|Future|Observable|Subject|BehaviorSubject|ReplaySubject|AsyncSubject)$/;
+
+  for (const file of files) {
+    const issues = [];
+    const lines = file.content.split('\n');
+    const filePath = file.path || 'unknown';
+
+    // File name analysis
+    const fileName = filePath.split('/').pop();
+    const baseName = fileName.replace(/\.[^.]+$/, '');
+    if (baseName && baseName.length > 1) {
+      const fileConv = classifyName(baseName);
+      stats.conventions[fileConv].count++;
+
+      if (isPython(file) && isCamelCase(baseName) && !isPascalCase(baseName)) {
+        issues.push({
+          line: 1, severity: 'medium', category: 'fileName',
+          description: `Python file uses camelCase (${baseName}), should use snake_case`,
+        });
+        stats.violations.inconsistentVariables++;
+      }
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineNum = i + 1;
+      if (issues.length >= maxIssuesPerFile) break;
+
+      const trimmed = line.trim();
+      if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('#') || trimmed.startsWith("'")) continue;
+
+      // const/let/var
+      const varMatch = line.match(/(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+      if (varMatch) {
+        const name = varMatch[1];
+        const conv = classifyName(name);
+        stats.conventions[conv].count++;
+
+        // PascalCase const — skip component-like names
+        if (isPascalCase(name) && !COMPONENT_SUFFIXES.test(name) && !line.includes('new ') && !line.includes('extends')) {
+          issues.push({
+            line: lineNum, severity: 'low', category: 'variable',
+            description: `Variable \`${name}\` uses PascalCase, expected camelCase`,
+          });
+          stats.violations.pascalFunctions++;
+        }
+
+        // Single letter names (allow i/j/k/e/_/$ in JS)
+        if (/^[a-zA-Z]$/.test(name) && !['i', 'j', 'k', 'e', '_', '$'].includes(name) && !isPython(file)) {
+          issues.push({
+            line: lineNum, severity: 'low', category: 'naming',
+            description: `Single letter name \`${name}\` — consider a descriptive name`,
+          });
+          stats.violations.singleLetterNames++;
+        }
+
+        // Abbreviated names
+        if (ABBREVS.has(name)) {
+          issues.push({
+            line: lineNum, severity: 'low', category: 'naming',
+            description: `Abbreviated name \`${name}\` — use full word`,
+          });
+          stats.violations.abbreviatedNames++;
+        }
+      }
+
+      // Function declarations
+      const funcMatch = line.match(/(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+      if (funcMatch) {
+        const name = funcMatch[1];
+        stats.conventions[classifyName(name)].count++;
+
+        if (isPascalCase(name) && !isPython(file) && name !== 'constructor') {
+          issues.push({
+            line: lineNum, severity: 'medium', category: 'function',
+            description: `Function \`${name}\` uses PascalCase, expected camelCase`,
+          });
+          stats.violations.pascalFunctions++;
+        }
+        if (isPython(file) && isCamelCase(name)) {
+          issues.push({
+            line: lineNum, severity: 'medium', category: 'function',
+            description: `Function \`${name}\` uses camelCase, Python expects snake_case`,
+          });
+          stats.violations.snakeVariables++;
+        }
+      }
+
+      // Class declarations
+      const classMatch = line.match(/(?:export\s+)?(?:default\s+)?class\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+      if (classMatch) {
+        const name = classMatch[1];
+        stats.conventions[classifyName(name)].count++;
+        if (!isPascalCase(name) && name.length > 1) {
+          issues.push({
+            line: lineNum, severity: 'high', category: 'class',
+            description: `Class \`${name}\` should use PascalCase`,
+          });
+          stats.violations.camelClasses++;
+        }
+      }
+
+      // Enum declarations
+      const enumMatch = line.match(/(?:export\s+)?enum\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+      if (enumMatch) {
+        const name = enumMatch[1];
+        stats.conventions[classifyName(name)].count++;
+        if (!isPascalCase(name)) {
+          issues.push({
+            line: lineNum, severity: 'medium', category: 'enum',
+            description: `Enum \`${name}\` should use PascalCase`,
+          });
+          stats.violations.camelEnums++;
+        }
+      }
+
+      // Module-level const with numeric value in PascalCase → flag
+      const numConstMatch = line.match(/^\s*const\s+([A-Z][a-zA-Z0-9_]*)\s*=\s*\d/);
+      if (numConstMatch) {
+        const name = numConstMatch[1];
+        if (isPascalCase(name)) {
+          issues.push({
+            line: lineNum, severity: 'low', category: 'constant',
+            description: `Constant \`${name}\` may need SCREAMING_SNAKE`,
+          });
+          stats.violations.lowerConstants++;
+        }
+      }
+    }
+
+    if (issues.length > 0) {
+      stats.filesWithIssues++;
+      stats.totalIssues += issues.length;
+    }
+    fileResults.push({ path: filePath, issues });
+  }
+
+  const convEntries = Object.entries(stats.conventions).filter(([, v]) => v.count > 0);
+  const dominant = convEntries.sort((a, b) => b[1].count - a[1].count)[0];
+
+  return {
+    score: Math.max(0, 100 - stats.totalIssues * 0.5),
+    stats,
+    dominantConvention: dominant ? dominant[0] : null,
+    conventionDistribution: Object.fromEntries(
+      Object.entries(stats.conventions).filter(([, v]) => v.count > 0)
+    ),
+    files: fileResults,
+  };
+}
+
+export function formatNamingConventionsReport(result) {
+  let report = '## Naming Conventions Analysis\n\n';
+  report += `**Score:** ${result.score}/100\n`;
+  report += `**Files analyzed:** ${result.stats.totalFiles}\n`;
+  report += `**Files with issues:** ${result.stats.filesWithIssues}\n`;
+  report += `**Total issues:** ${result.stats.totalIssues}\n\n`;
+
+  if (result.dominantConvention) {
+    report += `**Dominant convention:** ${result.stats.conventions[result.dominantConvention].label}\n\n`;
+  }
+
+  report += '### Convention Distribution\n\n';
+  const totalConv = Object.values(result.conventionDistribution).reduce((s, v) => s + v.count, 0);
+  for (const [conv, data] of Object.entries(result.conventionDistribution)) {
+    const pct = totalConv > 0 ? Math.round((data.count / totalConv) * 100) : 0;
+    report += `- ${data.label}: ${data.count} (${pct}%)\n`;
+  }
+  report += '\n';
+
+  const violations = Object.entries(result.stats.violations).filter(([, v]) => v > 0);
+  if (violations.length > 0) {
+    report += '### Violation Summary\n\n';
+    const labels = {
+      inconsistentVariables: 'Inconsistent variable naming',
+      pascalFunctions: 'PascalCase functions (expected camelCase)',
+      camelClasses: 'Non-PascalCase classes',
+      lowerConstants: 'Lowercase constants (expected SCREAMING_SNAKE)',
+      camelEnums: 'Non-PascalCase enums',
+      snakeVariables: 'snake_case in JS/TS variables',
+      singleLetterNames: 'Single letter variable names',
+      abbreviatedNames: 'Abbreviated variable names',
+    };
+    for (const [key, count] of violations.sort((a, b) => b[1] - a[1])) {
+      report += `- ${labels[key] || key}: ${count}\n`;
+    }
+    report += '\n';
+  }
+
+  const topFiles = result.files
+    .filter(f => f.issues.length > 0)
+    .sort((a, b) => b.issues.length - a.issues.length)
+    .slice(0, 10);
+
+  if (topFiles.length > 0) {
+    report += '### Top Files with Issues\n\n';
+    for (const file of topFiles) {
+      report += `#### ${file.path} (${file.issues.length} issues)\n`;
+      for (const issue of file.issues.slice(0, 5)) {
+        const icon = issue.severity === 'critical' ? '🔴' : issue.severity === 'high' ? '🟠' : issue.severity === 'medium' ? '🟡' : '🔵';
+        report += `  ${icon} L${issue.line}: ${issue.description}\n`;
+      }
+      if (file.issues.length > 5) report += `  ... and ${file.issues.length - 5} more\n`;
+      report += '\n';
+    }
+  }
+
+  return report;
+}
+
 export function formatCodeSmellReport(result) {
   if (!result) return '## Code Smell Analysis\n\nNo data.\n';
 
