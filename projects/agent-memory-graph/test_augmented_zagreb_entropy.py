@@ -261,15 +261,18 @@ class TestAugZagrebEntropyDisconnected:
 
 class TestAugZagrebEntropyEdgeAddition:
     def test_adding_edge_changes_entropy(self):
-        """Adding an edge to an irregular graph changes the AZI entropy."""
+        """Adding an edge between leaves of a star changes the AZI entropy."""
         g = MemoryGraph()
-        build_path(g, 5)
+        center = g.add("c")
+        leaves = [g.add(f"l{i}") for i in range(4)]
+        for leaf in leaves:
+            g.link(center.id, leaf.id, "r")
         before = g.augmented_zagreb_entropy()
-        # Add edge to make a paw-like structure
-        nodes = [str(r["id"]) for r in g.conn.execute("SELECT id FROM nodes").fetchall()]
-        g.link(nodes[0], nodes[2], "r")
+        # Connect two leaves — creates irregular degree distribution
+        g.link(leaves[0].id, leaves[1].id, "r")
         after = g.augmented_zagreb_entropy()
         assert before != after
+        assert abs(before - after) > 1e-6  # meaningful change, not float noise
 
 
 # ─── Bounded [0, 1] ──────────────────────────────────────────────────
