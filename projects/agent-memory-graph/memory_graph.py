@@ -6612,8 +6612,8 @@ class MemoryGraph:
         - ``most_homogeneous``: index with highest entropy (most even)
         - ``fingerprint``: tuple of 6 rounded values for graph comparison
 
-        The six indices are: ``sombor``, ``reduced_sombor``, ``randic``,
-        ``zagreb_m1``, ``abc``, ``ga``.
+        The seven degree-based indices are: ``sombor``, ``reduced_sombor``,
+        ``randic``, ``zagreb_m1``, ``abc``, ``ga``, ``augmented_zagreb``.
 
         Returns ``None`` if the graph has fewer than 2 edges.
         """
@@ -6624,6 +6624,7 @@ class MemoryGraph:
             ("zagreb_m1", self.zagreb_m1_entropy(normalized=True)),
             ("abc", self.abc_entropy(normalized=True)),
             ("ga", self.ga_entropy(normalized=True)),
+            ("augmented_zagreb", self.augmented_zagreb_entropy(normalized=True)),
         ]
         # Filter out None values (e.g. abc may be None for K₂-only graphs)
         valid = [(name, val) for name, val in labels if val is not None]
@@ -6648,6 +6649,7 @@ class MemoryGraph:
             "zagreb_m1": self.zagreb_m1_entropy(normalized=False),
             "abc": self.abc_entropy(normalized=False),
             "ga": self.ga_entropy(normalized=False),
+            "augmented_zagreb": self.augmented_zagreb_entropy(normalized=False),
         }
         raw_valid = {k: v for k, v in raw.items() if v is not None}
         # Fingerprint: 6 decimal places
@@ -6690,6 +6692,7 @@ class MemoryGraph:
         - ``"zagreb_m1"`` — (d_u+d_v) contributions
         - ``"abc"`` — √((d_u+d_v−2)/(d_u·d_v)) contributions (K₂ skipped)
         - ``"ga"`` — 2√(d_u·d_v)/(d_u+d_v) contributions
+        - ``"augmented_zagreb"`` — (d_u·d_v/(d_u+d_v−2))³ contributions (K₂ skipped)
 
         Normalisation divides by ln(m)^(2−q) for q ≠ 1 to keep values
         bounded, following the standard Tsallis normalisation for
@@ -6744,9 +6747,14 @@ class MemoryGraph:
                 # K₂ edges skipped
             elif index == "ga":
                 contributions.append(2.0 * math.sqrt(ds * dt) / (ds + dt))
+            elif index == "augmented_zagreb":
+                az_denom = ds + dt - 2
+                if az_denom > 0:
+                    contributions.append((ds * dt / az_denom) ** 3)
+                # K₂ edges skipped
             else:
                 raise ValueError(f"unknown index '{index}'; choose from "
-                                 f"sombor/reduced_sombor/randic/zagreb_m1/abc/ga")
+                                 f"sombor/reduced_sombor/randic/zagreb_m1/abc/ga/augmented_zagreb")
         if not contributions:
             return None
         total = sum(contributions)
@@ -6768,6 +6776,128 @@ class MemoryGraph:
             if s_max > 0:
                 tsallis /= s_max
         return tsallis
+
+    # ── Cycle 282: Augmented Zagreb entropy + edge-betweenness entropy ─
+
+    def augmented_zagreb_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Augmented Zagreb edge contributions.
+
+        For each edge *e* = (*u*, *v*) with *d_u + d_v > 2*:
+
+        ::
+
+            a_e = (d_u · d_v / (d_u + d_v − 2))³
+            p_e = a_e / AZI
+            H_AZI = −Σ p_e · ln(p_e)
+
+        Edges where *d_u + d_v = 2* (K₂ edges) contribute 0 to AZI
+        and are **excluded** from the entropy calculation — the same
+        filtering behaviour as ``abc_entropy()``.
+
+        The cubic exponent makes AZI entropy the most sensitive
+        degree-based entropy: small differences in endpoint degrees
+        are amplified, producing wider score distributions and thus
+        lower normalised entropy for irregular graphs.
+
+        **Properties:**
+        - Regular graphs (K_n, C_n, stars): all contributions equal → H = 1.0
+        - K₂-only graphs: AZI = 0, entropy undefined → None
+        - P_n (n ≥ 4): endpoint vs internal edges differ → H < 1.0
+
+        Args:
+            normalized: divide by ln(m) for [0, 1] range.
+
+        Returns:
+            float, or ``None`` for < 1 edge or all-K₂ graphs.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            denom = ds + dt - 2
+            if denom > 0 and ds > 0 and dt > 0:
+                contributions.append((ds * dt / denom) ** 3)
+        if not contributions:
+            return None
+        total = sum(contributions)
+        if total <= 0:
+            return None
+        m = len(contributions)
+        probs = [c / total for c in contributions]
+        entropy = 0.0
+        for p in probs:
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
+    def edge_betweenness_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised edge betweenness centrality.
+
+        Unlike the degree-based entropies which measure heterogeneity
+        in *local* edge weights, edge-betweenness entropy captures
+        heterogeneity in *global* structural importance — how unevenly
+        shortest paths are distributed across edges.
+
+        For each edge *e* with betweenness centrality *b_e*:
+
+        ::
+
+            p_e = b_e / Σ b_e
+            H_EB = −Σ p_e · ln(p_e)
+
+        **Properties:**
+        - Cycle graphs C_n: all edges have equal betweenness → H = 1.0
+        - Complete graphs K_n: all edges equal → H = 1.0
+        - Trees: betweenness varies widely (internal edges carry more
+          paths) → H < 1.0
+        - Star K_{1,k}: betweenness is equal across all edges
+          (each edge is on k−1 shortest paths through the centre)
+          → H = 1.0
+        - Path P_n: betweenness is maximally uneven (central edges
+          carry more paths) → H significantly < 1.0
+        - Bridge edges: extremely high betweenness → lower entropy
+
+        This is the first entropy measure in the toolkit based on
+        *centrality* rather than *degree*, opening the structural
+        entropy category.
+
+        Args:
+            normalized: divide by ln(m) for [0, 1] range.
+
+        Returns:
+            float, or ``None`` for < 2 nodes or no edges.
+        """
+        eb = self.edge_betweenness()
+        if not eb:
+            return None
+        # Filter zero-betweenness edges (can occur in disconnected graphs)
+        values = [v for v in eb.values() if v > 0]
+        if not values:
+            return None
+        total = sum(values)
+        if total <= 0:
+            return None
+        m = len(values)
+        probs = [v / total for v in values]
+        entropy = 0.0
+        for p in probs:
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
 
     def onion_structure(self, n_layers: int = 3) -> Optional[list[dict]]:
         """洋葱结构 — k-core 分层剖面。

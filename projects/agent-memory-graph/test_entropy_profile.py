@@ -1,9 +1,9 @@
 """Tests for entropy_profile() — comparative degree-based entropy dashboard.
 
-Computes all six degree-based Shannon entropies and returns structured comparison
+Computes all seven degree-based Shannon entropies and returns structured comparison
 with diversity stats, most heterogeneous/homogeneous index, and graph fingerprint.
 
-Cycle 281.
+Cycle 281 (6 indices). Cycle 282: +augmented_zagreb (7 indices).
 """
 import math
 import pytest
@@ -177,14 +177,16 @@ class TestEntropyProfileIrregular:
             assert 0 < val < 1.0, f"{name} should be < 1.0 for P₄"
 
     def test_path_p5_most_less_than_one(self):
-        """P₅: most entropies < 1.0, but abc = 1.0 (all abc contributions identical)."""
+        """P₅: most entropies < 1.0, but abc and augmented_zagreb = 1.0 (identical contributions)."""
         g = MemoryGraph()
         build_path(g, 5)
         p = g.entropy_profile()
         assert p is not None
         # abc entropy = 1.0 for paths (all abc contributions are √(1/2))
+        # augmented_zagreb entropy = 1.0 for paths (all AZI contributions = 8)
         # Other indices should be < 1.0
-        below_one = [v for n, v in p["values"].items() if n != "abc"]
+        skip = {"abc", "augmented_zagreb"}
+        below_one = [v for n, v in p["values"].items() if n not in skip]
         for val in below_one:
             assert 0 < val < 1.0
 
@@ -234,7 +236,7 @@ class TestEntropyProfileStructure:
         p = g.entropy_profile()
         assert isinstance(p["values"], dict)
         # Should have 5-6 entries (abc may be missing for some graphs)
-        assert len(p["values"]) >= 5
+        assert len(p["values"]) >= 6
 
     def test_raw_values_dict(self):
         g = MemoryGraph()
@@ -251,7 +253,7 @@ class TestEntropyProfileStructure:
         build_complete(g, 4)
         p = g.entropy_profile()
         assert isinstance(p["fingerprint"], tuple)
-        assert len(p["fingerprint"]) >= 5
+        assert len(p["fingerprint"]) >= 6
 
     def test_fingerprint_rounded(self):
         g = MemoryGraph()
@@ -266,8 +268,8 @@ class TestEntropyProfileStructure:
         g = MemoryGraph()
         build_complete(g, 4)
         p = g.entropy_profile()
-        assert p["index_count"] >= 5
-        assert p["index_count"] <= 6
+        assert p["index_count"] >= 6
+        assert p["index_count"] <= 7
 
     def test_most_heterogeneous_is_string(self):
         g = MemoryGraph()

@@ -221,12 +221,27 @@ class TestTsallisIndex:
         with pytest.raises(ValueError, match="unknown index"):
             g.tsallis_entropy(q=2.0, index="nonexistent")
 
+    def test_augmented_zagreb_index(self):
+        """augmented_zagreb index should work and return valid values."""
+        g = MemoryGraph()
+        build_complete(g, 4)
+        val = g.tsallis_entropy(q=2.0, index="augmented_zagreb")
+        assert val is not None
+        assert 0 < val <= 1.0 + 1e-10
+
+    def test_augmented_zagreb_k2_filtered(self):
+        """augmented_zagreb on pure K₂: all edges skipped → None."""
+        g = MemoryGraph()
+        a, b = g.add("a"), g.add("b")
+        g.link(a.id, b.id, "r")
+        assert g.tsallis_entropy(q=2.0, index="augmented_zagreb") is None
+
     def test_different_indices_different_values(self):
         """Different indices give different Tsallis entropies on irregular graphs."""
         g = MemoryGraph()
         build_paw(g)
         vals = set()
-        for idx in ["sombor", "randic", "zagreb_m1", "ga"]:
+        for idx in ["sombor", "randic", "zagreb_m1", "ga", "augmented_zagreb"]:
             v = g.tsallis_entropy(q=2.0, index=idx)
             if v is not None:
                 vals.add(round(v, 8))
