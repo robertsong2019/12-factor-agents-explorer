@@ -9313,6 +9313,140 @@ export function formatDeprecationUsageReport(result) {
   return report;
 }
 
+// F70: File Header Analysis
+// Detects missing or incomplete file-level documentation headers.
+export function analyzeFileHeaders(files = [], options = {}) {
+  const {
+    requireLicense = true,
+    requireModuleTag = false,
+    requireDescription = false,
+    headerLines = 5,
+    licensePatterns = ['@license', 'Licensed', 'MIT License', 'Apache License', 'BSD', 'GPL', 'ISC License', 'UNLICENSED', 'SPDX'],
+  } = options;
+
+  const stats = {
+    totalFiles: files.length,
+    filesWithHeaders: 0,
+    filesWithLicense: 0,
+    filesWithModuleTag: 0,
+    filesWithDescription: 0,
+    filesWithoutAnyHeader: 0,
+    totalIssues: 0,
+  };
+
+  const fileResults = [];
+
+  for (const file of files) {
+    const issues = [];
+    const lines = file.content.split('\n');
+    const filePath = file.path || 'unknown';
+    const ext = filePath.split('.').pop();
+
+    // Get header region (first N lines, skipping shebang)
+    let startLine = 0;
+    if (lines[0]?.startsWith('#!/')) startLine = 1;
+    const headerLines_ = lines.slice(startLine, startLine + headerLines);
+    const headerText = headerLines_.join('\n').toLowerCase();
+
+    const hasLicense = licensePatterns.some(p => headerText.includes(p.toLowerCase()));
+    const hasModuleTag = /@(?:module|file|class|namespace)\s/.test(headerText);
+    const hasDescription = headerLines_.some(l => {
+      const t = l.trim();
+      // Skip non-comment lines, empty lines, bare comment markers
+      if (!t || t === '/*' || t === '*' || t === '*/' || t === '/**' || t === '//') return false;
+      if (!/^(\s*\*\s*|\/\/\s*|#\s*|<!--\s*)/.test(l)) return false; // must be a comment line
+      if (/^\s*(\*\s*)?@(?:license|copyright|author|version|since|see|deprecated|typedef|param|returns?|throws?|example|ignore)/i.test(t)) return false;
+      // A description line has > 10 chars of actual text
+      const cleaned = t.replace(/^(\s*\*\s*|\/\/\s*|<!--\s*)/, '').replace(/(\s*-->|\s*\*\/)$/, '').trim();
+      return cleaned.length > 10 && /[a-zA-Z]/.test(cleaned);
+    });
+    const hasAnyHeader = hasLicense || hasModuleTag || hasDescription;
+
+    if (hasLicense) stats.filesWithLicense++;
+    if (hasModuleTag) stats.filesWithModuleTag++;
+    if (hasDescription) stats.filesWithDescription++;
+    if (hasAnyHeader) stats.filesWithHeaders++;
+    else stats.filesWithoutAnyHeader++;
+
+    if (requireLicense && !hasLicense) {
+      issues.push({ line: 1, severity: 'low', category: 'license', description: 'Missing license header' });
+      stats.totalIssues++;
+    }
+    if (requireModuleTag && !hasModuleTag) {
+      issues.push({ line: 1, severity: 'low', category: 'module', description: 'Missing @module JSDoc tag' });
+      stats.totalIssues++;
+    }
+    if (requireDescription && !hasDescription) {
+      issues.push({ line: 1, severity: 'low', category: 'description', description: 'Missing file description in header' });
+      stats.totalIssues++;
+    }
+
+    // Check for non-standard header formats
+    const hasJSDoc = headerLines_.some(l => /^\s*\/\*\*/.test(l));
+    const hasHashComment = headerLines_.some(l => /^\s*#/.test(l));
+    let headerStyle = 'none';
+    if (hasJSDoc) headerStyle = 'jsdoc';
+    else if (hasHashComment) headerStyle = 'hash';
+    else if (headerLines_.some(l => /^\s*\/\//.test(l))) headerStyle = 'line-comment';
+
+    fileResults.push({
+      path: filePath,
+      hasLicense,
+      hasModuleTag,
+      hasDescription,
+      hasAnyHeader,
+      headerStyle,
+      issues,
+    });
+  }
+
+  const coverage = stats.totalFiles > 0 ? Math.round((stats.filesWithHeaders / stats.totalFiles) * 100) : 100;
+  return {
+    score: coverage,
+    stats,
+    files: fileResults,
+  };
+}
+
+export function formatFileHeadersReport(result) {
+  let report = '## File Header Analysis\n\n';
+  report += `**Score:** ${result.score}/100 (header coverage)\n`;
+  report += `**Files analyzed:** ${result.stats.totalFiles}\n\n`;
+
+  report += '### Coverage\n\n';
+  report += `- Files with any header: ${result.stats.filesWithHeaders}/${result.stats.totalFiles}\n`;
+  report += `- Files with license: ${result.stats.filesWithLicense}\n`;
+  report += `- Files with @module tag: ${result.stats.filesWithModuleTag}\n`;
+  report += `- Files with description: ${result.stats.filesWithDescription}\n`;
+  report += `- Files without any header: ${result.stats.filesWithoutAnyHeader}\n\n`;
+
+  // Header style distribution
+  const styles = {};
+  for (const f of result.files) {
+    styles[f.headerStyle] = (styles[f.headerStyle] || 0) + 1;
+  }
+  if (Object.keys(styles).length > 0) {
+    report += '### Header Style Distribution\n\n';
+    for (const [style, count] of Object.entries(styles).sort((a, b) => b[1] - a[1])) {
+      report += `- ${style}: ${count}\n`;
+    }
+    report += '\n';
+  }
+
+  // Files missing headers
+  const missing = result.files.filter(f => !f.hasAnyHeader);
+  if (missing.length > 0) {
+    report += '### Files Without Headers\n\n';
+    for (const f of missing.slice(0, 20)) {
+      report += `- ${f.path}\n`;
+    }
+    if (missing.length > 20) report += `- ... and ${missing.length - 20} more\n`;
+    report += '\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
