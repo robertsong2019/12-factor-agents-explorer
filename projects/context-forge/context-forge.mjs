@@ -10445,6 +10445,367 @@ export function formatParameterObjectsReport(result) {
   return report;
 }
 
+/**
+ * F77: analyzeCyclomaticComplexity — per-function cyclomatic complexity.
+ * Counts decision points (if/else if/else, for, while, do, case, catch, ?, &&, ||)
+ * in each JS/TS function and flags high-complexity functions.
+ */
+export function analyzeCyclomaticComplexity(files = []) {
+  const jsExt = /\.(js|mjs|cjs|ts|tsx|jsx)$/;
+  const issues = [];
+  let totalFunctions = 0;
+  let complexFunctions = 0;
+  let veryComplexFunctions = 0;
+  let totalComplexity = 0;
+  const allComplexities = [];
+
+  for (const file of files) {
+    if (!file.path || !file.content) continue;
+    if (!jsExt.test(file.path)) continue;
+    if (/\.test\.|\.spec\./.test(file.path)) continue;
+
+    const lines = file.content.split('\n');
+
+    // Detect function boundaries and compute complexity per function
+    let funcStart = -1;
+    let funcName = '';
+    let funcDepth = 0;
+    let braceDepth = 0;
+    let complexity = 1; // base complexity
+    let parenDepth = 0;
+    let inString = false;
+    let stringChar = '';
+    let inComment = false;
+    let inLineComment = false;
+
+    const flushFunction = (endLine) => {
+      if (funcStart >= 0 && funcName) {
+        totalFunctions++;
+        totalComplexity += complexity;
+        allComplexities.push(complexity);
+        if (complexity >= 10) {
+          const severity = complexity >= 15 ? 'high' : 'medium';
+          if (complexity >= 15) veryComplexFunctions++;
+          complexFunctions++;
+          issues.push({
+            file: file.path,
+            line: funcStart + 1,
+            funcName,
+            complexity,
+            severity,
+            label: `${funcName}() complexity=${complexity}`,
+            desc: `Cyclomatic complexity ${complexity} (threshold: 10). Consider extracting branches.`,
+          });
+        }
+      }
+      funcStart = -1;
+      funcName = '';
+      complexity = 1;
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Detect function start
+      const funcMatch = line.match(/(?:export\s+)?(?:async\s+)?(?:function\s+|const\s+|let\s+|var\s+)(\w+)\s*(?:=\s*)?(?:\([^)]*\)|\w+)\s*(?:=>\s*\{|\{)/);
+      const arrowMatch = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*\([^)]*\)\s*=>\s*\{/);
+      const methodMatch = line.match(/^\s+(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{/);
+
+      if ((funcMatch || arrowMatch || methodMatch) && funcStart < 0) {
+        funcName = (funcMatch && funcMatch[1]) || (arrowMatch && arrowMatch[1]) || (methodMatch && methodMatch[1]) || '';
+        funcStart = i;
+        complexity = 1;
+        braceDepth = (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+        if (braceDepth <= 0) {
+          // Single-line function
+          // Count decision points on this line
+          complexity += countDecisionPoints(line);
+          flushFunction(i);
+        }
+        continue;
+      }
+
+      if (funcStart >= 0) {
+        // Track braces to know when function ends
+        const code = stripCommentsAndStrings(line);
+        const opens = (code.match(/{/g) || []).length;
+        const closes = (code.match(/}/g) || []).length;
+
+        if (opens > 0 || closes > 0) {
+          braceDepth += opens - closes;
+        }
+
+        complexity += countDecisionPoints(code);
+
+        if (braceDepth <= 0 && i > funcStart) {
+          flushFunction(i);
+        }
+      }
+    }
+    flushFunction(lines.length - 1);
+  }
+
+  const avgComplexity = totalFunctions > 0 ? +(totalComplexity / totalFunctions).toFixed(1) : 0;
+  const maxComplexity = allComplexities.length > 0 ? Math.max(...allComplexities) : 0;
+
+  // Score: start at 100, deduct for complex functions
+  let score = 100;
+  score -= complexFunctions * 5;
+  score -= veryComplexFunctions * 5; // additional penalty
+  if (totalFunctions > 0 && complexFunctions / totalFunctions > 0.3) score -= 10;
+  score = Math.max(0, score);
+
+  const grade = score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : score >= 60 ? 'D' : 'F';
+
+  return {
+    stats: {
+      totalFunctions,
+      complexFunctions,
+      veryComplexFunctions,
+      avgComplexity,
+      maxComplexity,
+    },
+    issues: issues.sort((a, b) => b.complexity - a.complexity),
+    score,
+    grade,
+  };
+}
+
+function countDecisionPoints(code) {
+  let count = 0;
+  // if/else if/else
+  count += (code.match(/\bif\s*\(/g) || []).length;
+  count += (code.match(/\belse\s+if\s*\(/g) || []).length;
+  // loops
+  count += (code.match(/\bfor\s*\(/g) || []).length;
+  count += (code.match(/\bwhile\s*\(/g) || []).length;
+  count += (code.match(/\bdo\s*\{/g) || []).length;
+  // switch case
+  count += (code.match(/\bcase\s/g) || []).length;
+  // catch
+  count += (code.match(/\bcatch\s*\(/g) || []).length;
+  // ternary
+  count += (code.match(/\?/g) || []).length;
+  // logical operators (short-circuit = branching)
+  count += (code.match(/&&/g) || []).length;
+  count += (code.match(/\|\|/g) || []).length;
+  // nullish coalescing
+  count += (code.match(/\?\?/g) || []).length;
+  return count;
+}
+
+function stripCommentsAndStrings(line) {
+  let result = '';
+  let i = 0;
+  while (i < line.length) {
+    // Block comment
+    if (line[i] === '/' && line[i + 1] === '*') {
+      i += 2;
+      while (i < line.length && !(line[i] === '*' && line[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+    // Line comment
+    if (line[i] === '/' && line[i + 1] === '/') {
+      break;
+    }
+    // Strings
+    if (line[i] === '"' || line[i] === "'" || line[i] === '`') {
+      const q = line[i];
+      i++;
+      while (i < line.length && line[i] !== q) {
+        if (line[i] === '\\\\') i++;
+        i++;
+      }
+      i++;
+      continue;
+    }
+    result += line[i];
+    i++;
+  }
+  return result;
+}
+
+export function formatCyclomaticComplexityReport(result) {
+  let report = '## 🔄 Cyclomatic Complexity Analysis\n\n';
+
+  report += `**Health Score: ${result.score}/100 (${result.grade})**\n\n`;
+
+  report += '### Summary\n\n';
+  report += `- Total functions: ${result.stats.totalFunctions}\n`;
+  report += `- Complex functions (≥10): ${result.stats.complexFunctions}\n`;
+  report += `- Very complex (≥15): ${result.stats.veryComplexFunctions}\n`;
+  report += `- Average complexity: ${result.stats.avgComplexity}\n`;
+  report += `- Max complexity: ${result.stats.maxComplexity}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Complex Functions\n\n';
+    report += '| Function | File:Line | Complexity | Severity |\n';
+    report += '|----------|-----------|------------|----------|\n';
+    for (const issue of result.issues.slice(0, 20)) {
+      report += `| ${issue.funcName} | ${issue.file}:${issue.line} | ${issue.complexity} | ${issue.severity} |\n`;
+    }
+    if (result.issues.length > 20) {
+      report += `| ... | ${result.issues.length - 20} more | | |\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'All functions have manageable complexity. ✅\n\n';
+  }
+
+  return report;
+}
+
+/**
+ * F78: analyzeReturnPaths — functions with excessive return statements.
+ * Multiple return paths can indicate mixed responsibilities.
+ * Flags functions with 5+ returns and reports unreachable code after return.
+ */
+export function analyzeReturnPaths(files = []) {
+  const jsExt = /\.(js|mjs|cjs|ts|tsx|jsx)$/;
+  const issues = [];
+  let totalFunctions = 0;
+  let multiReturnFunctions = 0;
+  let unreachableCodeCount = 0;
+
+  for (const file of files) {
+    if (!file.path || !file.content) continue;
+    if (!jsExt.test(file.path)) continue;
+    if (/\.test\.|\.spec\./.test(file.path)) continue;
+
+    const lines = file.content.split('\n');
+    let funcStart = -1;
+    let funcName = '';
+    let braceDepth = 0;
+    let returnCount = 0;
+    let returnLine = -1;
+
+    const flushFunction = () => {
+      if (funcStart >= 0 && funcName) {
+        totalFunctions++;
+        if (returnCount >= 5) {
+          multiReturnFunctions++;
+          const severity = returnCount >= 8 ? 'high' : 'medium';
+          issues.push({
+            file: file.path,
+            line: funcStart + 1,
+            funcName,
+            returnCount,
+            type: 'excessive_returns',
+            severity,
+            label: `${funcName}() has ${returnCount} return statements`,
+            desc: `Excessive return paths (threshold: 5). Consider splitting or simplifying.`,
+          });
+        }
+      }
+      funcStart = -1;
+      funcName = '';
+      returnCount = 0;
+      returnLine = -1;
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const code = stripCommentsAndStrings(line);
+
+      // Detect function start
+      const funcMatch = code.match(/(?:export\s+)?(?:async\s+)?(?:function\s+|const\s+|let\s+|var\s+)(\w+)\s*(?:=\s*)?(?:\([^)]*\)|\w+)\s*(?:=>\s*\{|\{)/);
+      const methodMatch = code.match(/^\s+(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{/);
+
+      if ((funcMatch || methodMatch) && funcStart < 0) {
+        funcName = (funcMatch && funcMatch[1]) || (methodMatch && methodMatch[1]) || '';
+        funcStart = i;
+        returnCount = 0;
+        braceDepth = (code.match(/{/g) || []).length - (code.match(/}/g) || []).length;
+        // Check for return on same line (single-line function)
+        if (/\breturn\b/.test(code)) {
+          returnCount++;
+        }
+        if (braceDepth <= 0) {
+          flushFunction();
+        }
+        continue;
+      }
+
+      if (funcStart >= 0) {
+        const opens = (code.match(/{/g) || []).length;
+        const closes = (code.match(/}/g) || []).length;
+        braceDepth += opens - closes;
+
+        // Count return statements
+        if (/\breturn\b/.test(code)) {
+          returnCount++;
+          // Check for unreachable code: code after return on same line
+          const returnIdx = code.indexOf('return');
+          const afterReturn = code.slice(returnIdx).replace(/return\s*[^;]*;?/, '').trim();
+          if (afterReturn.length > 0 && !afterReturn.startsWith('}') && !afterReturn.startsWith(')')) {
+            unreachableCodeCount++;
+            issues.push({
+              file: file.path,
+              line: i + 1,
+              funcName,
+              returnCount,
+              type: 'unreachable_code',
+              severity: 'low',
+              label: `Unreachable code after return in ${funcName}()`,
+              desc: `Code after return statement will never execute.`,
+            });
+          }
+        }
+
+        if (braceDepth <= 0 && i > funcStart) {
+          flushFunction();
+        }
+      }
+    }
+    flushFunction();
+  }
+
+  let score = 100;
+  score -= multiReturnFunctions * 6;
+  score -= unreachableCodeCount * 4;
+  score = Math.max(0, score);
+
+  const grade = score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : score >= 60 ? 'D' : 'F';
+
+  return {
+    stats: {
+      totalFunctions,
+      multiReturnFunctions,
+      unreachableCodeCount,
+    },
+    issues,
+    score,
+    grade,
+  };
+}
+
+export function formatReturnPathsReport(result) {
+  let report = '## 🔀 Return Path Analysis\n\n';
+
+  report += `**Health Score: ${result.score}/100 (${result.grade})**\n\n`;
+
+  report += '### Summary\n\n';
+  report += `- Total functions: ${result.stats.totalFunctions}\n`;
+  report += `- Functions with 5+ returns: ${result.stats.multiReturnFunctions}\n`;
+  report += `- Unreachable code instances: ${result.stats.unreachableCodeCount}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Issues Found\n\n';
+    for (const issue of result.issues.slice(0, 30)) {
+      report += `- **${issue.file}:${issue.line}** [${issue.severity}] ${issue.label}\n`;
+    }
+    if (result.issues.length > 30) {
+      report += `- ... and ${result.issues.length - 30} more\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'Return paths are clean and well-structured. ✅\n\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
