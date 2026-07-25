@@ -9447,6 +9447,155 @@ export function formatFileHeadersReport(result) {
   return report;
 }
 
+// ─── F71: Regex Complexity / ReDoS Risk ───────────────────────────
+
+/**
+ * Analyze regex literals for catastrophic backtracking (ReDoS) risk.
+ * Detects: nested quantifiers, overlapping alternation, quantified groups,
+ * unbounded repetitions in complex contexts.
+ *
+ * @param {Array} files - Array of { path, content } objects
+ * @returns {Object} Analysis result with risk items and stats
+ */
+export function analyzeRegexComplexity(files = []) {
+  const issues = [];
+  let regexCount = 0;
+  let riskyCount = 0;
+
+  // Patterns that indicate ReDoS vulnerability
+  const dangerousPatterns = [
+    // Nested quantifiers: (a+)+ , (a*)*, (a+)*, (a*)+
+    { regex: /\([^)]*[+*?][^)]*\)[+*?]/, severity: 'high', label: 'nested-quantifier',
+      desc: 'Nested quantifier like (a+)+ can cause exponential backtracking' },
+    // Quantified group with alternation: (a|a)*
+    { regex: /\([^)]*\|[^)]*\)[+*?]/, severity: 'high', label: 'overlapped-alternation',
+      desc: 'Quantified alternation with overlapping branches can cause catastrophic backtracking' },
+    // Unbounded repetition: .{0,} or x{0,} without anchor
+    { regex: /\.\{0,\}/, severity: 'medium', label: 'unbounded-dot-repetition',
+      desc: 'Unbounded repetition of dot (.) without anchors' },
+    // Multiple unbounded quantifiers: a+.*b+ or similar
+    { regex: /[+*][^+*\n]{0,10}[+*]/, severity: 'medium', label: 'adjacent-quantifiers',
+      desc: 'Adjacent unbounded quantifiers increase backtracking surface' },
+    // Quantified optional group: (a?)+
+    { regex: /\([^)]*\?\)[+*]/, severity: 'medium', label: 'quantified-optional-group',
+      desc: 'Quantified optional group creates ambiguity' },
+  ];
+
+  for (const file of files) {
+    if (!file.content || typeof file.content !== 'string') continue;
+
+    // Find regex literals: /pattern/flags
+    const regexLiteralRe = /\/([^\/\n]+)\/([gimsuy]*)/g;
+    // Also find RegExp() calls
+    const regexpCallRe = /new\s+RegExp\s*\(\s*['"]([^'"]+)['"]/g;
+    // Also find string patterns in RegExp constructors with template literals
+    const regexpTemplateRe = /new\s+RegExp\s*\(`([^`]+)`/g;
+
+    const candidates = [];
+
+    let m;
+    while ((m = regexLiteralRe.exec(file.content)) !== null) {
+      candidates.push({ pattern: m[1], flags: m[2], type: 'literal', index: m.index });
+    }
+    while ((m = regexpCallRe.exec(file.content)) !== null) {
+      candidates.push({ pattern: m[1], flags: '', type: 'constructor', index: m.index });
+    }
+    while ((m = regexpTemplateRe.exec(file.content)) !== null) {
+      candidates.push({ pattern: m[1], flags: '', type: 'template', index: m.index });
+    }
+
+    for (const candidate of candidates) {
+      regexCount++;
+      const lineNum = file.content.slice(0, candidate.index).split('\n').length;
+      const found = [];
+
+      for (const danger of dangerousPatterns) {
+        if (danger.regex.test(candidate.pattern)) {
+          found.push({
+            severity: danger.severity,
+            label: danger.label,
+            desc: danger.desc,
+          });
+        }
+      }
+
+      // Check pattern length heuristic: very long patterns are harder to optimize
+      if (candidate.pattern.length > 100) {
+        found.push({
+          severity: 'low',
+          label: 'long-pattern',
+          desc: `Pattern length ${candidate.pattern.length} exceeds 100 chars — consider splitting or simplifying`,
+        });
+      }
+
+      if (found.length > 0) {
+        riskyCount++;
+        const maxSeverity = found.some(f => f.severity === 'high') ? 'high'
+          : found.some(f => f.severity === 'medium') ? 'medium' : 'low';
+        issues.push({
+          file: file.path,
+          line: lineNum,
+          pattern: candidate.pattern.slice(0, 80),
+          type: candidate.type,
+          severity: maxSeverity,
+          findings: found,
+        });
+      }
+    }
+  }
+
+  const score = regexCount === 0 ? 100
+    : Math.max(0, 100 - Math.round((riskyCount / regexCount) * 100));
+
+  return {
+    score,
+    stats: {
+      totalRegexes: regexCount,
+      riskyRegexes: riskyCount,
+      safeRegexes: regexCount - riskyCount,
+      highSeverity: issues.filter(i => i.severity === 'high').length,
+      mediumSeverity: issues.filter(i => i.severity === 'medium').length,
+      lowSeverity: issues.filter(i => i.severity === 'low').length,
+    },
+    issues,
+  };
+}
+
+export function formatRegexComplexityReport(result) {
+  let report = '## Regex Complexity / ReDoS Risk Analysis\n\n';
+  report += `**Score:** ${result.score}/100 (regex safety)\n`;
+  report += `**Regexes found:** ${result.stats.totalRegexes}\n`;
+  report += `**Risky regexes:** ${result.stats.riskyRegexes}\n\n`;
+
+  if (result.stats.totalRegexes === 0) {
+    report += 'No regex literals or RegExp() calls found.\n';
+    return report;
+  }
+
+  report += '### Risk Distribution\n\n';
+  report += `- High severity: ${result.stats.highSeverity}\n`;
+  report += `- Medium severity: ${result.stats.mediumSeverity}\n`;
+  report += `- Low severity: ${result.stats.lowSeverity}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Issues Found\n\n';
+    for (const issue of result.issues.slice(0, 30)) {
+      report += `- **${issue.file}:${issue.line}** [${issue.severity}] \`${issue.pattern}\` (${issue.type})\n`;
+      for (const f of issue.findings) {
+        report += `  - ${f.label}: ${f.desc}\n`;
+      }
+    }
+    if (result.issues.length > 30) {
+      report += `- ... and ${result.issues.length - 30} more\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'No risky regex patterns detected. All regexes appear safe.\n\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });

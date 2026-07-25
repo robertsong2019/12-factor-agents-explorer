@@ -37,3 +37,7 @@ timestamp	commit	metric	value	status	description
 2026-07-24 22:14	F65	analyzeTypeSafety()	TS type safety: any/implicit-any/ts-ignore/ts-nocheck/assertions/missing-return/non-null. +32 tests	keep	994→1026	4f2d442
 2026-07-24 22:22	F66	analyzeCodeSmells()	7 smells: long-files/deep-nesting/too-many-params/magic-numbers/god-files/empty-catch/todo. +28 tests	keep	1026→1054	bf67730
 2026-07-24 23:00	F67	analyzeReadmeHealth()	10-section README quality analyzer: title/description/install/usage/license/contributing/tests/badges/examples/apiDocs + placeholder/broken-link detection + markdown stats. +53 tests	keep	1054→1107	bcc574e
+2026-07-25T19:15	F68	analyzeNamingConventions()	JS/TS/Python naming conventions: camelCase/PascalCase/snake_case/SCREAMING_SNAKE detection. +31 tests	keep	1107→1138	b91ff56
+2026-07-25T19:30	F69	analyzeDeprecationUsage()	Deprecated Node.js APIs/JS patterns/packages (moment/lodash). +22 tests	keep	1138→1160	56a7faf
+2026-07-25T19:45	F70	analyzeFileHeaders()	License/module/description header coverage, style distribution. +20 tests	keep	1160→1180	cad80cc
+2026-07-25T21:05	F71	analyzeRegexComplexity()	ReDoS risk: nested quantifiers/overlapped alternation/adjacent quantifiers/long patterns. +24 tests	keep	1180→1204	e7483b1
