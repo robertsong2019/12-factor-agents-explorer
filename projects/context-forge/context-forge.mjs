@@ -9180,6 +9180,139 @@ export function formatReadmeHealthReport(result) {
   return report;
 }
 
+// F69: Deprecation Usage Analysis
+// Detects usage of deprecated APIs, patterns, and libraries.
+// Patterns are plain substrings matched via includes().
+export function analyzeDeprecationUsage(files = [], options = {}) {
+  const {
+    additionalDeprecations = [],
+    maxIssuesPerFile = 50,
+  } = options;
+
+  // [substring, message, severity, category]
+  const BUILTIN = [
+    ['new Buffer(', 'Use Buffer.alloc(), Buffer.from() instead', 'high', 'nodejs'],
+    ['fs.exists(', 'Use fs.stat() or fs.access() instead', 'high', 'nodejs'],
+    ['fs.existsSync(', 'Use fs.statSync() or fs.accessSync() instead', 'high', 'nodejs'],
+    ['util.isArray', 'Use Array.isArray() instead', 'low', 'nodejs'],
+    ['util.isString', 'Use typeof x === "string" instead', 'low', 'nodejs'],
+    ['util.isNumber', 'Use typeof x === "number" instead', 'low', 'nodejs'],
+    ['util.isFunction', 'Use typeof x === "function" instead', 'low', 'nodejs'],
+    ['util.isObject', 'Use x !== null && typeof x === "object"', 'low', 'nodejs'],
+    ['util.inherits', 'Use ES6 class extends', 'medium', 'nodejs'],
+    ['crypto.createCipher(', 'Use crypto.createCipheriv() — insecure key derivation', 'high', 'nodejs'],
+    ['crypto.createDecipher(', 'Use crypto.createDecipheriv()', 'high', 'nodejs'],
+    ['punycode.', 'Use the "punycode" package — built-in is deprecated', 'medium', 'nodejs'],
+    ['domain.', 'Domain module is deprecated — use async/await', 'medium', 'nodejs'],
+    ['with (', '"with" statement deprecated in strict mode', 'high', 'javascript'],
+    ['arguments.callee', 'Forbidden in strict mode', 'high', 'javascript'],
+    ['arguments.caller', 'Forbidden in strict mode', 'high', 'javascript'],
+    ['escape(', 'Use encodeURIComponent() instead', 'medium', 'javascript'],
+    ['unescape(', 'Use decodeURIComponent() instead', 'medium', 'javascript'],
+    ['.substr(', 'Use .substring() or .slice() — .substr() deprecated', 'medium', 'javascript'],
+    ['.trimLeft(', 'Use .trimStart()', 'low', 'javascript'],
+    ['.trimRight(', 'Use .trimEnd()', 'low', 'javascript'],
+    ["require('moment')", 'moment.js in maintenance — use date-fns/dayjs/Temporal', 'medium', 'package'],
+    ['from \'moment\'', 'moment.js in maintenance — use date-fns/dayjs/Temporal', 'medium', 'package'],
+    ["from \"moment\"", 'moment.js in maintenance — use date-fns/dayjs/Temporal', 'medium', 'package'],
+    ["require('lodash')", 'Full lodash — use lodash-es or individual imports', 'low', 'package'],
+    ["from 'lodash'", 'Full lodash — use lodash-es or individual imports', 'low', 'package'],
+    ["from \"lodash\"", 'Full lodash — use lodash-es or individual imports', 'low', 'package'],
+  ];
+
+  const allPatterns = [...BUILTIN, ...additionalDeprecations];
+
+  const stats = {
+    totalFiles: files.length,
+    filesWithIssues: 0,
+    totalIssues: 0,
+    categories: {},
+    severityCounts: { critical: 0, high: 0, medium: 0, low: 0 },
+  };
+
+  const fileResults = [];
+
+  for (const file of files) {
+    const issues = [];
+    const lines = file.content.split('\n');
+    const filePath = file.path || 'unknown';
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineNum = i + 1;
+      if (issues.length >= maxIssuesPerFile) break;
+
+      const trimmed = line.trim();
+      if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('#') || trimmed.startsWith("'")) continue;
+
+      for (const [substr, message, severity, category] of allPatterns) {
+        if (line.includes(substr)) {
+          issues.push({ line: lineNum, severity, category, pattern: substr, description: message });
+          stats.severityCounts[severity]++;
+          if (!stats.categories[category]) stats.categories[category] = { count: 0, label: category };
+          stats.categories[category].count++;
+        }
+      }
+    }
+
+    if (issues.length > 0) {
+      stats.filesWithIssues++;
+      stats.totalIssues += issues.length;
+    }
+    fileResults.push({ path: filePath, issues });
+  }
+
+  return {
+    score: Math.max(0, 100 - stats.totalIssues * 2 - stats.severityCounts.critical * 10 - stats.severityCounts.high * 3),
+    stats,
+    files: fileResults,
+  };
+}
+
+export function formatDeprecationUsageReport(result) {
+  let report = '## Deprecation Usage Analysis\n\n';
+  report += `**Score:** ${result.score}/100\n`;
+  report += `**Files analyzed:** ${result.stats.totalFiles}\n`;
+  report += `**Files with issues:** ${result.stats.filesWithIssues}\n`;
+  report += `**Total issues:** ${result.stats.totalIssues}\n\n`;
+
+  report += '### Severity Breakdown\n\n';
+  for (const [sev, count] of Object.entries(result.stats.severityCounts)) {
+    if (count > 0) {
+      const icon = sev === 'critical' ? '🔴' : sev === 'high' ? '🟠' : sev === 'medium' ? '🟡' : '🔵';
+      report += `- ${icon} ${sev}: ${count}\n`;
+    }
+  }
+  report += '\n';
+
+  const cats = Object.entries(result.stats.categories).sort((a, b) => b[1].count - a[1].count);
+  if (cats.length > 0) {
+    report += '### Category Breakdown\n\n';
+    for (const [cat, data] of cats) report += `- ${data.label}: ${data.count} issues\n`;
+    report += '\n';
+  }
+
+  const topFiles = result.files
+    .filter(f => f.issues.length > 0)
+    .sort((a, b) => b.issues.length - a.issues.length)
+    .slice(0, 10);
+
+  if (topFiles.length > 0) {
+    report += '### Top Files with Deprecations\n\n';
+    for (const file of topFiles) {
+      report += `#### ${file.path} (${file.issues.length} issues)\n`;
+      for (const issue of file.issues.slice(0, 5)) {
+        const icon = issue.severity === 'critical' ? '🔴' : issue.severity === 'high' ? '🟠' : issue.severity === 'medium' ? '🟡' : '🔵';
+        report += `  ${icon} L${issue.line} [${issue.category}]: ${issue.description}\n`;
+      }
+      if (file.issues.length > 5) report += `  ... and ${file.issues.length - 5} more\n`;
+      report += '\n';
+    }
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
