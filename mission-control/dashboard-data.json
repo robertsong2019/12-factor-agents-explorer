@@ -1,6 +1,6 @@
 {
-  "lastUpdated": "2026-06-27T22:00:00Z",
-  "generatedAt": "2026-06-28 06:00 CST",
+  "lastUpdated": "2026-07-25T22:00:00Z",
+  "generatedAt": "2026-07-26 06:00 CST",
   "activeNow": [
     {
       "job": "dashboard-update-morning",
@@ -13,13 +13,7 @@
       "job": "knowledge-organization",
       "id": "fd0515b0",
       "issue": "Last run ended with error",
-      "lastRun": "2026-06-27T18:00:00Z"
-    },
-    {
-      "job": "project-testing-morning",
-      "id": "f7510f1f",
-      "issue": "Last run ended with error",
-      "lastRun": "2026-06-27T19:00:00Z"
+      "lastRun": "2026-07-25T18:00:00Z"
     }
   ],
   "crons": [
@@ -27,8 +21,8 @@
       "name": "dashboard-update-morning",
       "schedule": "6:00 AM daily",
       "id": "f38e0365",
-      "lastRun": "2026-06-27T22:00:00Z",
-      "nextRun": "2026-06-28T22:00:00Z",
+      "lastRun": "2026-07-25T22:00:00Z",
+      "nextRun": "2026-07-26T22:00:00Z",
       "status": "running",
       "errors": 0
     },
@@ -36,8 +30,8 @@
       "name": "github-trending-daily",
       "schedule": "7:00 AM daily",
       "id": "9b2a8701",
-      "lastRun": "2026-06-26T23:00:00Z",
-      "nextRun": "2026-06-27T23:00:00Z",
+      "lastRun": "2026-07-24T23:00:00Z",
+      "nextRun": "2026-07-25T23:00:00Z",
       "status": "ok",
       "errors": 0
     },
@@ -45,8 +39,8 @@
       "name": "github-trending-deep",
       "schedule": "8:00 AM daily",
       "id": "2c714952",
-      "lastRun": "2026-06-27T00:00:00Z",
-      "nextRun": "2026-06-28T00:00:00Z",
+      "lastRun": "2026-07-25T00:00:00Z",
+      "nextRun": "2026-07-26T00:00:00Z",
       "status": "ok",
       "errors": 0
     },
@@ -54,8 +48,17 @@
       "name": "github-creative-evening",
       "schedule": "7:00 PM daily",
       "id": "265091b6",
-      "lastRun": "2026-06-27T11:00:00Z",
-      "nextRun": "2026-06-28T11:00:00Z",
+      "lastRun": "2026-07-25T11:00:00Z",
+      "nextRun": "2026-07-26T11:00:00Z",
+      "status": "ok",
+      "errors": 0
+    },
+    {
+      "name": "github-creative-evening (CST)",
+      "schedule": "7:00 PM daily CST",
+      "id": "ad37c59a",
+      "lastRun": "2026-07-25T11:00:00Z",
+      "nextRun": "2026-07-26T11:00:00Z",
       "status": "ok",
       "errors": 0
     },
@@ -63,17 +66,27 @@
       "name": "deep-exploration-evening",
       "schedule": "8:00 PM daily",
       "id": "bb46cb70",
-      "lastRun": "2026-06-27T12:00:00Z",
-      "nextRun": "2026-06-28T12:00:00Z",
+      "lastRun": "2026-07-25T12:00:00Z",
+      "nextRun": "2026-07-26T12:00:00Z",
       "status": "ok",
       "errors": 0
+    },
+    {
+      "name": "deep-exploration-evening (CST)",
+      "schedule": "8:00 PM daily CST",
+      "id": "a4bf5e2a",
+      "lastRun": "2026-07-25T12:00:00Z",
+      "nextRun": "2026-07-26T12:00:00Z",
+      "status": "ok",
+      "errors": 0,
+      "model": "glm-5.1"
     },
     {
       "name": "code-lab-evening",
       "schedule": "9:00 PM daily",
       "id": "13a2f284",
-      "lastRun": "2026-06-27T13:00:00Z",
-      "nextRun": "2026-06-28T13:00:00Z",
+      "lastRun": "2026-07-25T13:00:00Z",
+      "nextRun": "2026-07-26T13:00:00Z",
       "status": "ok",
       "errors": 0
     },
@@ -81,17 +94,27 @@
       "name": "tool-development-evening",
       "schedule": "10:00 PM daily",
       "id": "ce2fb615",
-      "lastRun": "2026-06-27T14:00:00Z",
-      "nextRun": "2026-06-28T14:00:00Z",
+      "lastRun": "2026-07-25T14:00:00Z",
+      "nextRun": "2026-07-26T14:00:00Z",
       "status": "ok",
       "errors": 0
+    },
+    {
+      "name": "tool-development-evening (CST)",
+      "schedule": "10:00 PM daily CST",
+      "id": "62bf7f3b",
+      "lastRun": "2026-07-25T14:00:00Z",
+      "nextRun": "2026-07-26T14:00:00Z",
+      "status": "ok",
+      "errors": 0,
+      "model": "glm-5.1"
     },
     {
       "name": "key-development-1",
       "schedule": "11:00 PM daily",
       "id": "78eac6fc",
-      "lastRun": "2026-06-27T15:00:00Z",
-      "nextRun": "2026-06-28T15:00:00Z",
+      "lastRun": "2026-07-25T15:00:00Z",
+      "nextRun": "2026-07-26T15:00:00Z",
       "status": "ok",
       "errors": 0
     },
@@ -99,8 +122,8 @@
       "name": "key-development-2",
       "schedule": "12:00 AM daily",
       "id": "88679f9e",
-      "lastRun": "2026-06-27T16:00:00Z",
-      "nextRun": "2026-06-28T16:00:00Z",
+      "lastRun": "2026-07-25T16:00:00Z",
+      "nextRun": "2026-07-26T16:00:00Z",
       "status": "ok",
       "errors": 0
     },
@@ -108,17 +131,27 @@
       "name": "key-development-3",
       "schedule": "1:00 AM daily",
       "id": "b0fd7e8d",
-      "lastRun": "2026-06-27T17:00:00Z",
-      "nextRun": "2026-06-28T17:00:00Z",
+      "lastRun": "2026-07-25T17:00:00Z",
+      "nextRun": "2026-07-26T17:00:00Z",
       "status": "ok",
       "errors": 0
+    },
+    {
+      "name": "knowledge-organization (CST)",
+      "schedule": "2:00 AM daily CST",
+      "id": "1ea6e3b0",
+      "lastRun": "2026-07-25T18:00:00Z",
+      "nextRun": "2026-07-26T18:00:00Z",
+      "status": "ok",
+      "errors": 0,
+      "model": "glm-5.1"
     },
     {
       "name": "knowledge-organization",
       "schedule": "2:00 AM daily",
       "id": "fd0515b0",
-      "lastRun": "2026-06-27T18:00:00Z",
-      "nextRun": "2026-06-28T18:00:00Z",
+      "lastRun": "2026-07-25T18:00:00Z",
+      "nextRun": "2026-07-26T18:00:00Z",
       "status": "error",
       "errors": 1
     },
@@ -126,17 +159,17 @@
       "name": "project-testing-morning",
       "schedule": "3:00 AM daily",
       "id": "f7510f1f",
-      "lastRun": "2026-06-27T19:00:00Z",
-      "nextRun": "2026-06-28T19:00:00Z",
-      "status": "error",
-      "errors": 1
+      "lastRun": "2026-07-25T19:00:00Z",
+      "nextRun": "2026-07-26T19:00:00Z",
+      "status": "ok",
+      "errors": 0
     },
     {
       "name": "documentation-morning",
       "schedule": "4:00 AM daily",
       "id": "77a5bcc6",
-      "lastRun": "2026-06-27T20:00:00Z",
-      "nextRun": "2026-06-28T20:00:00Z",
+      "lastRun": "2026-07-25T20:00:00Z",
+      "nextRun": "2026-07-26T20:00:00Z",
       "status": "ok",
       "errors": 0
     },
@@ -144,30 +177,41 @@
       "name": "essay-generation-morning",
       "schedule": "5:00 AM daily",
       "id": "686ec55c",
-      "lastRun": "2026-06-27T21:00:00Z",
-      "nextRun": "2026-06-28T21:00:00Z",
+      "lastRun": "2026-07-25T21:00:00Z",
+      "nextRun": "2026-07-26T21:00:00Z",
       "status": "ok",
       "errors": 0
+    },
+    {
+      "name": "essay-generation-morning (CST)",
+      "schedule": "5:00 AM daily CST",
+      "id": "f0362050",
+      "lastRun": "2026-07-25T21:00:00Z",
+      "nextRun": "2026-07-26T21:00:00Z",
+      "status": "ok",
+      "errors": 0,
+      "model": "glm-5.1"
     }
   ],
   "sessions": {
-    "total": 45,
+    "total": 56,
     "model": "glm-5.1",
     "mainSession": {
       "age": "13m ago",
-      "tokens": "151k/205k (74%)",
+      "tokens": "80k/200k (40%)",
+      "model": "glm-5",
       "status": "active"
     },
-    "recentCronSessions": 26,
-    "feishuSession": "15h ago",
-    "wecomSession": "89d ago",
-    "staleSessions": 8
+    "recentCronSessions": 38,
+    "feishuSession": "2d ago",
+    "wecomSession": "117d ago",
+    "staleSessions": 10
   },
   "summary": {
-    "totalCronJobs": 15,
-    "healthy": 12,
-    "errors": 2,
+    "totalCronJobs": 20,
+    "healthy": 18,
+    "errors": 1,
     "running": 1,
-    "lastUpdated": "2026-06-28T06:00:00+08:00"
+    "lastUpdated": "2026-07-26T06:00:00+08:00"
   }
 }
