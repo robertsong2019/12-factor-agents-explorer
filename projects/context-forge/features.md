@@ -95,3 +95,10 @@
 
 ### Documentation Health (Round 10 — 2026-07-24)
 - [x] **F67**: analyzeReadmeHealth() — 10-section README quality analyzer (title/description/install/usage/license/contributing/tests/badges/examples/apiDocs), placeholder content detection, broken markdown link scanner, markdown element stats (headings/codeBlocks/links/images). A-F grading. formatReadmeHealthReport(). ✅ 2026-07-24
+
+### Code Structure (Round 12 — 2026-07-25)
+- [x] **F77**: analyzeCyclomaticComplexity() — per-function cyclomatic complexity: decision-point counting (if/else if, for, while, do, case, catch, ternary ?, &&, ||, ??). 10/15 thresholds, avg/max stats, A-F grading. formatCyclomaticComplexityReport(). ✅ 2026-07-25
+- [x] **F78**: analyzeReturnPaths() — excessive return-statement detection (5+ threshold, 8+ high severity), unreachable code after return. A-F grading. formatReturnPathsReport(). ✅ 2026-07-25
+
+### Code Safety (Round 13 — 2026-07-25)
+- [x] **F79**: analyzeEqualityChecks() — loose equality detector: ==/!= type coercion risk, null/undefined safe pattern detection (low severity), strict comparison counting, A-F grading. formatEqualityChecksReport(). ✅ 2026-07-25

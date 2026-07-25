@@ -10806,6 +10806,158 @@ export function formatReturnPathsReport(result) {
   return report;
 }
 
+export function analyzeEqualityChecks(files = []) {
+  const jsExt = /\.(js|mjs|cjs|ts|tsx|jsx)$/;
+  const issues = [];
+  let strictComparisons = 0;
+  let looseComparisons = 0;
+  let nullSafeLoose = 0;
+
+  // Regex: matches == but NOT ===, >=, <=, =>
+  const looseEqRe = /(?<![<>=!])==(?!=)/g;
+  // Regex: matches != but NOT !==
+  const looseNeqRe = /!=(?!=)/g;
+  // Regex: matches === (strict equals)
+  const strictEqRe = /(?<![<>=!])===(?!=)/g;
+  // Regex: matches !== (strict not-equals)
+  const strictNeqRe = /!==/g;
+
+  for (const file of files) {
+    if (!file.path || !file.content) continue;
+    if (!jsExt.test(file.path)) continue;
+    if (/\.test\.|\.spec\./.test(file.path)) continue;
+
+    const lines = file.content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const code = stripCommentsAndStrings(lines[i]);
+
+      // Count strict comparisons
+      strictComparisons += (code.match(strictEqRe) || []).length;
+      strictComparisons += (code.match(strictNeqRe) || []).length;
+
+      // Find loose == occurrences
+      let match;
+      looseEqRe.lastIndex = 0;
+      while ((match = looseEqRe.exec(code)) !== null) {
+        const startIdx = match.index;
+        const ctxStart = Math.max(0, startIdx - 30);
+        const ctxEnd = Math.min(code.length, startIdx + 30);
+        const context = code.slice(ctxStart, ctxEnd).trim();
+
+        const afterOp = code.slice(startIdx, startIdx + 20);
+        const beforeOp = code.slice(Math.max(0, startIdx - 15), startIdx + 2);
+        const isNullCheck = /==\s*(null|undefined)\b/.test(afterOp) ||
+                           /\b(null|undefined)\s*==/.test(beforeOp);
+
+        looseComparisons++;
+        if (isNullCheck) nullSafeLoose++;
+
+        issues.push({
+          file: file.path,
+          line: i + 1,
+          column: startIdx + 1,
+          operator: '==',
+          suggestion: '===',
+          context,
+          isNullCheck,
+          severity: isNullCheck ? 'low' : 'medium',
+          label: `Use === instead of ==`,
+          desc: isNullCheck
+            ? `Loose == with null/undefined. While often intentional (checks both), prefer explicit === undefined or === null for clarity.`
+            : `Loose == causes type coercion. Use === for strict comparison.`,
+        });
+      }
+
+      // Find loose != occurrences
+      looseNeqRe.lastIndex = 0;
+      while ((match = looseNeqRe.exec(code)) !== null) {
+        const startIdx = match.index;
+        const ctxStart = Math.max(0, startIdx - 30);
+        const ctxEnd = Math.min(code.length, startIdx + 30);
+        const context = code.slice(ctxStart, ctxEnd).trim();
+
+        const afterOp = code.slice(startIdx, startIdx + 20);
+        const beforeOp = code.slice(Math.max(0, startIdx - 15), startIdx + 2);
+        const isNullCheck = /!=\s*(null|undefined)\b/.test(afterOp) ||
+                           /\b(null|undefined)\s*!=/.test(beforeOp);
+
+        looseComparisons++;
+        if (isNullCheck) nullSafeLoose++;
+
+        issues.push({
+          file: file.path,
+          line: i + 1,
+          column: startIdx + 1,
+          operator: '!=',
+          suggestion: '!==',
+          context,
+          isNullCheck,
+          severity: isNullCheck ? 'low' : 'medium',
+          label: `Use !== instead of !=`,
+          desc: isNullCheck
+            ? `Loose != with null/undefined. While often intentional (checks both), prefer explicit !== undefined or !== null for clarity.`
+            : `Loose != causes type coercion. Use !== for strict comparison.`,
+        });
+      }
+    }
+  }
+
+  const totalComparisons = strictComparisons + looseComparisons;
+  const nonNullLoose = looseComparisons - nullSafeLoose;
+
+  let score = 100;
+  score -= nonNullLoose * 4;
+  score -= nullSafeLoose * 1;
+  score = Math.max(0, score);
+
+  const grade = score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : score >= 60 ? 'D' : 'F';
+
+  return {
+    stats: {
+      totalComparisons,
+      looseComparisons,
+      strictComparisons,
+      nullSafeLoose,
+      nonNullLoose,
+    },
+    issues,
+    score,
+    grade,
+  };
+}
+
+export function formatEqualityChecksReport(result) {
+  let report = '## ⚖️ Equality Check Analysis\n\n';
+
+  report += `**Health Score: ${result.score}/100 (${result.grade})**\n\n`;
+
+  report += '### Summary\n\n';
+  report += `- Total comparisons: ${result.stats.totalComparisons}\n`;
+  report += `- Loose (== / !=): ${result.stats.looseComparisons}\n`;
+  report += `- Strict (=== / !==): ${result.stats.strictComparisons}\n`;
+  report += `- Null-safe loose (low severity): ${result.stats.nullSafeLoose}\n`;
+  report += `- Type coercion risk: ${result.stats.nonNullLoose}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Issues Found\n\n';
+    for (const issue of result.issues.slice(0, 30)) {
+      report += `- **${issue.file}:${issue.line}** [${issue.severity}] ${issue.label}`;
+      if (issue.context) {
+        report += ` — \`${issue.context.trim()}\``;
+      }
+      report += '\n';
+    }
+    if (result.issues.length > 30) {
+      report += `- ... and ${result.issues.length - 30} more\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'All equality checks use strict comparison. ✅\n\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
