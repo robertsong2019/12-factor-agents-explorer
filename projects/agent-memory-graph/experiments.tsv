@@ -349,3 +349,5 @@ timestamp	commit	metric	value	status	description
 2026-07-26T21:00:00+08:00	45f3c9f	test_pass_rate	100%	keep	All 4620 passing, 31.00s.
 2026-07-26T21:10:00+08:00	126759b	test_count	4620→4643	keep	Cycle 284: forget_policy() — FSFM 4-category taxonomy (passive_decay/active_deletion/safety_purge/adaptive_reinforcement). Pre-configured policies with overrides. Specialized active_deletion conflict-only processing. +23 tests. Zero regressions. 257th day.
 2026-07-26T21:10:00+08:00	126759b	test_pass_rate	100%	keep	All 4643 passing, 31.25s.
+2026-07-26T21:20:00+08:00	550098b	test_count	4643→4672	keep	Cycle 285: cue_reactivation() + soft_forget() + get_forgotten_nodes(). Oblivion-pattern soft forgetting with cue-based reactivation. JSON-flag forgotten state, keyword/fuzzy/exact matching, weight boost on reactivation. Full lifecycle verified. +29 tests. Zero regressions. 258th day.
+2026-07-26T21:20:00+08:00	550098b	test_pass_rate	100%	keep	All 4672 passing, 31.16s.
