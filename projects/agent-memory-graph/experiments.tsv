@@ -347,3 +347,5 @@ timestamp	commit	metric	value	status	description
 2026-07-26T03:00+08:00	cron-testing	fix flaky test	4572p/1f	4583p/0f	+11 tests, -1 flaky	fixed TestAugZagrebEntropyEdgeAddition (P5 path had float-identical entropy, used star K1,4 instead); added test_visualize_ascii.py (11 new tests for visualize_ascii + shortest_path_undirected) PASS
 2026-07-26T21:00:00+08:00	45f3c9f	test_count	4583→4620	keep	Cycle 283: compute_activation() + apply_decay() — entropy-weighted forgetting. FadeMem adaptive decay × amg entropy framework. FSFM taxonomy recommendations. First entropy-based forgetting. +37 tests. Zero regressions. 256th day.
 2026-07-26T21:00:00+08:00	45f3c9f	test_pass_rate	100%	keep	All 4620 passing, 31.00s.
+2026-07-26T21:10:00+08:00	126759b	test_count	4620→4643	keep	Cycle 284: forget_policy() — FSFM 4-category taxonomy (passive_decay/active_deletion/safety_purge/adaptive_reinforcement). Pre-configured policies with overrides. Specialized active_deletion conflict-only processing. +23 tests. Zero regressions. 257th day.
+2026-07-26T21:10:00+08:00	126759b	test_pass_rate	100%	keep	All 4643 passing, 31.25s.
