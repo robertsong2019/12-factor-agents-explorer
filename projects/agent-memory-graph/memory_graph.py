@@ -11991,6 +11991,113 @@ class MemoryGraph:
             })
         return result
 
+    # ── Security Purge (FSFM Category 3, Research #030) ──────────
+    # Safety-triggered immediate deletion of sensitive/malicious/
+    # privacy-compromising content. Unlike soft_forget, purge is IRREVERSIBLE.
+
+    _SENSITIVE_KINDS = {
+        "sensitive", "credential", "api_key", "token",
+        "personal_data", "malicious", "malware",
+    }
+
+    _SENSITIVE_LABEL_PATTERNS = [
+        "api key", "apikey", "secret", "password", "token",
+        "private key", "ssh key", "access key", "bearer",
+        "credentials", "session id",
+    ]
+
+    def security_purge(self, node_ids: list[str] | None = None,
+                       kinds: list[str] | None = None,
+                       scan_labels: bool = True,
+                       dry_run: bool = False) -> dict:
+        """Irreversibly purge sensitive/malicious nodes.
+
+        FSFM Category 3: safety-triggered forgetting. Unlike soft_forget
+        (reversible) or apply_decay (gradual), this is immediate and
+        permanent.
+
+        Deletion targets (OR'd together):
+          1. Explicit node_ids
+          2. Nodes with matching kinds (default: _SENSITIVE_KINDS)
+          3. Nodes whose labels match _SENSITIVE_LABEL_PATTERNS
+
+        Args:
+            node_ids: Explicit list of node IDs to purge.
+            kinds: Additional kinds to purge (merged with _SENSITIVE_KINDS).
+            scan_labels: If True, scan labels for sensitive patterns.
+            dry_run: Preview without deleting.
+
+        Returns:
+            {purged: int, scanned: int, details: [...], dry_run: bool}
+        """
+        import re
+
+        target_ids = set()
+
+        # 1. Explicit node_ids
+        if node_ids:
+            target_ids.update(node_ids)
+
+        # 2. Sensitive kinds
+        effective_kinds = set(self._SENSITIVE_KINDS)
+        if kinds:
+            effective_kinds.update(kinds)
+
+        kind_rows = self.conn.execute(
+            "SELECT id, label, kind FROM nodes WHERE kind IN (%s)" %
+            ",".join("?" * len(effective_kinds)),
+            tuple(effective_kinds)
+        ).fetchall()
+        for r in kind_rows:
+            target_ids.add(r["id"])
+
+        # 3. Label pattern scan
+        if scan_labels:
+            all_rows = self.conn.execute(
+                "SELECT id, label, kind FROM nodes"
+            ).fetchall()
+            patterns_norm = [
+                p.lower().replace("_", " ").replace("-", " ")
+                for p in self._SENSITIVE_LABEL_PATTERNS
+            ]
+            for r in all_rows:
+                # Normalize label: replace separators with spaces
+                label_norm = r["label"].lower().replace("_", " ").replace("-", " ")
+                if any(p in label_norm for p in patterns_norm):
+                    target_ids.add(r["id"])
+
+        # Execute purge
+        details = []
+        scanned = len(target_ids)
+
+        for nid in target_ids:
+            row = self.conn.execute(
+                "SELECT id, label, kind, weight FROM nodes WHERE id=?",
+                (nid,)
+            ).fetchone()
+            if not row:
+                continue
+
+            details.append({
+                "id": row["id"],
+                "label": row["label"],
+                "kind": row["kind"],
+                "weight": round(row["weight"], 4),
+            })
+
+            if not dry_run:
+                self.delete_node(nid)
+
+        if not dry_run:
+            self.conn.commit()
+
+        return {
+            "purged": len(details),
+            "scanned": scanned,
+            "details": details[:50],  # cap for readability
+            "dry_run": dry_run,
+        }
+
     # ── Neighborhood Agreement (multi-hop divergence) ─────────────
 
     def neighborhood_agreement(self, node_id: str,
