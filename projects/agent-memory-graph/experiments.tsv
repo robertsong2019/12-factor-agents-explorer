@@ -353,3 +353,4 @@ timestamp	commit	metric	value	status	description
 2026-07-26T21:20:00+08:00	550098b	test_pass_rate	100%	keep	All 4672 passing, 31.16s.
 2026-07-26T21:30:00+08:00	1457afb	test_count	4672→4693	keep	Cycle 286: security_purge() — FSCM Category 3 safety-triggered irreversible deletion. Kind-based + label-pattern detection with separator normalization. Custom kind merge. +21 tests. Zero regressions. 259th day.
 2026-07-26T21:30:00+08:00	1457afb	test_pass_rate	100%	keep	All 4693 passing, 30.83s.
+287	entropy_guided_query_route()	entropy-aware retrieval (low=drift/high=basic)	52	4745	256	2026-07-26
