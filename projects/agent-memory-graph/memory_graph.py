@@ -6777,6 +6777,218 @@ class MemoryGraph:
                 tsallis /= s_max
         return tsallis
 
+    # ── Cycle 288: Rényi entropy + entropy_distance (JSD) ─────────────
+
+    def renyi_entropy(self, alpha: float = 2.0, normalized: bool = True,
+                      index: str = "sombor") -> Optional[float]:
+        """Rényi generalized entropy of degree-based edge contributions.
+
+        For entropic order *α* and edge contributions c_e from a chosen
+        degree-based topological index, the Rényi entropy is::
+
+            H_α = 1/(1−α) · ln( Σ p_e^α ),   α ≠ 1
+            H_1 = −Σ p_e · ln(p_e)            (Shannon)
+
+        The Rényi entropy is the other major generalization of Shannon
+        entropy (alongside Tsallis).  Key relationships:
+
+        - α → 1: converges to Shannon entropy
+        - α = 0: ln(m) (Hartley entropy — counts edges)
+        - α = 2: collision entropy = −ln(Σ p_e²)
+        - α → ∞: min-entropy = −ln(max(p_e))
+
+        **Rényi vs Tsallis:**
+
+            H_α^Rényi = ln( (α−1)·S_q^Tsallis + 1 ) / (1−α)
+
+        Equivalently: S_q^Tsallis = (exp((1−α)·H_α^Rényi) − 1) / (1−α)
+
+        Both are valid generalizations; Rényi is *extensive* (additive
+        for independent systems) while Tsallis is non-extensive.
+
+        The *index* parameter selects which degree-based contributions
+        to use (same 7 options as ``tsallis_entropy``).
+
+        Args:
+            alpha: entropic order (α ≠ 1; use dedicated methods for Shannon).
+               Defaults to 2.0.
+            normalized: divide by ln(m) for [0,1] range.
+            index: which degree-based contributions to use.
+
+        Returns:
+            float ≥ 0, or ``None`` for < 1 edge.
+        """
+        if alpha == 1.0:
+            raise ValueError("alpha=1 is Shannon entropy; use *_entropy() methods instead")
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds <= 0 or dt <= 0:
+                continue
+            if index == "sombor":
+                contributions.append(math.sqrt(ds * ds + dt * dt))
+            elif index == "reduced_sombor":
+                contributions.append(math.sqrt((ds - 1) ** 2 + (dt - 1) ** 2))
+            elif index == "randic":
+                contributions.append(1.0 / math.sqrt(ds * dt))
+            elif index == "zagreb_m1":
+                contributions.append(float(ds + dt))
+            elif index == "abc":
+                num = ds + dt - 2
+                den = ds * dt
+                if num > 0 and den > 0:
+                    contributions.append(math.sqrt(num / den))
+            elif index == "ga":
+                contributions.append(2.0 * math.sqrt(ds * dt) / (ds + dt))
+            elif index == "augmented_zagreb":
+                az_denom = ds + dt - 2
+                if az_denom > 0:
+                    contributions.append((ds * dt / az_denom) ** 3)
+            else:
+                raise ValueError(f"unknown index '{index}'; choose from "
+                                 f"sombor/reduced_sombor/randic/zagreb_m1/abc/ga/augmented_zagreb")
+        if not contributions:
+            return None
+        total = sum(contributions)
+        if total <= 0:
+            return None
+        m = len(contributions)
+        probs = [c / total for c in contributions]
+        # Rényi entropy: H_α = 1/(1−α) · ln(Σ p^α)
+        sum_pa = sum(p ** alpha for p in probs)
+        if sum_pa <= 0:
+            return None
+        renyi = math.log(sum_pa) / (1.0 - alpha)
+        if normalized and m > 1:
+            # Maximum Rényi entropy: uniform distribution → ln(m)
+            # H_α^max = 1/(1−α) · ln(m · (1/m)^α) = 1/(1−α) · ln(m^(1−α)) = ln(m)
+            renyi /= math.log(m)
+        return renyi
+
+    def entropy_distance(self, other: "MemoryGraph", index: str = "sombor") -> Optional[float]:
+        """Jensen-Shannon divergence between two graphs' edge-contribution distributions.
+
+        For a chosen degree-based *index*, computes the normalized
+        probability distributions *P* (self) and *Q* (other), then
+        calculates the Jensen-Shannon divergence::
+
+            M = ½(P + Q)
+            JSD = ½·KL(P‖M) + ½·KL(Q‖M)
+
+        where KL(A‖B) = Σ a·ln(a/b) is the Kullback-Leibler divergence.
+
+        **Properties:**
+        - Symmetric: JSD(A, B) = JSD(B, A)
+        - Bounded: 0 ≤ JSD ≤ ln(2) ≈ 0.693
+        - JSD(A, A) = 0 (self-distance is zero)
+        - Normalized output in [0, 1] (divided by ln 2)
+        - JSD = 0 iff the edge-contribution distributions are identical
+
+        The *index* parameter selects which degree-based contributions
+        to use (same 7 options as ``tsallis_entropy``).
+
+        For graphs with different edge counts, the distributions are
+        naturally over different support sizes.  This method handles
+        that by computing probabilities over the *union* of normalized
+        contribution values (binned to 6 decimal places), assigning
+        zero probability to missing categories.
+
+        Args:
+            other: the other ``MemoryGraph`` to compare against.
+            index: which degree-based contributions to use.
+
+        Returns:
+            float in [0, 1], or ``None`` if either graph has < 1 edge.
+        """
+        dist_a = self._contribution_distribution(index)
+        dist_b = other._contribution_distribution(index)
+        if dist_a is None or dist_b is None:
+            return None
+        # Build aligned distributions over the union of keys
+        keys = set(dist_a.keys()) | set(dist_b.keys())
+        pa = [dist_a.get(k, 0.0) for k in keys]
+        qb = [dist_b.get(k, 0.0) for k in keys]
+        # Jensen-Shannon divergence
+        jsd = 0.0
+        for p, q in zip(pa, qb):
+            m = 0.5 * (p + q)
+            if p > 0 and m > 0:
+                jsd += 0.5 * p * math.log(p / m)
+            if q > 0 and m > 0:
+                jsd += 0.5 * q * math.log(q / m)
+        # Normalize to [0, 1] by dividing by ln(2)
+        ln2 = math.log(2)
+        if ln2 > 0:
+            jsd /= ln2
+        # Clamp to handle floating-point overshoot
+        return max(0.0, min(1.0, jsd))
+
+    def _contribution_distribution(self, index: str = "sombor") -> Optional[dict]:
+        """Return normalized degree-based contribution distribution.
+
+        Maps each unique (rounded) contribution value to its probability.
+        Internal helper for ``entropy_distance``.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds <= 0 or dt <= 0:
+                continue
+            if index == "sombor":
+                contributions.append(math.sqrt(ds * ds + dt * dt))
+            elif index == "reduced_sombor":
+                contributions.append(math.sqrt((ds - 1) ** 2 + (dt - 1) ** 2))
+            elif index == "randic":
+                contributions.append(1.0 / math.sqrt(ds * dt))
+            elif index == "zagreb_m1":
+                contributions.append(float(ds + dt))
+            elif index == "abc":
+                num = ds + dt - 2
+                den = ds * dt
+                if num > 0 and den > 0:
+                    contributions.append(math.sqrt(num / den))
+            elif index == "ga":
+                contributions.append(2.0 * math.sqrt(ds * dt) / (ds + dt))
+            elif index == "augmented_zagreb":
+                az_denom = ds + dt - 2
+                if az_denom > 0:
+                    contributions.append((ds * dt / az_denom) ** 3)
+            else:
+                raise ValueError(f"unknown index '{index}'")
+        if not contributions:
+            return None
+        total = sum(contributions)
+        if total <= 0:
+            return None
+        # Group by rounded contribution value and normalize
+        dist: dict[float, float] = {}
+        for c in contributions:
+            key = round(c / total, 6)
+            dist[key] = dist.get(key, 0.0) + (c / total)
+        return dist
+
     # ── Cycle 282: Augmented Zagreb entropy + edge-betweenness entropy ─
 
     def augmented_zagreb_entropy(self, normalized: bool = True) -> Optional[float]:
@@ -6884,6 +7096,148 @@ class MemoryGraph:
             return None
         # Filter zero-betweenness edges (can occur in disconnected graphs)
         values = [v for v in eb.values() if v > 0]
+        if not values:
+            return None
+        total = sum(values)
+        if total <= 0:
+            return None
+        m = len(values)
+        probs = [v / total for v in values]
+        entropy = 0.0
+        for p in probs:
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
+    def closeness_vitality_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised closeness vitality values.
+
+        Closeness vitality measures how much each node contributes to
+        the overall reachability of the graph — it is the change in
+        the Wiener index when that node (and its incident edges) is
+        removed.
+
+        For each node *v* with closeness vitality *cv_v*:
+
+        ::
+
+            p_v = cv_v / Σ cv_v   (using |cv_v| to handle negatives)
+            H_CV = −Σ p_v · ln(p_v)
+
+        Because closeness vitality can be negative (removing a central
+        node from a dense graph may *decrease* total distances by
+        disconnecting it), we use absolute values for the probability
+        distribution.
+
+        **Properties:**
+        - Regular graphs (K_n, C_n): all vitalities equal → H = 1.0
+        - Path P_n: endpoints vs centre have different vitalities → H < 1.0
+        - Star K_{1,k}: centre has very different vitality from leaves → H < 1.0
+        - Disconnected graphs: vitality may be 0 for all nodes → None
+
+        Args:
+            normalized: divide by ln(n) for [0, 1] range.
+
+        Returns:
+            float, or ``None`` for < 2 nodes or all-zero vitalities.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        n = len(rows)
+        if n < 2:
+            return None
+        vitalities: list[float] = []
+        for r in rows:
+            nid = str(r["id"])
+            cv = self.closeness_vitality(nid)
+            if cv is not None:
+                vitalities.append(abs(cv))
+        # Filter zero vitalities (can occur in disconnected graphs)
+        values = [v for v in vitalities if v > 0]
+        if not values:
+            return None
+        total = sum(values)
+        if total <= 0:
+            return None
+        m = len(values)
+        probs = [v / total for v in values]
+        entropy = 0.0
+        for p in probs:
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
+    def eigenvector_centrality_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised eigenvector centrality values.
+
+        Eigenvector centrality measures the influence of a node in a
+        network — a node is important if it is connected to other
+        important nodes.  This entropy captures how evenly "influence"
+        is distributed across the graph.
+
+        For each node *v* with eigenvector centrality *ec_v*:
+
+        ::
+
+            p_v = ec_v / Σ ec_v
+            H_EC = −Σ p_v · ln(p_v)
+
+        **Properties:**
+        - Regular graphs (K_n, C_n): all centralities equal → H = 1.0
+        - Star K_{1,k}: centre dominates → H significantly < 1.0
+        - Path P_n: endpoints have low centrality → H < 1.0
+        - Disconnected graphs: isolated nodes get centrality ≈ 0,
+          effectively excluded from the distribution
+
+        This is the second centrality-based entropy (after
+        ``edge_betweenness_entropy``), extending the structural entropy
+        category to node-level spectral importance.
+
+        Args:
+            normalized: divide by ln(n) for [0, 1] range.
+
+        Returns:
+            float, or ``None`` for < 2 nodes or no positive centralities.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        n = len(rows)
+        if n < 2:
+            return None
+        # Build symmetric (undirected) adjacency for power iteration
+        node_ids = [str(r["id"]) for r in rows]
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        adj_sym: dict[int, set[int]] = {i: set() for i in range(n)}
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = str(e["source"]), str(e["target"])
+            if s in idx and t in idx:
+                adj_sym[idx[s]].add(idx[t])
+                adj_sym[idx[t]].add(idx[s])
+        # Power iteration on (A + I) to handle bipartite graphs
+        # where eigenvalues come in ±λ pairs (stars, paths, …).
+        # Adding I shifts spectrum to λ+1 ≥ 0, preserving eigenvectors
+        # while eliminating sign oscillation.
+        import random
+        random.seed(42)
+        v = [1.0 / math.sqrt(n)] * n
+        for _ in range(500):
+            new_v = [v[i] for i in range(n)]  # +I contribution
+            for i in range(n):
+                for j in adj_sym[i]:
+                    new_v[i] += v[j]
+            norm = math.sqrt(sum(x * x for x in new_v))
+            if norm == 0:
+                break
+            new_v = [x / norm for x in new_v]
+            diff = sum(abs(new_v[i] - v[i]) for i in range(n))
+            v = new_v
+            if diff < 1e-10:
+                break
+        # Eigenvector centrality values (all non-negative for connected
+        # non-bipartite graphs; use abs for safety)
+        values = [abs(v[i]) for i in range(n) if abs(v[i]) > 1e-15]
         if not values:
             return None
         total = sum(values)
