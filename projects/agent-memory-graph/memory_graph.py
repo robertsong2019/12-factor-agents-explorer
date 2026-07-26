@@ -11389,6 +11389,265 @@ class MemoryGraph:
             "dry_run": dry_run,
         }
 
+    # ── Entropy-Weighted Forgetting (Research #030) ──────────────
+    # Inspired by: FadeMem (arXiv:2601.18642) dual-layer adaptive decay,
+    # Oblivion (arXiv:2603.19550) cue-reactivated activation,
+    # FSFM (arXiv:2604.20300) four-category forgetting taxonomy.
+    #
+    # Core insight: amg's entropy metrics are direct forgetting signals.
+    # Low entropy = redundant/predictable → faster decay.
+    # High entropy = information-rich → preservation.
+
+    _ENTROPY_FLOOR = 0.3       # below = strong decay signal
+    _ENTROPY_CEILING = 0.8     # above = preservation signal
+    _ACCESS_BOOST = 0.2        # reinforcement per access
+    _CONFLICT_PENALTY = 0.5    # penalty for unresolved conflicts
+
+    def compute_activation(self, node_id: str,
+                           entropy_profile: dict | None = None,
+                           half_life_days: float = 7.0) -> dict | None:
+        """Compute entropy-weighted activation score for a memory node.
+
+        Combines FadeMem's adaptive exponential decay with amg's entropy
+        framework to produce a [0, 1] activation score and a forgetting
+        recommendation.
+
+        Formula::
+
+            A = base_decay × entropy_multiplier + access_boost - conflict_penalty
+
+        where:
+          - base_decay = exp(-λ × Δt), λ = ln(2) / half_life_days
+          - entropy_multiplier depends on node's local entropy contribution
+          - access_boost accounts for access frequency and recency
+          - conflict_penalty accounts for unresolved contradictions
+
+        Args:
+            node_id: Target node.
+            entropy_profile: Pre-computed entropy_profile() dict. If None,
+                uses a degree-based proxy.
+            half_life_days: Activation half-life (default 7 days).
+
+        Returns:
+            {activation, recommendation, reason, factors} or None if
+            node not found.
+        """
+        import math
+        row = self.conn.execute(
+            "SELECT id, kind, weight, accessed, created FROM nodes WHERE id=?",
+            (node_id,)
+        ).fetchone()
+        if not row:
+            return None
+
+        now = time.time()
+        age_days = (now - row["created"]) / 86400.0
+        last_access_days = (now - row["accessed"]) / 86400.0
+
+        # 1. Base exponential decay (Oblivion formula)
+        lam = math.log(2) / half_life_days
+        base_decay = math.exp(-lam * age_days)
+
+        # 2. Entropy modulation (amg innovation)
+        # Use node degree as entropy proxy if no profile given
+        if entropy_profile and "per_node" in (entropy_profile or {}):
+            node_entropy = entropy_profile.get("per_node", {}).get(
+                node_id, {}).get("shannon", 0.5)
+        else:
+            # Degree-based proxy: normalized Shannon of edge weights
+            edges = self.conn.execute(
+                "SELECT weight FROM edges WHERE source=? OR target=?",
+                (node_id, node_id)
+            ).fetchall()
+            if not edges:
+                node_entropy = 0.0  # Isolated = lowest entropy
+            else:
+                weights = [e["weight"] for e in edges]
+                total = sum(weights)
+                if total <= 0:
+                    node_entropy = 0.0
+                else:
+                    probs = [w / total for w in weights]
+                    node_entropy = -sum(p * math.log(p + 1e-12)
+                                        for p in probs if p > 0)
+                    # Normalize by max entropy
+                    n = len(weights)
+                    max_h = math.log(n) if n > 1 else 1.0
+                    node_entropy = node_entropy / max_h if max_h > 0 else 0.0
+
+        if node_entropy < self._ENTROPY_FLOOR:
+            entropy_multiplier = 0.5 + node_entropy  # [0.5, 0.8)
+        elif node_entropy > self._ENTROPY_CEILING:
+            entropy_multiplier = 1.0 + (node_entropy -
+                                       self._ENTROPY_CEILING) * 2  # [1.0, 1.4+)
+        else:
+            entropy_multiplier = 0.8 + (node_entropy - 0.3) * 0.4  # [0.8, 1.0]
+
+        # 3. Access reinforcement (Oblivion's Rᵢ terms)
+        # Count in-edges as proxy for access frequency
+        access_count = self.conn.execute(
+            "SELECT COUNT(*) as c FROM edges WHERE target=?",
+            (node_id,)
+        ).fetchone()["c"]
+        access_boost = 0.0
+        if access_count > 0:
+            access_boost = (self._ACCESS_BOOST
+                             * min(access_count / 5.0, 1.0)
+                             * math.exp(-lam * last_access_days))
+
+        # 4. Conflict penalty (check for contradicting edges)
+        conflict_count = self.conn.execute(
+            "SELECT COUNT(*) as c FROM edges WHERE "
+            "(source=? OR target=?) AND relation='contradicts'",
+            (node_id, node_id)
+        ).fetchone()["c"]
+        conflict_penalty = 0.0
+        if conflict_count > 0:
+            conflict_penalty = (self._CONFLICT_PENALTY
+                                * min(conflict_count * 0.1, 0.3))
+
+        # Final activation
+        activation = max(0.0, min(1.0,
+            base_decay * entropy_multiplier + access_boost - conflict_penalty
+        ))
+
+        # Recommendation (FSFM taxonomy)
+        if activation < 0.1:
+            recommendation = "DELETE"
+            reason = f"Activation {activation:.3f} below deletion threshold"
+        elif activation < 0.25:
+            recommendation = "ARCHIVE"
+            reason = f"Low activation ({activation:.3f}), entropy={node_entropy:.3f}"
+        elif activation < 0.4 and node_entropy < self._ENTROPY_FLOOR:
+            recommendation = "CONSOLIDATE"
+            reason = f"Low entropy ({node_entropy:.3f}) + moderate decay"
+        elif conflict_count > 0 and activation < 0.5:
+            recommendation = "RESOLVE_OR_DELETE"
+            reason = f"{conflict_count} unresolved conflicts + decay"
+        else:
+            recommendation = "KEEP"
+            reason = f"Healthy activation ({activation:.3f})"
+
+        return {
+            "node_id": node_id,
+            "activation": round(activation, 4),
+            "recommendation": recommendation,
+            "reason": reason,
+            "factors": {
+                "base_decay": round(base_decay, 4),
+                "entropy": round(node_entropy, 4),
+                "entropy_multiplier": round(entropy_multiplier, 4),
+                "access_boost": round(access_boost, 4),
+                "conflict_penalty": round(conflict_penalty, 4),
+                "age_days": round(age_days, 2),
+                "last_access_days": round(last_access_days, 2),
+                "access_count": access_count,
+                "conflict_count": conflict_count,
+            },
+        }
+
+    def apply_decay(self, half_life_days: float = 7.0,
+                    kinds: list[str] | None = None,
+                    dry_run: bool = False,
+                    archive_threshold: float = 0.25,
+                    delete_threshold: float = 0.1) -> dict:
+        """Apply entropy-weighted decay to all (or filtered) nodes.
+
+        Unlike ``memory_decay()`` (pure time-based), this uses
+        ``compute_activation()`` to combine entropy, access patterns,
+        and conflicts into a unified forgetting signal.
+
+        Nodes below ``delete_threshold`` are deleted entirely.
+        Nodes below ``archive_threshold`` have weight reduced by 50%.
+        Nodes at or above ``archive_threshold`` get a 10% weight reduction
+        (gentle aging).
+
+        Args:
+            half_life_days: Activation half-life (default 7 days).
+            kinds: Only process these kinds (None = all).
+            dry_run: Preview without modifying.
+            archive_threshold: Below this = significant weight cut.
+            delete_threshold: Below this = node deletion.
+
+        Returns:
+            {scanned, kept, archived, deleted, activations}
+        """
+        rows = self.conn.execute(
+            "SELECT id, kind, weight FROM nodes"
+        ).fetchall()
+
+        scanned = 0
+        kept = 0
+        archived = 0
+        deleted = 0
+        weight_before = 0.0
+        weight_after = 0.0
+        recommendations = {"KEEP": 0, "ARCHIVE": 0, "CONSOLIDATE": 0,
+                           "DELETE": 0, "RESOLVE_OR_DELETE": 0}
+        details_deleted = []
+
+        for r in rows:
+            if kinds and r["kind"] not in kinds:
+                continue
+
+            scanned += 1
+            result = self.compute_activation(r["id"],
+                                             half_life_days=half_life_days)
+            if not result:
+                continue
+
+            rec = result["recommendation"]
+            recommendations[rec] = recommendations.get(rec, 0) + 1
+            act = result["activation"]
+            old_w = r["weight"]
+            weight_before += old_w
+
+            if act < delete_threshold or rec == "DELETE":
+                if not dry_run:
+                    self.delete_node(r["id"])
+                deleted += 1
+                details_deleted.append({
+                    "id": r["id"], "activation": act,
+                    "old_weight": old_w,
+                })
+                weight_after += 0.0
+            elif act < archive_threshold or rec in ("ARCHIVE", "CONSOLIDATE"):
+                new_w = old_w * 0.5
+                if not dry_run:
+                    self.conn.execute(
+                        "UPDATE nodes SET weight=? WHERE id=?",
+                        (new_w, r["id"]))
+                archived += 1
+                weight_after += new_w
+            else:
+                # Gentle aging for kept nodes
+                new_w = old_w * 0.9
+                if not dry_run:
+                    self.conn.execute(
+                        "UPDATE nodes SET weight=? WHERE id=?",
+                        (new_w, r["id"]))
+                kept += 1
+                weight_after += new_w
+
+        if not dry_run:
+            self.conn.commit()
+
+        return {
+            "scanned": scanned,
+            "kept": kept,
+            "archived": archived,
+            "deleted": deleted,
+            "recommendations": recommendations,
+            "weight_before": round(weight_before, 4),
+            "weight_after": round(weight_after, 4),
+            "weight_lost": round(weight_before - weight_after, 4),
+            "delete_threshold": delete_threshold,
+            "archive_threshold": archive_threshold,
+            "half_life_days": half_life_days,
+            "dry_run": dry_run,
+            "details_deleted": details_deleted[:10],
+        }
+
     # ── Neighborhood Agreement (multi-hop divergence) ─────────────
 
     def neighborhood_agreement(self, node_id: str,
