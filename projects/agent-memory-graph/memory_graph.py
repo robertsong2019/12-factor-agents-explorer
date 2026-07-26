@@ -11648,6 +11648,194 @@ class MemoryGraph:
             "details_deleted": details_deleted[:10],
         }
 
+    # ── Forgetting Policy Selector (FSFM Taxonomy, Research #030) ──
+
+    _FSFM_POLICIES = {
+        "passive_decay": {
+            "description": "Exponential time-based decay modulated by access frequency",
+            "half_life_days": 7.0,
+            "min_weight": 0.01,
+            "delete_threshold": 0.05,
+            "archive_threshold": 0.2,
+        },
+        "active_deletion": {
+            "description": "Remove outdated/contradicted entries via conflict resolution",
+            "half_life_days": 14.0,  # Slower decay, focus on conflicts
+            "min_weight": 0.05,
+            "delete_threshold": 0.15,
+            "archive_threshold": 0.3,
+            "require_conflict": True,
+        },
+        "safety_purge": {
+            "description": "Force-purge sensitive/malicious/privacy-compromising content",
+            "half_life_days": 1.0,  # Aggressive
+            "min_weight": 0.0,
+            "delete_threshold": 0.5,  # Delete most things
+            "archive_threshold": 0.7,
+            "kinds": ["sensitive", "malicious", "expired_credential"],
+        },
+        "adaptive_reinforcement": {
+            "description": "RL-inspired: reinforce valuable memories, let others fade",
+            "half_life_days": 30.0,  # Slow — only very old fades
+            "min_weight": 0.1,
+            "delete_threshold": 0.02,
+            "archive_threshold": 0.1,
+        },
+    }
+
+    def forget_policy(self, policy: str = "passive_decay",
+                      dry_run: bool = False,
+                      kinds: list[str] | None = None,
+                      **overrides) -> dict:
+        """Apply a named forgetting policy from the FSFM taxonomy.
+
+        FSFM (arXiv:2604.20300) defines four forgetting categories:
+          1. **passive_decay** — Ebbinghaus-curve exponential decay
+          2. **active_deletion** — conflict/outdated content removal
+          3. **safety_purge** — sensitive data forced purge
+          4. **adaptive_reinforcement** — RL-inspired selective retention
+
+        Each policy pre-configures half_life_days, thresholds, and optional
+        kind filters. Overrides allow fine-tuning.
+
+        Args:
+            policy: One of 'passive_decay', 'active_deletion',
+                    'safety_purge', 'adaptive_reinforcement'.
+            dry_run: Preview without modifying.
+            kinds: Additional kind filter (merged with policy kinds).
+            **overrides: Override any policy parameter (half_life_days,
+                        delete_threshold, etc.).
+
+        Returns:
+            {policy, scanned, kept, archived, deleted, recommendations, ...}
+        """
+        if policy not in self._FSFM_POLICIES:
+            valid = ", ".join(self._FSFM_POLICIES.keys())
+            raise ValueError(
+                f"Unknown policy '{policy}'. Valid: {valid}")
+
+        config = dict(self._FSFM_POLICIES[policy])  # copy
+        config.update(overrides)
+
+        # Merge kind filters
+        policy_kinds = config.pop("kinds", None)
+        require_conflict = config.pop("require_conflict", False)
+        config_desc = config.pop("description", "")
+
+        effective_kinds = set()
+        if policy_kinds:
+            effective_kinds.update(policy_kinds)
+        if kinds:
+            effective_kinds.update(kinds)
+        effective_kinds = list(effective_kinds) if effective_kinds else None
+
+        # For active_deletion, filter to conflicted nodes only
+        if require_conflict:
+            return self._forget_active_deletion(
+                dry_run=dry_run,
+                half_life_days=config.get("half_life_days", 14.0),
+                delete_threshold=config.get("delete_threshold", 0.15),
+                archive_threshold=config.get("archive_threshold", 0.3),
+            )
+
+        result = self.apply_decay(
+            half_life_days=config.get("half_life_days", 7.0),
+            kinds=effective_kinds,
+            dry_run=dry_run,
+            archive_threshold=config.get("archive_threshold", 0.25),
+            delete_threshold=config.get("delete_threshold", 0.1),
+        )
+        result["policy"] = policy
+        result["policy_description"] = config_desc
+        return result
+
+    def _forget_active_deletion(self, dry_run: bool = False,
+                                half_life_days: float = 14.0,
+                                delete_threshold: float = 0.15,
+                                archive_threshold: float = 0.3) -> dict:
+        """Active deletion: process only nodes with contradiction edges."""
+        # Find nodes involved in conflicts
+        conflict_rows = self.conn.execute(
+            "SELECT DISTINCT source AS id FROM edges "
+            "WHERE relation='contradicts' "
+            "UNION "
+            "SELECT DISTINCT target AS id FROM edges "
+            "WHERE relation='contradicts'"
+        ).fetchall()
+
+        scanned = len(conflict_rows)
+        kept = 0
+        archived = 0
+        deleted = 0
+        recommendations = {"KEEP": 0, "ARCHIVE": 0, "CONSOLIDATE": 0,
+                           "DELETE": 0, "RESOLVE_OR_DELETE": 0}
+        weight_before = 0.0
+        weight_after = 0.0
+        details_deleted = []
+
+        for r in conflict_rows:
+            node_id = r["id"]
+            result = self.compute_activation(node_id,
+                                             half_life_days=half_life_days)
+            if not result:
+                continue
+
+            rec = result["recommendation"]
+            recommendations[rec] = recommendations.get(rec, 0) + 1
+            act = result["activation"]
+
+            row = self.conn.execute(
+                "SELECT weight FROM nodes WHERE id=?", (node_id,)
+            ).fetchone()
+            if not row:
+                continue
+            old_w = row["weight"]
+            weight_before += old_w
+
+            if act < delete_threshold:
+                if not dry_run:
+                    self.delete_node(node_id)
+                deleted += 1
+                details_deleted.append({
+                    "id": node_id, "activation": act,
+                    "old_weight": old_w,
+                })
+                weight_after += 0.0
+            elif act < archive_threshold:
+                new_w = old_w * 0.5
+                if not dry_run:
+                    self.conn.execute(
+                        "UPDATE nodes SET weight=? WHERE id=?",
+                        (new_w, node_id))
+                archived += 1
+                weight_after += new_w
+            else:
+                new_w = old_w * 0.9
+                if not dry_run:
+                    self.conn.execute(
+                        "UPDATE nodes SET weight=? WHERE id=?",
+                        (new_w, node_id))
+                kept += 1
+                weight_after += new_w
+
+        if not dry_run:
+            self.conn.commit()
+
+        return {
+            "policy": "active_deletion",
+            "policy_description": "Remove outdated/contradicted entries",
+            "scanned": scanned,
+            "kept": kept,
+            "archived": archived,
+            "deleted": deleted,
+            "recommendations": recommendations,
+            "weight_before": round(weight_before, 4),
+            "weight_after": round(weight_after, 4),
+            "weight_lost": round(weight_before - weight_after, 4),
+            "dry_run": dry_run,
+            "details_deleted": details_deleted[:10],
+        }
+
     # ── Neighborhood Agreement (multi-hop divergence) ─────────────
 
     def neighborhood_agreement(self, node_id: str,
