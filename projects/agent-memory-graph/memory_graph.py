@@ -29386,6 +29386,191 @@ class MemoryGraph:
 
 
     # ----------------------------------------------------------------
+    # Entropy-Guided Query Routing (Entropy-Guided Branching)
+    # ----------------------------------------------------------------
+
+    _ENTROPY_ROUTE_BINS = {
+        # Normalised Shannon entropy → recommended retrieval mode.
+        #
+        # Shannon entropy is maximised when all edge contributions are
+        # equal (regular graphs → entropy = 1.0).  Low entropy means
+        # a few edges dominate (hubs, bridges → heterogeneous).
+        #
+        # Low entropy (heterogeneous structure) → drift multi-hop:
+        #   structural complexity requires exploratory traversal.
+        # Medium entropy → hybrid SimHash + graph.
+        # High entropy (uniform structure) → basic keyword lookup:
+        #   regular graphs are simple to search.
+        "low":    (0.0, 0.33, "drift"),
+        "medium": (0.33, 0.67, "hybrid"),
+        "high":   (0.67, 1.01, "basic"),
+    }
+
+    def entropy_guided_query_route(
+        self,
+        question: str,
+        *,
+        limit: int = 10,
+        entropy_index: str = "sombor",
+        detail: bool = False,
+        override_heuristic: bool = True,
+    ) -> dict:
+        """Query with entropy-aware strategy selection.
+
+        Uses graph topology entropy to determine the optimal retrieval
+        strategy, complementing the keyword-based ``_route_query``
+        heuristic with structural awareness.
+
+        **Core idea** (Research #028: Entropy-Guided Branching):
+
+        - **High entropy** (uniform graph structure, all edges similar)
+          → ``basic`` keyword lookup.  The graph is regular enough that
+          direct search suffices.
+        - **Medium entropy** → ``hybrid`` SimHash + graph.  Moderate
+          structural variation benefits from binary pre-filtering.
+        - **Low entropy** (heterogeneous structure with hubs, clusters,
+          bridges) → ``drift`` multi-hop.  Structural complexity requires
+          exploratory traversal to capture multi-hop relationships.
+
+        The entropy is computed from the chosen degree-based index
+        (default: Sombor).  The profile range and std are also reported
+        for transparency.
+
+        When ``override_heuristic`` is True (default), the entropy-based
+        mode takes precedence over the keyword heuristic — useful for
+        graphs where structure matters more than question phrasing.
+        When False, the heuristic runs first and entropy only adjusts
+        the mode if the graph is extremely heterogeneous (top 10%).
+
+        Args:
+            question:            Natural-language query.
+            limit:               Max results.
+            entropy_index:       Which entropy index to use for routing
+                                 (``"sombor"``, ``"randic"``, ``"abc"``,
+                                 ``"ga"``, ``"zagreb_m1"``,
+                                 ``"augmented_zagreb"``, ``"edge_betweenness"``).
+            detail:              Include full node details.
+            override_heuristic:  If True, entropy determines the mode.
+
+        Returns:
+            ``{question, mode, entropy_mode, heuristic_mode, entropy_analysis,
+            results, stats}``
+        """
+        import time as _time
+
+        # --- 1. Compute entropy -------------------------------
+        index_map = {
+            "sombor":            self.sombor_entropy,
+            "reduced_sombor":    self.reduced_sombor_entropy,
+            "randic":            self.randic_entropy,
+            "zagreb_m1":         self.zagreb_m1_entropy,
+            "abc":               self.abc_entropy,
+            "ga":                self.ga_entropy,
+            "augmented_zagreb":  self.augmented_zagreb_entropy,
+            "edge_betweenness":  self.edge_betweenness_entropy,
+        }
+        entropy_fn = index_map.get(entropy_index)
+        if entropy_fn is None:
+            raise ValueError(
+                f"Unknown entropy_index '{entropy_index}'. "
+                f"Choose from: {', '.join(index_map)}"
+            )
+
+        entropy_val = entropy_fn(normalized=True)
+        profile = self.entropy_profile()
+
+        # --- 2. Classify into bin -----------------------------
+        if entropy_val is None:
+            # Not enough edges for entropy — fall back to heuristic
+            entropy_val = 0.0
+            entropy_bin = "low"
+            bin_reason = "insufficient edges for entropy → default low"
+        else:
+            for bname, (lo, hi, _) in self._ENTROPY_ROUTE_BINS.items():
+                if lo <= entropy_val < hi:
+                    entropy_bin = bname
+                    bin_reason = (
+                        f"{entropy_index} entropy {entropy_val:.4f} "
+                        f"∈ [{lo:.2f}, {hi:.2f}) → {bname}"
+                    )
+                    break
+            else:
+                entropy_bin = "high"
+                bin_reason = f"{entropy_index} entropy {entropy_val:.4f} → high"
+
+        _, _, entropy_mode = self._ENTROPY_ROUTE_BINS[entropy_bin]
+
+        # --- 3. Get heuristic mode for comparison -------------
+        heuristic_mode, heuristic_rationale = self._route_query(question)
+
+        # --- 4. Decide final mode ----------------------------
+        if override_heuristic:
+            final_mode = entropy_mode
+            decision = (
+                f"entropy overrides heuristic: {entropy_bin} "
+                f"({bin_reason})"
+            )
+        else:
+            # Only override if entropy is very low (heterogeneous) and
+            # heuristic picked a simple mode that misses complexity
+            if entropy_bin == "low" and heuristic_mode in ("basic", "local"):
+                final_mode = entropy_mode
+                decision = (
+                    f"entropy escalation: low entropy (heterogeneous) "
+                    f"overrides heuristic '{heuristic_mode}' → '{entropy_mode}'"
+                )
+            else:
+                final_mode = heuristic_mode
+                decision = (
+                    f"heuristic kept: '{heuristic_mode}' "
+                    f"(entropy={entropy_bin}, not extreme enough to override)"
+                )
+
+        # --- 5. Execute query --------------------------------
+        t0 = _time.perf_counter()
+        raw = self.query(
+            question, mode=final_mode, limit=limit, detail=detail,
+        )
+        elapsed_ms = (_time.perf_counter() - t0) * 1000
+
+        # --- 6. Build entropy analysis report ----------------
+        entropy_analysis = {
+            "index": entropy_index,
+            "value": round(entropy_val, 6),
+            "bin": entropy_bin,
+            "bin_reason": bin_reason,
+            "recommended_mode": entropy_mode,
+            "heuristic_mode": heuristic_mode,
+            "heuristic_rationale": heuristic_rationale,
+            "final_mode": final_mode,
+            "decision": decision,
+        }
+        if profile:
+            entropy_analysis["profile"] = {
+                "min": round(profile["min"], 6),
+                "max": round(profile["max"], 6),
+                "range": round(profile["range"], 6),
+                "mean": round(profile["mean"], 6),
+                "std": round(profile["std"], 6),
+                "most_heterogeneous": profile["most_heterogeneous"],
+                "most_homogeneous": profile["most_homogeneous"],
+            }
+
+        return {
+            "question": question,
+            "mode": final_mode,
+            "entropy_mode": entropy_mode,
+            "heuristic_mode": heuristic_mode,
+            "entropy_analysis": entropy_analysis,
+            "results": raw.get("results", []),
+            "stats": {
+                **raw.get("stats", {}),
+                "elapsed_ms": round(elapsed_ms, 2),
+            },
+        }
+
+
+    # ----------------------------------------------------------------
     # Reasoning Quality Evaluation (MemOps + ActMem-inspired)
     # ----------------------------------------------------------------
 
