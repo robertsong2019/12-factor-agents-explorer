@@ -11836,6 +11836,161 @@ class MemoryGraph:
             "details_deleted": details_deleted[:10],
         }
 
+    # ── Cue-Reactivated Soft Forgetting (Oblivion, Research #030) ──
+    # Oblivion (arXiv:2603.19550): memories don't get deleted, they
+    # become less accessible. Contextual cues can reactivate them.
+    # amg stores a `forgotten` flag + `forgotten_at` timestamp.
+
+    def soft_forget(self, node_id: str, reason: str = "") -> bool:
+        """Mark a node as softly forgotten (below retrieval threshold).
+
+        Unlike delete_node(), the node remains in the graph for potential
+        cue-based reactivation. Forgotten nodes are excluded from recall()
+        and retrieval but retain all edges and metadata.
+
+        Args:
+            node_id: Node to soft-forget.
+            reason: Optional reason string.
+
+        Returns:
+            True if node was found and marked, False otherwise.
+        """
+        row = self.conn.execute(
+            "SELECT id FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not row:
+            return False
+
+        now = time.time()
+        self.conn.execute(
+            "UPDATE nodes SET data = json_set("
+            "  COALESCE(data, '{}'),"
+            "  '$.forgotten', 1,"
+            "  '$.forgotten_at', ?,"
+            "  '$.forget_reason', ?"
+            ") WHERE id=?",
+            (now, reason, node_id)
+        )
+        self.conn.commit()
+        return True
+
+    def cue_reactivation(self, cue: str,
+                         limit: int = 5,
+                         reactivation_boost: float = 0.5,
+                         fuzzy: bool = True) -> dict:
+        """Reactivate softly forgotten nodes matching a cue.
+
+        Searches forgotten nodes for label/data similarity to the cue.
+        Matching nodes have their forgotten flag cleared and weight
+        boosted, simulating human memory reactivation (Oblivion pattern).
+
+        Args:
+            cue: Search string to match against forgotten nodes.
+            limit: Max nodes to reactivate.
+            reactivation_boost: Weight multiplier for reactivated nodes
+                (default 0.5 = restore to half weight).
+            fuzzy: If True, use substring/keyword matching; if False,
+                use exact label match.
+
+        Returns:
+            {reactivated: [...], scanned: int, boost_applied: float}
+        """
+        # Find forgotten nodes
+        rows = self.conn.execute(
+            "SELECT id, label, kind, weight, data FROM nodes "
+            "WHERE json_extract(data, '$.forgotten') = 1"
+        ).fetchall()
+
+        reactivated = []
+        cue_lower = cue.lower()
+
+        for r in rows:
+            label_lower = r["label"].lower()
+            matched = False
+
+            if fuzzy:
+                # Keyword matching: any cue word appears in label
+                cue_words = [w for w in cue_lower.split() if len(w) > 2]
+                if any(w in label_lower for w in cue_words):
+                    matched = True
+                # Also check substring
+                if cue_lower in label_lower:
+                    matched = True
+            else:
+                matched = (label_lower == cue_lower)
+
+            if matched and len(reactivated) < limit:
+                # Reactivate: clear forgotten flag, boost weight
+                old_weight = r["weight"]
+                new_weight = max(old_weight, reactivation_boost)
+
+                self.conn.execute(
+                    "UPDATE nodes SET "
+                    "  data = json_remove("
+                    "    json_remove(data, '$.forgotten'),"
+                    "    '$.forgotten_at'),"
+                    "  weight = ?, "
+                    "  accessed = ? "
+                    "WHERE id=?",
+                    (new_weight, time.time(), r["id"])
+                )
+
+                # Also remove forget_reason
+                self.conn.execute(
+                    "UPDATE nodes SET "
+                    "  data = json_remove(data, '$.forget_reason') "
+                    "WHERE id=?",
+                    (r["id"],)
+                )
+
+                reactivated.append({
+                    "id": r["id"],
+                    "label": r["label"],
+                    "kind": r["kind"],
+                    "old_weight": round(old_weight, 4),
+                    "new_weight": round(new_weight, 4),
+                })
+
+        self.conn.commit()
+
+        return {
+            "cue": cue,
+            "scanned": len(rows),
+            "reactivated": reactivated,
+            "count": len(reactivated),
+            "boost_applied": reactivation_boost,
+        }
+
+    def get_forgotten_nodes(self, limit: int = 50) -> list[dict]:
+        """List softly forgotten nodes.
+
+        Args:
+            limit: Max results.
+
+        Returns:
+            List of {id, label, kind, weight, forgotten_at, reason}.
+        """
+        rows = self.conn.execute(
+            "SELECT id, label, kind, weight, data FROM nodes "
+            "WHERE json_extract(data, '$.forgotten') = 1 "
+            "LIMIT ?",
+            (limit,)
+        ).fetchall()
+
+        import json
+        result = []
+        for r in rows:
+            data = json.loads(r["data"]) if r["data"] else {}
+            result.append({
+                "id": r["id"],
+                "label": r["label"],
+                "kind": r["kind"],
+                "weight": round(r["weight"], 4),
+                "forgotten_at": data.get("forgotten_at"),
+                "reason": data.get("forget_reason", ""),
+            })
+        return result
+
     # ── Neighborhood Agreement (multi-hop divergence) ─────────────
 
     def neighborhood_agreement(self, node_id: str,
