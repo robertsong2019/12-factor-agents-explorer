@@ -7171,6 +7171,81 @@ class MemoryGraph:
             dist[key] = dist.get(key, 0.0) + (c / total)
         return dist
 
+    # ── Cycle 298: Cross-entropy between graphs ─
+
+    def cross_entropy_graph(self, other: "MemoryGraph", index: str = "sombor") -> Optional[float]:
+        """Asymmetric cross-entropy H(P, Q) between two graphs' edge-contribution distributions.
+
+        For a chosen degree-based *index*, computes the normalized
+        probability distributions *P* (self) and *Q* (other), then
+        calculates the cross-entropy::
+
+            H(P, Q) = −Σ_{e: p_e > 0} p_e · ln(q_e)
+
+        where *p_e* are self's contribution probabilities and *q_e* are
+        the other graph's probabilities, aligned over the *union* of
+        normalized contribution values (binned to 6 decimal places).
+
+        **Relationship to ``entropy_distance`` (JSD):**
+
+        ::
+
+            JSD(P, Q) = ½·KL(P‖M) + ½·KL(Q‖M)
+                      = H(P, Q) − ½·H(P) − ½·H(Q)   (up to base)
+
+        Cross-entropy is the *asymmetric* variant: H(P, Q) ≠ H(Q, P)
+        in general.  It measures the information cost of encoding
+        samples from distribution *P* using a code optimised for *Q*.
+
+        **Properties:**
+        - Asymmetric: H(P, Q) ≠ H(Q, P) in general
+        - H(P, P) = H(P) (self cross-entropy = Shannon entropy)
+        - H(P, Q) ≥ H(P) (cross-entropy ≥ self-entropy, Gibbs' inequality)
+        - Non-negative for all distributions
+        - When P and Q have disjoint supports: H(P, Q) → ∞ (no overlap)
+        - Normalized output: divided by ln(m_max) for [0, ~1+] range
+
+        **Use cases:**
+        - Graph classification: compute H(G, G_i) for reference graphs,
+          classify by minimum cross-entropy
+        - Anomaly detection: high H(G_normal, G_test) signals anomaly
+        - Directional similarity: H(A, B) < H(B, A) means A is
+          "well-described" by B but not vice versa
+
+        Args:
+            other: the other ``MemoryGraph`` to compare against.
+            index: which degree-based contributions to use
+                (sombor, reduced_sombor, randic, zagreb_m1, abc, ga,
+                augmented_zagreb).
+
+        Returns:
+            float ≥ 0, or ``None`` if either graph has < 1 edge.
+        """
+        dist_a = self._contribution_distribution(index)
+        dist_b = other._contribution_distribution(index)
+        if dist_a is None or dist_b is None:
+            return None
+        # Build aligned distributions over the union of keys
+        keys = set(dist_a.keys()) | set(dist_b.keys())
+        pa = [dist_a.get(k, 0.0) for k in keys]
+        qb = [dist_b.get(k, 0.0) for k in keys]
+        # Cross-entropy H(P, Q) = −Σ p · ln(q), only where p > 0
+        h_pq = 0.0
+        for p, q in zip(pa, qb):
+            if p > 0:
+                if q > 0:
+                    h_pq -= p * math.log(q)
+                else:
+                    # p > 0 but q = 0: infinite cross-entropy
+                    # Clamp to a large penalty to keep it finite
+                    h_pq -= p * math.log(1e-12)
+        # Normalize by ln(number of categories) for interpretability
+        m = max(len(keys), 2)
+        ln_m = math.log(m)
+        if ln_m > 0:
+            h_pq /= ln_m
+        return max(0.0, h_pq)
+
     # ── Cycle 282: Augmented Zagreb entropy + edge-betweenness entropy ─
 
     def augmented_zagreb_entropy(self, normalized: bool = True) -> Optional[float]:
