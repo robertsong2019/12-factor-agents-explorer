@@ -30181,6 +30181,84 @@ class MemoryGraph:
             "eigenvalues":             evals,
         }
 
+    def quantum_jensen_shannon_distance(
+        self,
+        other: "MemoryGraph",
+        *,
+        include_quarantined: bool = False,
+    ) -> Optional[float]:
+        r"""Quantum Jensen-Shannon distance between two graphs.
+
+        Treats each graph's Laplacian spectrum as a quantum density
+        matrix (diagonal), then computes the **quantum** JSD:
+
+            ρ_G = diag(λ₁/Σλ, …, λₙ/Σλ)    (normalised eigenvalues)
+
+            d_QJSD(G, H) = √( ½ S(ρ_G ‖ M) + ½ S(ρ_H ‖ M) )
+
+        where M = ½(ρ_G + ρ_H) and S(ρ‖σ) is the von Neumann
+        relative entropy:
+
+            S(ρ‖σ) = Tr(ρ · (ln ρ − ln σ))
+
+        Since both ρ are diagonal, this reduces to elementwise
+        computation on the eigenvalue probability vectors.
+
+        **Properties** (Research #031):
+        - Symmetric: d(A,B) = d(B,A)
+        - Bounded: 0 ≤ d ≤ ln(2)^½ ≈ 0.833
+        - Metric: satisfies triangle inequality
+        - Captures **global** topology: two graphs with the same
+          degree sequence but different wiring give d > 0
+        - Complementary to ``entropy_distance()`` (which uses
+          degree-based edge contributions)
+
+        Graphs of different sizes are handled by padding the shorter
+        eigenvalue vector with zeros.
+
+        Args:
+            other:               The graph to compare against.
+            include_quarantined:  Include quarantined nodes.
+
+        Returns:
+            float in [0, √ln2], or ``None`` if either graph has < 2 nodes.
+        """
+        evals_a = self._laplacian_eigenvalues(include_quarantined=include_quarantined)
+        evals_b = other._laplacian_eigenvalues(include_quarantined=include_quarantined)
+        if evals_a is None or evals_b is None:
+            return None
+        # Normalise eigenvalues to probability vectors
+        sum_a = sum(evals_a)
+        sum_b = sum(evals_b)
+        if sum_a <= 0 and sum_b <= 0:
+            # Both empty graphs → distance 0
+            return 0.0
+        if sum_a <= 0 or sum_b <= 0:
+            # One empty, one not → maximum distance
+            return math.sqrt(math.log(2))
+        p = [e / sum_a for e in evals_a]
+        q = [e / sum_b for e in evals_b]
+        # Pad to same length
+        n = max(len(p), len(q))
+        p += [0.0] * (n - len(p))
+        q += [0.0] * (n - len(q))
+        # M = (p + q) / 2
+        m = [(p[i] + q[i]) / 2.0 for i in range(n)]
+        eps = 1e-15
+        # Von Neumann relative entropies
+        s_pm = 0.0  # S(p || m)
+        s_qm = 0.0  # S(q || m)
+        for i in range(n):
+            if p[i] > eps and m[i] > eps:
+                s_pm += p[i] * (math.log(p[i]) - math.log(m[i]))
+            if q[i] > eps and m[i] > eps:
+                s_qm += q[i] * (math.log(q[i]) - math.log(m[i]))
+        qjsd = 0.5 * s_pm + 0.5 * s_qm
+        # Numerical safety
+        if qjsd < 0:
+            qjsd = 0.0
+        return math.sqrt(qjsd)
+
     def entropy_guided_query_route(
         self,
         question: str,

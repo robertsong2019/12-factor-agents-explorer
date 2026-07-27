@@ -361,3 +361,4 @@ timestamp	commit	metric	value	status	description
 2026-07-27T19:30:00+08:00	207b333	entropy_profile_indices	7→15	keep	Cycle 291: entropy_profile() extended from 7 degree-only to 15 multi-group. Distance (harary, wiener), edge-partition (szeged, gutman, schultz), centrality (closeness_vitality, eigenvector, edge_betweenness). 4951 tests, zero regressions. 261st day.
 2026-07-27T13:06	d9995d1	test_count	5001	keep	Cycle 292: von_neumann_entropy + spectral_entropy_profile. First spectral entropy (Laplacian eigenvalue Shannon). K_n maximizes H=ln(n-1). +50 tests, 4951→5001. 262nd day.
 2026-07-27T13:10	dcf7de4	test_count	5038	keep	Cycle 293: TemporalEntropyTracker phase detection. 7 entropy indices. growth/consolidation/forgetting/transition. +37 tests, 5001→5038. 262nd day.
+2026-07-27T13:13	7fbc04f	test_count	5064	keep	Cycle 294: quantum_jensen_shannon_distance. Spectral inter-graph metric. Symmetric/bounded/triangle inequality. +26 tests, 5038→5064. 262nd day.
