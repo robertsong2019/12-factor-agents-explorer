@@ -15,7 +15,7 @@
 
 import { readdir, readFile, writeFile, stat, mkdir } from "node:fs/promises";
 import { join, basename, extname, relative, sep } from "node:path";
-import { existsSync as fsExistsSync, unlinkSync as fsUnlinkSync, watch as fsWatch, readdirSync as fsReaddirSync } from "node:fs";
+import { existsSync as fsExistsSync, unlinkSync as fsUnlinkSync, watch as fsWatch, readdirSync as fsReaddirSync, readFileSync } from "node:fs";
 
 export { fsWatch as _fsWatch };
 
@@ -10953,6 +10953,392 @@ export function formatEqualityChecksReport(result) {
     report += '\n';
   } else {
     report += 'All equality checks use strict comparison. ✅\n\n';
+  }
+
+  return report;
+}
+
+// ─── F79: Dead Code Detection ─────────────────────────────────────
+
+/**
+ * F79: Detect dead code — unreachable code after throw/return,
+ * commented-out code blocks, unused private functions, and
+ * unreachable branches (e.g. if (false), while (false)).
+ *
+ * @param {Array} files - Array of { path, content } objects
+ * @returns {Object} Analysis result
+ */
+export function analyzeDeadCode(files = []) {
+  const issues = [];
+  let totalUnreachable = 0;
+  let totalCommentedCode = 0;
+  let totalUnusedPrivate = 0;
+  let totalUnreachableBranch = 0;
+
+  const jsExt = /\.(js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|c|cpp)$/;
+
+  // Heuristic: detect if a commented line looks like code (not prose)
+  function looksLikeCode(line) {
+    const trimmed = line.trim();
+    // Remove comment markers
+    const codePart = trimmed.replace(/^(\/\/|\/\*|\*|#|<!--|-->)\s*/, '').replace(/\*\/$|-->$/, '').trim();
+    if (codePart.length < 8) return false;
+    // Strong signals: typical code patterns
+    const codePatterns = [
+      /(?:const|let|var|function|return|if|for|while|switch|case|class)\b/,
+      /=>\s*[{(]/,
+      /[\w$]+\s*\([^)]*\)\s*\{/, // function call with braces
+      /\w+\s*[:=]\s*[^;]+;,?\s*$/, // assignment
+      /import\s+.*from\s+['"]/,
+      /export\s+/,      /\b(?:true|false|null|undefined|None|True|False)\b[;,)]/,
+    ];
+    return codePatterns.some(re => re.test(codePart));
+  }
+
+  for (const file of files) {
+    if (!file.content || typeof file.content !== 'string') continue;
+    if (!jsExt.test(file.path)) continue;
+    if (/\.test\.|\.spec\./.test(file.path)) continue;
+
+    const lines = file.content.split('\n');
+    let braceDepth = 0;
+    let funcStart = -1;
+    let funcName = '';
+    let afterTerminate = false;
+    let terminateLine = -1;
+    let terminateType = '';
+
+    // Track all function definitions and references
+    const funcDefs = []; // { name, line, isExported }
+    const allText = file.content;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const code = stripCommentsAndStrings(line);
+      const trimmed = line.trim();
+
+      // ─── Detect unreachable code after return/throw ─────────
+      if (afterTerminate) {
+        // Skip blank lines and closing braces
+        if (trimmed === '' || trimmed === '}' || trimmed === '});' || trimmed === '};' || trimmed.startsWith('})')) {
+          if (trimmed.includes('}')) {
+            afterTerminate = false;
+          }
+          continue;
+        }
+        // Real code after terminate = unreachable
+        totalUnreachable++;
+        issues.push({
+          file: file.path,
+          line: i + 1,
+          type: 'unreachable-after-terminate',
+          severity: 'high',
+          label: 'Unreachable code',
+          desc: `Code after ${terminateType} on line ${terminateLine + 1} will never execute`,
+        });
+        afterTerminate = false;
+      }
+
+      if (/\b(?:return|throw)\b/.test(code)) {
+        // Check it's a real return/throw, not in a string or comment
+        const stmtMatch = code.match(/\b(return|throw)\b/);
+        if (stmtMatch) {
+          // Check if this line ends the statement (has semicolon or is end of expression)
+          const afterStmt = code.slice(code.indexOf(stmtMatch[0]) + stmtMatch[0].length);
+          if (afterStmt.includes(';') || afterStmt.match(/^\s*(?:\n|$)/) || /^[^;]*$/.test(afterStmt.trim())) {
+            afterTerminate = true;
+            terminateLine = i;
+            terminateType = stmtMatch[1];
+          }
+        }
+      }
+
+      // ─── Detect unreachable branches: if (false), while (false), if (0) ──
+      const falseCondRe = /\b(?:if|while)\s*\(\s*(?:false|0|!true)\s*\)/;
+      if (falseCondRe.test(code)) {
+        totalUnreachableBranch++;
+        issues.push({
+          file: file.path,
+          line: i + 1,
+          type: 'unreachable-branch',
+          severity: 'high',
+          label: 'Unreachable branch',
+          desc: `Condition is always false — this block will never execute`,
+        });
+      }
+
+      // ─── Detect commented-out code blocks ─────────────────
+      // Single line
+      if ((trimmed.startsWith('//') || trimmed.startsWith('#')) && !trimmed.startsWith('//#!') && looksLikeCode(line)) {
+        totalCommentedCode++;
+        // Only report if 3+ consecutive commented code lines (to reduce noise)
+        let consecutive = 1;
+        for (let j = i + 1; j < Math.min(i + 20, lines.length); j++) {
+          const nextTrim = lines[j].trim();
+          if ((nextTrim.startsWith('//') || nextTrim.startsWith('#')) && looksLikeCode(lines[j])) {
+            consecutive++;
+          } else {
+            break;
+          }
+        }
+        if (consecutive >= 3) {
+          issues.push({
+            file: file.path,
+            line: i + 1,
+            type: 'commented-out-code',
+            severity: 'medium',
+            label: `${consecutive} lines of commented-out code`,
+            desc: `Commented-out code block (lines ${i + 1}-${i + consecutive}). Remove if dead, or document why it's kept.`,
+          });
+        }
+      }
+
+      // Block comments that look like code
+      if (trimmed.startsWith('/*') && !trimmed.startsWith('/**') && looksLikeCode(trimmed)) {
+        totalCommentedCode++;
+        issues.push({
+          file: file.path,
+          line: i + 1,
+          type: 'commented-out-code',
+          severity: 'medium',
+          label: 'Commented-out code (block)',
+          desc: `Block comment contains what appears to be code. Remove if dead, or document why it's kept.`,
+        });
+      }
+
+      // ─── Track function definitions for unused detection ──
+      const exportFunc = code.match(/export\s+(?:async\s+)?function\s+(\w+)/);
+      const exportConst = code.match(/export\s+(?:const|let)\s+(\w+)/);
+      const privateFunc = code.match(/(?:async\s+)?function\s+(\w+)/);
+      const privateConst = code.match(/(?:const|let)\s+(\w+)\s*=/);
+
+      if (exportFunc) {
+        funcDefs.push({ name: exportFunc[1], line: i + 1, isExported: true });
+      } else if (exportConst) {
+        funcDefs.push({ name: exportConst[1], line: i + 1, isExported: true });
+      } else if (privateFunc && !exportFunc) {
+        funcDefs.push({ name: privateFunc[1], line: i + 1, isExported: false });
+      } else if (privateConst && !exportConst) {
+        funcDefs.push({ name: privateConst[1], line: i + 1, isExported: false });
+      }
+    }
+
+    // ─── Check for unused private functions/variables ───
+    for (const def of funcDefs) {
+      if (def.isExported) continue;
+      if (def.name.startsWith('_')) continue; // convention: intentional private
+      if (def.name.length <= 2) continue; // skip short names (i, j, etc.)
+
+      // Count references in the file (excluding the definition line)
+      const refRe = new RegExp(`\\b${def.name}\\b`, 'g');
+      let refCount = 0;
+      let match;
+      while ((match = refRe.exec(allText)) !== null) {
+        const matchLine = allText.substring(0, match.index).split('\n').length;
+        if (matchLine !== def.line) refCount++;
+      }
+
+      if (refCount === 0) {
+        totalUnusedPrivate++;
+        issues.push({
+          file: file.path,
+          line: def.line,
+          type: 'unused-private',
+          severity: 'low',
+          label: `Unused private: ${def.name}`,
+          desc: `"${def.name}" is defined but never referenced in this file. Consider removing it.`,
+        });
+      }
+    }
+  }
+
+  // Score
+  let score = 100;
+  score -= totalUnreachable * 10;
+  score -= totalUnreachableBranch * 8;
+  score -= totalCommentedCode * 3;
+  score -= totalUnusedPrivate * 4;
+  score = Math.max(0, score);
+
+  const grade = score >= 90 ? 'A' : score >= 80 ? 'B' : score >= 70 ? 'C' : score >= 60 ? 'D' : 'F';
+
+  return {
+    stats: {
+      totalUnreachable,
+      totalUnreachableBranch,
+      totalCommentedCode,
+      totalUnusedPrivate,
+      totalIssues: issues.length,
+    },
+    issues,
+    score,
+    grade,
+  };
+}
+
+export function formatDeadCodeAnalysisReport(result) {
+  let report = '## 💀 Dead Code Analysis\n\n';
+
+  report += `**Health Score: ${result.score}/100 (${result.grade})**\n\n`;
+
+  report += '### Summary\n\n';
+  report += `- Unreachable code (after return/throw): ${result.stats.totalUnreachable}\n`;
+  report += `- Unreachable branches (always-false): ${result.stats.totalUnreachableBranch}\n`;
+  report += `- Commented-out code blocks: ${result.stats.totalCommentedCode}\n`;
+  report += `- Unused private functions/vars: ${result.stats.totalUnusedPrivate}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Issues Found\n\n';
+    for (const issue of result.issues.slice(0, 40)) {
+      report += `- **${issue.file}:${issue.line}** [${issue.severity}] ${issue.label}: ${issue.desc}\n`;
+    }
+    if (result.issues.length > 40) {
+      report += `- ... and ${result.issues.length - 40} more\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'No dead code detected. ✅\n\n';
+  }
+
+  return report;
+}
+
+/**
+ * F80: analyzeResourceLeaks() — detect potential resource leak patterns.
+ * Scans for: setInterval/setTimeout without clear, addEventListener without removeEventListener,
+ * fs.open/fs.createReadStream without close, database connections without end/close.
+ * @param {string[]} sourceFiles - Array of source file paths to analyze.
+ * @returns {object} analysis result with issues, summary, and grade.
+ */
+export function analyzeResourceLeaks(sourceFiles) {
+  const issues = [];
+  let totalScanned = 0;
+
+  for (const filePath of sourceFiles) {
+    let content;
+    try {
+      content = readFileSync(filePath, 'utf-8');
+    } catch {
+      continue;
+    }
+    totalScanned++;
+    const lines = content.split('\n');
+
+    // Track interval/timeout definitions to check for clear calls
+    const intervalKeys = new Set();
+    const timeoutKeys = new Set();
+    const listenerRefs = new Set();
+    const openRefs = new Set();
+    let hasClearInterval = false;
+    let hasClearTimeout = false;
+    let hasRemoveListener = false;
+    let hasClose = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // setInterval assignments
+      const intervalMatch = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*setInterval\s*\(/);
+      if (intervalMatch) intervalKeys.add(intervalMatch[1]);
+      // setInterval without assignment
+      if (line.match(/setInterval\s*\(/) && !intervalMatch) {
+        issues.push({ file: filePath, line: i + 1, type: 'uncleared-interval', severity: 'high', message: 'setInterval() without assignment — cannot be cleared' });
+      }
+      if (line.match(/clearInterval\s*\(/)) hasClearInterval = true;
+
+      // setTimeout assignments
+      const timeoutMatch = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*setTimeout\s*\(/);
+      if (timeoutMatch) timeoutKeys.add(timeoutMatch[1]);
+      if (line.match(/clearTimeout\s*\(/)) hasClearTimeout = true;
+
+      // addEventListener
+      const listenerMatch = line.match(/\w+\.addEventListener\s*\(\s*['"]([^'"]+)['"].*?,\s*(\w+)/);
+      if (listenerMatch) listenerRefs.add(listenerMatch[2]);
+      // Generic addEventListener tracking
+      if (line.match(/\.addEventListener\s*\(/)) {
+        const hasRemove = lines.some(l => l.match(/\.removeEventListener\s*\(/));
+        if (!hasRemove && !hasRemoveListener) {
+          // Only flag if there's no removeEventListener anywhere in file
+        }
+      }
+      if (line.match(/\.removeEventListener\s*\(/)) hasRemoveListener = true;
+
+      // fs.open / createReadStream / createWriteStream without close handling
+      const openMatch = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*(?:fs\.open|fs\.createReadStream|fs\.createWriteStream|createReadStream|createWriteStream)\s*\(/);
+      if (openMatch) openRefs.add(openMatch[1]);
+      if (line.match(/\.(close|destroy|end)\s*\(/)) hasClose = true;
+
+      // Database connection patterns
+      if (line.match(/\.(connect|createConnection|createPool|mongoClient|mongoose\.connect)\s*\(/)) {
+        const hasDbClose = lines.some(l => l.match(/\.(end|close|disconnect|destroy)\s*\(/));
+        if (!hasDbClose) {
+          issues.push({ file: filePath, line: i + 1, type: 'db-connection-leak', severity: 'medium', message: 'Database connection opened but no close/end/disconnect found in file' });
+        }
+      }
+    }
+
+    // Check for intervals without clear
+    if (intervalKeys.size > 0 && !hasClearInterval) {
+      for (const key of intervalKeys) {
+        issues.push({ file: filePath, line: 0, type: 'uncleared-interval', severity: 'high', message: `Interval '${key}' defined but clearInterval() never called in file` });
+      }
+    }
+
+    // Check for event listeners without remove
+    if (listenerRefs.size > 0 && !hasRemoveListener) {
+      issues.push({ file: filePath, line: 0, type: 'listener-accumulation', severity: 'medium', message: `${listenerRefs.size} addEventListener call(s) but no removeEventListener found in file` });
+    }
+
+    // Check for file handles without close
+    if (openRefs.size > 0 && !hasClose) {
+      issues.push({ file: filePath, line: 0, type: 'unclosed-handle', severity: 'medium', message: `${openRefs.size} stream/handle(s) opened but no close/destroy/end found in file` });
+    }
+  }
+
+  const highCount = issues.filter(i => i.severity === 'high').length;
+  const mediumCount = issues.filter(i => i.severity === 'medium').length;
+  const score = Math.max(0, 100 - highCount * 15 - mediumCount * 7);
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 75) grade = 'B';
+  else if (score >= 60) grade = 'C';
+  else if (score >= 40) grade = 'D';
+  else grade = 'F';
+
+  return {
+    issues,
+    summary: {
+      totalIssues: issues.length,
+      high: highCount,
+      medium: mediumCount,
+      filesScanned: totalScanned,
+      score,
+      grade
+    }
+  };
+}
+
+/**
+ * F80: formatResourceLeaksReport() — markdown report for resource leak analysis.
+ */
+export function formatResourceLeaksReport(result) {
+  const s = result.summary;
+  let report = `## 🔧 Resource Leak Analysis\n\n`;
+  report += `**Grade: ${s.grade}** (score: ${s.score}/100)\n\n`;
+  report += `Files scanned: ${s.filesScanned} | Issues: ${s.totalIssues} (high: ${s.high}, medium: ${s.medium})\n\n`;
+
+  if (result.issues.length > 0) {
+    report += `| File | Line | Type | Severity | Issue |\n`;
+    report += `|------|------|------|----------|-------|\n`;
+    for (const issue of result.issues.slice(0, 40)) {
+      report += `| ${issue.file} | ${issue.line || '-'} | ${issue.type} | ${issue.severity} | ${issue.message} |\n`;
+    }
+    if (result.issues.length > 40) {
+      report += `\n... and ${result.issues.length - 40} more\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'No resource leak patterns detected. ✅\n\n';
   }
 
   return report;

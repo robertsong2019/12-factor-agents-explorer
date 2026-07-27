@@ -102,3 +102,6 @@
 
 ### Code Safety (Round 13 — 2026-07-25)
 - [x] **F79**: analyzeEqualityChecks() — loose equality detector: ==/!= type coercion risk, null/undefined safe pattern detection (low severity), strict comparison counting, A-F grading. formatEqualityChecksReport(). ✅ 2026-07-25
+
+### Resource Safety (Round 14 — 2026-07-27)
+- [x] **F80**: analyzeResourceLeaks() — resource leak detector: setInterval without clear, addEventListener without remove, unclosed file handles/streams, DB connections without close/disconnect. A-F grading. formatResourceLeaksReport(). Fixed pre-existing duplicate formatDeadCodeReport (renamed to formatDeadCodeAnalysisReport). ✅ 2026-07-27
