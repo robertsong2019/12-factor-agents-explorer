@@ -7246,6 +7246,81 @@ class MemoryGraph:
             h_pq /= ln_m
         return max(0.0, h_pq)
 
+    # ── Cycle 299: KL divergence between graphs ─
+
+    def kl_divergence_graph(self, other: "MemoryGraph", index: str = "sombor") -> Optional[float]:
+        """Kullback-Leibler divergence KL(P‖Q) between two graphs' edge-contribution distributions.
+
+        For a chosen degree-based *index*, computes the normalized
+        probability distributions *P* (self) and *Q* (other), then
+        calculates the KL divergence::
+
+            KL(P‖Q) = Σ_{e: p_e > 0} p_e · ln(p_e / q_e)
+
+        This is the **relative entropy** — the information gain when
+        moving from distribution *Q* to distribution *P*.
+
+        **Relationship to other inter-graph measures:**
+
+        ::
+
+            KL(P‖Q) = H(P, Q) − H(P)     (cross-entropy − self-entropy)
+            JSD(P,Q) = ½·KL(P‖M) + ½·KL(Q‖M)   (M = ½(P+Q))
+
+        KL divergence is the fundamental asymmetric measure from which
+        both cross-entropy and JSD are derived.
+
+        **Properties:**
+        - Asymmetric: KL(P‖Q) ≠ KL(Q‖P) in general
+        - Non-negative: KL(P‖Q) ≥ 0 (Gibbs' inequality)
+        - KL(P‖P) = 0 (self-divergence is zero)
+        - KL(P‖Q) = 0 iff P = Q almost everywhere
+        - Not a true metric (does not satisfy triangle inequality)
+        - When P has mass where Q has none: KL → ∞ (clamped to finite)
+        - Normalized by ln(m_max) for interpretability
+
+        **Use cases:**
+        - Model selection: find the reference graph that minimizes KL
+          from the query graph
+        - Information gain: measure how much new information one graph
+          carries relative to another
+        - Anomaly scoring: KL(normal‖test) quantifies deviation
+        - Prior-posterior analysis: compare expected vs observed structure
+
+        Args:
+            other: the other ``MemoryGraph`` to compare against (Q).
+            index: which degree-based contributions to use
+                (sombor, reduced_sombor, randic, zagreb_m1, abc, ga,
+                augmented_zagreb).
+
+        Returns:
+            float ≥ 0, or ``None`` if either graph has < 1 edge.
+        """
+        dist_a = self._contribution_distribution(index)
+        dist_b = other._contribution_distribution(index)
+        if dist_a is None or dist_b is None:
+            return None
+        # Build aligned distributions over the union of keys
+        keys = set(dist_a.keys()) | set(dist_b.keys())
+        pa = [dist_a.get(k, 0.0) for k in keys]
+        qb = [dist_b.get(k, 0.0) for k in keys]
+        # KL(P‖Q) = Σ p · ln(p/q), only where p > 0
+        kl = 0.0
+        for p, q in zip(pa, qb):
+            if p > 0:
+                if q > 0:
+                    kl += p * math.log(p / q)
+                else:
+                    # p > 0 but q = 0: infinite KL (P has mass Q doesn't)
+                    # Clamp to a large penalty
+                    kl += p * math.log(p / 1e-12)
+        # Normalize by ln(number of categories) for interpretability
+        m = max(len(keys), 2)
+        ln_m = math.log(m)
+        if ln_m > 0:
+            kl /= ln_m
+        return max(0.0, kl)
+
     # ── Cycle 282: Augmented Zagreb entropy + edge-betweenness entropy ─
 
     def augmented_zagreb_entropy(self, normalized: bool = True) -> Optional[float]:
