@@ -32552,5 +32552,144 @@ def demo():
     print(mg.visualize_ascii())
 
 
+# ------------------------------------------------------------------
+# Temporal Entropy Tracker (Cycle 293)
+# ------------------------------------------------------------------
+
+class TemporalEntropyTracker:
+    """Track spectral entropy of a MemoryGraph over time to detect
+    phase transitions in the knowledge graph.
+
+    Records snapshots of Von Neumann entropy (and optionally other
+    indices) at regular intervals, then computes first and second
+    derivatives to classify the graph's current **phase**:
+
+    - ``growth``       — H increasing, nodes increasing (expanding)
+    - ``consolidation``— H plateau, nodes stable (stable/healthy)
+    - ``forgetting``   — H decreasing, nodes decreasing (pruning)
+    - ``transition``   — sign change in second derivative (phase shift)
+    - ``insufficient`` — < 2 snapshots (not enough data)
+
+    Usage::
+
+        tracker = TemporalEntropyTracker(mg)
+        tracker.snapshot()           # record current state
+        # ... add/remove nodes ...
+        tracker.snapshot()           # record new state
+        report = tracker.report()    # get trajectory analysis
+    """
+
+    def __init__(self, graph: "MemoryGraph", index: str = "von_neumann"):
+        self.graph = graph
+        self.index = index
+        self.snapshots: list[dict] = []
+
+    def snapshot(self, *, label: str = "") -> dict:
+        """Record current entropy and graph statistics.
+
+        Args:
+            label:  Optional label for this snapshot.
+
+        Returns:
+            The recorded snapshot dict.
+        """
+        entropy_fn = {
+            "von_neumann":      self.graph.von_neumann_entropy,
+            "sombor":           self.graph.sombor_entropy,
+            "randic":           self.graph.randic_entropy,
+            "tsallis":           lambda normalized=True, **kw: self.graph.tsallis_entropy(q=2.0, normalized=normalized, **kw),
+            "renyi":             lambda normalized=True, **kw: self.graph.renyi_entropy(alpha=2.0, normalized=normalized, **kw),
+            "augmented_zagreb":  self.graph.augmented_zagreb_entropy,
+            "edge_betweenness":  self.graph.edge_betweenness_entropy,
+        }.get(self.index)
+        if entropy_fn is None:
+            raise ValueError(
+                f"Unknown entropy index '{self.index}'. "
+                f"Choose from: {', '.join(['von_neumann', 'sombor', 'randic', 'tsallis', 'renyi', 'augmented_zagreb', 'edge_betweenness'])}"
+            )
+        entropy = entropy_fn(normalized=False)
+        entropy_norm = entropy_fn(normalized=True)
+        stats = self.graph.stats()
+        snap = {
+            "seq":             len(self.snapshots),
+            "label":           label,
+            "entropy":         entropy if entropy is not None else 0.0,
+            "entropy_norm":    entropy_norm if entropy_norm is not None else 0.0,
+            "node_count":      stats.get("nodes", 0),
+            "edge_count":      stats.get("edges", 0),
+        }
+        self.snapshots.append(snap)
+        return snap
+
+    def first_derivative(self) -> Optional[list[float]]:
+        """Rate of change of entropy between consecutive snapshots."""
+        if len(self.snapshots) < 2:
+            return None
+        derivs = []
+        for i in range(1, len(self.snapshots)):
+            d = self.snapshots[i]["entropy"] - self.snapshots[i - 1]["entropy"]
+            derivs.append(d)
+        return derivs
+
+    def second_derivative(self) -> Optional[list[float]]:
+        """Acceleration of entropy change (curvature)."""
+        d1 = self.first_derivative()
+        if d1 is None or len(d1) < 2:
+            return None
+        return [d1[i] - d1[i - 1] for i in range(1, len(d1))]
+
+    def phase(self) -> str:
+        """Classify the current phase of the knowledge graph.
+
+        Returns one of: ``growth``, ``consolidation``, ``forgetting``
+        ``transition``, ``insufficient``.
+        """
+        if len(self.snapshots) < 2:
+            return "insufficient"
+        d1 = self.first_derivative()
+        d2 = self.second_derivative()
+        last = self.snapshots[-1]
+        prev = self.snapshots[-2]
+        node_delta = last["node_count"] - prev["node_count"]
+        rate = d1[-1] if d1 else 0.0
+        eps = 1e-9
+        # Check for transition (sign change in acceleration)
+        if d2 and len(d2) >= 1:
+            if abs(d2[-1]) > eps and len(d2) >= 2:
+                # Sign flip in second derivative
+                if d2[-1] * d2[-2] < -eps:
+                    return "transition"
+        # Classify based on rate and node_delta
+        if rate > eps:
+            return "growth"
+        elif rate < -eps:
+            if node_delta < 0:
+                return "forgetting"
+            return "forgetting"  # entropy declining regardless
+        else:
+            return "consolidation"
+
+    def report(self) -> dict:
+        """Full trajectory analysis report."""
+        d1 = self.first_derivative()
+        d2 = self.second_derivative()
+        ents = [s["entropy"] for s in self.snapshots]
+        nodes = [s["node_count"] for s in self.snapshots]
+        return {
+            "snapshots":         len(self.snapshots),
+            "index":             self.index,
+            "entropy_values":    ents,
+            "entropy_normalized":[s["entropy_norm"] for s in self.snapshots],
+            "node_counts":       nodes,
+            "edge_counts":       [s["edge_count"] for s in self.snapshots],
+            "first_derivative":  d1 if d1 else [],
+            "second_derivative": d2 if d2 else [],
+            "current_phase":     self.phase(),
+            "mean_rate":         (sum(d1) / len(d1)) if d1 else 0.0,
+            "volatility":        (sum(x * x for x in d1) / len(d1)) if d1 else 0.0,
+            "labels":            [s["label"] for s in self.snapshots],
+        }
+
+
 if __name__ == "__main__":
     demo()
