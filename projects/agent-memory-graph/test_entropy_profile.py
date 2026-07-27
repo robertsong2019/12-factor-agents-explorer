@@ -245,9 +245,9 @@ class TestEntropyProfileStructure:
         g = MemoryGraph()
         build_complete(g, 4)
         p = g.entropy_profile()
-        required = {"values", "raw_values", "min", "max", "range",
+        required = {"values", "raw_values", "spectral_values", "spectral_raw_values", "min", "max", "range",
                     "mean", "std", "most_heterogeneous", "most_homogeneous",
-                    "fingerprint", "index_count"}
+                    "fingerprint", "index_count", "spectral_count"}
         assert required.issubset(p.keys())
 
     def test_values_dict(self):
@@ -289,6 +289,34 @@ class TestEntropyProfileStructure:
         p = g.entropy_profile()
         assert p["index_count"] >= 10
         assert p["index_count"] <= 16
+
+    def test_spectral_values_present(self):
+        g = MemoryGraph()
+        build_path(g, 4)
+        p = g.entropy_profile()
+        assert "spectral_values" in p
+        assert isinstance(p["spectral_values"], dict)
+        assert "von_neumann" in p["spectral_values"]
+
+    def test_spectral_raw_values_present(self):
+        g = MemoryGraph()
+        build_complete(g, 4)
+        p = g.entropy_profile()
+        assert "spectral_raw_values" in p
+        assert isinstance(p["spectral_raw_values"], dict)
+
+    def test_spectral_count(self):
+        g = MemoryGraph()
+        build_path(g, 4)
+        p = g.entropy_profile()
+        assert p["spectral_count"] >= 1
+
+    def test_spectral_von_neumann_matches_direct_call(self):
+        g = MemoryGraph()
+        build_path(g, 5)
+        p = g.entropy_profile()
+        direct = g.von_neumann_entropy(normalized=True)
+        assert abs(p["spectral_values"]["von_neumann"] - direct) < 1e-9
 
     def test_most_heterogeneous_is_string(self):
         g = MemoryGraph()

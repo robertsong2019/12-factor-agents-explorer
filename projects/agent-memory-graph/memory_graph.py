@@ -6816,11 +6816,22 @@ class MemoryGraph:
             "edge_betweenness": self.edge_betweenness_entropy(normalized=False),
         }
         raw_valid = {k: v for k, v in raw.items() if v is not None}
+        # Spectral
+        spectral_labels = [
+            ("von_neumann", self.von_neumann_entropy(normalized=True)),
+        ]
+        spectral_valid = [(n, v) for n, v in spectral_labels if v is not None]
+        spectral_raw = {
+            "von_neumann": self.von_neumann_entropy(normalized=False),
+        }
+        spectral_raw_valid = {k: v for k, v in spectral_raw.items() if v is not None}
         # Fingerprint: 6 decimal places
         fingerprint = tuple(round(v, 6) for _, v in valid)
         return {
             "values": {n: v for n, v in valid},
             "raw_values": raw_valid,
+            "spectral_values": {n: v for n, v in spectral_valid},
+            "spectral_raw_values": spectral_raw_valid,
             "min": vmin,
             "max": vmax,
             "range": vrange,
@@ -6830,6 +6841,7 @@ class MemoryGraph:
             "most_homogeneous": most_homogeneous,
             "fingerprint": fingerprint,
             "index_count": len(valid),
+            "spectral_count": len(spectral_valid),
         }
 
     def tsallis_entropy(self, q: float = 2.0, normalized: bool = True,
