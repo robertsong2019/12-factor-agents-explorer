@@ -29760,6 +29760,103 @@ class MemoryGraph:
         "high":   (0.67, 1.01, "basic"),
     }
 
+    def harary_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Harary (reciprocal-distance) contributions.
+
+        For each reachable node pair (u, v), compute the reciprocal
+        distance r_uv = 1/d(u,v), normalise to p_uv = r_uv / H where
+        H is the Harary index, then calculate Shannon entropy:
+
+            H_H = −Σ p_uv · ln(p_uv)
+
+        When *normalized* is True the result is divided by ln(pairs)
+        so the output lies in (0, 1].  A value of 1.0 means all
+        reachable pairs are equidistant (e.g. complete graphs, cycles).
+
+        **Properties:**
+        - Complete graph K_n: all d=1, H_H = 1.0 (all equal)
+        - Cycle C_n: all d=1 or d=2, structure-dependent
+        - Star K_{1,k}: hub-leaf pairs d=1, leaf-leaf d=2 → heterogeneity
+        - Sensitive to reciprocal distances → emphasises compactness variation
+
+        Returns:
+            float in (0, ln(pairs)] or (0, 1], or ``None`` for < 2 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        contributions: list[float] = []
+        for i, nid in enumerate(node_ids):
+            dists = self._bfs_distances(nid)
+            for other in node_ids[i + 1:]:
+                d = dists.get(other)
+                if d and d > 0:
+                    contributions.append(1.0 / d)
+        if not contributions:
+            return None
+        h = sum(contributions)
+        if h <= 0:
+            return None
+        m = len(contributions)
+        entropy = 0.0
+        for c in contributions:
+            p = c / h
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
+    def wiener_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Wiener (distance) contributions.
+
+        For each reachable node pair (u, v), compute the distance d_uv,
+        normalise to p_uv = d_uv / W where W is the Wiener index,
+        then calculate Shannon entropy:
+
+            H_W = −Σ p_uv · ln(p_uv)
+
+        When *normalized* is True the result is divided by ln(pairs)
+        so the output lies in (0, 1].  A value of 1.0 means all
+        reachable pairs are equidistant.
+
+        **Properties:**
+        - Complete graph K_n: all d=1, H_W = 1.0
+        - Cycle C_n: distances are 1 and n/2 (for large n), bimodal
+        - Star K_{1,k}: hub-leaf d=1, leaf-leaf d=2 → near-uniform
+        - Complementary to harary_entropy: Wiener weights long paths,
+          Harary weights short paths
+
+        Returns:
+            float in (0, ln(pairs)] or (0, 1], or ``None`` for < 2 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        contributions: list[float] = []
+        for i, nid in enumerate(node_ids):
+            dists = self._bfs_distances(nid)
+            for other in node_ids[i + 1:]:
+                d = dists.get(other)
+                if d and d > 0:
+                    contributions.append(float(d))
+        if not contributions:
+            return None
+        w = sum(contributions)
+        if w <= 0:
+            return None
+        m = len(contributions)
+        entropy = 0.0
+        for c in contributions:
+            p = c / w
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
     def entropy_guided_query_route(
         self,
         question: str,
