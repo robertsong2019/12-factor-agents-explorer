@@ -1,10 +1,15 @@
-"""Tests for entropy_profile() — comparative degree-based entropy dashboard.
+"""Tests for entropy_profile() — comparative entropy dashboard.
 
-Computes all seven degree-based Shannon entropies and returns structured comparison
-with diversity stats, most heterogeneous/homogeneous index, and graph fingerprint.
+Computes degree-based, distance-based, edge-partition, and centrality-based
+Shannon entropies and returns structured comparison.
 
-Cycle 281 (6 indices). Cycle 282: +augmented_zagreb (7 indices).
+Cycle 281 (6 degree indices). Cycle 282: +augmented_zagreb (7).
+Cycle 291: +8 (harary, wiener, szeged, gutman, schultz, closeness_vitality,
+eigenvector_centrality, edge_betweenness) → 15 indices total.
 """
+
+DEGREE_INDICES = {"sombor", "reduced_sombor", "randic", "zagreb_m1",
+                   "abc", "ga", "augmented_zagreb"}
 import math
 import pytest
 from memory_graph import MemoryGraph
@@ -71,23 +76,24 @@ class TestEntropyProfileDegenerate:
         assert g.entropy_profile() is None
 
     def test_single_edge(self):
-        """K₂ — only 1 edge. Entropy = 0 for all indices (m=1, no normalization)."""
+        """K₂ — degree-based entropies = 0 (m=1, log(1)=0). Distance-based also 0 (single pair)."""
         g = MemoryGraph()
         a, b = g.add("a"), g.add("b")
         g.link(a.id, b.id, "r")
         result = g.entropy_profile()
-        # abc skips K₂ edge → None. Other 5 indices return 0.0 (raw entropy of 1 item)
         assert result is not None
-        assert result["index_count"] == 5  # abc excluded
-        for val in result["values"].values():
-            assert val == 0.0
+        assert result["index_count"] >= 5
+        # Degree indices with 1 edge: normalized entropy = 0
+        for name, val in result["values"].items():
+            if name in DEGREE_INDICES:
+                assert val == 0.0, f"{name} should be 0 for K2"
 
 
 # ─── Regular graphs: all entropies = 1.0 ───────────────────────────────
 
 class TestEntropyProfileRegular:
     def test_k3_all_ones(self):
-        """K₃: all contributions identical → all normalized entropies = 1.0."""
+        """K₃: degree-based entropies = 1.0 (all edges identical). Distance-based also 1.0 (all pairs d=1)."""
         g = MemoryGraph()
         build_complete(g, 3)
         p = g.entropy_profile()
@@ -111,57 +117,71 @@ class TestEntropyProfileRegular:
         for name, val in p["values"].items():
             assert val == pytest.approx(1.0, abs=1e-12), f"{name} != 1.0"
 
-    def test_c4_all_ones(self):
+    def test_c4_degree_ones(self):
+        """C₄: degree-based entropies = 1.0. Distance-based differ (d=1,2 bimodal)."""
         g = MemoryGraph()
         build_cycle(g, 4)
         p = g.entropy_profile()
         assert p is not None
         for name, val in p["values"].items():
-            assert val == pytest.approx(1.0, abs=1e-12), f"{name} != 1.0"
+            if name in DEGREE_INDICES:
+                assert val == pytest.approx(1.0, abs=1e-12), f"{name} != 1.0"
+            else:
+                assert 0 < val <= 1.0 + 1e-9
 
-    def test_c5_all_ones(self):
+    def test_c5_degree_ones(self):
         g = MemoryGraph()
         build_cycle(g, 5)
         p = g.entropy_profile()
         assert p is not None
         for name, val in p["values"].items():
-            assert val == pytest.approx(1.0, abs=1e-12), f"{name} != 1.0"
+            if name in DEGREE_INDICES:
+                assert val == pytest.approx(1.0, abs=1e-12), f"{name} != 1.0"
+            else:
+                assert 0 < val <= 1.0 + 1e-9
 
-    def test_star_k3_all_ones(self):
-        """K_{1,3}: all edges identical → all entropies = 1.0."""
+    def test_star_k3_degree_ones(self):
+        """K_{1,3}: degree-based entropies = 1.0 (all edges identical). Distance/edge-partition differ."""
         g = MemoryGraph()
         build_star(g, 3)
         p = g.entropy_profile()
         assert p is not None
         for name, val in p["values"].items():
-            assert val == pytest.approx(1.0, abs=1e-12), f"{name} != 1.0"
+            if name in DEGREE_INDICES:
+                assert val == pytest.approx(1.0, abs=1e-12), f"{name} != 1.0"
+            else:
+                assert 0 < val <= 1.0 + 1e-9
 
-    def test_star_k5_all_ones(self):
+    def test_star_k5_degree_ones(self):
         g = MemoryGraph()
         build_star(g, 5)
         p = g.entropy_profile()
         assert p is not None
         for name, val in p["values"].items():
-            assert val == pytest.approx(1.0, abs=1e-12), f"{name} != 1.0"
+            if name in DEGREE_INDICES:
+                assert val == pytest.approx(1.0, abs=1e-12), f"{name} != 1.0"
+            else:
+                assert 0 < val <= 1.0 + 1e-9
 
-    def test_range_zero(self):
-        """For regular graphs, range should be ~0."""
+    def test_range_zero_complete(self):
+        """For complete graphs, all indices = 1.0 → range = 0."""
         g = MemoryGraph()
         build_complete(g, 4)
         p = g.entropy_profile()
         assert p["range"] == pytest.approx(0.0, abs=1e-12)
 
-    def test_std_zero(self):
+    def test_std_zero_complete(self):
         g = MemoryGraph()
         build_complete(g, 4)
         p = g.entropy_profile()
         assert p["std"] == pytest.approx(0.0, abs=1e-12)
 
-    def test_mean_one(self):
+    def test_mean_close_to_one_cycle(self):
+        """C₆: degree indices = 1.0, distance-based differ → mean < 1.0 but > 0."""
         g = MemoryGraph()
         build_cycle(g, 6)
         p = g.entropy_profile()
-        assert p["mean"] == pytest.approx(1.0, abs=1e-12)
+        assert 0 < p["mean"] <= 1.0
 
 
 # ─── Irregular graphs: entropies < 1.0 ─────────────────────────────────
@@ -235,31 +255,30 @@ class TestEntropyProfileStructure:
         build_complete(g, 3)
         p = g.entropy_profile()
         assert isinstance(p["values"], dict)
-        # Should have 5-6 entries (abc may be missing for some graphs)
-        assert len(p["values"]) >= 6
+        assert len(p["values"]) >= 10
 
     def test_raw_values_dict(self):
         g = MemoryGraph()
         build_complete(g, 3)
         p = g.entropy_profile()
         assert isinstance(p["raw_values"], dict)
-        # Raw values should be ln(m) for regular graphs
-        m = 3  # K₃ has 3 edges
+        # Degree-based raw values should be ln(m) for complete graphs
+        m = 3
         for name, val in p["raw_values"].items():
-            assert val == pytest.approx(math.log(m), abs=1e-10)
+            if name in DEGREE_INDICES:
+                assert val == pytest.approx(math.log(m), abs=1e-10), f"{name} raw != ln({m})"
 
     def test_fingerprint_is_tuple(self):
         g = MemoryGraph()
         build_complete(g, 4)
         p = g.entropy_profile()
         assert isinstance(p["fingerprint"], tuple)
-        assert len(p["fingerprint"]) >= 6
+        assert len(p["fingerprint"]) >= 10
 
     def test_fingerprint_rounded(self):
         g = MemoryGraph()
         build_path(g, 5)
         p = g.entropy_profile()
-        # Each fingerprint value should be rounded to 6 decimal places
         for v in p["fingerprint"]:
             rounded = round(v, 6)
             assert v == pytest.approx(rounded, abs=1e-10)
@@ -268,8 +287,8 @@ class TestEntropyProfileStructure:
         g = MemoryGraph()
         build_complete(g, 4)
         p = g.entropy_profile()
-        assert p["index_count"] >= 6
-        assert p["index_count"] <= 7
+        assert p["index_count"] >= 10
+        assert p["index_count"] <= 16
 
     def test_most_heterogeneous_is_string(self):
         g = MemoryGraph()

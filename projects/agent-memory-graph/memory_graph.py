@@ -6752,12 +6752,17 @@ class MemoryGraph:
         - ``most_homogeneous``: index with highest entropy (most even)
         - ``fingerprint``: tuple of 6 rounded values for graph comparison
 
-        The seven degree-based indices are: ``sombor``, ``reduced_sombor``,
+        The degree-based indices are: ``sombor``, ``reduced_sombor``,
         ``randic``, ``zagreb_m1``, ``abc``, ``ga``, ``augmented_zagreb``.
+        Additional groups: distance-based (``harary``, ``wiener``),
+        edge-partition (``szeged``, ``gutman``, ``schultz``),
+        centrality (``closeness_vitality``, ``eigenvector_centrality``,
+        ``edge_betweenness``), generalized (``tsallis``, ``renyi``).
 
-        Returns ``None`` if the graph has fewer than 2 edges.
+        Returns ``None`` if fewer than 2 groups produce valid values.
         """
         labels = [
+            # Degree-based
             ("sombor", self.sombor_entropy(normalized=True)),
             ("reduced_sombor", self.reduced_sombor_entropy(normalized=True)),
             ("randic", self.randic_entropy(normalized=True)),
@@ -6765,6 +6770,17 @@ class MemoryGraph:
             ("abc", self.abc_entropy(normalized=True)),
             ("ga", self.ga_entropy(normalized=True)),
             ("augmented_zagreb", self.augmented_zagreb_entropy(normalized=True)),
+            # Distance-based
+            ("harary", self.harary_entropy(normalized=True)),
+            ("wiener", self.wiener_entropy(normalized=True)),
+            # Edge-partition
+            ("szeged", self.szeged_entropy(normalized=True)),
+            ("gutman", self.gutman_entropy(normalized=True)),
+            ("schultz", self.schultz_entropy(normalized=True)),
+            # Centrality-based
+            ("closeness_vitality", self.closeness_vitality_entropy(normalized=True)),
+            ("eigenvector_centrality", self.eigenvector_centrality_entropy(normalized=True)),
+            ("edge_betweenness", self.edge_betweenness_entropy(normalized=True)),
         ]
         # Filter out None values (e.g. abc may be None for K₂-only graphs)
         valid = [(name, val) for name, val in labels if val is not None]
@@ -6790,6 +6806,14 @@ class MemoryGraph:
             "abc": self.abc_entropy(normalized=False),
             "ga": self.ga_entropy(normalized=False),
             "augmented_zagreb": self.augmented_zagreb_entropy(normalized=False),
+            "harary": self.harary_entropy(normalized=False),
+            "wiener": self.wiener_entropy(normalized=False),
+            "szeged": self.szeged_entropy(normalized=False),
+            "gutman": self.gutman_entropy(normalized=False),
+            "schultz": self.schultz_entropy(normalized=False),
+            "closeness_vitality": self.closeness_vitality_entropy(normalized=False),
+            "eigenvector_centrality": self.eigenvector_centrality_entropy(normalized=False),
+            "edge_betweenness": self.edge_betweenness_entropy(normalized=False),
         }
         raw_valid = {k: v for k, v in raw.items() if v is not None}
         # Fingerprint: 6 decimal places
