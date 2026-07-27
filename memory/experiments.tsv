@@ -74,3 +74,83 @@ date	project	baseline_tests	baseline_pass	after_tests	after_pass	delta_tests	del
 2026-07-20T23:00:00+08:00	nano-agent	test_count	709	732	+23	F45-F46: subtract + to_prompt. Set difference + structured LLM prompt formatter.
 2026-07-21T00:00:00+08:00	amg	test_count	4073	4099	+26	Cycle 271: semantic_cluster_detect() — group-level redundancy via single-linkage clustering. Content clusters (trigram Jaccard) + structural clusters (neighbour Jaccard) + combined clusters. Union-Find O(n²α(n)). 96bf3b7. 247th day.
 2026-07-21T01:00:00+08:00	acs	test_count	2784	2810	+26	Cycle 197: threshold_hysteresis_config — raise/clear threshold bands. set/get/clear/evaluate. Dead band stickiness. Flapping risk detection. Completes fragility remediation loop. 838781d. 197th day.
+2026-07-22T00:00:00+08:00	amg	test_count	4099→4121	keep	Cycle 272: auto_consolidate_cluster() — group-level batch consolidation. Degree-sorted merge. +22 tests. 248th day.
+2026-07-22T00:00:00+08:00	acs	test_count	2810→2831	keep	Cycle 198: hysteresis_band_recommender() — auto-recommend optimal raise/clear bands. Three strategies. Direction bias. +21 tests. 198th day.
+2026-07-22T00:00:00+08:00	context-forge	test_count	663→773	keep	F49-F54: detectDebugCode + analyzeImportGraph + analyzeMaturity + detectSecurityIssues + analyzeErrorHandling + analyzeDuplicateCode. +110 tests. 5005→6008 lines.
+2026-07-22T00:00:00+08:00	amg-mcp	test_count	0→43	keep	Day 1-2: 6 MCP tools (recall/remember/health/forget/query/consolidate) + resource subscription. Factory pattern. Zod v4 schemas.
+2026-07-22T02:00:00+08:00	knowledge	organization	0	1	6th phantom occurrence recovery. MEMORY.md insights #96-99. HEARTBEAT refreshed.
+2026-07-22T04:00:00+08:00	amg-mcp	docs	0	1	README created (274 lines). API reference all 6 tools + architecture + roadmap. c14b1d3.
+2026-07-22T05:00:00+08:00	blog	published	0	1	Self-tuning thresholds hysteresis essay ~1800 words. cff6666. GitHub Pages live.
+2026-07-22T19:12:00+08:00	amg	test_count	4121→4135	keep	Cycle 273: walk_statistics() — graph traversal metrics. +14 tests. 249th day.
+2026-07-22T19:24:00+08:00	amg	test_count	4135→4144	keep	Cycle 274: edge_type_stats() — edge type distribution analysis. +9 tests.
+2026-07-22T20:00:00+08:00	research	deep_research	0	1	#023 OTel GenAI Semantic Conventions — gen_ai spans/metrics/agent spans. Memory ops first-class. 5 token granularity levels. ~20KB note.
+2026-07-22T20:06:00+08:00	research	deep_research	0	1	#023b MCP Day 3 algorithms — Union-Find cluster detection + temporal gap scanner + TF-IDF semantic coverage + skill pattern miner. 6/6 tests verified.
+2026-07-22T21:07:00+08:00	amg-mcp	test_count	43→82	keep	Day 3: memory.gaps + memory.skills tools. Gap detection module. +39 tests.
+2026-07-22T21:30:00+08:00	context-forge	test_count	773→786	keep	F55: analyzeCommentHealth() — comment ratio + stale markers + JSDoc coverage. +13 tests.
+2026-07-22T21:45:00+08:00	agent-task-cli	test_count	1299→1319	keep	Round 51: F201 getAndTouch + F202 emitIfChanged + F203 ensureIndex. +20 tests.
+2026-07-22T22:25:00+08:00	amg	test_count	4144→4163	keep	Cycle 275: detect_skill_candidates() — episodic pattern mining for skill promotion. +19 tests. Foundation for compress_to_skill().
+2026-07-22T22:25:00+08:00	knowledge	phantom_fix	0	1	7th phantom occurrence: 9 entries missing. All recovered.
+2026-07-22T23:00:00+08:00	amg-mcp	test_count	82→93	keep	Day 4: HTTP transport mode. Node.js http.createServer wrapper + --http CLI flag. +11 tests. Dual transport complete. ea6e363.
+2026-07-23T00:00:00+08:00	amg	test_count	4163→4205	keep	Cycle 276: sombor_index() + reduced_sombor_index() — Gutman 2021 degree-based topological indices. Geometric interpretation. +42 tests. 250th consecutive day. 81f1249.
+2026-07-23T00:00:00+08:00	amg	test_pass_rate	100%	keep	All 4205 passing, 0 regressions, 29.14s.
+2026-07-23T01:00:00+08:00	acs	test_count	2831→2864	keep	Cycle 199: hysteresis_band_backtest() — dual-evaluator replay (baseline vs hysteresis). Flapping reduction + delayed detection metrics. Per-dimension breakdown. Closes detect→configure→recommend→validate pipeline. +33 tests. 199th day. 94919e4.
+2026-07-23T01:00:00+08:00	acs	test_pass_rate	100%	keep	All 2864 passing, 7.55s.
+2026-07-23T03:00:00+08:00	prompt-weaver	test_count	184→223	keep	CLI tests: parseArgs + init + build + validate + deploy. +39 tests.
+2026-07-23T20:06:00+08:00	research	note_count	+1	keep	Research #024: MCP SDK v2 Day-5 integration patterns. Dual-era testing, cacheHints ROI, MRTR deferred. ~16KB.
+2026-07-23T22:35:00+08:00	amg-mcp	test_count	93→122	keep	Day 5: Cross-era integration tests (5 phases). Legacy↔Auto persistence verified. All 14 tools legacy-tested. +29 tests. bf3e3c0.
+2026-07-23T22:50:00+08:00	context-forge	test_count	786→856	keep	F56 analyzeAsyncPatterns + F57 analyzeExportHealth + F58 analyzeFunctionMetrics. +70 tests, 6008→7001 lines.
+2026-07-23T23:00:00+08:00	amg	test_count	4205→4223	keep	Cycle 277: auto_compress_skills() — detect_skill_candidates → batch compress episodic clusters → skill nodes. Triple-loop quality system complete. Idempotent. +18 tests. e481e60.
+2026-07-23T23:00:00+08:00	amg	test_pass_rate	100%	keep	All 4223 passing, 0 regressions.
+2026-07-24T00:00:00+08:00	amg	test_count	4223→4269	keep	Cycle 278: sombor_entropy() + reduced_sombor_entropy() — Shannon entropy of normalized Sombor edge contributions. Index (magnitude) + entropy (distribution) = complete structural descriptor. Normalized [0,1]. RS entropy K₂=0 unique case. +46 tests. 251st day. 3ca0faf.
+2026-07-24T00:00:00+08:00	amg	test_pass_rate	100%	keep	All 4269 passing, 30.93s.
+2026-07-24T01:00:00+08:00	acs	test_count	2864→2898	keep	Cycle 200: scorecard_dimension_correlation() — Pearson r between scorecard dimensions across presets. Redundant/independent/complementary classification. Merge suggestions. Capstone of scorecard analytics layer. +34 tests. 200th day. 8f54402.
+2026-07-24T01:00:00+08:00	acs	test_pass_rate	100%	keep	All 2898 passing, 7.79s.
+2026-07-24T02:04:00+08:00	knowledge	phantom_fix	0	1	10th phantom occurrence: 9 entries missing (pw CLI, research #024, amg-mcp Day 5, cf F56-58, amg c277, amg c278, acs c200). All recovered.
+2026-07-25T00:00:00+08:00	amg	test_count	4269→4326	keep	Cycle 279: randic_entropy() + zagreb_m1_entropy() — Shannon entropy of normalized Randić (1/√(d_u·d_v)) and Zagreb M₁ (d_u+d_v) edge contributions. Extends entropy framework from Sombor-only (c278) to 3 degree-based indices. Normalized [0,1]. Regular → 1.0, paths → < 1.0. +57 tests. Zero regressions. 252nd day. a5d2c6f.
+2026-07-25T00:00:00+08:00	amg	test_pass_rate	100%	keep	All 4326 passing, 29.54s.
+2026-07-25T01:00:00+08:00	bea3f92	test_count	4326→4394	keep	Cycle 280: abc_entropy() + ga_entropy() — Shannon entropy of normalized ABC √((d_u+d_v−2)/(d_u·d_v)) and GA 2√(d_u·d_v)/(d_u+d_v) edge contributions. Extends entropy family from 3 indices (6 APIs) to 5 indices (10 APIs). ABC uniquely filters K₂ edges (numerator=0). GA uses geometric/arithmetic ratio. Normalized [0,1]. Regular → 1.0. +68 tests (34+34). Zero regressions. 253rd day.
+2026-07-25T01:00:00+08:00	bea3f92	test_pass_rate	100%	keep	All 4394 passing, 30.03s.
+2026-07-25T05:02:00+08:00	blog	published	0	1	Episodic-to-skill pipeline essay ~2800 words. AMG Cycles 275-280. dc19662. GitHub Pages live.
+2026-07-26T00:00:00+08:00	e3ca646	test_count	4394→4479	keep	Cycle 281: entropy_profile() + tsallis_entropy() — comparative entropy dashboard (all 6 degree-based Shannon entropies + diversity stats + fingerprint) and generalized Tsallis entropy with parameter q across all 6 index types. +85 tests. Zero regressions. 254th consecutive day.
+2026-07-26T00:00:00+08:00	e3ca646	test_pass_rate	100%	keep	All 4479 passing, 31.37s.
+2026-07-24T21:00:00+08:00	context-forge	test_count	856→1054	keep	F59-F66: analyzeCliHealth + analyzeDependencyRisk + analyzeTestCoverage + analyzeLoggingHealth + analyzeEnvHealth + analyzePerformancePatterns + analyzeTypeSafety + analyzeCodeSmells. +198 tests, 7001→8684 lines.
+2026-07-25T03:00:00+08:00	micro-agent-protocol	test_count	88→101	keep	+13 tests (schema validation, protocol versioning, error handling).
+2026-07-25T03:01:00+08:00	prompt-router	test_count	35→72	keep	+37 tests (route matching, fallback, priority ordering).
+2026-07-25T19:00:00+08:00	context-forge	test_count	1054→1180	keep	F67-F70: 4 analysis features. +126 tests, 8684→9453 lines.
+2026-07-25T20:00:00+08:00	research	deep_research	0	1	#027 Agent Trust & Safety 2026 — dissociative identity, per-component SimHash (0.974 AUC), pre-execution gating, distributed attacks. 7 TrustEngineV2 algorithms. ~33KB note.
+2026-07-25T20:07:00+08:00	research	deep_research	0	1	#028 Agent Planning & Reasoning 2026 — VRR-Stop (+60.6pp), SkillComposer (+23.1pp), RLAW (78.6% vs 54.1%), entropy-guided branching, PlanFlip. 3 runnable code examples. ~19KB note.
+2026-07-25T21:00:00+08:00	context-forge	test_count	1180→1283	keep	F71-F74: analyzeRegexComplexity + analyzeErrorMessages + analyzeHardcodedStrings + analyzeImportHygiene. +103 tests, 9453→10164 lines.
+2026-07-25T22:15:00+08:00	context-forge	test_count	1276→1326	keep	F77 analyzeCyclomaticComplexity + F78 analyzeReturnPaths. +50 tests, 10451→10812 lines.
+2026-07-26T01:00:00+08:00	060de53	test_count	4479→4572	keep	Cycle 282: augmented_zagreb_entropy() + edge_betweenness_entropy() — AZI cubic exponent (most discriminative degree entropy) + first centrality-based entropy (structural category). Entropy family 14 APIs. +93 tests. Zero regressions. 255th consecutive day.
+2026-07-26T01:00:00+08:00	060de53	test_pass_rate	100%	keep	All 4572 passing, 29.89s.
+2026-07-26T03:00+08:00	cron-testing	fix flaky test	4572p/1f	4583p/0f	+11 tests, -1 flaky	fixed TestAugZagrebEntropyEdgeAddition (P5 path had float-identical entropy, used star K1,4 instead); added test_visualize_ascii.py (11 new tests for visualize_ascii + shortest_path_undirected) PASS
+2026-07-26T21:00:00+08:00	45f3c9f	test_count	4583→4620	keep	Cycle 283: compute_activation() + apply_decay() — entropy-weighted forgetting. FadeMem adaptive decay × amg entropy framework. FSFM taxonomy recommendations. First entropy-based forgetting. +37 tests. Zero regressions. 256th day.
+2026-07-26T21:00:00+08:00	45f3c9f	test_pass_rate	100%	keep	All 4620 passing, 31.00s.
+2026-07-26T21:10:00+08:00	126759b	test_count	4620→4643	keep	Cycle 284: forget_policy() — FSFM 4-category taxonomy (passive_decay/active_deletion/safety_purge/adaptive_reinforcement). Pre-configured policies with overrides. Specialized active_deletion conflict-only processing. +23 tests. Zero regressions. 257th day.
+2026-07-26T21:10:00+08:00	126759b	test_pass_rate	100%	keep	All 4643 passing, 31.25s.
+2026-07-26T21:20:00+08:00	550098b	test_count	4643→4672	keep	Cycle 285: cue_reactivation() + soft_forget() + get_forgotten_nodes(). Oblivion-pattern soft forgetting with cue-based reactivation. JSON-flag forgotten state, keyword/fuzzy/exact matching, weight boost on reactivation. Full lifecycle verified. +29 tests. Zero regressions. 258th day.
+2026-07-26T21:20:00+08:00	550098b	test_pass_rate	100%	keep	All 4672 passing, 31.16s.
+2026-07-26T21:30:00+08:00	1457afb	test_count	4672→4693	keep	Cycle 286: security_purge() — FSCM Category 3 safety-triggered irreversible deletion. Kind-based + label-pattern detection with separator normalization. Custom kind merge. +21 tests. Zero regressions. 259th day.
+2026-07-26T21:30:00+08:00	1457afb	test_pass_rate	100%	keep	All 4693 passing, 30.83s.
+2026-07-26T22:18:00+08:00	4792815	test_count	4693→4745	keep	Cycle 287: entropy_guided_query_route() — entropy-aware retrieval strategy selection. High entropy (uniform) → basic, low entropy (heterogeneous) → drift. 8 entropy indices. override_heuristic parameter. +52 tests. 256th day.
+2026-07-26T22:18:00+08:00	4792815	test_pass_rate	100%	keep	All 4745 passing.
+2026-07-26T20:00:00+08:00	research	deep_research	0	1	#029 Multi-Agent Orchestration 2026 — coordination defects 41-87% failures, LAMaS -38-46% latency, Arbor 193% improvement via tree search as shared memory. LangGraph 38% production share. 3 runnable examples. ~18KB.
+2026-07-26T20:04:00+08:00	research	deep_research	0	1	#030 Adaptive Forgetting & Memory Pruning — FSFM 4-category taxonomy, FadeMem 45% storage ↓, Oblivion cue-reactivation, MemFactory RL framework. Entropy as forgetting signal = novel. 2 runnable examples. ~15KB.
+2026-07-27T00:57:00+08:00	d4c8fbd	test_count	4825→4902	keep	Cycle 288: renyi_entropy() + entropy_distance(). Rényi generalized entropy (extensive counterpart to Tsallis, α→1=Shannon, α=2=collision). JSD-based graph distance (symmetric, bounded [0,1], triangle inequality). +77 tests. Zero regressions. 260th day.
+2026-07-27T00:57:00+08:00	d4c8fbd	test_pass_rate	100%	keep	All 4902 passing, 33.38s.
+2026-07-28T01:00:00+08:00	262de7b	test_count	5147→5192	keep	Cycle 299: kl_divergence_graph() — KL(P‖Q) relative entropy between graphs. Completes information-theoretic trilogy: JSD (symmetric, c288) + cross-entropy (asymmetric, c298) + KL divergence (asymmetric, c299). KL = Σ p·ln(p/q), asymmetric, non-negative, zero iff identical. Supports all 7 degree-based indices. Disjoint support clamped. +45 tests. Zero regressions. 263rd consecutive day.
+2026-07-28T01:00:00+08:00	262de7b	test_pass_rate	100%	keep	All 5192 passing, 35.41s.
+2026-07-27T22:20:00+08:00	405f82c	test_count	4951→5001	keep	Cycle 292: von_neumann_entropy() + spectral_entropy_profile() — first spectral entropy (Laplacian eigenvalue Shannon). K_n maximizes H=ln(n-1). Dashboard: algebraic connectivity, spectral gap, spectral radius, participation ratio. _laplacian_eigenvalues + _sym_eigenvalues infra. +50 tests. 262nd day.
+2026-07-27T22:20:00+08:00	405f82c	test_pass_rate	100%	keep	All 5001 passing.
+2026-07-27T22:25:00+08:00	e2c9f53	test_count	5001→5038	keep	Cycle 293: TemporalEntropyTracker — phase transition detection via first/second derivatives of spectral entropy. 5 phases: growth/consolidation/forgetting/transition/insufficient. 7 entropy indices. +37 tests. 262nd day.
+2026-07-27T22:25:00+08:00	e2c9f53	test_pass_rate	100%	keep	All 5038 passing.
+2026-07-27T22:30:00+08:00	b26c4e7	test_count	5038→5064	keep	Cycle 294: quantum_jensen_shannon_distance() — spectral inter-graph true metric via Laplacian density matrices. Symmetric, bounded [0,sqrt(ln2)], triangle inequality. +26 tests. 262nd day.
+2026-07-27T22:30:00+08:00	b26c4e7	test_pass_rate	100%	keep	All 5064 passing.
+2026-07-27T22:35:00+08:00	1ebfe1f	test_count	5064→5068	keep	Cycle 295: entropy_profile() spectral extension — added spectral_values + spectral_raw_values + spectral_count fields. von_neumann alongside 15 degree/distance/centrality indices. +4 tests. 262nd day.
+2026-07-27T22:35:00+08:00	1ebfe1f	test_pass_rate	100%	keep	All 5068 passing.
+2026-07-27T22:40:00+08:00	fed5e7c	test_count	5068→5098	keep	Cycle 296: EntityResolver — 8 APIs (register_alias/resolve_alias/list_aliases/remove_alias/suggest_duplicates/merge_entities/resolve_or_add/auto_resolve_check). Fills Research #032 #1 gap. Case-insensitive, fuzzy dedup, entity merge with edge redirection. +30 tests. 262nd day.
+2026-07-27T22:40:00+08:00	fed5e7c	test_pass_rate	100%	keep	All 5098 passing.
+2026-07-27T22:45:00+08:00	cd36149	test_count	5098→5109	keep	Cycle 297: entropy_weighted_retrieval() — BM25 + per-node entropy weight blend. Score=(1-α)×similarity+α×entropy_weight. 8 indices. Novel differentiator. +11 tests. 262nd day.
+2026-07-27T22:45:00+08:00	cd36149	test_pass_rate	100%	keep	All 5109 passing.
+2026-07-28T00:30:00+08:00	461848a	test_count	5109→5147	keep	Cycle 298: cross_entropy_graph() — first asymmetric inter-graph measure H(P,Q). Gibbs inequality verified. 7 indices. Disjoint support clamped. +38 tests. 262nd day.
+2026-07-28T00:30:00+08:00	461848a	test_pass_rate	100%	keep	All 5147 passing, 35.14s.
