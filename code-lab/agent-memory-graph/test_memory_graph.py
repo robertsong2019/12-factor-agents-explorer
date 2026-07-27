@@ -20752,3 +20752,381 @@ class TestImmutableStoreIntegration:
         assert seqs == sorted(seqs, reverse=True)
         # All unique
         assert len(set(seqs)) == len(seqs)
+
+
+
+# ── von Neumann 谱熵测试 ──────────────────────────────────────
+
+class TestVonNeumannEntropy:
+    """Test von Neumann spectral entropy."""
+
+    def test_empty_graph_returns_none(self):
+        mg = MemoryGraph(":memory:")
+        assert mg.von_neumann_entropy() is None
+
+    def test_single_node_zero_entropy(self):
+        mg = MemoryGraph(":memory:")
+        mg.add("A")
+        assert mg.von_neumann_entropy() == 0.0
+
+    def test_two_nodes_one_edge(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A"); b = mg.add("B")
+        mg.link(a.id, b.id, "rel")
+        # K2: Laplacian eigenvalues [0, 2]
+        # H = -(2/2)*log(2/2) = -1*log(1) = 0
+        h = mg.von_neumann_entropy()
+        assert h is not None
+        assert abs(h - 0.0) < 1e-10
+
+    def test_complete_graph_k3(self):
+        """K3: H_vN(K_3) = log(3-1) = log(2)."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in ["A", "B", "C"]]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        h = mg.von_neumann_entropy()
+        assert h is not None
+        expected = math.log(2)  # log(n-1) for K_n
+        assert abs(h - expected) < 0.01
+
+    def test_complete_graph_k4(self):
+        """K4: H_vN(K_4) = log(4-1) = log(3)."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in ["A", "B", "C", "D"]]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        h = mg.von_neumann_entropy()
+        assert h is not None
+        expected = math.log(3)
+        assert abs(h - expected) < 0.02
+
+    def test_complete_graph_k5(self):
+        """K5: H_vN(K_5) = log(4)."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in list("ABCDE")]
+        for i in range(5):
+            for j in range(i + 1, 5):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        h = mg.von_neumann_entropy()
+        assert h is not None
+        expected = math.log(4)
+        assert abs(h - expected) < 0.05
+
+    def test_path_graph_lower_than_complete(self):
+        """Path graph P_n should have lower vN entropy than complete graph K_n."""
+        mg_path = MemoryGraph(":memory:")
+        nodes_p = [mg_path.add(n) for n in ["A", "B", "C", "D"]]
+        mg_path.link(nodes_p[0].id, nodes_p[1].id, "r")
+        mg_path.link(nodes_p[1].id, nodes_p[2].id, "r")
+        mg_path.link(nodes_p[2].id, nodes_p[3].id, "r")
+        h_path = mg_path.von_neumann_entropy()
+
+        mg_complete = MemoryGraph(":memory:")
+        nodes_c = [mg_complete.add(n) for n in ["A", "B", "C", "D"]]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                mg_complete.link(nodes_c[i].id, nodes_c[j].id, "r")
+        h_complete = mg_complete.von_neumann_entropy()
+
+        assert h_path is not None and h_complete is not None
+        assert h_path < h_complete
+
+    def test_star_graph(self):
+        """Star S_n: hub + spokes. Should have positive entropy."""
+        mg = MemoryGraph(":memory:")
+        hub = mg.add("hub")
+        for i in range(5):
+            leaf = mg.add(f"L{i}")
+            mg.link(hub.id, leaf.id, "r")
+        h = mg.von_neumann_entropy()
+        assert h is not None
+        assert h > 0
+
+    def test_isolated_nodes_no_edges(self):
+        mg = MemoryGraph(":memory:")
+        for n in ["A", "B", "C"]:
+            mg.add(n)
+        # No edges → m=0 → entropy is 0
+        assert mg.von_neumann_entropy() == 0.0
+
+    def test_duplicate_edges_not_double_counted(self):
+        """Adding the same edge twice should not change vN entropy."""
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A"); b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        h1 = mg.von_neumann_entropy()
+        mg.link(a.id, b.id, "r2")  # INSERT OR REPLACE by (source,target,relation,weight)
+        h2 = mg.von_neumann_entropy()
+        assert h1 is not None and h2 is not None
+
+    def test_entropy_increases_with_more_edges(self):
+        """Adding edges to a graph should generally increase vN entropy."""
+        mg1 = MemoryGraph(":memory:")
+        nodes1 = [mg1.add(n) for n in list("ABCDE")]
+        mg1.link(nodes1[0].id, nodes1[1].id, "r")
+        mg1.link(nodes1[1].id, nodes1[2].id, "r")
+        h1 = mg1.von_neumann_entropy()
+
+        mg2 = MemoryGraph(":memory:")
+        nodes2 = [mg2.add(n) for n in list("ABCDE")]
+        pairs = [(0,1),(1,2),(2,3),(3,4),(0,4),(0,2)]
+        for i, j in pairs:
+            mg2.link(nodes2[i].id, nodes2[j].id, "r")
+        h2 = mg2.von_neumann_entropy()
+
+        assert h1 is not None and h2 is not None
+        assert h2 > h1
+
+    def test_directed_edges_treated_undirected(self):
+        """vN entropy treats directed edges as undirected (symmetric Laplacian)."""
+        mg1 = MemoryGraph(":memory:")
+        a1 = mg1.add("A"); b1 = mg1.add("B"); c1 = mg1.add("C")
+        mg1.link(a1.id, b1.id, "r")
+        mg1.link(c1.id, b1.id, "r")
+        h1 = mg1.von_neumann_entropy()
+
+        mg2 = MemoryGraph(":memory:")
+        a2 = mg2.add("A"); b2 = mg2.add("B"); c2 = mg2.add("C")
+        mg2.link(b2.id, a2.id, "r")  # reversed direction
+        mg2.link(b2.id, c2.id, "r")
+        h2 = mg2.von_neumann_entropy()
+
+        assert h1 is not None and h2 is not None
+        assert abs(h1 - h2) < 1e-8
+
+    def test_result_is_float(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A"); b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        h = mg.von_neumann_entropy()
+        assert isinstance(h, float)
+
+    def test_cycle_graph_c4(self):
+        """Cycle C4 is 2-regular. Entropy should be positive and finite."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in ["A", "B", "C", "D"]]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        mg.link(nodes[3].id, nodes[0].id, "r")
+        h = mg.von_neumann_entropy()
+        assert h is not None
+        assert h > 0
+        assert h < 10  # sanity upper bound
+
+
+# ── spectral_entropy_profile 测试 ─────────────────────────────
+
+class TestSpectralEntropyProfile:
+    """Test comprehensive spectral entropy profile."""
+
+    def test_empty_graph_returns_none(self):
+        mg = MemoryGraph(":memory:")
+        assert mg.spectral_entropy_profile() is None
+
+    def test_single_node(self):
+        mg = MemoryGraph(":memory:")
+        mg.add("A")
+        profile = mg.spectral_entropy_profile()
+        assert profile is not None
+        assert profile["eigenvalues"] == [0.0]
+        assert profile["von_neumann_entropy"] == 0.0
+        assert profile["complexity_ratio"] == 0.0
+
+    def test_complete_graph_k3_profile(self):
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in ["A", "B", "C"]]
+        for i in range(3):
+            for j in range(i + 1, 3):
+                mg.link(nodes[i].id, nodes[j].id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+
+        # Eigenvalues of K3 Laplacian: [0, 3, 3]
+        eigs = p["eigenvalues"]
+        assert len(eigs) == 3
+        assert abs(eigs[0]) < 0.1  # ~0
+        assert abs(eigs[1] - 3.0) < 0.1
+        assert abs(eigs[2] - 3.0) < 0.1
+
+        # vN entropy ~ log(2)
+        assert abs(p["von_neumann_entropy"] - math.log(2)) < 0.01
+
+        # Complexity ratio ~ 1.0 for complete graph
+        assert abs(p["complexity_ratio"] - 1.0) < 0.05
+
+        # Spanning trees of K3 = 3 (Cayley)
+        assert p["number_of_spanning_trees"] is not None
+        assert abs(p["number_of_spanning_trees"] - 3.0) < 0.5
+
+    def test_path_graph_p4_profile(self):
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in ["A", "B", "C", "D"]]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+
+        assert len(p["eigenvalues"]) == 4
+        assert abs(p["eigenvalues"][0]) < 0.1  # ~0 for connected
+
+        # Path graph has exactly 1 spanning tree
+        assert p["number_of_spanning_trees"] is not None
+        assert abs(p["number_of_spanning_trees"] - 1.0) < 0.5
+
+    def test_has_all_required_keys(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A"); b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+        required_keys = {
+            "eigenvalues", "spectral_gap", "algebraic_connectivity",
+            "von_neumann_entropy", "shannon_degree_entropy",
+            "spectral_radius", "graph_energy", "laplacian_energy",
+            "number_of_spanning_trees", "complexity_ratio"
+        }
+        assert set(p.keys()) == required_keys
+
+    def test_spectral_gap_positive(self):
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in list("ABCD")]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+        assert p["spectral_gap"] > 0
+
+    def test_graph_energy_positive_for_edges(self):
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in ["A", "B", "C"]]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+        assert p["graph_energy"] > 0
+
+    def test_laplacian_energy_positive(self):
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in ["A", "B", "C"]]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+        assert p["laplacian_energy"] > 0
+
+    def test_complexity_ratio_between_0_and_1(self):
+        """For any graph, complexity ratio should be in [0, 1]."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in list("ABCDE")]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        mg.link(nodes[3].id, nodes[4].id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+        assert 0.0 <= p["complexity_ratio"] <= 1.0 + 0.1
+
+    def test_isolated_nodes_profile(self):
+        mg = MemoryGraph(":memory:")
+        for n in ["A", "B", "C"]:
+            mg.add(n)
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+        assert p["von_neumann_entropy"] == 0.0
+        assert p["graph_energy"] == 0.0
+
+    def test_star_graph_spanning_trees(self):
+        """Star graph S_n has exactly 1 spanning tree."""
+        mg = MemoryGraph(":memory:")
+        hub = mg.add("hub")
+        for i in range(4):
+            leaf = mg.add(f"L{i}")
+            mg.link(hub.id, leaf.id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+        assert p["number_of_spanning_trees"] is not None
+        assert abs(p["number_of_spanning_trees"] - 1.0) < 0.5
+
+    def test_cycle_graph_c3_spanning_trees(self):
+        """C3 = K3, has 3 spanning trees."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in ["A", "B", "C"]]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[0].id, nodes[2].id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+        assert p["number_of_spanning_trees"] is not None
+        assert abs(p["number_of_spanning_trees"] - 3.0) < 0.5
+
+    def test_von_neumann_entropy_consistent_with_standalone(self):
+        """Profile's vN entropy should match standalone von_neumann_entropy()."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in list("ABCD")]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        mg.link(nodes[3].id, nodes[0].id, "r")
+        h_standalone = mg.von_neumann_entropy()
+        p = mg.spectral_entropy_profile()
+        assert h_standalone is not None and p is not None
+        assert abs(h_standalone - p["von_neumann_entropy"]) < 0.001
+
+    def test_shannon_entropy_in_profile(self):
+        """Profile should include Shannon degree entropy for comparison."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in ["A", "B", "C"]]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[0].id, nodes[2].id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+        assert p["shannon_degree_entropy"] > 0
+
+    def test_two_graphs_comparison(self):
+        """Same nodes, more edges → different profile."""
+        mg1 = MemoryGraph(":memory:")
+        nodes1 = [mg1.add(n) for n in list("ABCDE")]
+        mg1.link(nodes1[0].id, nodes1[1].id, "r")
+        mg1.link(nodes1[1].id, nodes1[2].id, "r")
+        p1 = mg1.spectral_entropy_profile()
+
+        mg2 = MemoryGraph(":memory:")
+        nodes2 = [mg2.add(n) for n in list("ABCDE")]
+        for i in range(5):
+            for j in range(i + 1, 5):
+                mg2.link(nodes2[i].id, nodes2[j].id, "r")
+        p2 = mg2.spectral_entropy_profile()
+
+        assert p1 is not None and p2 is not None
+        assert p2["von_neumann_entropy"] > p1["von_neumann_entropy"]
+        assert p2["graph_energy"] > p1["graph_energy"]
+        assert p2["complexity_ratio"] > p1["complexity_ratio"]
+
+    def test_eigenvalues_sorted(self):
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in list("ABCD")]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        p = mg.spectral_entropy_profile()
+        assert p is not None
+        eigs = p["eigenvalues"]
+        assert eigs == sorted(eigs)
+
+    def test_algebraic_connectivity_matches(self):
+        """Profile's algebraic connectivity should match standalone method."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(n) for n in list("ABCD")]
+        mg.link(nodes[0].id, nodes[1].id, "r")
+        mg.link(nodes[1].id, nodes[2].id, "r")
+        mg.link(nodes[2].id, nodes[3].id, "r")
+        ac_standalone = mg.algebraic_connectivity()
+        p = mg.spectral_entropy_profile()
+        assert ac_standalone is not None and p is not None
+        assert abs(ac_standalone - p["algebraic_connectivity"]) < 0.01

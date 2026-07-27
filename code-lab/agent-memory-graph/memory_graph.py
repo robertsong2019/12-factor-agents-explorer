@@ -6839,6 +6839,205 @@ class MemoryGraph:
             rs_old = rs_new
         return x
 
+    # ── 谱熵分析（von Neumann entropy + spectral profile）────
+
+    def von_neumann_entropy(self) -> float | None:
+        """计算图的 von Neumann 谱熵。
+
+        基于拉普拉斯矩阵的归一化特征值：
+            H_vN(G) = - Σ (λ_i / (2m)) * log(λ_i / (2m))
+
+        其中 λ_i 是拉普拉斯矩阵的非零特征值，m 是边数。
+        使用自然对数（nats）。
+
+        性质：
+        - 完全图 K_n: H_vN(K_n) = log(n-1)
+        - 空图（无边）: H_vN = 0
+        - 星图: H_vN 较低（结构简单）
+        - 正则图: H_vN 较高（结构均匀）
+
+        von Neumann 熵衡量图的"结构复杂性"：
+        - 低熵 = 简单、规则、可预测的拓扑
+        - 高熵 = 复杂、不规则的拓扑
+
+        与 Shannon 度分布熵（graph_entropy）不同，vN 熵基于拉普拉斯谱，
+        捕获全局拓扑信息而不仅是度分布。
+
+        Returns:
+            von Neumann 熵（nats），或 None（空图）
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n == 0:
+            return None
+
+        edge_count = self.conn.execute("SELECT COUNT(*) c FROM edges").fetchone()["c"]
+        if edge_count == 0:
+            return 0.0
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        degree = [0] * n
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                if j not in adj_sym[i]:
+                    adj_sym[i].add(j); adj_sym[j].add(i)
+                    degree[i] += 1; degree[j] += 1
+
+        m = sum(degree) / 2.0  # total edge count (undirected)
+        if m == 0:
+            return 0.0
+
+        # Build Laplacian
+        L = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            L[i][i] = float(degree[i])
+            for j in adj_sym[i]:
+                L[i][j] = -1.0
+
+        eigenvalues = self._sym_eigenvalues(L)
+
+        two_m = 2.0 * m
+        h = 0.0
+        for lam in eigenvalues:
+            if lam < 1e-12:
+                continue  # skip zero eigenvalues
+            p = lam / two_m
+            if p > 0:
+                h -= p * math.log(p)
+        return h
+
+    def spectral_entropy_profile(self) -> dict | None:
+        """计算图的完整谱熵概要。
+
+        一次性计算所有谱分析指标，返回结构化字典：
+
+        Returns:
+            {
+                "eigenvalues": [λ_0, λ_1, ..., λ_{n-1}],  # 排序后的拉普拉斯特征值
+                "spectral_gap": λ_1 - λ_0,                # 谱间隙（最大-最小）
+                "algebraic_connectivity": λ_1 (2nd smallest),
+                "von_neumann_entropy": float,               # vN 谱熵
+                "shannon_degree_entropy": float,            # 度分布熵（对比用）
+                "spectral_radius": float,                   # 邻接矩阵谱半径
+                "graph_energy": float,                      # 图能量 Σ|λ_i|
+                "laplacian_energy": float,                  # 拉普拉斯能量
+                "number_of_spanning_trees": float | None,   # 生成树数量（Kirchhoff定理）
+                "complexity_ratio": float,                  # vN_entropy / log(n-1)，1.0=完全图
+            }
+            或 None（空图）
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n == 0:
+            return None
+        if n == 1:
+            return {
+                "eigenvalues": [0.0],
+                "spectral_gap": 0.0,
+                "algebraic_connectivity": 0.0,
+                "von_neumann_entropy": 0.0,
+                "shannon_degree_entropy": 0.0,
+                "spectral_radius": 0.0,
+                "graph_energy": 0.0,
+                "laplacian_energy": 0.0,
+                "number_of_spanning_trees": 1.0,
+                "complexity_ratio": 0.0,
+            }
+
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        degree = [0] * n
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        for e in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                if j not in adj_sym[i]:
+                    adj_sym[i].add(j); adj_sym[j].add(i)
+                    degree[i] += 1; degree[j] += 1
+
+        # Build Laplacian and adjacency matrices
+        L = [[0.0] * n for _ in range(n)]
+        A = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            L[i][i] = float(degree[i])
+            for j in adj_sym[i]:
+                L[i][j] = -1.0
+                A[i][j] = 1.0
+
+        lap_eigs = self._sym_eigenvalues(L)
+        lap_eigs_sorted = sorted(lap_eigs)
+
+        adj_eigs = self._sym_eigenvalues(A)
+
+        edge_count = sum(degree) // 2
+        m = sum(degree) / 2.0
+
+        # von Neumann entropy
+        two_m = 2.0 * m if m > 0 else 1.0
+        vn_h = 0.0
+        for lam in lap_eigs:
+            if lam < 1e-12:
+                continue
+            p = lam / two_m
+            if p > 0:
+                vn_h -= p * math.log(p)
+
+        # Shannon degree entropy (reuse logic from graph_entropy)
+        dist: dict[int, int] = {}
+        for d in degree:
+            dist[d] = dist.get(d, 0) + 1
+        shannon_h = 0.0
+        for cnt in dist.values():
+            p = cnt / n
+            if p > 0:
+                shannon_h -= p * math.log2(p)
+
+        # Graph energy = sum of absolute adjacency eigenvalues
+        graph_energy = sum(abs(ev) for ev in adj_eigs)
+
+        # Laplacian energy = sum of |λ_i - avg_degree|
+        avg_deg = sum(degree) / n
+        lap_energy = sum(abs(lam - avg_deg) for lam in lap_eigs)
+
+        # Number of spanning trees (Kirchhoff's matrix-tree theorem)
+        # = (1/n) * product of non-zero Laplacian eigenvalues
+        non_zero_eigs = [lam for lam in lap_eigs if lam > 1e-10]
+        if len(non_zero_eigs) > 0 and n > 0:
+            product = 1.0
+            for lam in non_zero_eigs:
+                product *= lam
+            spanning_trees = product / n
+        else:
+            spanning_trees = None
+
+        # Spectral gap (max - min Laplacian eigenvalue)
+        spectral_gap = lap_eigs_sorted[-1] - lap_eigs_sorted[0] if lap_eigs_sorted else 0.0
+
+        # Algebraic connectivity (2nd smallest)
+        alg_conn = lap_eigs_sorted[1] if len(lap_eigs_sorted) >= 2 else 0.0
+
+        # Spectral radius of adjacency matrix
+        spec_radius = max(abs(ev) for ev in adj_eigs) if adj_eigs else 0.0
+
+        # Complexity ratio: vN_entropy / log(n-1)
+        # 1.0 = complete graph (maximum complexity for given n)
+        log_n1 = math.log(n - 1) if n > 1 else 1.0
+        complexity_ratio = vn_h / log_n1 if log_n1 > 0 else 0.0
+
+        return {
+            "eigenvalues": [round(e, 8) for e in lap_eigs_sorted],
+            "spectral_gap": round(spectral_gap, 8),
+            "algebraic_connectivity": round(max(0.0, alg_conn), 8),
+            "von_neumann_entropy": round(vn_h, 8),
+            "shannon_degree_entropy": round(shannon_h, 8),
+            "spectral_radius": round(spec_radius, 8),
+            "graph_energy": round(graph_energy, 8),
+            "laplacian_energy": round(lap_energy, 8),
+            "number_of_spanning_trees": round(spanning_trees, 4) if spanning_trees is not None else None,
+            "complexity_ratio": round(complexity_ratio, 8),
+        }
+
     # ── 连通性分析（node/edge connectivity）─────────────────
 
     def node_connectivity(self) -> int:
