@@ -30021,6 +30021,166 @@ class MemoryGraph:
             entropy /= math.log(m)
         return entropy
 
+    # ------------------------------------------------------------------
+    # Spectral entropy (Laplacian eigenvalue based)
+    # ------------------------------------------------------------------
+
+    def _laplacian_eigenvalues(self, *, include_quarantined: bool = False
+                               ) -> Optional[list[float]]:
+        """Return sorted Laplacian eigenvalues of the undirected graph.
+
+        Builds L = D − A (symmetric) and applies ``_sym_eigenvalues``.
+        Used by all spectral-entropy methods.
+
+        Args:
+            include_quarantined:  If True, include quarantined nodes.
+
+        Returns:
+            Sorted list of eigenvalues (ascending), or ``None``
+            for fewer than 2 nodes.
+        """
+        base = "SELECT id FROM nodes"
+        if not include_quarantined:
+            base += " WHERE quarantined = 0"
+        node_ids = [str(r["id"]) for r in self.conn.execute(base).fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return None
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+        degree = [0] * n
+        adj_sym: dict[int, set[int]] = defaultdict(set)
+        edge_q = "SELECT source, target FROM edges"
+        for e in self.conn.execute(edge_q).fetchall():
+            s, t = str(e["source"]), str(e["target"])
+            if s in idx and t in idx:
+                i, j = idx[s], idx[t]
+                adj_sym[i].add(j)
+                adj_sym[j].add(i)
+                degree[i] += 1
+                degree[j] += 1
+        L = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            L[i][i] = float(degree[i])
+            for j in adj_sym[i]:
+                L[i][j] = -1.0
+        evals = self._sym_eigenvalues(L)
+        evals.sort()
+        return evals
+
+    def von_neumann_entropy(self, normalized: bool = True,
+                            *, include_quarantined: bool = False
+                            ) -> Optional[float]:
+        r"""Von Neumann graph entropy — Shannon entropy of normalised
+        positive Laplacian eigenvalues.
+
+        For a graph with Laplacian eigenvalues *λ₁ … λₙ* (λ₁ = 0 for
+        each connected component), define:
+
+            λ_sum = Σ λᵢ  (= 2m  where *m* is the edge count)
+            pᵢ   = λᵢ / λ_sum
+            H_vN = −Σ pᵢ · ln(pᵢ)        (skip pᵢ = 0)
+
+        **Properties** (Research #031):
+        - K_n maximises: all non-zero λᵢ = n, uniform → H = ln(n−1)
+        - Empty graph (0 edges): all λ = 0 → convention H = 0
+        - Path P_n: heterogeneous spectrum → moderate entropy
+        - Complementary to degree-based entropies: captures **global**
+          topology through the spectral decomposition, not local
+          neighbourhood structure.
+
+        When *normalized* is True the result is divided by ln(n−1)
+        so that a complete graph maps to 1.0.
+
+        Args:
+            normalized:           Divide by ln(n−1) so K_n → 1.0.
+            include_quarantined:  Include quarantined nodes.
+
+        Returns:
+            float in [0, ln(n−1)] or [0, 1], or ``None`` for < 2 nodes.
+        """
+        evals = self._laplacian_eigenvalues(include_quarantined=include_quarantined)
+        if evals is None:
+            return None
+        # Sum of Laplacian eigenvalues = trace(L) = 2m
+        lam_sum = sum(evals)
+        if lam_sum <= 0:
+            return 0.0  # no edges → all eigenvalues zero
+        probs = [e / lam_sum for e in evals if e > 1e-15]
+        if not probs:
+            return 0.0
+        entropy = 0.0
+        for p in probs:
+            entropy -= p * math.log(p)
+        n = len(evals)
+        if normalized and n > 2:
+            max_entropy = math.log(n - 1)
+            if max_entropy > 0:
+                entropy /= max_entropy
+        return entropy
+
+    def spectral_entropy_profile(self, *, include_quarantined: bool = False
+                                 ) -> Optional[dict]:
+        """Dashboard of spectral (Laplacian-eigenvalue) graph descriptors.
+
+        Aggregates all spectral information into a single dict:
+
+        - ``von_neumann_entropy``      — normalised H_vN ∈ [0, 1]
+        - ``von_neumann_entropy_raw``  — raw H_vN
+        - ``algebraic_connectivity``   — λ₂ (Fiedler value)
+        - ``spectral_gap``             — λₙ − λ₂ (gap between largest
+          and second-smallest eigenvalue)
+        - ``spectral_radius``          — largest |λᵢ|
+        - ``n_positive``               — count of λᵢ > ε
+        - ``n_zero``                   — count of λᵢ ≈ 0 (= #components)
+        - ``max_entropy_possible``     — ln(n−1)
+        - ``entropy_ratio``            — H_vN / ln(n−1)
+        - ``complexity``               — participation ratio
+          (Σλ²)² / Σλ⁴ — measures how spread the spectrum is
+        - ``eigenvalues``              — full sorted eigenvalue list
+
+        Returns:
+            dict, or ``None`` for < 2 nodes.
+        """
+        evals = self._laplacian_eigenvalues(include_quarantined=include_quarantined)
+        if evals is None:
+            return None
+        n = len(evals)
+        eps = 1e-9
+        n_zero = sum(1 for e in evals if abs(e) < eps)
+        n_pos = sum(1 for e in evals if e > eps)
+        lam_max = max(evals) if evals else 0.0
+        lam_sum = sum(evals)
+        # Algebraic connectivity (second smallest)
+        alg_conn = evals[1] if n >= 2 else 0.0
+        # Spectral gap = largest - second smallest
+        spec_gap = (evals[-1] - evals[1]) if n >= 2 else 0.0
+        # Participation ratio (quantum complexity measure)
+        if lam_sum > 0:
+            sum_sq = sum(e * e for e in evals)
+            sum_4th = sum(e ** 4 for e in evals)
+            complexity = (sum_sq * sum_sq / sum_4th) if sum_4th > eps else 0.0
+        else:
+            complexity = 0.0
+        h_vn_norm = self.von_neumann_entropy(normalized=True,
+                                             include_quarantined=include_quarantined)
+        h_vn_raw = self.von_neumann_entropy(normalized=False,
+                                            include_quarantined=include_quarantined)
+        max_h = math.log(n - 1) if n > 2 else 0.0
+        entropy_ratio = (h_vn_raw / max_h) if max_h > 0 else 0.0
+        return {
+            "von_neumann_entropy":     h_vn_norm,
+            "von_neumann_entropy_raw": h_vn_raw,
+            "algebraic_connectivity":  alg_conn,
+            "spectral_gap":            spec_gap,
+            "spectral_radius":         lam_max,
+            "n_positive":              n_pos,
+            "n_zero":                  n_zero,
+            "max_entropy_possible":    max_h,
+            "entropy_ratio":           entropy_ratio,
+            "complexity":              complexity,
+            "eigenvalues":             evals,
+        }
+
     def entropy_guided_query_route(
         self,
         question: str,
