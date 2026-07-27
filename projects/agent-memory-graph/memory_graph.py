@@ -94,6 +94,12 @@ class MemoryGraph:
                 properties TEXT DEFAULT '{}',
                 PRIMARY KEY (source, target, relation)
             );
+            CREATE TABLE IF NOT EXISTS entity_aliases (
+                alias_key TEXT PRIMARY KEY,
+                canonical_label TEXT NOT NULL,
+                alias_display TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_alias_canonical ON entity_aliases(canonical_label);
         """)
         # Schema migration: add provenance + quarantine columns (backward compatible)
         existing_cols = {row[1] for row in self.conn.execute("PRAGMA table_info(nodes)").fetchall()}
@@ -32588,6 +32594,176 @@ class MemoryGraph:
             "nodes_after": nodes_after,
             "actions": actions,
             "dry_run": dry_run,
+        }
+
+    # ── EntityResolver: alias management + duplicate detection ────────────────
+    # Research #032: Entity resolution is "table stakes" (Mem0 v3, Graphiti).
+    # This fills the gap with alias registration, fuzzy duplicate detection,
+    # and entity merging.
+
+    def _label_exists(self, label: str) -> bool:
+        """Check if any node has this exact label."""
+        row = self.conn.execute("SELECT 1 FROM nodes WHERE label=? LIMIT 1", (label,)).fetchone()
+        return row is not None
+
+    def register_alias(self, canonical_label: str, alias: str) -> None:
+        """Register *alias* as an alternate name for *canonical_label*.
+
+        Raises ValueError if canonical_label does not exist in the graph.
+        Aliases are stored case-insensitively and whitespace-trimmed.
+        """
+        canonical_label = canonical_label.strip()
+        alias = alias.strip()
+        if not self._label_exists(canonical_label):
+            raise ValueError(f"Canonical label '{canonical_label}' not found in graph")
+        key = alias.lower()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO entity_aliases (alias_key, canonical_label, alias_display) VALUES (?,?,?)",
+            (key, canonical_label, alias),
+        )
+        self.conn.commit()
+
+    def resolve_alias(self, alias: str) -> Optional[str]:
+        """Resolve *alias* to its canonical label. Returns None if not found."""
+        key = alias.strip().lower()
+        row = self.conn.execute(
+            "SELECT canonical_label FROM entity_aliases WHERE alias_key=?", (key,)
+        ).fetchone()
+        if row:
+            return row["canonical_label"]
+        # Also check if it's already a canonical label
+        if self._label_exists(alias.strip()):
+            return alias.strip()
+        return None
+
+    def list_aliases(self, canonical: str = None) -> dict:
+        """List all aliases, optionally filtered by canonical label.
+
+        Returns ``{canonical_label: [alias1, alias2, ...]}``.
+        """
+        if canonical:
+            rows = self.conn.execute(
+                "SELECT alias_display FROM entity_aliases WHERE canonical_label=? ORDER BY alias_display",
+                (canonical,),
+            ).fetchall()
+            return {canonical: [r["alias_display"] for r in rows]} if rows else {}
+        rows = self.conn.execute(
+            "SELECT canonical_label, alias_display FROM entity_aliases ORDER BY canonical_label, alias_display"
+        ).fetchall()
+        result: dict[str, list[str]] = {}
+        for r in rows:
+            result.setdefault(r["canonical_label"], []).append(r["alias_display"])
+        return result
+
+    def remove_alias(self, alias: str) -> bool:
+        """Remove an alias. Returns True if it existed."""
+        key = alias.strip().lower()
+        cur = self.conn.execute("DELETE FROM entity_aliases WHERE alias_key=?", (key,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def _find_by_label(self, label: str) -> Optional[str]:
+        """Find node ID by exact label match."""
+        row = self.conn.execute("SELECT id FROM nodes WHERE label=? LIMIT 1", (label,)).fetchone()
+        return row["id"] if row else None
+
+    def suggest_duplicates(self, *, threshold: float = 0.92) -> list[dict]:
+        """Detect potential duplicate entities via normalised label comparison.
+
+        Compares nodes of the same *kind*. Two labels are considered duplicates if
+        their case-insensitive, whitespace-trimmed forms match exactly.
+
+        Returns a list of ``{"canonical": label, "kind": kind, "duplicates": [(id, label)]}``.
+        """
+        rows = self.conn.execute("SELECT id, label, kind FROM nodes").fetchall()
+        # Group by (normalised_label, kind)
+        groups: dict[tuple[str, str], list] = {}
+        for r in rows:
+            key = (r["label"].strip().lower(), r["kind"] or "fact")
+            groups.setdefault(key, []).append((r["id"], r["label"], r["kind"] or "fact"))
+        dupes = []
+        for (norm_label, kind), entries in groups.items():
+            if len(entries) > 1:
+                canonical = entries[0][1]  # first-added is canonical
+                dupes.append({
+                    "canonical": canonical,
+                    "kind": kind,
+                    "duplicates": [(e[0], e[1]) for e in entries[1:]],
+                    "duplicate_kind": kind,
+                })
+        return dupes
+
+    def merge_entities(self, source_id: str, target_id: str) -> bool:
+        """Merge *source_id* into *target_id* — redirect all edges, merge data, delete source.
+
+        Data from source is merged into target (target takes precedence on conflicts).
+        Returns False if either node doesn't exist, True on success.
+        """
+        src = self.get_node(source_id)
+        tgt = self.get_node(target_id)
+        if not src or not tgt:
+            return False
+        if source_id == target_id:
+            return True
+        # Merge data (target wins)
+        merged_data = {**src.data, **tgt.data}
+        self.update_node(target_id, data=merged_data)
+        # Redirect edges: source→X becomes target→X
+        out_edges = self.conn.execute(
+            "SELECT target, relation, weight FROM edges WHERE source=?", (source_id,)
+        ).fetchall()
+        for e in out_edges:
+            if e["target"] != target_id:  # avoid self-loop
+                self.link(target_id, e["target"], e["relation"], e["weight"])
+        # Redirect edges: X→source becomes X→target
+        in_edges = self.conn.execute(
+            "SELECT source, relation, weight FROM edges WHERE target=?", (source_id,)
+        ).fetchall()
+        for e in in_edges:
+            if e["source"] != target_id:
+                self.link(e["source"], target_id, e["relation"], e["weight"])
+        # Delete source node (also cleans its edges)
+        self.delete_node(source_id)
+        return True
+
+    def resolve_or_add(self, label: str, *, kind: str = "fact", data: dict = None) -> object:
+        """Resolve *label* via aliases; if not found, create a new node.
+
+        Returns the resolved/created Node.
+        """
+        canonical = self.resolve_alias(label)
+        if canonical:
+            nid = self._find_by_label(canonical)
+            if nid:
+                return self.get_node(nid)
+        # No alias found — create new
+        return self.add(label, kind, data or {})
+
+    def auto_resolve_check(self) -> dict:
+        """Audit entity resolution health — find duplicates and report coverage.
+
+        Returns::
+
+            {
+              "total_nodes": int,
+              "total_aliases": int,
+              "aliased_entities": int,
+              "duplicates_found": int,
+              "suggestions": [...],  # from suggest_duplicates()
+            }
+        """
+        dupes = self.suggest_duplicates()
+        alias_rows = self.conn.execute(
+            "SELECT COUNT(*) as cnt, COUNT(DISTINCT canonical_label) as entities FROM entity_aliases"
+        ).fetchone()
+        node_count = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        return {
+            "total_nodes": node_count,
+            "total_aliases": alias_rows["cnt"],
+            "aliased_entities": alias_rows["entities"],
+            "duplicates_found": len(dupes),
+            "suggestions": dupes,
+            "recommended_action": "merge_entities() on each duplicate group" if dupes else "none",
         }
 
 
