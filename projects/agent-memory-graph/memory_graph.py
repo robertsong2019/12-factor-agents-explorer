@@ -32766,6 +32766,121 @@ class MemoryGraph:
             "recommended_action": "merge_entities() on each duplicate group" if dupes else "none",
         }
 
+    # ── Entropy-Weighted Retrieval ───────────────────────────────────────────
+    # Research #032: amg's unique advantage — entropy as retrieval signal.
+    # While Mem0 uses vector similarity and Graphiti uses graph traversal,
+    # amg uses structural entropy to boost informationally rich nodes.
+
+    def _entropy_weight_for_node(self, node_id: str,
+                                 entropy_index: str = "sombor") -> float:
+        """Compute a normalised entropy weight [0,1] for a single node.
+
+        Uses the node's degree relative to the max degree in the graph,
+        weighted by the chosen degree-entropy index's power.
+        """
+        deg = self._node_degree(node_id)
+        if deg == 0:
+            return 0.0
+        max_deg = max((self._node_degree(r["id"])
+                       for r in self.conn.execute("SELECT id FROM nodes").fetchall()),
+                      default=0)
+        if max_deg == 0:
+            return 0.0
+        # Normalise degree to [0, 1]
+        norm_deg = deg / max_deg
+        # Apply index-specific power (approximates contribution share)
+        index_powers = {
+            "sombor": 1.5,
+            "reduced_sombor": 1.0,
+            "randic": 0.5,
+            "zagreb_m1": 2.0,
+            "abc": 1.5,
+            "ga": 0.5,
+            "augmented_zagreb": 2.5,
+            "edge_betweenness": 1.0,
+        }
+        power = index_powers.get(entropy_index, 1.5)
+        return min(1.0, norm_deg ** power)
+
+    def entropy_weighted_retrieval(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        alpha: float = 0.3,
+        entropy_index: str = "sombor",
+        detail: bool = False,
+    ) -> list[dict]:
+        """Retrieve nodes ranked by a blend of BM25 similarity and entropy weight.
+
+        This is amg's novel differentiator (Research #032): structural
+        entropy boosts nodes that are informationally rich and
+        well-connected, going beyond pure keyword matching.
+
+        Score = (1 - alpha) * similarity + alpha * entropy_weight
+
+        Args:
+            query:          Natural-language search query.
+            limit:          Max results.
+            alpha:          Entropy blend factor [0, 1].
+                            0 = pure similarity (BM25), 1 = pure entropy.
+                            Default 0.3 gives a gentle structural boost.
+            entropy_index:  Degree-entropy index for weight computation.
+            detail:         Include full Node objects in results.
+
+        Returns: list of dicts with keys: node_id, label, score,
+                 similarity, entropy_weight, and optionally node.
+        """
+        valid_indices = {"sombor", "reduced_sombor", "randic", "zagreb_m1",
+                         "abc", "ga", "augmented_zagreb", "edge_betweenness"}
+        if entropy_index not in valid_indices:
+            raise ValueError(
+                f"Unknown entropy index '{entropy_index}'. "
+                f"Choose from: {', '.join(sorted(valid_indices))}"
+            )
+
+        # Step 1: BM25 similarity search
+        bm25_results = self.search_bm25(query, limit=limit * 3)
+        if not bm25_results:
+            # Fallback: search_unified
+            bm25_results = self.search_unified(query, limit=limit * 3)
+            bm25_results = [
+                {"node_id": r["node"].id, "label": r["node"].label,
+                 "kind": r["node"].kind, "score": r["score"]}
+                for r in bm25_results
+            ]
+        if not bm25_results:
+            return []
+
+        # Normalise BM25 scores to [0, 1]
+        max_sim = max((r["score"] for r in bm25_results), default=1.0)
+        if max_sim <= 0:
+            max_sim = 1.0
+
+        # Step 2: Compute entropy weight and blended score
+        results = []
+        for r in bm25_results[:limit * 2]:
+            nid = r["node_id"]
+            sim = r["score"] / max_sim
+            ew = self._entropy_weight_for_node(nid, entropy_index)
+            score = (1 - alpha) * sim + alpha * ew
+            entry = {
+                "node_id": nid,
+                "label": r["label"],
+                "kind": r.get("kind", "fact"),
+                "score": round(score, 6),
+                "similarity": round(sim, 6),
+                "entropy_weight": round(ew, 6),
+            }
+            if detail:
+                node = self.get_node(nid)
+                if node:
+                    entry["node"] = node
+            results.append(entry)
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:limit]
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
