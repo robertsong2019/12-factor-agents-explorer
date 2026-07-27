@@ -5574,6 +5574,146 @@ class MemoryGraph:
                     total += deg[nid] * deg[other] * d
         return total
 
+    def szeged_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Szeged edge-partition contributions.
+
+        For each edge (u, v), compute n_u · n_v (the Szeged contribution),
+        normalise to p_e = (n_u · n_v) / Sz, then calculate Shannon entropy:
+
+            H_Sz = −Σ p_e · ln(p_e)
+
+        When *normalized* is True the result is divided by ln(m)
+        so the output lies in (0, 1].
+
+        **Properties:**
+        - Regular graph: all edges have identical partitions → H = 1.0
+        - Path P_n: endpoints vs interior edges differ → H < 1.0
+        - Star K_{1,k}: all edges identical (hub-leaf) → H = 1.0
+
+        Returns:
+            float in (0, ln(m)] or (0, 1], or ``None`` for < 2 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        if not edges:
+            return None
+        all_dists: dict[str, dict[str, int]] = {}
+        for nid in node_ids:
+            all_dists[nid] = self._bfs_distances(nid)
+        contributions: list[int] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            n_u = n_v = 0
+            ds_map = all_dists.get(s, {})
+            dt_map = all_dists.get(t, {})
+            for w in node_ids:
+                dw_s, dw_t = ds_map.get(w), dt_map.get(w)
+                if dw_s is None or dw_t is None:
+                    continue
+                if dw_s < dw_t:
+                    n_u += 1
+                elif dw_t < dw_s:
+                    n_v += 1
+            contributions.append(n_u * n_v)
+        sz = sum(contributions)
+        if sz <= 0:
+            return None
+        m = len(contributions)
+        entropy = 0.0
+        for c in contributions:
+            p = c / sz
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
+    def gutman_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Gutman (degree-weighted distance) contributions.
+
+        For each reachable node pair (u, v), compute d_u · d_v · d(u,v),
+        normalise to p_uv = contribution / Gut, then Shannon entropy.
+
+        **Properties:**
+        - Complete graph K_n: all pairs identical → H = 1.0
+        - Path P_n: endpoint-endpoint pairs weight less (low degree)
+        - Regular graph: Gut = k²·W, same as Wiener entropy
+
+        Returns:
+            float in (0, ln(pairs)] or (0, 1], or ``None`` for < 2 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edge_count = self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        if edge_count == 0:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        deg: dict[str, int] = {nid: self.degree(nid) for nid in node_ids}
+        contributions: list[int] = []
+        for i, nid in enumerate(node_ids):
+            dists = self._bfs_distances(nid)
+            for other in node_ids[i + 1:]:
+                d = dists.get(other)
+                if d and d > 0:
+                    contributions.append(deg[nid] * deg[other] * d)
+        gut = sum(contributions)
+        if gut <= 0:
+            return None
+        m = len(contributions)
+        entropy = 0.0
+        for c in contributions:
+            p = c / gut
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
+    def schultz_entropy(self, normalized: bool = True) -> Optional[float]:
+        """Shannon entropy of normalised Schultz (degree-sum-weighted distance) contributions.
+
+        For each reachable pair (u, v), compute (d_u + d_v) · d(u,v),
+        normalise, then Shannon entropy.
+
+        **Properties:**
+        - Complete graph K_n: uniform → H = 1.0
+        - Complementary to Gutman entropy: sum vs product weighting
+
+        Returns:
+            float in (0, ln(pairs)] or (0, 1], or ``None`` for < 2 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 2:
+            return None
+        edge_count = self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        if edge_count == 0:
+            return None
+        node_ids = [str(r["id"]) for r in rows]
+        deg: dict[str, int] = {nid: self.degree(nid) for nid in node_ids}
+        contributions: list[int] = []
+        for i, nid in enumerate(node_ids):
+            dists = self._bfs_distances(nid)
+            for other in node_ids[i + 1:]:
+                d = dists.get(other)
+                if d and d > 0:
+                    contributions.append((deg[nid] + deg[other]) * d)
+        sch = sum(contributions)
+        if sch <= 0:
+            return None
+        m = len(contributions)
+        entropy = 0.0
+        for c in contributions:
+            p = c / sch
+            if p > 0:
+                entropy -= p * math.log(p)
+        if normalized and m > 1:
+            entropy /= math.log(m)
+        return entropy
+
     def schultz_index(self) -> Optional[int]:
         """Schultz molecular topological index (Schultz 1989).
 
