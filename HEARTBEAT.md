@@ -3,7 +3,7 @@
 ## 待办任务
 
 ### 🔴 最高优先级（本周）
-- [ ] **agent-memory-graph: README + npm publish** — **5192 tests**, 870+ APIs, 八十合一
+- [ ] **agent-memory-graph: README + npm publish** — **5307 tests**, 870+ APIs, 八十合一
 - [ ] **agent-context-store: README + npm publish** — **2898 tests**, 600+ APIs, 二十六层
 - [ ] **structured-output-toolkit: README + npm publish** — **561 tests**
 - [ ] **agent-task-cli: README + npm publish** — **1319 tests**, F203
@@ -14,7 +14,7 @@
 - [ ] amg: OpenClaw plugin (~200 lines) — fastest-growing distribution channel
 - [ ] amg PyPI publish (Python-first strategy)
 - [ ] context-forge: 继续 F80+ code analysis features
-- [ ] lab/agent-observability: OTel GenAI 对齐
+- [ ] lab/agent-observability: OTel GenAI alignment — Research #034 complete, 5 action items queued (rename ops, compacted attr, MCP _meta propagation, OTelGenAITracer adapter, token histogram)
 - [ ] openclaw-langgraph-bridge: Gateway 集成测试 (261 tests)
 - [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
 
@@ -31,7 +31,7 @@
 - [x] context-forge F79: analyzeDeadCode(). +20 tests
 
 ## 系统状态
-- **agent-memory-graph**: **5192 tests** — 870+ APIs。八十合一: **entropy framework** ✅ (20+ APIs: 7 degree-based + 2 spectral + 1 dashboard + 2 generalized + 4 inter-graph trilogy) + **adaptive forgetting suite** ✅ (6 APIs) + **EntityResolver** ✅ (8 APIs) + **entropy-weighted retrieval** ✅ + **entropy-guided query routing** ✅ + **TemporalEntropyTracker** ✅ + **triple-loop quality** ✅ + MCP Day 1-5 ✅
+- **agent-memory-graph**: **5354 tests** — 870+ APIs。八十合一: **entropy framework** ✅ (20+ APIs: 7 degree-based + 2 spectral + 1 dashboard + 2 generalized + 4 inter-graph trilogy) + **adaptive forgetting suite** ✅ (6 APIs) + **EntityResolver** ✅ (8 APIs) + **entropy-weighted retrieval** ✅ + **entropy-guided query routing** ✅ + **TemporalEntropyTracker** ✅ + **triple-loop quality** ✅ + MCP Day 1-5 ✅
 - **agent-context-store**: **2898 tests** — 600+ APIs。二十六层 pipeline COMPLETE ✅
 - **structured-output-toolkit**: **561 tests**
 - **agent-task-cli**: **1319 tests** — F203
@@ -39,11 +39,13 @@
 - **nano-agent**: **732 tests** (F46)
 - **amg-mcp**: **122 tests** — Phase 1 Day 5 complete ✅
 - **prompt-weaver**: **223 tests**
-- **四项目总计**: 9970 tests ✅
-- **全项目总计**: 14265 tests
+- **四项目总计**: 10032 tests ✅
+- **全项目总计**: 14327 tests
 - **零回滚率**: amg 263天 🏆 / acs 200天 🏆
 
 ## 近期活动 (07-28)
+- **Cycle 307** ✅ (23:00): entropy_stability() — Monte Carlo entropy variance under random edge perturbation. remove+rewire modes, stability_score=1-CV, 7 indices, seedable. 47 tests (5307→5354). **266th day**. 5780e3e.
+- **Cycle 306** ✅ (22:15): entropy_contribution() — leave-one-out marginal entropy per node. 7 indices, O(n·m) cached degree vectors. Critical vs expendable node classification. +20 tests (5287→5307). **265th day**. c064b04.
 - **Cycle 299** ✅ (01:00): kl_divergence_graph() — KL(P‖Q) relative entropy. Completes information-theoretic trilogy. +45 tests (5147→5192). **263rd day**. 262de7b.
 - **Cycle 298** ✅ (00:30): cross_entropy_graph() — first asymmetric inter-graph measure. +38 tests (5109→5147). **262nd day**. 461848a.
 
