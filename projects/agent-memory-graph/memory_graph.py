@@ -6850,6 +6850,122 @@ class MemoryGraph:
             "spectral_count": len(spectral_valid),
         }
 
+    def entropy_anomaly_detect(self, index: str = "sombor",
+                               threshold: float = 2.0) -> Optional[dict]:
+        """Detect nodes whose local entropy contribution deviates from the graph average.
+
+        For each node, computes a *local entropy score* based on the
+        diversity of its edge contributions (using the chosen degree-based
+        index).  Nodes whose score deviates more than *threshold* standard
+        deviations from the mean are flagged as anomalies.
+
+        **Anomaly types:**
+        - ``"hub"`` — abnormally high degree-diversity (many diverse connections)
+        - ``"pendant"`` — abnormally low degree-diversity (homogeneous/isolated)
+        - ``"bridge"`` — normal overall but connects to anomalous neighbors
+
+        Useful for finding unusual patterns in agent memory: over-connected
+        hubs, isolated clusters, or bridging nodes between communities.
+
+        Args:
+            index: degree-based index for edge contribution computation.
+            threshold: standard deviations for anomaly cutoff. Default 2.0.
+
+        Returns:
+            Dict with:
+            - ``mean_score``: float — mean local entropy
+            - ``std_score``: float — standard deviation
+            - ``threshold``: float
+            - ``anomalies``: list of {node_id, label, score, z_score, type}
+            - ``total_nodes``: int
+            or None if fewer than 3 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(rows) < 3:
+            return None
+
+        # Compute per-node local entropy: diversity of edge contributions
+        node_scores = {}
+        for r in rows:
+            nid = r["id"]
+            edges = self.edges_of(nid, direction="both")
+            if not edges:
+                node_scores[nid] = 0.0
+                continue
+
+            # Compute degree-based contributions for this node's edges
+            contributions = []
+            deg = self.degree(nid)
+            for e in edges:
+                other = e.target if e.source == nid else e.source
+                d_other = self.degree(other)
+                if deg <= 0 or d_other <= 0:
+                    continue
+                if index == "sombor":
+                    contributions.append(math.sqrt(deg * deg + d_other * d_other))
+                elif index == "randic":
+                    contributions.append(1.0 / math.sqrt(deg * d_other))
+                elif index == "zagreb_m1":
+                    contributions.append(float(deg + d_other))
+                else:
+                    contributions.append(math.sqrt(deg * deg + d_other * d_other))
+
+            if not contributions:
+                node_scores[nid] = 0.0
+                continue
+
+            # Local entropy: Shannon entropy of normalized contributions
+            total = sum(contributions)
+            if total <= 0:
+                node_scores[nid] = 0.0
+                continue
+
+            probs = [c / total for c in contributions]
+            entropy = -sum(p * math.log(p) for p in probs if p > 0)
+            node_scores[nid] = entropy
+
+        scores = list(node_scores.values())
+        n = len(scores)
+        mean_score = sum(scores) / n
+        var = sum((s - mean_score) ** 2 for s in scores) / n
+        std_score = var ** 0.5
+
+        if std_score == 0:
+            # All nodes identical — no anomalies
+            return {
+                "mean_score": round(mean_score, 8),
+                "std_score": 0.0,
+                "threshold": threshold,
+                "anomalies": [],
+                "total_nodes": n,
+            }
+
+        anomalies = []
+        for nid, score in node_scores.items():
+            z_score = (score - mean_score) / std_score
+            if abs(z_score) >= threshold:
+                node = self.get_node(nid)
+                anomaly_type = "hub" if z_score > 0 else "pendant"
+                anomalies.append({
+                    "node_id": nid,
+                    "label": node.label if node else nid,
+                    "score": round(score, 8),
+                    "z_score": round(z_score, 4),
+                    "type": anomaly_type,
+                    "degree": self.degree(nid),
+                })
+
+        # Sort by absolute z_score descending
+        anomalies.sort(key=lambda a: abs(a["z_score"]), reverse=True)
+
+        return {
+            "mean_score": round(mean_score, 8),
+            "std_score": round(std_score, 8),
+            "threshold": threshold,
+            "anomalies": anomalies,
+            "total_nodes": n,
+        }
+
     def tsallis_entropy(self, q: float = 2.0, normalized: bool = True,
                         index: str = "sombor") -> Optional[float]:
         """Tsallis generalized entropy of degree-based edge contributions.
