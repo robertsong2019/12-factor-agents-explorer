@@ -33870,6 +33870,250 @@ class MemoryGraph:
             "evaluated":         n_eval,
         }
 
+    # ── Cycle 307: Entropy stability under random perturbation ──
+
+    def entropy_stability(self, index: str = "sombor",
+                          *, trials: int = 50,
+                          edge_fraction: float = 0.1,
+                          mode: str = "remove",
+                          seed: int | None = None) -> Optional[dict]:
+        """Monte Carlo analysis of entropy stability under random perturbation.
+
+        Repeatedly perturbs the graph by removing (or adding noise to)
+        a fraction of edges, recomputing the degree-based Shannon entropy
+        after each perturbation, and summarising the distribution of
+        entropy values.
+
+        **Why stability matters:**
+        A graph whose entropy barely changes under perturbation is
+        **structurally robust** — small changes in connectivity do not
+        alter its information-theoretic properties.  Conversely, a graph
+        with high entropy variance is **fragile** — its structural
+        diversity depends on specific edges.
+
+        **Perturbation modes:**
+        - ``"remove"``: delete *edge_fraction* × *m* random edges
+        - ``"rewire"``: rewire *edge_fraction* × *m* random edges
+          (preserve degree sequence approximately)
+
+        Args:
+            index: Degree-based index (sombor, reduced_sombor, randic,
+                zagreb_m1, abc, ga, augmented_zagreb).
+            trials: Number of Monte Carlo iterations (default 50).
+            edge_fraction: Fraction of *m* edges to perturb per trial
+                (0.0–1.0, default 0.1 = 10%).
+            mode: Perturbation mode: "remove" or "rewire".
+            seed: RNG seed for reproducibility (default None = non-deterministic).
+
+        Returns:
+            Dict with:
+            - ``baseline_entropy``: H(G) on the original graph
+            - ``mean``: mean entropy across trials
+            - ``std``: std deviation of entropy across trials
+            - ``cv``: coefficient of variation (std/mean), a scale-free
+              stability measure (lower = more stable)
+            - ``min``: minimum entropy observed
+            - ``max``: maximum entropy observed
+            - ``range``: max - min
+            - ``stability_score``: 1 - cv (clipped to [0, 1]);
+              1.0 = perfectly stable, 0.0 = highly unstable
+            - ``entropy_values``: list of per-trial entropy values
+            - ``perturbed_edges``: number of edges perturbed per trial
+            - ``trials``: number of successful trials
+            - ``mode`` / ``index``: echoes of parameters
+
+            Returns ``None`` if the graph has < 2 edges or < 3 nodes.
+        """
+        import random as _rng
+
+        if seed is not None:
+            _rng.seed(seed)
+
+        if edge_fraction <= 0 or edge_fraction > 1:
+            raise ValueError("edge_fraction must be in (0, 1]")
+        if trials < 1:
+            raise ValueError("trials must be >= 1")
+        if mode not in ("remove", "rewire"):
+            raise ValueError(f"Unknown mode '{mode}'; choose 'remove' or 'rewire'")
+
+        # ── Contribution function ──
+        def _sombor_c(du, dv):
+            return math.sqrt(du * du + dv * dv)
+
+        def _reduced_sombor_c(du, dv):
+            return math.sqrt(max(du - 1, 0) ** 2 + max(dv - 1, 0) ** 2)
+
+        def _randic_c(du, dv):
+            return 1.0 / math.sqrt(du * dv) if du > 0 and dv > 0 else 0.0
+
+        def _zagreb_m1_c(du, dv):
+            return float(du * du + dv * dv)
+
+        def _abc_c(du, dv):
+            if du <= 0 or dv <= 0:
+                return 0.0
+            num = du + dv - 2.0
+            if num <= 0:
+                return 0.0
+            return math.sqrt(num / (du * dv))
+
+        def _ga_c(du, dv):
+            return 2.0 * math.sqrt(du * dv) / (du + dv) if du > 0 and dv > 0 else 0.0
+
+        def _aug_az_c(du, dv):
+            return ((du * dv) / (du + dv)) ** 3 if du > 0 and dv > 0 else 0.0
+
+        CONTRIB = {
+            "sombor":           _sombor_c,
+            "reduced_sombor":   _reduced_sombor_c,
+            "randic":           _randic_c,
+            "zagreb_m1":        _zagreb_m1_c,
+            "abc":              _abc_c,
+            "ga":               _ga_c,
+            "augmented_zagreb": _aug_az_c,
+        }
+        if index not in CONTRIB:
+            raise ValueError(f"Unknown index '{index}'. Valid: {list(CONTRIB)}")
+        contrib_fn = CONTRIB[index]
+
+        def _shannon(contribs: list[float]) -> Optional[float]:
+            valid = [c for c in contribs if c > 0]
+            if not valid:
+                return 0.0 if contribs else None
+            total = sum(valid)
+            if total <= 0:
+                return None
+            m = len(valid)
+            h = 0.0
+            for c in valid:
+                p = c / total
+                if p > 0:
+                    h -= p * math.log(p)
+            if m > 1:
+                h /= math.log(m)
+            return h
+
+        # ── Cache graph state ──
+        node_rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        all_node_ids = [str(r["id"]) for r in node_rows]
+        edge_rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        all_edges = [(str(r["source"]), str(r["target"])) for r in edge_rows]
+
+        n_nodes = len(all_node_ids)
+        n_edges = len(all_edges)
+        if n_nodes < 3 or n_edges < 2:
+            return None
+
+        # Compute original degrees
+        orig_deg: dict[str, int] = {}
+        for nid in all_node_ids:
+            orig_deg[nid] = self.degree(nid)
+
+        # Baseline entropy
+        base_contribs = [
+            contrib_fn(orig_deg.get(s, 0), orig_deg.get(t, 0))
+            for s, t in all_edges
+        ]
+        baseline = _shannon(base_contribs)
+        if baseline is None:
+            return None
+
+        # Number of edges to perturb per trial
+        n_perturb = max(1, int(n_edges * edge_fraction))
+
+        # Adjacency for rewire mode
+        if mode == "rewire":
+            adjacency: dict[str, set[str]] = {nid: set() for nid in all_node_ids}
+            for s, t in all_edges:
+                adjacency.setdefault(s, set()).add(t)
+                adjacency.setdefault(t, set()).add(s)
+
+        entropy_values: list[float] = []
+
+        for _trial in range(trials):
+            # Copy current state
+            trial_deg = dict(orig_deg)
+            trial_edges = list(all_edges)
+
+            if mode == "remove":
+                # Remove n_perturb random edges
+                indices_to_remove = set(
+                    _rng.sample(range(len(trial_edges)), min(n_perturb, len(trial_edges)))
+                )
+                kept_edges = [
+                    e for i, e in enumerate(trial_edges)
+                    if i not in indices_to_remove
+                ]
+                # Update degrees
+                for idx in indices_to_remove:
+                    s, t = trial_edges[idx]
+                    trial_deg[s] = max(0, trial_deg.get(s, 0) - 1)
+                    trial_deg[t] = max(0, trial_deg.get(t, 0) - 1)
+                trial_edges = kept_edges
+
+            elif mode == "rewire":
+                # Rewire n_perturb random edges: pick an edge, detach one
+                # endpoint, reconnect to a random different node
+                for _ in range(n_perturb):
+                    if len(trial_edges) == 0:
+                        break
+                    ei = _rng.randrange(len(trial_edges))
+                    s, t = trial_edges[ei]
+                    # Choose which endpoint to rewire
+                    if _rng.random() < 0.5:
+                        # Rewire target
+                        new_t = _rng.choice(all_node_ids)
+                        if new_t == s or new_t == t or new_t in adjacency.get(s, set()):
+                            continue
+                        trial_edges[ei] = (s, new_t)
+                        trial_deg[t] = max(0, trial_deg.get(t, 0) - 1)
+                        trial_deg[new_t] = trial_deg.get(new_t, 0) + 1
+                    else:
+                        # Rewire source
+                        new_s = _rng.choice(all_node_ids)
+                        if new_s == s or new_s == t or new_s in adjacency.get(t, set()):
+                            continue
+                        trial_edges[ei] = (new_s, t)
+                        trial_deg[s] = max(0, trial_deg.get(s, 0) - 1)
+                        trial_deg[new_s] = trial_deg.get(new_s, 0) + 1
+
+            # Compute entropy on perturbed graph
+            perturbed_contribs = [
+                contrib_fn(trial_deg.get(s, 0), trial_deg.get(t, 0))
+                for s, t in trial_edges
+            ]
+            h = _shannon(perturbed_contribs)
+            if h is not None:
+                entropy_values.append(h)
+
+        if not entropy_values:
+            return None
+
+        n_val = len(entropy_values)
+        mean_h = sum(entropy_values) / n_val
+        var_h = sum((v - mean_h) ** 2 for v in entropy_values) / n_val
+        std_h = var_h ** 0.5
+        min_h = min(entropy_values)
+        max_h = max(entropy_values)
+        cv = std_h / mean_h if mean_h > 0 else float("inf")
+        stability = max(0.0, min(1.0, 1.0 - cv))
+
+        return {
+            "baseline_entropy":  round(baseline, 6),
+            "mean":              round(mean_h, 6),
+            "std":               round(std_h, 6),
+            "cv":                round(cv, 6),
+            "min":               round(min_h, 6),
+            "max":               round(max_h, 6),
+            "range":             round(max_h - min_h, 6),
+            "stability_score":   round(stability, 6),
+            "entropy_values":    [round(v, 6) for v in entropy_values],
+            "perturbed_edges":   n_perturb,
+            "trials":            n_val,
+            "mode":              mode,
+            "index":             index,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
