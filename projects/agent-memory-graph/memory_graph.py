@@ -7443,6 +7443,90 @@ class MemoryGraph:
 
     # ── Cycle 301: Graph classification via inter-graph trilogy ─
 
+    def graph_similarity_matrix(self, graphs: list["MemoryGraph"],
+                                method: str = "jsd",
+                                index: str = "sombor") -> Optional[dict]:
+        """Compute pairwise similarity/divergence matrix across multiple graphs.
+
+        For *N* input graphs, produces an *N×N* matrix of pairwise
+        inter-graph measures (JSD distance, cross-entropy, or KL divergence).
+        The diagonal is always 0 for symmetric measures (JSD) and correctly
+        computed for asymmetric ones (CE, KL: H(G,G)=H(G), KL(G‖G)=0).
+
+        Enables graph clustering, anomaly detection, and similarity search
+        without external tools.  Pairs naturally with ``graph_classification()``
+        for multi-reference comparison.
+
+        Args:
+            graphs: list of MemoryGraphs to compare pairwise.
+                **Self** is NOT included automatically — pass it explicitly
+                if desired.
+            method: inter-graph measure:
+                - ``"jsd"`` — Jensen-Shannon distance (symmetric, [0,1])
+                - ``"ce"`` — cross-entropy H(row, col) (asymmetric)
+                - ``"kl"`` — KL divergence KL(row‖col) (asymmetric)
+            index: degree-based index for edge contribution computation.
+
+        Returns:
+            Dict with:
+            - ``matrix``: N×N list of floats (NaN if comparison failed)
+            - ``method``: str
+            - ``index``: str
+            - ``size``: int (number of graphs)
+            - ``symmetric``: bool (True for jsd, False for ce/kl)
+            or None if fewer than 2 graphs.
+        """
+        n = len(graphs)
+        if n < 2:
+            return None
+
+        compute = {
+            "jsd": lambda a, b: a.entropy_distance(b, index=index),
+            "ce": lambda a, b: a.cross_entropy_graph(b, index=index),
+            "kl": lambda a, b: a.kl_divergence_graph(b, index=index),
+        }.get(method)
+        if compute is None:
+            raise ValueError(
+                f"unknown method '{method}'; choose from jsd/ce/kl"
+            )
+
+        matrix = [[0.0] * n for _ in range(n)]
+
+        if method == "jsd":
+            # Symmetric: compute upper triangle, mirror
+            for i in range(n):
+                for j in range(i + 1, n):
+                    val = compute(graphs[i], graphs[j])
+                    if val is None:
+                        val = float("nan")
+                    else:
+                        val = round(val, 8)
+                    matrix[i][j] = val
+                    matrix[j][i] = val
+        else:
+            # Asymmetric: compute full matrix
+            for i in range(n):
+                for j in range(n):
+                    if i == j:
+                        # Diagonal: KL(G‖G)=0, CE(G,G)=H(G)
+                        if method == "kl":
+                            matrix[i][j] = 0.0
+                        else:  # ce
+                            matrix[i][j] = round(
+                                compute(graphs[i], graphs[i]) or 0.0, 8
+                            )
+                    else:
+                        val = compute(graphs[i], graphs[j])
+                        matrix[i][j] = round(val, 8) if val is not None else float("nan")
+
+        return {
+            "matrix": matrix,
+            "method": method,
+            "index": index,
+            "size": n,
+            "symmetric": method == "jsd",
+        }
+
     def graph_classification(self, references: list["MemoryGraph"],
                               method: str = "jsd",
                               index: str = "sombor") -> Optional[dict]:
