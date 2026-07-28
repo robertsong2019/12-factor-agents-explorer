@@ -7441,6 +7441,62 @@ class MemoryGraph:
             "shannon": round(shannon, 8) if shannon is not None else None,
         }
 
+    # ── Cycle 301: Graph classification via inter-graph trilogy ─
+
+    def graph_classification(self, references: list["MemoryGraph"],
+                              method: str = "jsd",
+                              index: str = "sombor") -> Optional[dict]:
+        """Classify a graph against reference graphs using inter-graph measures.
+
+        Computes the chosen distance/divergence between *self* and each
+        reference graph, then returns the best match and full ranking.
+
+        **Methods:**
+        - ``"jsd"`` — Jensen-Shannon distance (symmetric, true metric)
+        - ``"ce"`` — cross-entropy H(self, ref) (asymmetric, encoding cost)
+        - ``"kl"`` — KL divergence KL(self‖ref) (asymmetric, info gain)
+
+        Args:
+            references: list of reference MemoryGraphs to classify against.
+            method: inter-graph measure (jsd, ce, kl).
+            index: degree-based index for edge contributions.
+
+        Returns:
+            Dict with:
+            - "best_match": int (index of closest reference)
+            - "best_score": float (lowest distance/divergence)
+            - "rankings": list of {"index": int, "score": float} sorted ascending
+            - "method": str
+            or None if no valid comparisons could be made.
+        """
+        if not references:
+            return None
+
+        compute = {
+            "jsd": self.entropy_distance,
+            "ce": self.cross_entropy_graph,
+            "kl": self.kl_divergence_graph,
+        }.get(method)
+        if compute is None:
+            raise ValueError(f"unknown method '{method}'; choose from jsd/ce/kl")
+
+        rankings = []
+        for i, ref in enumerate(references):
+            score = compute(ref, index=index)
+            if score is not None:
+                rankings.append({"index": i, "score": round(score, 8)})
+
+        if not rankings:
+            return None
+
+        rankings.sort(key=lambda x: x["score"])
+        return {
+            "best_match": rankings[0]["index"],
+            "best_score": rankings[0]["score"],
+            "rankings": rankings,
+            "method": method,
+        }
+
     # ── Cycle 282: Augmented Zagreb entropy + edge-betweenness entropy ─
 
     def augmented_zagreb_entropy(self, normalized: bool = True) -> Optional[float]:

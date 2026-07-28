@@ -367,3 +367,4 @@ timestamp	commit	metric	value	status	description
 2026-07-27T22:30	cd36149	test_count	5109	keep	Cycle 297: entropy_weighted_retrieval() — entropy as retrieval signal. Novel differentiator. Blends BM25 + per-node entropy weight. 8 indices supported. +11 tests, 5098→5109. 262nd day.
 2026-07-28T00:30:00+08:00	461848a	test_count	5109→5147	keep	Cycle 298: cross_entropy_graph() — asymmetric H(P,Q) between graphs' edge-contribution distributions. First directional inter-graph measure. Complements entropy_distance (JSD) with asymmetric encoding cost. Supports all 7 degree-based indices. Disjoint support clamped. +38 tests, 5109→5147. 262nd day.
 2026-07-28T00:30:00+08:00	461848a	test_pass_rate	100%	keep	All 5147 passing, 35.14s.
+2026-07-28T11:24:14+0000	afedb72	test_count	5202	keep	Cycle 300: entropy_scan() — multi-scale Rényi+Tsallis sweep. 8 alphas + 7 qs. Shannon from raw probs. Graph fingerprinting. 10 tests, 5192→5202. 264th day.

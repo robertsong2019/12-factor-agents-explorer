@@ -10459,6 +10459,102 @@ class TestEntropyScan:
             assert vals[i] >= vals[i+1] - 1e-8
 
 
+class TestGraphClassification:
+    """Cycle 301: graph_classification via inter-graph trilogy."""
+
+    def test_returns_none_on_empty_references(self, mg):
+        assert mg.graph_classification([]) is None
+
+    def test_jsd_self_is_best_match(self, mg):
+        """Graph should match itself best with JSD."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "r")
+        # Create a different graph
+        other = MemoryGraph()
+        c = other.add("C", "concept")
+        d = other.add("D", "concept")
+        e = other.add("E", "concept")
+        other.link(c.id, d.id, "r")
+        other.link(d.id, e.id, "r")
+        # Include self in references
+        self_ref = MemoryGraph()
+        x = self_ref.add("A", "concept")
+        y = self_ref.add("B", "concept")
+        self_ref.link(x.id, y.id, "r")
+        result = mg.graph_classification([other, self_ref], method="jsd")
+        assert result is not None
+        assert result["best_match"] == 1  # self_ref is index 1
+        assert result["best_score"] == 0.0
+
+    def test_kl_and_ce_methods(self, mg):
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "r")
+        other = MemoryGraph()
+        c = other.add("C", "concept")
+        d = other.add("D", "concept")
+        other.link(c.id, d.id, "r")
+        for method in ["kl", "ce"]:
+            result = mg.graph_classification([other], method=method)
+            assert result is not None
+            assert result["method"] == method
+            assert len(result["rankings"]) == 1
+
+    def test_invalid_method_raises(self, mg):
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "r")
+        other = MemoryGraph()
+        with pytest.raises(ValueError, match="unknown method"):
+            mg.graph_classification([other], method="invalid")
+
+    def test_rankings_sorted_ascending(self, mg):
+        """Rankings should be sorted by score ascending."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "r")
+        # Build 3 references with varying similarity
+        refs = []
+        for i in range(3):
+            g = MemoryGraph()
+            n1 = g.add("N1", "concept")
+            n2 = g.add("N2", "concept")
+            g.link(n1.id, n2.id, "r")
+            # Add extra edges for divergence
+            for j in range(i):
+                extra = g.add(f"E{j}", "concept")
+                g.link(n1.id, extra.id, "r")
+            refs.append(g)
+        result = mg.graph_classification(refs, method="jsd")
+        scores = [r["score"] for r in result["rankings"]]
+        assert scores == sorted(scores)
+
+    def test_index_parameter_propagates(self, mg):
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "r")
+        other = MemoryGraph()
+        c = other.add("C", "concept")
+        d = other.add("D", "concept")
+        other.link(c.id, d.id, "r")
+        r1 = mg.graph_classification([other], method="jsd", index="sombor")
+        r2 = mg.graph_classification([other], method="jsd", index="randic")
+        assert r1 is not None
+        assert r2 is not None
+
+    def test_result_structure(self, mg):
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "r")
+        other = MemoryGraph()
+        c = other.add("C", "concept")
+        d = other.add("D", "concept")
+        other.link(c.id, d.id, "r")
+        result = mg.graph_classification([other], method="jsd")
+        assert set(result.keys()) == {"best_match", "best_score", "rankings", "method"}
+
+
 class TestConnectivityFrontier:
     def test_empty_node(self, mg):
         assert mg.connectivity_frontier("nonexistent") == {}
