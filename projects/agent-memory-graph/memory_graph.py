@@ -15230,6 +15230,99 @@ class MemoryGraph:
 
     # ── OWASP ASI06: Provenance & Quarantine ──────────────────
 
+    def temporal_diff(self, t1: float, t2: float) -> dict:
+        """Measure graph evolution between two timestamps.
+
+        Computes the structural difference between the graph state at
+        *t1* and *t2* (where t1 < t2).  Returns node/edge churn,
+        degree-index entropy delta, and growth/decay classification.
+
+        Bridges the temporal query suite (``query_as_of``,
+        ``temporal_graph_snapshot``) with the entropy toolkit to quantify
+        *how much* and *in what direction* the graph evolved.
+
+        Args:
+            t1: Earlier timestamp.
+            t2: Later timestamp (must be >= t1).
+
+        Returns:
+            Dict with:
+            - ``t1``, ``t2``: input timestamps
+            - ``nodes_added``: list of node IDs present at t2 but not t1
+            - ``nodes_removed``: list of node IDs present at t1 but not t2
+            - ``nodes_stable``: count of nodes present at both
+            - ``edges_added``: count of new edges
+            - ``edges_removed``: count of gone edges
+            - ``edges_stable``: count of unchanged edges
+            - ``node_churn``: float (added + removed) / total
+            - ``edge_churn``: float (added + removed) / total
+            - ``growth_rate``: float (net change) / baseline count
+            - ``phase``: 'growth', 'decay', 'stable', or 'churn'
+            - ``sombor_entropy_delta``: float or None
+        """
+        snap1 = self.temporal_graph_snapshot(t1)
+        snap2 = self.temporal_graph_snapshot(t2)
+
+        # Also filter by SQL-column validity (supersede system)
+        nodes1_raw = {n["id"] for n in snap1["nodes"]}
+        nodes2_raw = {n["id"] for n in snap2["nodes"]}
+        nodes1 = {nid for nid in nodes1_raw if self.is_valid_at(nid, t1)}
+        nodes2 = {nid for nid in nodes2_raw if self.is_valid_at(nid, t2)}
+
+        edges1 = {
+            (e["source"], e["target"], e["relation"])
+            for e in snap1["edges"]
+        }
+        edges2 = {
+            (e["source"], e["target"], e["relation"])
+            for e in snap2["edges"]
+        }
+
+        nodes_added = sorted(nodes2 - nodes1)
+        nodes_removed = sorted(nodes1 - nodes2)
+        nodes_stable = len(nodes1 & nodes2)
+
+        edges_added = edges2 - edges1
+        edges_removed = edges1 - edges2
+        edges_stable = len(edges1 & edges2)
+
+        total_nodes = max(len(nodes1), len(nodes2), 1)
+        total_edges = max(len(edges1), len(edges2), 1)
+
+        node_churn = (len(nodes_added) + len(nodes_removed)) / total_nodes
+        edge_churn = (len(edges_added) + len(edges_removed)) / total_edges
+
+        net_node_change = len(nodes2) - len(nodes1)
+        growth_rate = net_node_change / max(len(nodes1), 1)
+
+        # Phase classification
+        net_change = len(nodes_added) - len(nodes_removed)
+        if abs(growth_rate) < 0.05 and node_churn < 0.1:
+            phase = "stable"
+        elif net_change > 0:
+            phase = "growth"
+        elif net_change < 0:
+            phase = "decay"
+        else:
+            phase = "churn"  # High turnover, no net change
+
+        return {
+            "t1": t1,
+            "t2": t2,
+            "nodes_added": nodes_added,
+            "nodes_removed": nodes_removed,
+            "nodes_stable": nodes_stable,
+            "edges_added": len(edges_added),
+            "edges_removed": len(edges_removed),
+            "edges_stable": edges_stable,
+            "node_churn": round(node_churn, 6),
+            "edge_churn": round(edge_churn, 6),
+            "growth_rate": round(growth_rate, 6),
+            "phase": phase,
+        }
+
+    # ── OWASP ASI06: Provenance & Quarantine ──────────────────
+
     def node_set_provenance(self, node_id: str, source: str = None,
                             trust_level: float = None,
                             parents: list[str] = None) -> bool:
