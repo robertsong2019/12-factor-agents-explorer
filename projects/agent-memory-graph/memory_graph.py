@@ -34246,6 +34246,161 @@ class MemoryGraph:
                     total -= p[i] * math.log(q_i)
             return total
 
+    # ----------------------------------------------------------------
+    # Cycle 309: Multi-resolution spectral divergence scan
+    # ----------------------------------------------------------------
+    def spectral_divergence_scan(
+        self,
+        other: "MemoryGraph",
+        *,
+        measure: str = "jsd",
+        resolutions: list[int] | None = None,
+        include_quarantined: bool = False,
+    ) -> Optional[dict]:
+        r"""Multi-resolution spectral divergence scan.
+
+        Computes :meth:`spectral_divergence` at multiple histogram
+        resolutions to reveal **at which frequency scales** two graphs
+        differ most.
+
+        **Why multi-resolution?**
+
+        A single ``spectral_divergence()`` call at ``bins=20`` gives
+        one number.  But different resolutions expose different
+        structural contrasts:
+
+        - **Few bins** (2-5) — coarse spectral *shape*: how much
+          total spectral weight is in low vs high frequencies.
+          Sensitive to global topology (community count, diameter).
+        - **Medium bins** (8-21) — mesoscale structure: average
+          degree, clustering coefficient.
+        - **Many bins** (34-55) — fine spectral detail: individual
+          eigenvalue positions, local motifs.
+
+        A graph pair that differs only in local structure will show
+        low divergence at coarse resolutions but high divergence at
+        fine resolutions.  A pair that differs in community structure
+        will show high divergence even at coarse resolutions.
+
+        **Default resolutions:** ``[2, 3, 5, 8, 13, 21, 34, 55]`` —
+        Fibonacci-like progression providing approximately logarithmic
+        coverage from ultra-coarse to ultra-fine.
+
+        **Returns a dict:**
+
+        - ``resolutions``       — list of bin counts used
+        - ``divergences``       — divergence value at each resolution
+        - ``peak_resolution``   — bin count with max divergence
+        - ``peak_divergence``   — max divergence value
+        - ``min_resolution``    — bin count with min divergence
+        - ``min_divergence``    — min divergence value
+        - ``mean``              — average divergence across resolutions
+        - ``std``               — standard deviation
+        - ``cv``                — coefficient of variation (std/mean)
+        - ``converged``         — ``True`` if last 3 values have
+          CV < 0.05 (divergence stabilises at fine resolution)
+        - ``monotonic``         — ``True`` if divergence is strictly
+          increasing or decreasing with resolution
+        - ``direction``         — ``"increasing"``, ``"decreasing"``,
+          or ``"non-monotonic"``
+        - ``measure``           — the measure used (jsd/kl/ce)
+
+        Args:
+            other:               Graph to compare against.
+            measure:             "jsd", "kl", or "ce".
+            resolutions:         List of bin counts (default
+                                  ``[2, 3, 5, 8, 13, 21, 34, 55]``).
+            include_quarantined: Include quarantined nodes.
+
+        Returns:
+            dict, or ``None`` if either graph has < 2 nodes or
+            < 1 edge.
+        """
+        if resolutions is None:
+            resolutions = [2, 3, 5, 8, 13, 21, 34, 55]
+
+        # Validate resolutions
+        if not resolutions or len(resolutions) < 2:
+            raise ValueError(
+                "resolutions must contain at least 2 values"
+            )
+        if any(b < 2 for b in resolutions):
+            raise ValueError(
+                "all resolutions must be >= 2"
+            )
+
+        # Compute divergence at each resolution
+        divergences: list[float] = []
+        for bins in resolutions:
+            val = self.spectral_divergence(
+                other,
+                measure=measure,
+                bins=bins,
+                include_quarantined=include_quarantined,
+            )
+            if val is None:
+                return None
+            divergences.append(val)
+
+        # Statistics
+        n = len(divergences)
+        mean_div = sum(divergences) / n
+        variance = sum(
+            (d - mean_div) ** 2 for d in divergences
+        ) / n
+        std_div = math.sqrt(variance)
+        cv = std_div / mean_div if mean_div > 0 else 0.0
+
+        # Peak / trough
+        max_idx = max(range(n), key=lambda i: divergences[i])
+        min_idx = min(range(n), key=lambda i: divergences[i])
+
+        # Convergence: CV of last 3 values
+        if n >= 3:
+            last3 = divergences[-3:]
+            m3 = sum(last3) / 3.0
+            v3 = sum((d - m3) ** 2 for d in last3) / 3.0
+            s3 = math.sqrt(v3)
+            cv3 = s3 / m3 if m3 > 0 else 0.0
+            converged = cv3 < 0.05
+        else:
+            converged = False
+
+        # Monotonicity
+        if n >= 2:
+            diffs = [
+                divergences[i + 1] - divergences[i]
+                for i in range(n - 1)
+            ]
+            all_inc = all(d > 0 for d in diffs)
+            all_dec = all(d < 0 for d in diffs)
+            monotonic = all_inc or all_dec
+            if all_inc:
+                direction = "increasing"
+            elif all_dec:
+                direction = "decreasing"
+            else:
+                direction = "non-monotonic"
+        else:
+            monotonic = False
+            direction = "insufficient"
+
+        return {
+            "resolutions":     list(resolutions),
+            "divergences":     divergences,
+            "peak_resolution": resolutions[max_idx],
+            "peak_divergence": divergences[max_idx],
+            "min_resolution":  resolutions[min_idx],
+            "min_divergence":  divergences[min_idx],
+            "mean":            mean_div,
+            "std":             std_div,
+            "cv":              cv,
+            "converged":       converged,
+            "monotonic":       monotonic,
+            "direction":       direction,
+            "measure":         measure,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
