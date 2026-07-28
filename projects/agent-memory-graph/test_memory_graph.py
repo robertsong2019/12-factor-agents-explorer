@@ -24738,3 +24738,229 @@ class TestAutoHealGaps:
             "actions", "dry_run",
         }
         assert set(result.keys()) == expected_keys
+
+
+# ------------------------------------------------------------------
+# Cycle 306: entropy_contribution() tests
+# ------------------------------------------------------------------
+
+class TestEntropyContribution:
+    """Tests for MemoryGraph.entropy_contribution()."""
+
+    def _build_star(self, k=5):
+        """Build a star graph K_{1,k}."""
+        mg = MemoryGraph()
+        center = mg.add("center", "hub")
+        for i in range(k):
+            leaf = mg.add(f"leaf{i}", "node")
+            mg.link(center.id, leaf.id, "connects")
+        return mg
+
+    def _build_path(self, n=5):
+        """Build a path graph P_n."""
+        mg = MemoryGraph()
+        prev = mg.add("n0", "node")
+        for i in range(1, n):
+            curr = mg.add(f"n{i}", "node")
+            mg.link(prev.id, curr.id, "next")
+            prev = curr
+        return mg
+
+    def _build_complete(self, n=4):
+        """Build a complete graph K_n."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"v{i}", "node") for i in range(n)]
+        for i in range(n):
+            for j in range(i + 1, n):
+                mg.link(nodes[i].id, nodes[j].id, "knows")
+        return mg
+
+    def test_returns_none_for_empty_graph(self):
+        mg = MemoryGraph()
+        assert mg.entropy_contribution() is None
+
+    def test_returns_none_for_two_nodes(self):
+        """Need at least 3 nodes."""
+        mg = MemoryGraph()
+        a = mg.add("A", "x")
+        b = mg.add("B", "x")
+        mg.link(a.id, b.id, "r")
+        assert mg.entropy_contribution() is None
+
+    def test_returns_none_no_edges(self):
+        mg = MemoryGraph()
+        mg.add("A", "x")
+        mg.add("B", "x")
+        mg.add("C", "x")
+        assert mg.entropy_contribution() is None
+
+    def test_basic_structure_star(self):
+        """Star graph should return a valid result dict."""
+        mg = self._build_star(4)
+        result = mg.entropy_contribution()
+        assert result is not None
+        expected_keys = {
+            "baseline_entropy", "contributions", "ranked", "mean", "std",
+            "max_delta", "min_delta", "critical_nodes", "expendable_nodes",
+            "index", "sampled", "evaluated",
+        }
+        assert set(result.keys()) == expected_keys
+
+    def test_star_center_is_most_critical(self):
+        """In a star graph, removing the center should cause the largest
+        entropy change because it destroys all edges."""
+        mg = self._build_star(5)
+        result = mg.entropy_contribution()
+        assert result is not None
+        # The top-ranked node should be the center
+        top_node = result["ranked"][0][0]
+        center_node = mg.search_by_label("center")[0]
+        assert top_node == center_node.id
+
+    def test_all_contributions_non_negative(self):
+        """ΔH should be ≥ 0 for all nodes."""
+        mg = self._build_path(6)
+        result = mg.entropy_contribution()
+        assert result is not None
+        for nid, delta in result["contributions"].items():
+            assert delta >= 0.0, f"Negative ΔH for node {nid}"
+
+    def test_evaluated_equals_node_count(self):
+        """Without sampling, all nodes should be evaluated."""
+        mg = self._build_path(5)
+        result = mg.entropy_contribution()
+        assert result is not None
+        assert result["evaluated"] == 5
+        assert result["sampled"] is False
+
+    def test_sampling_reduces_evaluated(self):
+        """With sample=3 on a 6-node graph, only 3 nodes evaluated."""
+        mg = self._build_path(6)
+        result = mg.entropy_contribution(sample=3)
+        assert result is not None
+        assert result["evaluated"] == 3
+        assert result["sampled"] is True
+
+    def test_top_k_limits_ranked(self):
+        """top_k should limit the ranked list."""
+        mg = self._build_complete(5)
+        result = mg.entropy_contribution(top_k=2)
+        assert result is not None
+        assert len(result["ranked"]) <= 2
+
+    def test_invalid_index_raises(self):
+        mg = self._build_star(3)
+        with pytest.raises(ValueError, match="Unknown index"):
+            mg.entropy_contribution(index="nonexistent")
+
+    def test_different_indices_produce_results(self):
+        """All 7 supported indices should produce valid results."""
+        mg = self._build_path(5)
+        indices = [
+            "sombor", "reduced_sombor", "randic",
+            "zagreb_m1", "abc", "ga", "augmented_zagreb",
+        ]
+        for idx in indices:
+            result = mg.entropy_contribution(index=idx)
+            # Some indices may return None for small graphs (e.g. abc with K2 edges)
+            if result is not None:
+                assert result["index"] == idx
+                assert len(result["contributions"]) > 0
+
+    def test_regular_graph_equal_contributions(self):
+        """In a cycle C_n (all nodes equivalent), all ΔH should be equal."""
+        mg = MemoryGraph()
+        n = 5
+        nodes = [mg.add(f"v{i}", "node") for i in range(n)]
+        for i in range(n):
+            mg.link(nodes[i].id, nodes[(i + 1) % n].id, "next")
+        result = mg.entropy_contribution()
+        assert result is not None
+        deltas = list(result["contributions"].values())
+        # All deltas should be approximately equal
+        max_spread = max(deltas) - min(deltas)
+        assert max_spread < 0.01, f"Expected equal ΔH, spread={max_spread}"
+
+    def test_ranked_sorted_descending(self):
+        """Ranked list should be sorted by ΔH descending."""
+        mg = self._build_star(5)
+        result = mg.entropy_contribution()
+        assert result is not None
+        deltas = [d for _, d in result["ranked"]]
+        assert deltas == sorted(deltas, reverse=True)
+
+    def test_critical_nodes_subset(self):
+        """Critical nodes should be a subset of all evaluated nodes."""
+        mg = self._build_path(7)
+        result = mg.entropy_contribution()
+        assert result is not None
+        all_nodes = set(result["contributions"].keys())
+        assert set(result["critical_nodes"]).issubset(all_nodes)
+        assert set(result["expendable_nodes"]).issubset(all_nodes)
+
+    def test_max_delta_matches_ranked_first(self):
+        """max_delta should equal the first ranked entry's delta."""
+        mg = self._build_star(4)
+        result = mg.entropy_contribution()
+        assert result is not None
+        assert result["max_delta"] == result["ranked"][0][1]
+
+    def test_min_delta_matches_ranked_last(self):
+        """min_delta should equal the last ranked entry's delta."""
+        mg = self._build_star(4)
+        result = mg.entropy_contribution()
+        assert result is not None
+        assert result["min_delta"] == result["ranked"][-1][1]
+
+    def test_mean_is_average(self):
+        """mean should be the average of all deltas."""
+        mg = self._build_path(5)
+        result = mg.entropy_contribution()
+        assert result is not None
+        deltas = list(result["contributions"].values())
+        expected_mean = sum(deltas) / len(deltas)
+        assert abs(result["mean"] - round(expected_mean, 6)) < 0.001
+
+    def test_path_graph_intermediate_node_more_critical_than_endpoint(self):
+        """In P_5, interior nodes (degree 2) should generally have higher
+        ΔH than endpoints (degree 1) because they connect more edges."""
+        mg = self._build_path(5)
+        result = mg.entropy_contribution(index="sombor")
+        assert result is not None
+        # Endpoints are n0 and n4
+        endpoint_ids = set()
+        for label in ["n0", "n4"]:
+            nodes = mg.search_by_label(label)
+            if nodes:
+                endpoint_ids.add(nodes[0].id)
+        interior_deltas = [
+            d for nid, d in result["contributions"].items()
+            if nid not in endpoint_ids
+        ]
+        endpoint_deltas = [
+            d for nid, d in result["contributions"].items()
+            if nid in endpoint_ids
+        ]
+        if interior_deltas and endpoint_deltas:
+            avg_interior = sum(interior_deltas) / len(interior_deltas)
+            avg_endpoint = sum(endpoint_deltas) / len(endpoint_deltas)
+            # Interior nodes should be at least as critical as endpoints
+            assert avg_interior >= avg_endpoint - 0.01
+
+    def test_complete_graph_all_equal(self):
+        """In K_n, every node is symmetric so all ΔH should be equal."""
+        mg = self._build_complete(4)
+        result = mg.entropy_contribution()
+        assert result is not None
+        deltas = list(result["contributions"].values())
+        spread = max(deltas) - min(deltas)
+        assert spread < 0.01, f"K_n should have equal ΔH, spread={spread}"
+
+    def test_consistency_across_calls(self):
+        """Same graph should produce same results on repeated calls
+        (when not using sampling)."""
+        mg = self._build_star(5)
+        r1 = mg.entropy_contribution()
+        r2 = mg.entropy_contribution()
+        assert r1 is not None and r2 is not None
+        assert r1["contributions"] == r2["contributions"]

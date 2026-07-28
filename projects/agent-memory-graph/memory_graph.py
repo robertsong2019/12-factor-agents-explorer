@@ -33642,6 +33642,234 @@ class MemoryGraph:
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:limit]
 
+    # ------------------------------------------------------------------
+    # Cycle 306: entropy_contribution()
+    # ------------------------------------------------------------------
+
+    def entropy_contribution(self, index: str = "sombor",
+                             sample: int | None = None,
+                             top_k: int = 0) -> Optional[dict]:
+        """Leave-one-out marginal entropy contribution per node.
+
+        For each node *v*, computes the graph's degree-based entropy
+        as if *v* were removed (edges incident to *v* deleted, and
+        the degrees of *v*' neighbors decremented by 1), then measures
+        the absolute change:
+
+            ΔH_v = |H(G) − H(G − v)|
+
+        Nodes with high ΔH_v are **information-critical**: their removal
+        most disrupts the graph's structural diversity.  This is valuable
+        for:
+
+        * Memory consolidation — protect high-contribution nodes from forgetting
+        * Graph pruning — safely remove low-contribution nodes
+        * Centrality analysis — an information-theoretic alternative to PageRank
+
+        Implementation note: instead of cloning the full graph N times,
+        this method computes entropy directly from cached degree/edge
+        arrays, achieving O(n·m) total complexity.
+
+        Args:
+            index: Degree-based entropy index to use.  One of
+                ``sombor``, ``reduced_sombor``, ``randic``, ``zagreb_m1``,
+                ``abc``, ``ga``, ``augmented_zagreb``.
+            sample: If the graph has more than *sample* nodes, randomly
+                sample that many instead of exhaustive leave-one-out.
+                ``None`` = always exhaustive.  Recommended ≤ 200.
+            top_k: If > 0, only return the top-*k* contributors
+                (sorted by ΔH descending).
+
+        Returns:
+            Dict with keys:
+
+            * ``baseline_entropy``: H(G) on the full graph
+            * ``contributions``: ``{node_id: ΔH_v}`` for every (or sampled) node
+            * ``ranked``: list of ``(node_id, ΔH_v)`` sorted descending
+            * ``mean``: average ΔH across evaluated nodes
+            * ``std``: standard deviation of ΔH
+            * ``max_delta``: largest ΔH (most critical node)
+            * ``min_delta``: smallest ΔH (most expendable node)
+            * ``critical_nodes``: nodes with ΔH > mean + std
+            * ``expendable_nodes``: nodes with ΔH < mean − std
+            * ``index``: the entropy index used
+            * ``sampled``: whether sampling was used
+            * ``evaluated``: number of nodes evaluated
+
+            Returns ``None`` if the graph has fewer than 3 nodes or 1 edge.
+        """
+        import random as _random
+
+        # ── Edge contribution functions: f(d_u, d_v) → float ──
+        def _sombor_contrib(du, dv):
+            return math.sqrt(du * du + dv * dv)
+
+        def _reduced_sombor_contrib(du, dv):
+            rm_u, rm_v = max(du - 1, 0), max(dv - 1, 0)
+            return math.sqrt(rm_u * rm_u + rm_v * rm_v)
+
+        def _randic_contrib(du, dv):
+            if du <= 0 or dv <= 0:
+                return 0.0
+            return 1.0 / math.sqrt(du * dv)
+
+        def _zagreb_m1_contrib(du, dv):
+            return float(du * du + dv * dv)
+
+        def _abc_contrib(du, dv):
+            if du <= 1 or dv <= 1:
+                return 0.0
+            return math.sqrt((du + dv - 2.0) / (du * dv))
+
+        def _ga_contrib(du, dv):
+            if du <= 0 or dv <= 0:
+                return 0.0
+            return 2.0 * math.sqrt(du * dv) / (du + dv)
+
+        def _augmented_zagreb_contrib(du, dv):
+            if du <= 0 or dv <= 0:
+                return 0.0
+            ratio = (du * dv) / (du + dv)
+            return ratio ** 3  # |(d_u*d_v)/(d_u+d_v)|^3
+
+        CONTRIB_MAP = {
+            "sombor":           _sombor_contrib,
+            "reduced_sombor":   _reduced_sombor_contrib,
+            "randic":           _randic_contrib,
+            "zagreb_m1":        _zagreb_m1_contrib,
+            "abc":              _abc_contrib,
+            "ga":               _ga_contrib,
+            "augmented_zagreb": _augmented_zagreb_contrib,
+        }
+        if index not in CONTRIB_MAP:
+            raise ValueError(
+                f"Unknown index '{index}'. Valid: {list(CONTRIB_MAP)}"
+            )
+        contrib_fn = CONTRIB_MAP[index]
+
+        # ── Helper: compute Shannon entropy from edge contributions ──
+        def _shannon_entropy(contribs: list[float]) -> Optional[float]:
+            valid = [c for c in contribs if c > 0]
+            if not valid:
+                return None if not contribs else 0.0
+            total = sum(valid)
+            if total <= 0:
+                return None
+            m = len(valid)
+            h = 0.0
+            for c in valid:
+                p = c / total
+                if p > 0:
+                    h -= p * math.log(p)
+            if m > 1:
+                h /= math.log(m)
+            return h
+
+        # ── Cache graph state ──
+        node_rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        all_node_ids = [str(r["id"]) for r in node_rows]
+        n_nodes = len(all_node_ids)
+        edge_rows = self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall()
+        all_edges = [(str(r["source"]), str(r["target"])) for r in edge_rows]
+        n_edges = len(all_edges)
+
+        if n_nodes < 3 or n_edges < 1:
+            return None
+
+        # Compute original degrees
+        orig_deg: dict[str, int] = {}
+        for nid in all_node_ids:
+            orig_deg[nid] = self.degree(nid)
+
+        # Baseline entropy
+        baseline_contribs = [
+            contrib_fn(orig_deg.get(s, 0), orig_deg.get(t, 0))
+            for s, t in all_edges
+        ]
+        baseline = _shannon_entropy(baseline_contribs)
+        if baseline is None:
+            return None
+
+        # ── Determine which nodes to evaluate ──
+        use_sampling = sample is not None and n_nodes > sample
+        if use_sampling:
+            eval_nodes = _random.sample(all_node_ids, sample)
+        else:
+            eval_nodes = all_node_ids
+
+        # ── Adjacency for fast degree adjustment ──
+        adjacency: dict[str, set[str]] = {nid: set() for nid in all_node_ids}
+        for s, t in all_edges:
+            adjacency.setdefault(s, set()).add(t)
+            adjacency.setdefault(t, set()).add(s)
+
+        contributions: dict[str, float] = {}
+
+        for nid in eval_nodes:
+            # Adjusted degrees: decrement neighbors of nid
+            adj_deg = dict(orig_deg)  # shallow copy
+            neighbors = adjacency.get(nid, set())
+            for nb in neighbors:
+                adj_deg[nb] = max(0, adj_deg.get(nb, 0) - 1)
+            adj_deg[nid] = 0  # effectively removed
+
+            # Filter edges not incident to nid, compute contributions
+            removed_contribs = []
+            for s, t in all_edges:
+                if s == nid or t == nid:
+                    continue
+                removed_contribs.append(
+                    contrib_fn(adj_deg.get(s, 0), adj_deg.get(t, 0))
+                )
+
+            h_without = _shannon_entropy(removed_contribs)
+            if h_without is not None:
+                contributions[nid] = round(abs(baseline - h_without), 6)
+            elif len(removed_contribs) == 0:
+                # All edges removed — full entropy loss
+                contributions[nid] = round(baseline, 6)
+            else:
+                contributions[nid] = 0.0
+
+        if not contributions:
+            return None
+
+        deltas = list(contributions.values())
+        n_eval = len(deltas)
+        mean_delta = sum(deltas) / n_eval
+        var_delta = sum((d - mean_delta) ** 2 for d in deltas) / n_eval
+        std_delta = var_delta ** 0.5
+
+        ranked = sorted(contributions.items(), key=lambda x: x[1], reverse=True)
+        if top_k > 0:
+            ranked = ranked[:top_k]
+
+        critical = [
+            nid for nid, d in contributions.items()
+            if d > mean_delta + std_delta
+        ]
+        expendable = [
+            nid for nid, d in contributions.items()
+            if d < max(0.0, mean_delta - std_delta)
+        ]
+
+        return {
+            "baseline_entropy":  round(baseline, 6),
+            "contributions":     contributions,
+            "ranked":            ranked,
+            "mean":              round(mean_delta, 6),
+            "std":               round(std_delta, 6),
+            "max_delta":         round(max(deltas), 6),
+            "min_delta":         round(min(deltas), 6),
+            "critical_nodes":    critical,
+            "expendable_nodes":  expendable,
+            "index":             index,
+            "sampled":           use_sampling,
+            "evaluated":         n_eval,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
