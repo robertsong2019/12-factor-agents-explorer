@@ -7321,6 +7321,126 @@ class MemoryGraph:
             kl /= ln_m
         return max(0.0, kl)
 
+    # ── Cycle 300: Multi-scale entropy scan for graph fingerprinting ─
+
+    def entropy_scan(self, index: str = "sombor",
+                     alphas: list[float] | None = None,
+                     qs: list[float] | None = None) -> Optional[dict]:
+        """Multi-scale Rényi and Tsallis entropy sweep for graph fingerprinting.
+
+        Computes Rényi entropy H_α and Tsallis entropy S_q across a range
+        of α and q parameters.  The resulting curves are structural
+        fingerprints that uniquely characterize a graph's distribution shape.
+
+        **Why multi-scale?**
+        Different α/q values probe different aspects of the distribution:
+        - Low α/q (< 1): emphasise rare edge contributions (long tails)
+        - α/q = 1: Shannon entropy (maximum uncertainty)
+        - α/q = 2: collision/square-counting entropy
+        - High α/q (> 2): emphasise dominant contributions
+
+        Two graphs with identical Shannon entropy can have very different
+        multi-scale profiles — making entropy_scan a more discriminative
+        fingerprint.
+
+        **Use cases:**
+        - Graph similarity: compare scan curves across graphs
+        - Phase detection: track curve shape changes over time
+        - Anomaly detection: deviation from reference curve
+        - Graph classification: scan as feature vector
+
+        Args:
+            index: degree-based index (sombor, reduced_sombor, randic,
+                zagreb_m1, abc, ga, augmented_zagreb).
+            alphas: Rényi α values to sweep (default: [0.1, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0]).
+            qs: Tsallis q values to sweep (default: [0.1, 0.5, 1.5, 2.0, 3.0, 5.0, 10.0]).
+                Note: q=1 is excluded (equals Shannon, captured by α=1).
+
+        Returns:
+            Dict with keys:
+            - "renyi": {"alphas": [...], "values": [...]}
+            - "tsallis": {"qs": [...], "values": [...]}
+            - "shannon": float (included in both curves at limit)
+            or None if graph has < 1 edge.
+        """
+        if alphas is None:
+            alphas = [0.1, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0]
+        if qs is None:
+            qs = [0.1, 0.5, 1.5, 2.0, 3.0, 5.0, 10.0]
+
+        # Early exit if insufficient graph
+        dist = self._contribution_distribution(index)
+        if dist is None:
+            return None
+
+        # Edge count for normalization (matches renyi_entropy's normalization)
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        m = len(edges)
+        if m < 1:
+            return None
+
+        # Raw per-edge probabilities (not grouped) for Shannon
+        deg: dict[str, int] = {}
+        for r in rows:
+            nid = str(r["id"])
+            deg[nid] = self.degree(nid)
+        contributions: list[float] = []
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            ds, dt = deg.get(s, 0), deg.get(t, 0)
+            if ds <= 0 or dt <= 0:
+                continue
+            if index == "sombor":
+                contributions.append(math.sqrt(ds * ds + dt * dt))
+            elif index == "reduced_sombor":
+                contributions.append(math.sqrt((ds - 1) ** 2 + (dt - 1) ** 2))
+            elif index == "randic":
+                contributions.append(1.0 / math.sqrt(ds * dt))
+            elif index == "zagreb_m1":
+                contributions.append(float(ds + dt))
+            elif index == "abc":
+                num, den = ds + dt - 2, ds * dt
+                if num > 0 and den > 0:
+                    contributions.append(math.sqrt(num / den))
+            elif index == "ga":
+                contributions.append(2.0 * math.sqrt(ds * dt) / (ds + dt))
+            elif index == "augmented_zagreb":
+                az_denom = ds + dt - 2
+                if az_denom > 0:
+                    contributions.append((ds * dt / az_denom) ** 3)
+        if not contributions:
+            return None
+        total = sum(contributions)
+        probs = [c / total for c in contributions]
+        ln_m = math.log(m) if m > 1 else 1.0
+
+        # Shannon from raw probabilities, normalized by ln(m)
+        shannon = -sum(p * math.log(p) for p in probs if p > 0)
+        if ln_m > 0:
+            shannon /= ln_m
+
+        renyi_values = []
+        for a in alphas:
+            if a == 1.0:
+                v = shannon
+            else:
+                v = self.renyi_entropy(alpha=a, normalized=True, index=index)
+            renyi_values.append(round(v, 8) if v is not None else None)
+
+        tsallis_values = []
+        for q in qs:
+            v = self.tsallis_entropy(q=q, normalized=True, index=index)
+            tsallis_values.append(round(v, 8) if v is not None else None)
+
+        # shannon already computed above from raw probs, normalized by ln(m)
+
+        return {
+            "renyi": {"alphas": alphas, "values": renyi_values},
+            "tsallis": {"qs": qs, "values": tsallis_values},
+            "shannon": round(shannon, 8) if shannon is not None else None,
+        }
+
     # ── Cycle 282: Augmented Zagreb entropy + edge-betweenness entropy ─
 
     def augmented_zagreb_entropy(self, normalized: bool = True) -> Optional[float]:

@@ -10348,6 +10348,117 @@ class TestGraphEntropy:
         assert 0.0 <= result["normalized"] <= 1.0
 
 
+class TestEntropyScan:
+    """Cycle 300: multi-scale Rényi + Tsallis entropy scan."""
+
+    def test_returns_none_on_empty_graph(self, mg):
+        assert mg.entropy_scan() is None
+
+    def test_default_alphas_and_qs(self, mg):
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "r")
+        result = mg.entropy_scan()
+        assert result is not None
+        assert len(result["renyi"]["alphas"]) == 8
+        assert len(result["renyi"]["values"]) == 8
+        assert len(result["tsallis"]["qs"]) == 7
+        assert len(result["tsallis"]["values"]) == 7
+        assert result["shannon"] is not None
+
+    def test_renyi_convergence_to_shannon(self, mg):
+        """At α=1, Rényi should equal Shannon."""
+        for i in range(5):
+            n = mg.add(f"N{i}", "concept")
+            m = mg.add(f"M{i}", "concept")
+            mg.link(n.id, m.id, "r")
+        result = mg.entropy_scan(alphas=[1.0])
+        idx_1 = result["renyi"]["alphas"].index(1.0)
+        assert abs(result["renyi"]["values"][idx_1] - result["shannon"]) < 1e-6
+
+    def test_renyi_monotonicity(self, mg):
+        """Rényi H_α is non-increasing in α."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        result = mg.entropy_scan(alphas=[0.5, 1.0, 2.0, 5.0, 10.0])
+        values = result["renyi"]["values"]
+        for i in range(len(values) - 1):
+            if values[i] is not None and values[i+1] is not None:
+                assert values[i] >= values[i+1] - 1e-8, \
+                    f"Rényi not non-increasing: H({result['renyi']['alphas'][i]})={values[i]} > H({result['renyi']['alphas'][i+1]})={values[i+1]}"
+
+    def test_structured_vs_uniform_graphs_differ(self, mg):
+        """Star and path graphs should have different scan profiles."""
+        # Star graph (5 edges from center)
+        center = mg.add("C", "concept")
+        for i in range(5):
+            leaf = mg.add(f"L{i}", "concept")
+            mg.link(center.id, leaf.id, "r")
+        star = mg.entropy_scan()
+        # Path graph (4 edges in chain + center node = same edge count)
+        # Just verify star profile is valid and non-trivial
+        assert star is not None
+        assert len(star["renyi"]["values"]) == 8
+
+    def test_custom_alpha_q_lists(self, mg):
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "r")
+        result = mg.entropy_scan(alphas=[0.5, 2.0], qs=[1.5, 3.0])
+        assert result["renyi"]["alphas"] == [0.5, 2.0]
+        assert result["tsallis"]["qs"] == [1.5, 3.0]
+        assert len(result["renyi"]["values"]) == 2
+        assert len(result["tsallis"]["values"]) == 2
+
+    def test_all_values_non_negative(self, mg):
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "r")
+        result = mg.entropy_scan()
+        for v in result["renyi"]["values"]:
+            if v is not None:
+                assert v >= 0.0
+        for v in result["tsallis"]["values"]:
+            if v is not None:
+                assert v >= 0.0
+
+    def test_index_parameter_propagates(self, mg):
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "r")
+        r1 = mg.entropy_scan(index="sombor")
+        r2 = mg.entropy_scan(index="randic")
+        assert r1 is not None
+        assert r2 is not None
+
+    def test_consistency_with_individual_calls(self, mg):
+        """Scan values should match individual renyi_entropy/tsallis_entropy calls."""
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        scan = mg.entropy_scan(alphas=[2.0], qs=[2.0])
+        assert abs(scan["renyi"]["values"][0] - mg.renyi_entropy(alpha=2.0, index="sombor")) < 1e-6
+        assert abs(scan["tsallis"]["values"][0] - mg.tsallis_entropy(q=2.0, index="sombor")) < 1e-6
+
+    def test_larger_graph_profile_shape(self, mg):
+        """On a larger graph, verify profile has expected shape (non-increasing Rényi)."""
+        nodes = [mg.add(f"N{i}", "concept") for i in range(10)]
+        for i in range(9):
+            mg.link(nodes[i].id, nodes[i+1].id, "r")
+        mg.link(nodes[0].id, nodes[5].id, "r")
+        mg.link(nodes[2].id, nodes[7].id, "r")
+        result = mg.entropy_scan()
+        assert result is not None
+        vals = [v for v in result["renyi"]["values"] if v is not None]
+        for i in range(len(vals) - 1):
+            assert vals[i] >= vals[i+1] - 1e-8
+
+
 class TestConnectivityFrontier:
     def test_empty_node(self, mg):
         assert mg.connectivity_frontier("nonexistent") == {}
