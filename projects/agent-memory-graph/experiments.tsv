@@ -373,3 +373,4 @@ timestamp	commit	metric	value	status	description
 2026-07-28T21:30	998e016	test_count	5273	keep	Cycle 304: temporal_diff() graph evolution. Node/edge churn + phase classification. +16 tests, 5257→5273. Unified bi-temporal+SQL filtering.
 2026-07-28T21:40	acb2def	test_count	5287	keep	Cycle 305: entropy_anomaly_detect() anomalous node detection. Hub/pendant via z-score. +14 tests, 5273→5287.
 2026-07-28T22:15	c064b04	test_count	5307	keep	Cycle 306: entropy_contribution() leave-one-out marginal entropy per node. 7 indices, O(n·m) cached degree vectors. Critical vs expendable classification. +20 tests, 5287→5307. 265th day.
+2026-07-28T15:08	5780e3e	test_count	5354	keep	Cycle 307: entropy_stability() Monte Carlo entropy variance under perturbation. remove+rewire modes. stability_score=1-CV. 7 indices. 47 tests, 5307→5354. 266th day.
