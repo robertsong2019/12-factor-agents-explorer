@@ -17303,6 +17303,148 @@ class MemoryGraph:
         chain = list(reversed(backward)) + chain
         return chain
 
+    def query_as_of(self, timestamp: float, node_id: str = None,
+                    *, depth: int = 1, kind: str = None,
+                    relation: str = None, limit: int = 100) -> dict:
+        """Unified bi-temporal query — "what did the graph look like at time T?"
+
+        Combines node-level and edge-level bi-temporal filtering into a
+        single query API.  Two modes:
+
+        1. **Localized** (node_id given): BFS from *node_id* to *depth*,
+           returning only nodes and edges valid at *timestamp*.  This is
+           the Engram retrieval pattern — bi-temporal context retrieval
+           beats full-context by +10.4pp (LongMemEval).
+
+        2. **Global** (node_id is None): Full graph snapshot at *timestamp*.
+
+        Args:
+            timestamp: Unix timestamp to query (as-of time).
+            node_id: Optional seed node for localized subgraph query.
+            depth: BFS depth from seed (localized mode only). Default 1.
+            kind: Optional node kind filter.
+            relation: Optional edge relation filter.
+            limit: Max nodes to return (safety cap). Default 100.
+
+        Returns:
+            Dict with keys:
+            - ``timestamp``: the query timestamp
+            - ``mode``: 'localized' or 'global'
+            - ``nodes``: list of {id, label, kind, weight, valid_from, valid_to}
+            - ``edges``: list of {source, target, relation, weight}
+            - ``stats``: {nodes, edges, depth_reached}
+        """
+        ts = timestamp
+
+        # ── Global mode: delegate to temporal_graph_snapshot ──
+        if node_id is None:
+            snap = self.temporal_graph_snapshot(ts)
+            nodes_out = snap["nodes"]
+            edges_out = snap["edges"]
+            if kind is not None:
+                nodes_out = [n for n in nodes_out if n.get("kind") == kind]
+            if relation is not None:
+                edges_out = [e for e in edges_out if e.get("relation") == relation]
+            nodes_out = nodes_out[:limit]
+            return {
+                "timestamp": ts,
+                "mode": "global",
+                "nodes": nodes_out,
+                "edges": edges_out,
+                "stats": {"nodes": len(nodes_out), "edges": len(edges_out),
+                          "depth_reached": None},
+            }
+
+        # ── Localized mode: BFS from node_id ──
+        if not self.get_node(node_id):
+            return {"timestamp": ts, "mode": "localized", "nodes": [],
+                    "edges": [], "stats": {"nodes": 0, "edges": 0,
+                                            "depth_reached": 0}}
+
+        visited: set[str] = set()
+        frontier = {node_id}
+        all_edges = []
+        depth_reached = 0
+
+        for d in range(depth + 1):
+            next_frontier = set()
+            for nid in frontier:
+                if nid in visited or len(visited) >= limit:
+                    continue
+                # Check node validity at ts (both systems)
+                if not self.node_valid_at(nid, ts):
+                    continue
+                if not self.is_valid_at(nid, ts):
+                    continue
+                if kind is not None:
+                    node = self.get_node(nid)
+                    if node.kind != kind:
+                        continue
+                visited.add(nid)
+
+                # Explore edges (only if we haven't reached max depth)
+                if d < depth:
+                    for e in self.edges_of(nid, direction="both"):
+                        # Edge relation filter
+                        if relation is not None and e.relation != relation:
+                            continue
+                        # Edge temporal validity
+                        if not self.edge_valid_at(e.source, e.target,
+                                                  e.relation, ts):
+                            continue
+                        # Avoid duplicate edges
+                        edge_key = (e.source, e.target, e.relation)
+                        if not any(ae["source"] == e.source and
+                                   ae["target"] == e.target and
+                                   ae["relation"] == e.relation
+                                   for ae in all_edges):
+                            all_edges.append({
+                                "source": e.source,
+                                "target": e.target,
+                                "relation": e.relation,
+                                "weight": round(e.weight, 4),
+                            })
+                        # Add unvisited neighbors to frontier
+                        neighbor = e.target if e.source == nid else e.source
+                        if neighbor not in visited:
+                            next_frontier.add(neighbor)
+
+            frontier = next_frontier
+            if frontier:
+                depth_reached = d + 1
+            if not frontier or len(visited) >= limit:
+                break
+
+        # Build node list with temporal metadata
+        nodes_out = []
+        for nid in visited:
+            node = self.get_node(nid)
+            row = self.conn.execute(
+                "SELECT valid_from, valid_to FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            data = node.data if isinstance(node.data, dict) else json.loads(node.data)
+            node_temporal = data.get("_node_temporal", {})
+            nodes_out.append({
+                "id": node.id,
+                "label": node.label,
+                "kind": node.kind,
+                "weight": round(node.weight, 4),
+                "valid_from": row["valid_from"] if row else node_temporal.get("valid_from"),
+                "valid_to": row["valid_to"] if row else node_temporal.get("valid_until"),
+            })
+
+        return {
+            "timestamp": ts,
+            "mode": "localized",
+            "nodes": nodes_out,
+            "edges": all_edges,
+            "stats": {
+                "nodes": len(nodes_out),
+                "edges": len(all_edges),
+                "depth_reached": depth_reached,
+            },
+        }
+
     def trace_decision_chain(self, topic: str = None,
                              node_id: str = None) -> list[dict]:
         """Trace the decision/supersession chain for a topic or node.
