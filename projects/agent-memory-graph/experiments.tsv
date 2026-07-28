@@ -368,3 +368,7 @@ timestamp	commit	metric	value	status	description
 2026-07-28T00:30:00+08:00	461848a	test_count	5109→5147	keep	Cycle 298: cross_entropy_graph() — asymmetric H(P,Q) between graphs' edge-contribution distributions. First directional inter-graph measure. Complements entropy_distance (JSD) with asymmetric encoding cost. Supports all 7 degree-based indices. Disjoint support clamped. +38 tests, 5109→5147. 262nd day.
 2026-07-28T00:30:00+08:00	461848a	test_pass_rate	100%	keep	All 5147 passing, 35.14s.
 2026-07-28T11:24:14+0000	afedb72	test_count	5202	keep	Cycle 300: entropy_scan() — multi-scale Rényi+Tsallis sweep. 8 alphas + 7 qs. Shannon from raw probs. Graph fingerprinting. 10 tests, 5192→5202. 264th day.
+2026-07-28T21:10	4f049d8	test_count	5237	keep	Cycle 302: query_as_of() unified bi-temporal query. +28 tests, 5209→5237. Localized BFS + global snapshot.
+2026-07-28T21:20	7732780	test_count	5257	keep	Cycle 303: graph_similarity_matrix() N×N pairwise JSD/CE/KL. +20 tests, 5237→5257. Symmetric upper-triangle for JSD.
+2026-07-28T21:30	998e016	test_count	5273	keep	Cycle 304: temporal_diff() graph evolution. Node/edge churn + phase classification. +16 tests, 5257→5273. Unified bi-temporal+SQL filtering.
+2026-07-28T21:40	acb2def	test_count	5287	keep	Cycle 305: entropy_anomaly_detect() anomalous node detection. Hub/pendant via z-score. +14 tests, 5273→5287.
