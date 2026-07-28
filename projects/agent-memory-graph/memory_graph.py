@@ -34114,6 +34114,138 @@ class MemoryGraph:
             "index":             index,
         }
 
+    # ── Cycle 308: Spectral divergence ─────────────────────────────
+
+    def spectral_divergence(
+        self,
+        other: "MemoryGraph",
+        *,
+        measure: str = "jsd",
+        bins: int = 20,
+        include_quarantined: bool = False,
+    ) -> Optional[float]:
+        r"""Information-theoretic divergence between the Laplacian
+        eigenvalue **distributions** of two graphs.
+
+        Unlike ``quantum_jensen_shannon_distance()`` (which compares
+        eigenvalue vectors elementwise after zero-padding), this method
+        bins eigenvalues into a **common histogram** on ``[0, λ_max]``
+        and then computes the chosen divergence on the normalised
+        bin probabilities.
+
+        **Why histogram-based spectral comparison?**
+
+        - **Size-invariant**: graphs with different node counts share
+          the same binning grid, so the comparison is meaningful.
+        - **Shape-sensitive**: captures the overall *form* of the
+          spectrum (e.g.\ uniform vs peaked vs bimodal) rather than
+          individual eigenvalue positions.
+        - **Robust**: small perturbations to graph topology shift
+          eigenvalues slightly but rarely move them across bin
+          boundaries, producing stable divergence values.
+
+        **Binning:**
+
+        Both spectra are binned on ``[0, λ_max]`` where
+        ``λ_max = max(λ_max_A, λ_max_B)``.  Each eigenvalue is placed
+        into ``⌊k · λᵢ / λ_max⌋`` (clamped to ``bins−1``).  The
+        histograms are normalised to sum to 1.
+
+        **Measures:**
+
+        - ``"jsd"`` — Jensen-Shannon distance: √(½KL(P‖M)+½KL(Q‖M)),
+          M = ½(P+Q).  Symmetric, bounded [0, √ln2].
+        - ``"kl"`` — KL divergence: Σ p·ln(p/q), p>0.
+          Asymmetric: KL(P‖Q) ≠ KL(Q‖P).
+          Returns KL(self ‖ other).
+        - ``"ce"`` — Cross-entropy: −Σ p·ln(q), p>0.
+          Asymmetric: H(self, other).
+
+        Zero-probability bins where the other distribution has mass
+        are clamped to ``q = 1e-12`` to prevent infinite KL/CE.
+
+        Args:
+            other:               Graph to compare against.
+            measure:             "jsd", "kl", or "ce".
+            bins:                Number of histogram bins (default 20).
+            include_quarantined: Include quarantined nodes.
+
+        Returns:
+            float, or ``None`` if either graph has < 2 nodes or
+            < 1 edge.
+        """
+        evals_a = self._laplacian_eigenvalues(
+            include_quarantined=include_quarantined
+        )
+        evals_b = other._laplacian_eigenvalues(
+            include_quarantined=include_quarantined
+        )
+        if evals_a is None or evals_b is None:
+            return None
+
+        sum_a = sum(evals_a)
+        sum_b = sum(evals_b)
+        if sum_a <= 0 or sum_b <= 0:
+            return None
+
+        if measure not in ("jsd", "kl", "ce"):
+            raise ValueError(
+                f"unknown measure '{measure}'; choose from jsd/kl/ce"
+            )
+        if bins < 2:
+            raise ValueError("bins must be >= 2")
+
+        # ── Common binning grid ──
+        lam_max = max(max(evals_a), max(evals_b))
+        if lam_max <= 0:
+            return None
+
+        def _histogram(evals: list[float]) -> list[float]:
+            counts = [0.0] * bins
+            for e in evals:
+                idx = int(e / lam_max * bins)
+                if idx >= bins:
+                    idx = bins - 1
+                counts[idx] += 1.0
+            total = sum(counts)
+            if total > 0:
+                counts = [c / total for c in counts]
+            return counts
+
+        p = _histogram(evals_a)
+        q = _histogram(evals_b)
+        eps = 1e-12
+
+        if measure == "jsd":
+            m = [(p[i] + q[i]) / 2.0 for i in range(bins)]
+            s_pm = 0.0
+            s_qm = 0.0
+            for i in range(bins):
+                if p[i] > eps and m[i] > eps:
+                    s_pm += p[i] * (math.log(p[i]) - math.log(m[i]))
+                if q[i] > eps and m[i] > eps:
+                    s_qm += q[i] * (math.log(q[i]) - math.log(m[i]))
+            jsd = 0.5 * s_pm + 0.5 * s_qm
+            if jsd < 0:
+                jsd = 0.0
+            return math.sqrt(jsd)
+
+        elif measure == "kl":
+            total = 0.0
+            for i in range(bins):
+                if p[i] > eps:
+                    q_i = q[i] if q[i] > eps else eps
+                    total += p[i] * (math.log(p[i]) - math.log(q_i))
+            return total
+
+        else:  # ce
+            total = 0.0
+            for i in range(bins):
+                if p[i] > eps:
+                    q_i = q[i] if q[i] > eps else eps
+                    total -= p[i] * math.log(q_i)
+            return total
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
