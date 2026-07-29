@@ -34216,6 +34216,183 @@ class MemoryGraph:
             "index":             "von_neumann",
         }
 
+    # ── Cycle 314: Entropy fingerprint vector (graph feature vector) ──
+
+    def entropy_fingerprint(self, indices: list[str] | None = None,
+                           *, include_spectral: bool = True,
+                           include_ego: bool = False,
+                           ego_radius: int = 1) -> Optional[dict]:
+        """Compact feature vector characterising a graph's entropy profile.
+
+        Combines multiple entropy measures into a single numeric vector
+        that serves as a **structural fingerprint**.  Two graphs with
+        identical fingerprints have very similar topology; differing
+        fingerprints indicate structural divergence.
+
+        **Design** (Research #036):
+        The fingerprint is a vector of normalised entropy values across:
+        - Multiple degree-based indices (sombor, randic, etc.)
+        - Spectral entropy (von Neumann) if *include_spectral*
+        - Ego-local entropy statistics if *include_ego*
+
+        **Use cases:**
+        - Fast graph similarity: Euclidean distance between fingerprints
+        - Graph clustering: k-means on fingerprint vectors
+        - Anomaly detection: deviation from cluster centroid
+        - Tracking evolution: fingerprint trajectory over time
+
+        Args:
+            indices: Degree-based indices to include.  Default:
+                ``["sombor", "randic", "zagreb_m1", "abc"]``.
+            include_spectral: Add von Neumann entropy + spectral profile
+                summary statistics.
+            include_ego: Add ego-entropy statistics (mean, std,
+                field_uniformity) at *ego_radius*.
+            ego_radius: Neighbourhood radius for ego statistics.
+
+        Returns:
+            Dict with:
+            - ``vector``: list[float] — the fingerprint vector
+            - ``labels``: list[str] — descriptive label per dimension
+            - ``indices``: indices used
+            - ``dimension``: len(vector)
+            - ``include_spectral``: bool
+            - ``include_ego``: bool
+
+            Returns ``None`` if graph has < 2 nodes.
+        """
+        if indices is None:
+            indices = ["sombor", "randic", "zagreb_m1", "abc"]
+
+        all_nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        if len(all_nodes) < 2:
+            return None
+
+        vector: list[float] = []
+        labels: list[str] = []
+
+        # ── Degree-based Shannon entropy for each index ──
+        _entropy_methods = {
+            "sombor":           self.sombor_entropy,
+            "reduced_sombor":   self.reduced_sombor_entropy,
+            "randic":           self.randic_entropy,
+            "zagreb_m1":        self.zagreb_m1_entropy,
+            "abc":              self.abc_entropy,
+            "ga":               self.ga_entropy,
+            "augmented_zagreb": self.augmented_zagreb_entropy,
+            "harary":           self.harary_entropy,
+            "wiener":           self.wiener_entropy,
+            "szeged":           self.szeged_entropy,
+            "gutman":           self.gutman_entropy,
+            "schultz":          self.schultz_entropy,
+        }
+        for idx in indices:
+            method = _entropy_methods.get(idx)
+            if method:
+                h = method(normalized=True)
+                vector.append(round(h, 8) if h is not None else 0.0)
+            else:
+                vector.append(0.0)
+            labels.append(f"shannon_{idx}")
+
+        # ── Spectral entropy ──
+        if include_spectral:
+            vne = self.von_neumann_entropy(normalized=True)
+            if vne is not None:
+                vector.append(round(vne, 8))
+            else:
+                vector.append(0.0)
+            labels.append("von_neumann")
+
+            # Spectral profile summary
+            sp = self.spectral_entropy_profile()
+            if sp:
+                for key in ("algebraic_connectivity",
+                            "spectral_gap",
+                            "spectral_radius",
+                            "complexity"):
+                    val = sp.get(key)
+                    if isinstance(val, (int, float)):
+                        vector.append(round(float(val), 8))
+                    else:
+                        vector.append(0.0)
+                    labels.append(key)
+            else:
+                for key in ("algebraic_connectivity",
+                            "spectral_gap",
+                            "spectral_radius",
+                            "complexity"):
+                    vector.append(0.0)
+                    labels.append(key)
+
+        # ── Ego-local entropy statistics ──
+        if include_ego:
+            ego = self.ego_entropy_profile(radius=ego_radius)
+            if ego:
+                vector.append(round(ego["mean"], 8))
+                labels.append("ego_mean")
+                vector.append(round(ego["std"], 8))
+                labels.append("ego_std")
+                vector.append(round(ego["field_uniformity"], 8))
+                labels.append("ego_uniformity")
+                # Fraction of isolated nodes
+                frac_iso = len(ego["isolated"]) / ego["evaluated"] if ego["evaluated"] > 0 else 0.0
+                vector.append(round(frac_iso, 8))
+                labels.append("ego_frac_isolated")
+            else:
+                for lbl in ("ego_mean", "ego_std", "ego_uniformity", "ego_frac_isolated"):
+                    vector.append(0.0)
+                    labels.append(lbl)
+
+        return {
+            "vector":         vector,
+            "labels":         labels,
+            "indices":        indices,
+            "dimension":      len(vector),
+            "include_spectral": include_spectral,
+            "include_ego":    include_ego,
+        }
+
+    def fingerprint_distance(self, other: "MemoryGraph",
+                             indices: list[str] | None = None,
+                             *, include_spectral: bool = True,
+                             include_ego: bool = False,
+                             ego_radius: int = 1) -> Optional[float]:
+        """Euclidean distance between two graphs' entropy fingerprints.
+
+        Convenience wrapper: computes ``entropy_fingerprint()`` on both
+        graphs with identical parameters, then returns the L2 distance.
+
+        This is much faster than full inter-graph divergence (JSD/CE/KL)
+        because it avoids pairwise edge-contribution computation —
+        each fingerprint is computed independently.
+
+        Args:
+            other: The other graph to compare against.
+            indices, include_spectral, include_ego, ego_radius:
+                Same as ``entropy_fingerprint()``.
+
+        Returns:
+            float ≥ 0 (0 = identical fingerprints), or ``None``
+            if either graph is too small.
+        """
+        fp1 = self.entropy_fingerprint(indices, include_spectral=include_spectral,
+                                       include_ego=include_ego,
+                                       ego_radius=ego_radius)
+        fp2 = other.entropy_fingerprint(indices, include_spectral=include_spectral,
+                                        include_ego=include_ego,
+                                        ego_radius=ego_radius)
+        if fp1 is None or fp2 is None:
+            return None
+
+        v1, v2 = fp1["vector"], fp2["vector"]
+        # Pad shorter vector with zeros
+        n = max(len(v1), len(v2))
+        v1 += [0.0] * (n - len(v1))
+        v2 += [0.0] * (n - len(v2))
+
+        return round(math.sqrt(sum((a - b) ** 2 for a, b in zip(v1, v2))), 8)
+
     # ── Cycle 313: Ego-local entropy profile (VNEstruct-inspired) ──
 
     def ego_entropy_profile(self, index: str = "sombor",
