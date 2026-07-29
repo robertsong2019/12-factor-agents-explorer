@@ -34922,6 +34922,122 @@ class MemoryGraph:
 
         return round(math.sqrt(sum((a - b) ** 2 for a, b in zip(v1, v2))), 8)
 
+    # ── Cycle 318: Spectral classification against reference graphs ──
+
+    def spectral_classification(self,
+                                references: list["MemoryGraph"],
+                                *,
+                                method: str = "spectral",
+                                measure: str = "jsd",
+                                bins: int = 20,
+                                include_quarantined: bool = False,
+                               ) -> Optional[dict]:
+        """Classify this graph against reference graphs using spectral
+        or fingerprint-based similarity.
+
+        Unlike ``graph_classification()`` (which uses degree-based
+        JSD/CE/KL on edge contributions), this method operates in the
+        **spectral domain** or uses compact **entropy fingerprint**
+        vectors — capturing global topological shape rather than
+        local edge-weight distributions.
+
+        **Methods:**
+
+        - ``"spectral"`` — pairwise ``spectral_divergence()`` between
+          self and each reference.  Supports JSD/KL/CE measures on
+          Laplacian eigenvalue histograms.  Size-invariant.
+        - ``"spectral_scan"`` — pairwise ``spectral_divergence_scan()``
+          mean divergence across Fibonacci resolutions [2,3,5,8,13,21,34,55].
+          More robust than single-resolution: averages out bin-boundary
+          artefacts.
+        - ``"fingerprint"`` — pairwise ``fingerprint_distance()`` using
+          entropy fingerprint vectors (12 indices + spectral features).
+          Fastest method: O(n) per comparison vs O(n³) for spectral.
+
+        **Returns:**
+
+        Dict with:
+        - ``"best_match"``: int — index of closest reference
+        - ``"best_score"``: float — lowest distance/divergence
+        - ``"rankings"``: list of ``{"index": int, "score": float, "label": str|None}`` sorted ascending
+        - ``"method"``: str — classification method used
+        - ``"measure"``: str — divergence measure (for spectral methods)
+        - ``"confidence"``: float — separation ratio ``(2nd_best − best) / best``.
+          Higher = more confident classification (>0.5 is strong).
+        - ``"margin"``: float — absolute ``2nd_best − best`` gap.
+
+        Args:
+            references:          list of reference MemoryGraphs.
+            method:              "spectral", "spectral_scan", or "fingerprint".
+            measure:             divergence measure for spectral methods
+                                  ("jsd", "kl", "ce").  Ignored for
+                                  ``method="fingerprint"``.
+            bins:                bin count for ``method="spectral"``.
+                                  Ignored for other methods.
+            include_quarantined: passed to spectral methods.
+
+        Returns:
+            Dict, or ``None`` if no valid comparisons could be made
+            (e.g. empty references list or all degenerate graphs).
+        """
+        if not references:
+            return None
+
+        if method not in ("spectral", "spectral_scan", "fingerprint"):
+            raise ValueError(
+                f"unknown method '{method}'; "
+                "choose from spectral/spectral_scan/fingerprint"
+            )
+
+        rankings = []
+        for i, ref in enumerate(references):
+            if method == "spectral":
+                score = self.spectral_divergence(
+                    ref, measure=measure, bins=bins,
+                    include_quarantined=include_quarantined,
+                )
+            elif method == "spectral_scan":
+                scan_result = self.spectral_divergence_scan(
+                    ref, measure=measure,
+                    include_quarantined=include_quarantined,
+                )
+                score = scan_result["mean"] if scan_result is not None else None
+            else:  # fingerprint
+                score = self.fingerprint_distance(ref)
+
+            if score is not None:
+                label = None
+                # Try to extract a label from the reference graph
+                try:
+                    label = ref.graph_meta.get("label") if hasattr(ref, "graph_meta") else None
+                except Exception:
+                    pass
+                rankings.append({
+                    "index": i,
+                    "score": round(score, 8),
+                    "label": label,
+                })
+
+        if not rankings:
+            return None
+
+        rankings.sort(key=lambda x: x["score"])
+
+        best = rankings[0]["score"]
+        second = rankings[1]["score"] if len(rankings) > 1 else best
+        margin = round(second - best, 8)
+        confidence = round(margin / best, 8) if best > 1e-12 else float("inf") if margin > 0 else 0.0
+
+        return {
+            "best_match": rankings[0]["index"],
+            "best_score": best,
+            "rankings": rankings,
+            "method": method,
+            "measure": measure if method != "fingerprint" else "l2",
+            "confidence": confidence,
+            "margin": margin,
+        }
+
     # ── Cycle 313: Ego-local entropy profile (VNEstruct-inspired) ──
 
     def ego_entropy_profile(self, index: str = "sombor",
