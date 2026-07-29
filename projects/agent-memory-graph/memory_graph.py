@@ -7181,6 +7181,126 @@ class MemoryGraph:
             renyi /= math.log(m)
         return renyi
 
+    # ── Cycle 320: Classification with rejection ────────────────────
+
+    def classification_with_rejection(self,
+                                     classification_result: dict,
+                                     *,
+                                     threshold: float = 0.5,
+                                     min_margin: float = 0.0,
+                                     ) -> Optional[dict]:
+        """Apply threshold-based rejection to a classification result.
+
+        Takes a result dict from ``graph_classification`` ,
+        ``spectral_classification`` , or ``hybrid_classification``
+        and adds a reject/accept decision based on configurable criteria.
+
+        **Why rejection?**
+        Forcing a best-match when *no* reference is actually close leads
+        to false positives in production.  A rejection mechanism lets
+        the caller know when the classifier is uncertain, enabling
+        fallback strategies (human review, expanded reference set, etc.).
+
+        **Rejection criteria (both must be met to accept):**
+
+        1. **Score threshold**: ``best_score ≤ threshold``
+           - For JSD-based methods: typical good values 0.3–0.5
+           - For fingerprint L2: typical good values 0.2–0.8
+           - For hybrid: normalised ensemble score, try 0.3–0.7
+        2. **Margin**: ``margin ≥ min_margin``
+           - Ensures sufficient separation between top-2 candidates
+           - ``min_margin=0`` disables this check (threshold only)
+
+        When the best score is 0 (exact match), the result is always
+        accepted regardless of threshold (perfect match overrides).
+
+        Args:
+            classification_result: dict from any ``*_classification()``
+                method.  Must contain ``best_score`` , ``margin`` , and
+                ``rankings`` keys.
+            threshold: maximum acceptable ``best_score`` .
+                Default 0.5 (conservative for JSD; tune for your method).
+            min_margin: minimum acceptable margin (``2nd − best``).
+                Default 0.0 (disabled).
+
+        Returns:
+            Dict with all original keys plus:
+            - ``decision``: ``"accept"`` or ``"reject"``
+            - ``reason``: str explaining the decision
+            - ``threshold``: float (echoed)
+            - ``min_margin``: float (echoed)
+            - ``calibrated_confidence``: float — confidence rescaled
+              to [0, 1] where 0 = at threshold, 1 = perfect match.
+              Negative values indicate rejection territory.
+            or ``None`` if input is malformed.
+        """
+        if not isinstance(classification_result, dict):
+            return None
+        if "best_score" not in classification_result:
+            return None
+
+        best_score = classification_result["best_score"]
+        if best_score is None:
+            return None
+
+        # Margin: use explicit value if present, otherwise compute from rankings
+        margin = classification_result.get("margin")
+        if margin is None:
+            rankings = classification_result.get("rankings", [])
+            if len(rankings) >= 2:
+                scores = [r.get("score", 0) for r in rankings if r.get("score") is not None]
+                scores.sort()
+                margin = scores[1] - scores[0] if len(scores) >= 2 else 0.0
+            else:
+                margin = 0.0
+
+        if margin is None:
+            return None
+
+        # Perfect match: always accept
+        if best_score <= 1e-15:
+            decision = "accept"
+            reason = "exact match (score ≈ 0)"
+            calibrated = 1.0
+        else:
+            # Score criterion
+            score_ok = best_score <= threshold
+            # Margin criterion
+            margin_ok = margin >= min_margin
+
+            if score_ok and margin_ok:
+                decision = "accept"
+                if margin_ok and min_margin > 0:
+                    reason = (f"score {best_score:.4f} ≤ threshold {threshold:.4f} "
+                              f"and margin {margin:.4f} ≥ min_margin {min_margin:.4f}")
+                else:
+                    reason = f"score {best_score:.4f} ≤ threshold {threshold:.4f}"
+            elif not score_ok and not margin_ok:
+                decision = "reject"
+                reason = (f"score {best_score:.4f} > threshold {threshold:.4f} "
+                          f"and margin {margin:.4f} < min_margin {min_margin:.4f}")
+            elif not score_ok:
+                decision = "reject"
+                reason = f"score {best_score:.4f} > threshold {threshold:.4f}"
+            else:
+                decision = "reject"
+                reason = f"margin {margin:.4f} < min_margin {min_margin:.4f}"
+
+            # Calibrated confidence: 1.0 at score=0, 0.0 at score=threshold
+            # Linear rescale: (threshold - score) / threshold
+            if threshold > 0:
+                calibrated = (threshold - best_score) / threshold
+            else:
+                calibrated = 0.0 if best_score > 0 else 1.0
+
+        result = dict(classification_result)  # shallow copy
+        result["decision"] = decision
+        result["reason"] = reason
+        result["threshold"] = threshold
+        result["min_margin"] = min_margin
+        result["calibrated_confidence"] = round(calibrated, 6)
+        return result
+
     def entropy_distance(self, other: "MemoryGraph", index: str = "sombor") -> Optional[float]:
         """Jensen-Shannon divergence between two graphs' edge-contribution distributions.
 
