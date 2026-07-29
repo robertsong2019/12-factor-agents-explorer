@@ -34338,6 +34338,178 @@ class MemoryGraph:
             "weights":            weights,
         }
 
+    # ── Cycle 317: Three-layer router cascade (MemFlow pattern) ──
+
+    def three_layer_router_cascade(
+        self,
+        question: str,
+        *,
+        embedding: list[float] | None = None,
+        limit: int = 10,
+        detail: bool = False,
+        entropy_index: str = "sombor",
+    ) -> dict:
+        """Production-pattern query router with three-layer cascade.
+
+        Implements the MemFlow 7-intent routing pattern as a cascade:
+
+        **Layer 1 — Rules** (fastest, ~0ms):
+            Keyword-based heuristic routing via ``_route_query``.
+            Handles temporal, constraint, short-lookup, and global
+            queries deterministically.
+
+        **Layer 2 — Entropy-guided** (~1-5ms):
+            If the rule-based mode is ``"hybrid"`` or ``"drift"``
+            (ambiguous), escalate to ``entropy_guided_query_route``
+            which uses graph topology entropy to pick the optimal
+            strategy.  This handles cases where question phrasing
+            doesn't clearly indicate the best retrieval mode.
+
+        **Layer 3 — Keyword fallback** (~0ms):
+            If both layers above yield no results (empty graph,
+            insufficient edges for entropy, etc.), fall back to
+            basic keyword search via ``smart_query_route``.
+
+        **Cascade logic:**
+
+        1. Run Layer 1 (rules).  If mode is ``basic``, ``temporal``,
+           ``constraint``, or ``global`` — **commit immediately**.
+           These are high-confidence deterministic routes.
+        2. If Layer 1 mode is ``hybrid`` or ``drift`` — **escalate**
+           to Layer 2 (entropy).
+        3. If Layer 2 produces results — **commit**.
+        4. If Layer 2 fails or is skipped — **fall back** to Layer 3.
+
+        **Audit trail:**
+        The returned dict includes a ``cascade_trace`` showing which
+        layers were attempted, their outcomes, and latencies.  This
+        is essential for debugging routing decisions in production.
+
+        **Use cases:**
+        - Production deployment where routing reliability matters
+        - Debugging unexpected retrieval results
+        - A/B testing routing strategies (compare layer outcomes)
+        - Performance monitoring (which layer handles most queries)
+
+        Args:
+            question:       Natural-language query string.
+            embedding:      Optional pre-computed query embedding
+                            for semantic search modes.
+            limit:          Maximum results to return.
+            detail:         Include full node details in results.
+            entropy_index:  Entropy index for Layer 2
+                            (``"sombor"``, ``"randic"``, etc.).
+
+        Returns:
+            ``{question, mode, layer, results, stats, cascade_trace}``
+        """
+        import time as _time
+
+        trace: list[dict] = []
+
+        # ── Layer 1: Rules ──
+        t0 = _time.perf_counter()
+        rule_mode, rule_rationale = self._route_query(question)
+        t1 = _time.perf_counter()
+        trace.append({
+            "layer":         "rules",
+            "mode":          rule_mode,
+            "rationale":     rule_rationale,
+            "latency_ms":    round((t1 - t0) * 1000, 3),
+            "committed":     False,
+        })
+
+        # Deterministic high-confidence modes → commit immediately
+        commit_modes = {"basic", "temporal", "constraint", "global"}
+        results = None
+        chosen_mode = rule_mode
+        chosen_layer = "rules"
+
+        if rule_mode in commit_modes:
+            trace[-1]["committed"] = True
+            try:
+                results = self.smart_query_route(
+                    question, embedding=embedding, limit=limit,
+                )
+            except Exception:
+                results = {"mode": rule_mode, "results": [], "reason": "error"}
+                trace[-1]["committed"] = True
+                trace[-1]["error"] = "smart_query_route failed"
+        else:
+            # ── Layer 2: Entropy-guided escalation ──
+            t2 = _time.perf_counter()
+            try:
+                ent_result = self.entropy_guided_query_route(
+                    question,
+                    limit=limit,
+                    entropy_index=entropy_index,
+                    detail=detail,
+                    override_heuristic=True,
+                )
+                t3 = _time.perf_counter()
+                ent_results = ent_result.get("results", [])
+                trace.append({
+                    "layer":         "entropy",
+                    "mode":          ent_result.get("mode", "unknown"),
+                    "entropy_mode":  ent_result.get("entropy_mode"),
+                    "heuristic_mode": ent_result.get("heuristic_mode"),
+                    "latency_ms":    round((t3 - t2) * 1000, 3),
+                    "committed":     False,
+                    "n_results":     len(ent_results),
+                })
+                if ent_results:
+                    trace[-1]["committed"] = True
+                    results = ent_result
+                    chosen_mode = ent_result.get("mode", rule_mode)
+                    chosen_layer = "entropy"
+            except Exception as exc:
+                t3 = _time.perf_counter()
+                trace.append({
+                    "layer":         "entropy",
+                    "mode":          None,
+                    "error":         str(exc),
+                    "latency_ms":    round((t3 - t2) * 1000, 3),
+                    "committed":     False,
+                })
+
+            # ── Layer 3: Keyword fallback ──
+            if results is None:
+                t4 = _time.perf_counter()
+                try:
+                    results = self.smart_query_route(
+                        question, embedding=embedding, limit=limit,
+                    )
+                except Exception:
+                    results = {"mode": "basic", "results": []}
+                t5 = _time.perf_counter()
+                trace.append({
+                    "layer":         "fallback",
+                    "mode":          "basic",
+                    "latency_ms":    round((t5 - t4) * 1000, 3),
+                    "committed":     True,
+                    "n_results":     len(results.get("results", [])),
+                })
+                chosen_mode = "basic"
+                chosen_layer = "fallback"
+
+        # ── Build summary ──
+        final_results = results.get("results", []) if isinstance(results, dict) else []
+        total_latency = sum(t["latency_ms"] for t in trace)
+
+        return {
+            "question":       question,
+            "mode":           chosen_mode,
+            "layer":          chosen_layer,
+            "results":        final_results,
+            "n_results":      len(final_results),
+            "stats": {
+                "total_latency_ms":  round(total_latency, 3),
+                "layers_attempted":  len(trace),
+                "committed_layer":   chosen_layer,
+            },
+            "cascade_trace":  trace,
+        }
+
     # ── Cycle 315: Graph topology classification via entropy signatures ──
 
     def graph_type_indicator(self) -> Optional[dict]:
