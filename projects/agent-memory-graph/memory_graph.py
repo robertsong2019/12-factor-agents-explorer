@@ -34216,6 +34216,241 @@ class MemoryGraph:
             "index":             "von_neumann",
         }
 
+    # ── Cycle 315: Graph topology classification via entropy signatures ──
+
+    def graph_type_indicator(self) -> Optional[dict]:
+        """Classify graph topology type from entropy and structural metrics.
+
+        Uses a combination of degree-distribution statistics and entropy
+        measures to classify the graph into one of seven canonical types.
+        No reference graphs required — pure heuristic classification.
+
+        **Detectable types:**
+        - ``complete`` — K_n: all nodes connected. Max entropy, uniform degree.
+        - ``star`` — One hub, many leaves. Extreme degree variance.
+        - ``path`` — Linear chain. Low entropy, moderate degree variance.
+        - ``cycle`` — Ring. Uniform degree (degree 2), moderate entropy.
+        - ``tree`` — Acyclic, branching. Moderate entropy, no triangles.
+        - ``random`` — Erdős-Rényi-like. High entropy, low clustering.
+        - ``scale_free`` — Power-law degree distribution. High entropy, hub-dominated.
+        - ``unknown`` — Doesn't match any signature clearly.
+
+        **Method:**
+        Computes a set of structural indicators (degree variance, degree
+        entropy, spectral entropy, triangle density, clustering coefficient)
+        and matches them against characteristic profiles.
+
+        Returns:
+            Dict with:
+            - ``type``: best-guess type string
+            - ``confidence``: 0-1 (higher = more certain)
+            - "scores": dict of type → similarity score
+            - ``metrics``: underlying structural metrics used
+
+            Returns ``None`` for < 3 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        n = len(rows)
+        if n < 3:
+            return None
+
+        edges = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        m = len(edges)
+        if m < 1:
+            return {"type": "empty", "confidence": 1.0, "scores": {}, "metrics": {"nodes": n, "edges": 0}}
+
+        # ── Compute structural metrics ──
+        degrees: dict[str, int] = {}
+        adj: dict[str, set[str]] = {}
+        for r in rows:
+            nid = str(r["id"])
+            degrees[nid] = 0
+            adj[nid] = set()
+        for r in edges:
+            s, t = str(r["source"]), str(r["target"])
+            degrees[s] = degrees.get(s, 0) + 1
+            degrees[t] = degrees.get(t, 0) + 1
+            adj.setdefault(s, set()).add(t)
+            adj.setdefault(t, set()).add(s)
+
+        deg_values = list(degrees.values())
+        mean_deg = sum(deg_values) / n
+        var_deg = sum((d - mean_deg) ** 2 for d in deg_values) / n
+        std_deg = var_deg ** 0.5
+        cv_deg = std_deg / mean_deg if mean_deg > 0 else float("inf")
+        max_deg = max(deg_values)
+        min_deg = min(deg_values)
+
+        # Degree entropy (Shannon on degree distribution)
+        deg_counts: dict[int, int] = {}
+        for d in deg_values:
+            deg_counts[d] = deg_counts.get(d, 0) + 1
+        deg_probs = [c / n for c in deg_counts.values()]
+        deg_entropy = -sum(p * math.log(p) for p in deg_probs if p > 0)
+        max_deg_entropy = math.log(n) if n > 1 else 1.0
+        norm_deg_entropy = deg_entropy / max_deg_entropy if max_deg_entropy > 0 else 0.0
+
+        # Spectral entropy (von Neumann)
+        vne = self.von_neumann_entropy(normalized=True) or 0.0
+
+        # Triangle count (for cycle/complete/tree detection)
+        triangles = 0
+        node_list = [str(r["id"]) for r in rows]
+        for i, a in enumerate(node_list):
+            for b in adj.get(a, set()):
+                if b <= a:
+                    continue
+                for c in adj.get(a, set()):
+                    if c <= b:
+                        continue
+                    if c in adj.get(b, set()):
+                        triangles += 1
+        # Each triangle counted exactly once (a < b < c ordering)
+
+        # Max possible triangles
+        max_tri = n * (n - 1) * (n - 2) // 6
+        triangle_density = triangles / max_tri if max_tri > 0 else 0.0
+
+        # Clustering coefficient (average local)
+        clustering_sum = 0.0
+        clustering_count = 0
+        for nid in node_list:
+            neighbors = adj.get(nid, set())
+            k = len(neighbors)
+            if k < 2:
+                continue
+            # Count edges among neighbors
+            neighbor_list = list(neighbors)
+            local_edges = 0
+            for i, a in enumerate(neighbor_list):
+                for b in neighbor_list[i + 1:]:
+                    if b in adj.get(a, set()):
+                        local_edges += 1
+            clustering_sum += 2.0 * local_edges / (k * (k - 1))
+            clustering_count += 1
+        avg_clustering = clustering_sum / clustering_count if clustering_count > 0 else 0.0
+
+        # Connectivity check
+        visited: set[str] = set()
+        component_sizes: list[int] = []
+        for start in node_list:
+            if start in visited:
+                continue
+            stack = [start]
+            comp_size = 0
+            while stack:
+                node = stack.pop()
+                if node in visited:
+                    continue
+                visited.add(node)
+                comp_size += 1
+                stack.extend(adj.get(node, set()) - visited)
+            component_sizes.append(comp_size)
+        n_components = len(component_sizes)
+        is_connected = n_components == 1
+
+        # ── Edge density ──
+        max_edges = n * (n - 1) // 2
+        density = m / max_edges if max_edges > 0 else 0.0
+
+        # ── Type scoring ──
+        # Each score in [0, 1], higher = more likely that type
+        scores: dict[str, float] = {}
+
+        # Complete: high density (>0.8), low cv_deg (all same degree), high clustering
+        if density > 0.8 and cv_deg < 0.1 and avg_clustering > 0.8:
+            scores["complete"] = 1.0
+        else:
+            scores["complete"] = max(0.0, min(1.0,
+                (density - 0.5) * 2 * (1 - min(cv_deg, 1.0)) * avg_clustering
+            ))
+
+        # Star: one node has degree n-1, rest have degree 1
+        if max_deg == n - 1 and min_deg == 1:
+            hub_count = sum(1 for d in deg_values if d == n - 1)
+            if hub_count == 1:
+                scores["star"] = 1.0
+            else:
+                scores["star"] = 0.5
+        else:
+            # Partial star: high cv_deg, one dominant hub
+            hub_ratio = max_deg / (2 * m) if m > 0 else 0
+            scores["star"] = max(0.0, min(1.0, cv_deg * hub_ratio * 2))
+
+        # Path: max degree ≤ 2, connected, exactly n-1 edges
+        if is_connected and max_deg <= 2 and m == n - 1 and n > 2:
+            scores["path"] = 1.0
+        else:
+            deg2_frac = sum(1 for d in deg_values if d <= 2) / n
+            scores["path"] = max(0.0, min(1.0, deg2_frac * (1 - triangle_density * 5) * (1.0 - abs(m - n + 1) / n)))
+
+        # Cycle: all degree 2, connected, edges == nodes
+        if is_connected and max_deg == 2 and min_deg == 2 and m == n:
+            scores["cycle"] = 1.0
+        else:
+            deg2_only = all(d == 2 for d in deg_values)
+            scores["cycle"] = 1.0 if (deg2_only and m == n and is_connected) else 0.3 * (1.0 - abs(cv_deg) / 2)
+
+        # Tree: connected, m = n-1, no triangles
+        if is_connected and m == n - 1 and triangle_density < 0.01:
+            scores["tree"] = max(scores.get("path", 0.0), 0.8)  # path is a special tree
+        else:
+            scores["tree"] = max(0.0, min(1.0,
+                (1 - triangle_density * 3) * max(0.0, 1.0 - abs(m - (n - 1)) / n) * (1 if is_connected else 0.5)
+            ))
+
+        # Random: moderate entropy, moderate clustering, moderate density
+        scores["random"] = max(0.0, min(1.0,
+            norm_deg_entropy * (1 - avg_clustering) * (1 - abs(density - 0.3) * 2)
+        ))
+
+        # Scale-free: high cv_deg, hub-dominated, power-law-like
+        # Use max-to-mean degree ratio as power-law indicator
+        max_to_mean = max_deg / mean_deg if mean_deg > 0 else 0
+        # Nodes at or below median degree (long tail indicator)
+        sorted_degs = sorted(deg_values)
+        median_deg = sorted_degs[n // 2] if n > 0 else 0
+        low_deg_frac = sum(1 for d in deg_values if d <= median_deg) / n
+        scores["scale_free"] = max(0.0, min(1.0,
+            min(cv_deg, 1.0) * min(max_to_mean / 3.0, 1.0) * (1 - avg_clustering * 0.5)
+        ))
+
+        # ── Pick best type ──
+        best_type = max(scores, key=scores.get)
+        best_score = scores[best_type]
+
+        # Confidence: ratio of best to second-best
+        sorted_scores = sorted(scores.values(), reverse=True)
+        if len(sorted_scores) > 1 and sorted_scores[1] > 0:
+            confidence = 1.0 - (sorted_scores[1] / sorted_scores[0]) if sorted_scores[0] > 0 else 0.0
+        else:
+            confidence = 1.0 if best_score > 0 else 0.0
+
+        # Round scores
+        scores = {k: round(v, 4) for k, v in sorted(scores.items(), key=lambda x: -x[1])}
+
+        return {
+            "type":          best_type,
+            "confidence":    round(confidence, 4),
+            "scores":        scores,
+            "metrics": {
+                "nodes":           n,
+                "edges":           m,
+                "density":         round(density, 6),
+                "degree_mean":     round(mean_deg, 4),
+                "degree_std":      round(std_deg, 4),
+                "degree_cv":       round(cv_deg, 4),
+                "degree_entropy":  round(deg_entropy, 4),
+                "norm_deg_entropy": round(norm_deg_entropy, 4),
+                "von_neumann":     round(vne, 4),
+                "triangles":       triangles,
+                "triangle_density": round(triangle_density, 6),
+                "avg_clustering":  round(avg_clustering, 4),
+                "components":      n_components,
+                "connected":       is_connected,
+            },
+        }
+
     # ── Cycle 314: Entropy fingerprint vector (graph feature vector) ──
 
     def entropy_fingerprint(self, indices: list[str] | None = None,
