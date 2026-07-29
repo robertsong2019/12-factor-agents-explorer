@@ -35038,6 +35038,215 @@ class MemoryGraph:
             "margin": margin,
         }
 
+    # ── Cycle 319: Hybrid ensemble classification ──
+
+    def hybrid_classification(self,
+                               references: list["MemoryGraph"],
+                               *,
+                               degree_method: str = "jsd",
+                               degree_index: str = "sombor",
+                               spectral_method: str = "spectral",
+                               spectral_measure: str = "jsd",
+                               bins: int = 20,
+                               weights: tuple[float, float] | None = None,
+                               include_quarantined: bool = False,
+                              ) -> Optional[dict]:
+        """Classify against reference graphs using a **weighted ensemble**
+        of degree-based and spectral divergence scores.
+
+        Combines two complementary topological domains:
+
+        - **Degree-based** (local): JSD / CE / KL on edge-contribution
+          distributions — captures *local* structural patterns.
+        - **Spectral** (global): divergence on Laplacian eigenvalue
+          histograms — captures *global* topological shape.
+
+        Each modality's raw scores are **min-max normalised** to [0, 1]
+        across the reference set, then combined with configurable
+        weights to produce a single ensemble score per reference.
+
+        **Why hybrid?**
+        - Degree-based measures excel at distinguishing graphs with
+          different edge-weight distributions but miss global shape.
+        - Spectral measures excel at distinguishing global topology
+          (path vs cycle vs star) but average over local details.
+        - Combining them captures both axes of structural difference,
+        producing more robust classifications than either alone.
+
+        **Normalisation:**
+        For each modality, scores are min-max normalised::
+
+            norm_i = (score_i − min(scores)) / (max(scores) − min(scores))
+
+        Best match (lowest raw score) → norm = 0; worst → norm = 1.
+        If all scores in a modality are equal, all normals = 0
+        (no discriminative power, effectively excluded).
+
+        **Weights:**
+        ``weights = (w_degree, w_spectral)`` — normalised to sum to 1.
+        Default ``(0.5, 0.5)`` gives equal influence.  Use
+        ``(0.7, 0.3)`` to favour local structure, or ``(0.3, 0.7)``
+        to favour global topology.
+
+        Args:
+            references:          list of reference MemoryGraphs.
+            degree_method:       degree-based measure ("jsd", "ce", "kl").
+            degree_index:        degree-based index for edge contributions.
+            spectral_method:     spectral measure ("spectral", "spectral_scan",
+                                 "fingerprint").
+            spectral_measure:    divergence measure for spectral methods
+                                 ("jsd", "kl", "ce").  Ignored for
+                                 ``spectral_method="fingerprint"``.
+            bins:                bin count for ``spectral_method="spectral"``.
+            weights:             ``(w_degree, w_spectral)`` tuple or None
+                                 for equal weighting.
+            include_quarantined: passed to spectral methods.
+
+        Returns:
+            Dict with:
+            - ``best_match``: int — index of closest reference
+            - ``best_score``: float — ensemble score (lower = better)
+            - ``rankings``: list of dicts with keys ``index``, ``score``,
+              ``degree_raw``, ``spectral_raw``, ``degree_norm``,
+              ``spectral_norm``, ``label`` — sorted ascending by ensemble.
+            - ``degree_method``: str
+            - ``spectral_method``: str
+            - ``weights``: tuple[float, float] — normalised weights used
+            - ``confidence``: float — ``(2nd_best − best) / best``
+            - ``margin``: float — ``2nd_best − best``
+            or ``None`` if no valid comparisons could be made.
+        """
+        if not references:
+            return None
+
+        valid_degree = ("jsd", "ce", "kl")
+        valid_spectral = ("spectral", "spectral_scan", "fingerprint")
+        if degree_method not in valid_degree:
+            raise ValueError(
+                f"unknown degree_method '{degree_method}'; "
+                f"choose from {valid_degree}"
+            )
+        if spectral_method not in valid_spectral:
+            raise ValueError(
+                f"unknown spectral_method '{spectral_method}'; "
+                f"choose from {valid_spectral}"
+            )
+
+        # Normalise weights
+        if weights is None:
+            w_d, w_s = 0.5, 0.5
+        else:
+            if len(weights) != 2:
+                raise ValueError("weights must be a 2-tuple (degree, spectral)")
+            w_d, w_s = weights
+            total = w_d + w_s
+            if total <= 0:
+                raise ValueError("weights must sum to a positive value")
+            w_d, w_s = w_d / total, w_s / total
+
+        # Degree-based scoring
+        degree_compute = {
+            "jsd": self.entropy_distance,
+            "ce": self.cross_entropy_graph,
+            "kl": self.kl_divergence_graph,
+        }.get(degree_method)
+
+        # Collect raw scores
+        raw_degree: list[float | None] = []
+        raw_spectral: list[float | None] = []
+        for ref in references:
+            d_score = degree_compute(ref, index=degree_index)
+            raw_degree.append(d_score)
+
+            if spectral_method == "spectral":
+                s_score = self.spectral_divergence(
+                    ref, measure=spectral_measure, bins=bins,
+                    include_quarantined=include_quarantined,
+                )
+            elif spectral_method == "spectral_scan":
+                scan_result = self.spectral_divergence_scan(
+                    ref, measure=spectral_measure,
+                    include_quarantined=include_quarantined,
+                )
+                s_score = scan_result["mean"] if scan_result is not None else None
+            else:  # fingerprint
+                s_score = self.fingerprint_distance(ref)
+            raw_spectral.append(s_score)
+
+        # Min-max normalise each modality
+        def _min_max(values: list[float | None]) -> list[float | None]:
+            valid_vals = [v for v in values if v is not None]
+            if not valid_vals:
+                return [None] * len(values)
+            lo, hi = min(valid_vals), max(valid_vals)
+            rng = hi - lo
+            if rng < 1e-15:
+                return [0.0 if v is not None else None for v in values]
+            return [(v - lo) / rng if v is not None else None for v in values]
+
+        norm_degree = _min_max(raw_degree)
+        norm_spectral = _min_max(raw_spectral)
+
+        # Compute ensemble scores
+        rankings = []
+        for i in range(len(references)):
+            nd = norm_degree[i]
+            ns = norm_spectral[i]
+            # Skip if either modality completely failed for this ref
+            if nd is None and ns is None:
+                continue
+
+            # Use available modality if one is None
+            if nd is None:
+                ensemble = w_s * (ns or 0.0)
+                effective_d = raw_degree[i]
+                effective_nd = None
+            elif ns is None:
+                ensemble = w_d * (nd or 0.0)
+                effective_d = raw_degree[i]
+                effective_nd = nd
+            else:
+                ensemble = w_d * nd + w_s * ns
+                effective_nd = nd
+
+            # Extract label
+            label = None
+            try:
+                label = references[i].graph_meta.get("label") if hasattr(references[i], "graph_meta") else None
+            except Exception:
+                pass
+
+            rankings.append({
+                "index": i,
+                "score": round(ensemble, 8),
+                "degree_raw": round(raw_degree[i], 8) if raw_degree[i] is not None else None,
+                "spectral_raw": round(raw_spectral[i], 8) if raw_spectral[i] is not None else None,
+                "degree_norm": round(nd, 8) if nd is not None else None,
+                "spectral_norm": round(ns, 8) if ns is not None else None,
+                "label": label,
+            })
+
+        if not rankings:
+            return None
+
+        rankings.sort(key=lambda x: x["score"])
+
+        best = rankings[0]["score"]
+        second = rankings[1]["score"] if len(rankings) > 1 else best
+        margin = round(second - best, 8)
+        confidence = round(margin / best, 8) if best > 1e-12 else float("inf") if margin > 0 else 0.0
+
+        return {
+            "best_match": rankings[0]["index"],
+            "best_score": best,
+            "rankings": rankings,
+            "degree_method": degree_method,
+            "spectral_method": spectral_method,
+            "weights": (round(w_d, 8), round(w_s, 8)),
+            "confidence": confidence,
+            "margin": margin,
+        }
+
     # ── Cycle 313: Ego-local entropy profile (VNEstruct-inspired) ──
 
     def ego_entropy_profile(self, index: str = "sombor",
