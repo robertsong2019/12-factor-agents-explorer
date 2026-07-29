@@ -34216,6 +34216,211 @@ class MemoryGraph:
             "index":             "von_neumann",
         }
 
+    # ── Cycle 313: Ego-local entropy profile (VNEstruct-inspired) ──
+
+    def ego_entropy_profile(self, index: str = "sombor",
+                            radius: int = 1,
+                            top_k: int = 0) -> Optional[dict]:
+        """Per-node ego-network entropy at a given neighbourhood radius.
+
+        Inspired by **VNEstruct** (Dasoulas et al., ICML 2020): ego-local
+        entropy captures structural information that global entropy
+        averages out.  Each node's *ego-network* is the induced subgraph
+        on itself plus all neighbours within *radius* hops.
+
+        **Why ego-local?**
+        - Global entropy washes out local patterns (a hub in a sparse
+          region is invisible to global measures).
+        - Ego-entropy is O(n·k^2) where k = avg degree, vs O(n·m) for
+          leave-one-out global entropy (``entropy_contribution``).
+        - Nodes with anomalous local entropy are natural candidates for
+          anomaly detection, consolidation, or gap analysis.
+
+        **Interpretation:**
+        - Low ego-entropy = node sits in a **homogeneous neighbourhood**
+          (redundant, consolidation candidate).
+        - High ego-entropy = node is in a **diverse neighbourhood**
+          (structurally unique, should be preserved).
+        - Nodes with zero ego-entropy (no edges in ego-network) are
+          **isolated** — either orphan nodes or hubs whose neighbours
+          have no inter-connections.
+
+        Args:
+            index: Degree-based entropy index (``sombor``, ``randic``,
+                ``zagreb_m1``, ``abc``, ``ga``, ``reduced_sombor``,
+                ``augmented_zagreb``).
+            radius: Neighbourhood hop distance (1 = direct neighbours,
+                2 = friends-of-friends, etc.).  Default 1.
+            top_k: If > 0, only return the top-*k* nodes by ego-entropy.
+
+        Returns:
+            Dict with keys:
+
+            * ``index``: entropy index used
+            * ``radius``: neighbourhood radius
+            * ``ego_entropy``: ``{node_id: entropy}`` for each node
+            * ``ranked``: list of ``(node_id, entropy)`` sorted descending
+            * ``mean``: average ego-entropy
+            * ``std``: standard deviation
+            * ``max``: highest ego-entropy (most diverse neighbourhood)
+            * ``min``: lowest ego-entropy (most homogeneous)
+            * ``range``: max − min
+            * ``field_uniformity``: 1 − (std / mean) ∈ [0, 1]; high =
+              uniform field, low = hotspots exist
+            * ``hotspots``: nodes with ego-entropy > mean + std
+              (diverse neighbourhoods, structurally unique)
+            * ``coldspots``: nodes with ego-entropy < mean − std
+              (homogeneous neighbourhoods, consolidation candidates)
+            * ``isolated``: nodes with zero ego-entropy
+            * ``evaluated``: number of nodes evaluated
+
+            Returns ``None`` if the graph has fewer than 2 nodes.
+        """
+        # ── Contribution functions (reuse from entropy_contribution) ──
+        def _sombor_contrib(du, dv):
+            return math.sqrt(du * du + dv * dv)
+
+        def _reduced_sombor_contrib(du, dv):
+            rm_u, rm_v = max(du - 1, 0), max(dv - 1, 0)
+            return math.sqrt(rm_u * rm_u + rm_v * rm_v)
+
+        def _randic_contrib(du, dv):
+            if du <= 0 or dv <= 0:
+                return 0.0
+            return 1.0 / math.sqrt(du * dv)
+
+        def _zagreb_m1_contrib(du, dv):
+            return float(du * du + dv * dv)
+
+        def _abc_contrib(du, dv):
+            if du <= 1 or dv <= 1:
+                return 0.0
+            return math.sqrt((du + dv - 2.0) / (du * dv))
+
+        def _ga_contrib(du, dv):
+            if du <= 0 or dv <= 0:
+                return 0.0
+            return 2.0 * math.sqrt(du * dv) / (du + dv)
+
+        def _augmented_zagreb_contrib(du, dv):
+            if du <= 0 or dv <= 0:
+                return 0.0
+            ratio = (du * dv) / (du + dv)
+            return ratio ** 3
+
+        CONTRIB_MAP = {
+            "sombor":           _sombor_contrib,
+            "reduced_sombor":   _reduced_sombor_contrib,
+            "randic":           _randic_contrib,
+            "zagreb_m1":        _zagreb_m1_contrib,
+            "abc":              _abc_contrib,
+            "ga":               _ga_contrib,
+            "augmented_zagreb": _augmented_zagreb_contrib,
+        }
+        if index not in CONTRIB_MAP:
+            raise ValueError(
+                f"Unknown index '{index}'. Valid: {list(CONTRIB_MAP)}"
+            )
+        contrib_fn = CONTRIB_MAP[index]
+
+        # ── Helper: compute Shannon entropy from edge contributions ──
+        def _shannon_entropy(contribs: list[float]) -> float:
+            valid = [c for c in contribs if c > 0]
+            if not valid:
+                return 0.0
+            total = sum(valid)
+            probs = [c / total for c in valid]
+            return -sum(p * math.log(p) for p in probs)
+
+        # ── Collect all nodes ──
+        all_nodes = [
+            str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()
+        ]
+        if len(all_nodes) < 2:
+            return None
+
+        # ── Pre-build adjacency for BFS ──
+        adj: dict[str, set[str]] = {nid: set() for nid in all_nodes}
+        for r in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            s, t = str(r["source"]), str(r["target"])
+            adj.setdefault(s, set()).add(t)
+            adj.setdefault(t, set()).add(s)
+
+        # ── Global degree (for contribution calc) ──
+        global_deg: dict[str, int] = {nid: len(adj.get(nid, set())) for nid in all_nodes}
+
+        ego_entropy: dict[str, float] = {}
+
+        for nid in all_nodes:
+            # BFS to get ego-network node set at given radius
+            ego_nodes = {nid}
+            frontier = {nid}
+            for _ in range(radius):
+                next_frontier: set[str] = set()
+                for fnid in frontier:
+                    next_frontier.update(adj.get(fnid, set()))
+                ego_nodes.update(next_frontier)
+                frontier = next_frontier
+
+            # Collect edges within ego-network (both endpoints in ego_nodes)
+            ego_edges: list[tuple[str, str]] = []
+            for s in ego_nodes:
+                for t in adj.get(s, set()):
+                    if t in ego_nodes and s < t:  # avoid duplicates
+                        ego_edges.append((s, t))
+
+            if not ego_edges:
+                ego_entropy[nid] = 0.0
+                continue
+
+            # Compute contributions using ego-local degrees
+            # (degree within the ego-network, not global)
+            ego_deg: dict[str, int] = {n: 0 for n in ego_nodes}
+            for s, t in ego_edges:
+                ego_deg[s] = ego_deg.get(s, 0) + 1
+                ego_deg[t] = ego_deg.get(t, 0) + 1
+
+            contribs = [contrib_fn(ego_deg.get(s, 0), ego_deg.get(t, 0))
+                        for s, t in ego_edges]
+            ego_entropy[nid] = round(_shannon_entropy(contribs), 6)
+
+        # ── Statistics ──
+        values = list(ego_entropy.values())
+        n_eval = len(values)
+        mean_h = sum(values) / n_eval if n_eval else 0.0
+        var_h = sum((v - mean_h) ** 2 for v in values) / n_eval if n_eval else 0.0
+        std_h = var_h ** 0.5
+        min_h = min(values) if values else 0.0
+        max_h = max(values) if values else 0.0
+        range_h = max_h - min_h
+        uniformity = max(0.0, min(1.0, 1.0 - (std_h / mean_h if mean_h > 0 else 1.0)))
+
+        # Hotspots / coldspots / isolated
+        hotspots = [nid for nid, h in ego_entropy.items() if h > mean_h + std_h]
+        coldspots = [nid for nid, h in ego_entropy.items() if h < max(0.0, mean_h - std_h)]
+        isolated = [nid for nid, h in ego_entropy.items() if h == 0.0]
+
+        ranked = sorted(ego_entropy.items(), key=lambda x: -x[1])
+        if top_k > 0:
+            ranked = ranked[:top_k]
+
+        return {
+            "index":            index,
+            "radius":            radius,
+            "ego_entropy":       ego_entropy,
+            "ranked":            ranked,
+            "mean":              round(mean_h, 6),
+            "std":               round(std_h, 6),
+            "max":               round(max_h, 6),
+            "min":               round(min_h, 6),
+            "range":             round(range_h, 6),
+            "field_uniformity":  round(uniformity, 6),
+            "hotspots":          hotspots,
+            "coldspots":         coldspots,
+            "isolated":          isolated,
+            "evaluated":         n_eval,
+        }
+
     # ── Cycle 307: Entropy stability under random perturbation ──
 
     def entropy_stability(self, index: str = "sombor",
