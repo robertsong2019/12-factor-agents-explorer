@@ -34034,6 +34034,181 @@ class MemoryGraph:
             "evaluated":        n_eval,
         }
 
+    # ── Cycle 311: Spectral entropy stability (von Neumann) ──
+
+    def entropy_stability_spectral(self, *, trials: int = 30,
+                                      edge_fraction: float = 0.1,
+                                      mode: str = "remove",
+                                      seed: int | None = None,
+                                      include_quarantined: bool = False
+                                      ) -> Optional[dict]:
+        r"""Monte Carlo von Neumann entropy stability under edge perturbation.
+
+        Repeatedly perturbs the graph (remove or rewire edges),
+        recomputes the **spectral (von Neumann) entropy** after each
+        perturbation, and summarises the distribution.
+
+        This is the spectral counterpart to ``entropy_stability()``
+        (which uses degree-based indices).  Spectral stability captures
+        **global topology** robustness — how much the eigenvalue
+        distribution changes when edges are perturbed.
+
+        **Perturbation modes:**
+        - ``"remove"``: delete edges (default)
+        - ``"rewire"``: rewire endpoints (preserve degree sequence)
+
+        Args:
+            trials: Monte Carlo iterations (default 30, fewer than
+                    degree-based due to O(n²) eigenvalue cost).
+            edge_fraction: fraction of edges to perturb per trial (0–1).
+            mode: "remove" or "rewire".
+            seed: RNG seed for reproducibility.
+            include_quarantined: include quarantined nodes.
+
+        Returns:
+            Dict with same keys as ``entropy_stability()`` plus
+            ``index: "von_neumann"``.  Returns ``None`` for < 2 nodes.
+        """
+        import random as _rng
+
+        if seed is not None:
+            _rng.seed(seed)
+        if edge_fraction <= 0 or edge_fraction > 1:
+            raise ValueError("edge_fraction must be in (0, 1]")
+        if trials < 1:
+            raise ValueError("trials must be >= 1")
+        if mode not in ("remove", "rewire"):
+            raise ValueError(f"Unknown mode '{mode}'; choose 'remove' or 'rewire'")
+
+        # ── Collect graph state ──
+        base_q = "SELECT id FROM nodes"
+        if not include_quarantined:
+            base_q += " WHERE quarantined = 0"
+        node_ids = [str(r["id"]) for r in self.conn.execute(base_q).fetchall()]
+        n = len(node_ids)
+        if n < 2:
+            return None
+
+        edge_rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        all_edges = [(str(e["source"]), str(e["target"])) for e in edge_rows
+                     if str(e["source"]) in set(node_ids)
+                     and str(e["target"]) in set(node_ids)]
+        n_edges = len(all_edges)
+        if n_edges < 1:
+            return None
+
+        # Baseline
+        baseline = self.von_neumann_entropy(
+            normalized=True, include_quarantined=include_quarantined
+        )
+        if baseline is None:
+            return None
+
+        n_perturb = max(1, int(n_edges * edge_fraction))
+        idx_set = set(node_ids)
+        entropy_values: list[float] = []
+
+        for _trial in range(trials):
+            trial_edges = list(all_edges)
+
+            if mode == "remove":
+                if n_perturb >= len(trial_edges):
+                    # All edges removed → entropy = 0
+                    entropy_values.append(0.0)
+                    continue
+                indices_to_remove = set(
+                    _rng.sample(range(len(trial_edges)), n_perturb)
+                )
+                trial_edges = [
+                    e for i, e in enumerate(trial_edges)
+                    if i not in indices_to_remove
+                ]
+
+            else:  # rewire
+                adj: dict[str, set[str]] = {nid: set() for nid in node_ids}
+                for s, t in all_edges:
+                    adj[s].add(t)
+                    adj[t].add(s)
+                for _ in range(n_perturb):
+                    if not trial_edges:
+                        break
+                    ei = _rng.randrange(len(trial_edges))
+                    s, t = trial_edges[ei]
+                    if _rng.random() < 0.5:
+                        new_t = _rng.choice(node_ids)
+                        if new_t != s and new_t != t and new_t not in adj.get(s, set()):
+                            trial_edges[ei] = (s, new_t)
+                    else:
+                        new_s = _rng.choice(node_ids)
+                        if new_s != s and new_s != t and new_s not in adj.get(t, set()):
+                            trial_edges[ei] = (new_s, t)
+
+            # Build Laplacian from trial_edges
+            degree = [0] * n
+            adj_sym: dict[int, set[int]] = defaultdict(set)
+            node_idx = {nid: i for i, nid in enumerate(node_ids)}
+            for s, t in trial_edges:
+                if s in node_idx and t in node_idx:
+                    i, j = node_idx[s], node_idx[t]
+                    adj_sym[i].add(j)
+                    adj_sym[j].add(i)
+                    degree[i] += 1
+                    degree[j] += 1
+
+            L = [[0.0] * n for _ in range(n)]
+            for i in range(n):
+                L[i][i] = float(degree[i])
+                for j in adj_sym[i]:
+                    L[i][j] = -1.0
+
+            evals = self._sym_eigenvalues(L)
+            if evals is None:
+                continue
+
+            lam_sum = sum(evals)
+            if lam_sum <= 0:
+                h = 0.0
+            else:
+                probs = [e / lam_sum for e in evals if e > 1e-15]
+                if not probs:
+                    h = 0.0
+                else:
+                    h_raw = 0.0
+                    for p in probs:
+                        h_raw -= p * math.log(p)
+                    max_ent = math.log(n - 1) if n > 2 else 1.0
+                    h = h_raw / max_ent if max_ent > 0 else 0.0
+
+            entropy_values.append(h)
+
+        if not entropy_values:
+            return None
+
+        n_val = len(entropy_values)
+        mean_h = sum(entropy_values) / n_val
+        var_h = sum((v - mean_h) ** 2 for v in entropy_values) / n_val
+        std_h = var_h ** 0.5
+        min_h = min(entropy_values)
+        max_h = max(entropy_values)
+        cv = std_h / mean_h if mean_h > 0 else float("inf")
+        stability = max(0.0, min(1.0, 1.0 - cv))
+
+        return {
+            "baseline_entropy":  round(baseline, 6),
+            "mean":              round(mean_h, 6),
+            "std":               round(std_h, 6),
+            "cv":                round(cv, 6),
+            "min":               round(min_h, 6),
+            "max":               round(max_h, 6),
+            "range":             round(max_h - min_h, 6),
+            "stability_score":   round(stability, 6),
+            "entropy_values":    [round(v, 6) for v in entropy_values],
+            "perturbed_edges":   n_perturb,
+            "trials":            n_val,
+            "mode":              mode,
+            "index":             "von_neumann",
+        }
+
     # ── Cycle 307: Entropy stability under random perturbation ──
 
     def entropy_stability(self, index: str = "sombor",
