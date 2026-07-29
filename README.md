@@ -227,7 +227,7 @@ agent-task export <task-id> --format markdown
 - 🎯 5 种编排模式
 - 📊 实时监控
 - 💾 JSON/Markdown 导出
-- 🧪 109 个测试（80%+ 覆盖率）
+- 🧪 1340 个测试，214 个功能特性（F1-F214）
 
 **文档:** [README.md](projects/agent-task-cli/README.md) | [TUTORIAL.md](projects/agent-task-cli/TUTORIAL.md)
 
@@ -473,15 +473,18 @@ chmod +x skills/memory-manager/*.sh
 
 ## 📊 项目状态
 
-| 项目 | 语言 | 状态 | 文档 |
-|------|------|------|------|
-| agent-task-cli | Node.js | ✅ 稳定 | ✅ README + 教程 |
-| agent-memory-service | Python | ✅ 稳定 | ✅ README |
-| agent-memory-graph | Python | ✅ 稳定 | ✅ README |
-| agent-log | Bash | ✅ 稳定 | ✅ README + TUTORIAL |
-| context-forge | Python | ✅ 稳定 | ✅ README + 教程 |
-| mission-control | Node.js | 🚧 开发中 | ✅ README + 教程 |
-| prompt-mgr | Python | ✅ 稳定 | ✅ README + 教程 + API |
+| 项目 | 测试数 | 语言 | 状态 | 文档 |
+|------|--------|------|------|------|
+| agent-memory-graph | 5807 | Python | ✅ 生产就绪 | ✅ README（全面重写） |
+| agent-context-store | 2898 | TypeScript | ✅ 生产就绪 | ✅ README |
+| agent-task-cli | 1340 | Node.js | ✅ 稳定 | ✅ README + 教程 |
+| context-forge | 1346 | TypeScript | ✅ 稳定 | ✅ README + 教程 |
+| nano-agent | 732 | Python | ✅ 稳定 | ✅ README + API |
+| structured-output-toolkit | 561 | TypeScript | ✅ 稳定 | ✅ README |
+| prompt-weaver | 223 | Python | ✅ 稳定 | ✅ README |
+| amg-mcp | 122 | TypeScript | ✅ Phase 1 完成 | ✅ README + TUTORIAL |
+| agent-mesh-network | 158 | Node.js | 🚧 开发中 | ✅ README |
+| **全项目总计** | **14851** | — | — | — |
 
 ## 📞 获取帮助
 
@@ -516,5 +519,5 @@ MIT License - 详见各项目的 LICENSE 文件
 
 ---
 
-*最后更新: 2026-05-01*
+*最后更新: 2026-07-30*
 *维护者: OpenClaw Workspace Team*
