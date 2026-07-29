@@ -34216,6 +34216,128 @@ class MemoryGraph:
             "index":             "von_neumann",
         }
 
+    # ── Cycle 316: Unified node entropy importance ──
+
+    def node_entropy_importance(self, index: str = "sombor",
+                               weights: dict[str, float] | None = None) -> Optional[dict]:
+        """Unified per-node importance score combining multiple entropy signals.
+
+        Fuses three complementary entropy-based node measures into a single
+        ranking:
+        1. **Entropy contribution** (leave-one-out): how much global entropy
+           changes when this node is removed.
+        2. **Ego-entropy**: how diverse this node's local neighbourhood is.
+        3. **Anomaly z-score**: how far this node's local entropy deviates
+           from the graph average.
+
+        Each signal captures different aspects:
+        - Contribution = global importance (impact on graph structure)
+        - Ego-entropy = local importance (neighbourhood diversity)
+        - Anomaly = distinctiveness (unusual structural role)
+
+        **Use cases:**
+        - Prioritized retrieval (high-importance nodes first)
+        - Forgetting decisions (low-importance nodes first)
+        - Knowledge gap detection (unexpected low-importance hubs)
+        - Consolidation (merge similar low-importance nodes)
+
+        Args:
+            index: Degree-based entropy index.
+            weights: Custom weights for the three signals.
+                Keys: ``"contribution"``, ``"ego"``, ``"anomaly"``.
+                Default: equal weights (1/3 each).
+
+        Returns:
+            Dict with:
+            - ``ranking``: list of ``(node_id, score, components)`` sorted desc
+            - ``scores``: ``{node_id: composite_score}``
+            - ``components``: ``{node_id: {contribution, ego, anomaly}}``
+            - ``top_k_critical``: top 10% nodes (high importance)
+            - ``bottom_k_expendable``: bottom 10% nodes (low importance)
+            - ``mean``: average composite score
+            - ``std``: std deviation
+            - ``index``: entropy index used
+
+            Returns ``None`` for < 3 nodes.
+        """
+        rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        n = len(rows)
+        if n < 3:
+            return None
+
+        if weights is None:
+            weights = {"contribution": 1.0 / 3, "ego": 1.0 / 3, "anomaly": 1.0 / 3}
+        else:
+            # Normalize weights
+            total_w = sum(weights.values())
+            if total_w > 0:
+                weights = {k: v / total_w for k, v in weights.items()}
+
+        # ── Signal 1: Entropy contribution ──
+        contrib = self.entropy_contribution(index=index)
+        contrib_scores: dict[str, float] = {}
+        if contrib and "contributions" in contrib:
+            max_c = max(contrib["contributions"].values()) if contrib["contributions"] else 1.0
+            max_c = max(max_c, 1e-12)
+            contrib_scores = {k: v / max_c for k, v in contrib["contributions"].items()}
+
+        # ── Signal 2: Ego-entropy ──
+        ego = self.ego_entropy_profile(index=index)
+        ego_scores: dict[str, float] = {}
+        if ego and "ego_entropy" in ego:
+            max_e = max(ego["ego_entropy"].values()) if ego["ego_entropy"] else 1.0
+            max_e = max(max_e, 1e-12)
+            ego_scores = {k: v / max_e for k, v in ego["ego_entropy"].items()}
+
+        # ── Signal 3: Anomaly z-score ──
+        anomaly = self.entropy_anomaly_detect(index=index)
+        anomaly_scores: dict[str, float] = {}
+        if anomaly and "node_scores" in anomaly:
+            max_a = max(abs(v) for v in anomaly["node_scores"].values()) if anomaly["node_scores"] else 1.0
+            max_a = max(max_a, 1e-12)
+            # Use absolute z-score (high anomaly = high importance)
+            anomaly_scores = {k: abs(v) / max_a for k, v in anomaly["node_scores"].items()}
+
+        # ── Composite score ──
+        all_node_ids = [str(r["id"]) for r in rows]
+        composite: dict[str, float] = {}
+        components: dict[str, dict[str, float]] = {}
+
+        for nid in all_node_ids:
+            c = contrib_scores.get(nid, 0.0)
+            e = ego_scores.get(nid, 0.0)
+            a = anomaly_scores.get(nid, 0.0)
+            score = (weights.get("contribution", 0) * c +
+                     weights.get("ego", 0) * e +
+                     weights.get("anomaly", 0) * a)
+            composite[nid] = round(score, 6)
+            components[nid] = {"contribution": round(c, 6), "ego": round(e, 6), "anomaly": round(a, 6)}
+
+        # ── Ranking ──
+        ranked = sorted(composite.items(), key=lambda x: -x[1])
+
+        values = list(composite.values())
+        mean_s = sum(values) / len(values)
+        var_s = sum((v - mean_s) ** 2 for v in values) / len(values)
+        std_s = var_s ** 0.5
+
+        # Top/bottom 10%
+        k = max(1, n // 10)
+        top_critical = [nid for nid, _ in ranked[:k]]
+        bottom_expendable = [nid for nid, _ in ranked[-k:]]
+
+        return {
+            "ranking":            [(nid, s, components[nid]) for nid, s in ranked],
+            "scores":             composite,
+            "components":         components,
+            "top_k_critical":     top_critical,
+            "bottom_k_expendable": bottom_expendable,
+            "mean":               round(mean_s, 6),
+            "std":                round(std_s, 6),
+            "index":              index,
+            "weights":            weights,
+        }
+
     # ── Cycle 315: Graph topology classification via entropy signatures ──
 
     def graph_type_indicator(self) -> Optional[dict]:
