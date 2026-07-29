@@ -33870,6 +33870,170 @@ class MemoryGraph:
             "evaluated":         n_eval,
         }
 
+    # ── Cycle 310: Spectral entropy contribution (leave-one-out von Neumann) ──
+
+    def spectral_entropy_contribution(self, *, sample: int | None = None,
+                                        top_k: int = 0) -> Optional[dict]:
+        r"""Leave-one-out spectral entropy contribution per node.
+
+        For each node *v*, computes the graph's von Neumann entropy
+        (Laplacian eigenvalue Shannon) as if *v* and all its incident
+        edges were removed, then measures the absolute change:
+
+            ΔH_v = |H_vN(G) − H_vN(G − v)|
+
+        This is the **spectral counterpart** to ``entropy_contribution()``.
+        While degree-based contribution measures local structural diversity
+        disruption, spectral contribution captures **global topology**
+        disruption — which nodes most affect the eigenvalue distribution.
+
+        **Use cases:**
+        * Identify graph-structurally critical nodes (global topology)
+        * Complement degree-based entropy_contribution for richer analysis
+        * Memory consolidation — protect spectrally-critical nodes
+
+        **Complexity:** O(n² · max_iter) per node — use *sample* for large graphs.
+
+        Args:
+            sample: If graph has more nodes, randomly sample this many.
+                    ``None`` = exhaustive.  Recommended ≤ 50 for spectral.
+            top_k: If > 0, only return top-*k* contributors.
+
+        Returns:
+            Dict with keys:
+            * ``baseline_entropy``: H_vN(G) normalised
+            * ``contributions``: {node_id: ΔH_v}
+            * ``ranked``: [(node_id, ΔH_v)] sorted descending
+            * ``mean``, ``std``, ``max_delta``, ``min_delta``: stats
+            * ``critical_nodes``: ΔH > mean + std
+            * ``expendable_nodes``: ΔH < max(0, mean − std)
+            * ``index``: "von_neumann"
+            * ``sampled``, ``evaluated``: sampling info
+
+            Returns ``None`` if graph has < 3 nodes.
+        """
+        import random as _random
+
+        # ── Get base node set ──
+        node_ids = [
+            str(r["id"]) for r in
+            self.conn.execute("SELECT id FROM nodes WHERE quarantined = 0").fetchall()
+        ]
+        n = len(node_ids)
+        if n < 3:
+            return None
+
+        # ── Baseline von Neumann entropy ──
+        baseline = self.von_neumann_entropy(normalized=True)
+        if baseline is None:
+            return None
+
+        # ── Build adjacency and degree ──
+        edge_rows = self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall()
+        adj: dict[str, set[str]] = {nid: set() for nid in node_ids}
+        for e in edge_rows:
+            s, t = str(e["source"]), str(e["target"])
+            if s in adj and t in adj:
+                adj[s].add(t)
+                adj[t].add(s)
+
+        # ── Determine evaluation set ──
+        use_sampling = sample is not None and n > sample
+        if use_sampling:
+            eval_nodes = _random.sample(node_ids, sample)
+        else:
+            eval_nodes = node_ids
+
+        contributions: dict[str, float] = {}
+
+        for nid in eval_nodes:
+            # Build graph without nid
+            remaining = [x for x in node_ids if x != nid]
+            idx = {x: i for i, x in enumerate(remaining)}
+            m = len(remaining)
+            degree = [0] * m
+            adj_sym: dict[int, set[int]] = defaultdict(set)
+            for s_nb in adj.get(nid, set()):
+                # Edge (nid, s_nb) is removed; also check other edges
+                pass
+            for e in edge_rows:
+                s, t = str(e["source"]), str(e["target"])
+                if s == nid or t == nid:
+                    continue
+                if s in idx and t in idx:
+                    i, j = idx[s], idx[t]
+                    adj_sym[i].add(j)
+                    adj_sym[j].add(i)
+                    degree[i] += 1
+                    degree[j] += 1
+
+            if m < 2:
+                # Only 1 node left — full entropy loss
+                contributions[nid] = round(baseline, 6)
+                continue
+
+            # Build Laplacian
+            L = [[0.0] * m for _ in range(m)]
+            for i in range(m):
+                L[i][i] = float(degree[i])
+                for j in adj_sym[i]:
+                    L[i][j] = -1.0
+            evals = self._sym_eigenvalues(L)
+            if evals is None:
+                contributions[nid] = 0.0
+                continue
+
+            # Von Neumann entropy
+            lam_sum = sum(evals)
+            if lam_sum <= 0:
+                h_without = 0.0
+            else:
+                probs = [e / lam_sum for e in evals if e > 1e-15]
+                if not probs:
+                    h_without = 0.0
+                else:
+                    h_raw = 0.0
+                    for p in probs:
+                        h_raw -= p * math.log(p)
+                    max_ent = math.log(m - 1) if m > 2 else 1.0
+                    h_without = h_raw / max_ent if max_ent > 0 else 0.0
+
+            contributions[nid] = round(abs(baseline - h_without), 6)
+
+        if not contributions:
+            return None
+
+        deltas = list(contributions.values())
+        n_eval = len(deltas)
+        mean_d = sum(deltas) / n_eval
+        var_d = sum((d - mean_d) ** 2 for d in deltas) / n_eval
+        std_d = var_d ** 0.5
+
+        ranked = sorted(contributions.items(), key=lambda x: x[1], reverse=True)
+        if top_k > 0:
+            ranked = ranked[:top_k]
+
+        critical = [nid for nid, d in contributions.items() if d > mean_d + std_d]
+        expendable = [nid for nid, d in contributions.items()
+                      if d < max(0.0, mean_d - std_d)]
+
+        return {
+            "baseline_entropy": round(baseline, 6),
+            "contributions":    contributions,
+            "ranked":           ranked,
+            "mean":             round(mean_d, 6),
+            "std":              round(std_d, 6),
+            "max_delta":        round(max(deltas), 6),
+            "min_delta":        round(min(deltas), 6),
+            "critical_nodes":   critical,
+            "expendable_nodes": expendable,
+            "index":            "von_neumann",
+            "sampled":          use_sampling,
+            "evaluated":        n_eval,
+        }
+
     # ── Cycle 307: Entropy stability under random perturbation ──
 
     def entropy_stability(self, index: str = "sombor",
