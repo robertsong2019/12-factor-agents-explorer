@@ -6884,45 +6884,52 @@ class MemoryGraph:
         if len(rows) < 3:
             return None
 
-        # Compute per-node local entropy: diversity of edge contributions
-        node_scores = {}
-        for r in rows:
-            nid = r["id"]
-            edges = self.edges_of(nid, direction="both")
-            if not edges:
-                node_scores[nid] = 0.0
-                continue
-
-            # Compute degree-based contributions for this node's edges
-            contributions = []
-            deg = self.degree(nid)
-            for e in edges:
-                other = e.target if e.source == nid else e.source
-                d_other = self.degree(other)
-                if deg <= 0 or d_other <= 0:
+        # ── Von Neumann spectral branch ──
+        if index == "von_neumann":
+            sec = self.spectral_entropy_contribution()
+            if sec is None:
+                return None
+            node_scores = sec["contributions"]
+        else:
+            # Compute per-node local entropy: diversity of edge contributions
+            node_scores = {}
+            for r in rows:
+                nid = r["id"]
+                edges = self.edges_of(nid, direction="both")
+                if not edges:
+                    node_scores[nid] = 0.0
                     continue
-                if index == "sombor":
-                    contributions.append(math.sqrt(deg * deg + d_other * d_other))
-                elif index == "randic":
-                    contributions.append(1.0 / math.sqrt(deg * d_other))
-                elif index == "zagreb_m1":
-                    contributions.append(float(deg + d_other))
-                else:
-                    contributions.append(math.sqrt(deg * deg + d_other * d_other))
 
-            if not contributions:
-                node_scores[nid] = 0.0
-                continue
+                # Compute degree-based contributions for this node's edges
+                contributions = []
+                deg = self.degree(nid)
+                for e in edges:
+                    other = e.target if e.source == nid else e.source
+                    d_other = self.degree(other)
+                    if deg <= 0 or d_other <= 0:
+                        continue
+                    if index == "sombor":
+                        contributions.append(math.sqrt(deg * deg + d_other * d_other))
+                    elif index == "randic":
+                        contributions.append(1.0 / math.sqrt(deg * d_other))
+                    elif index == "zagreb_m1":
+                        contributions.append(float(deg + d_other))
+                    else:
+                        contributions.append(math.sqrt(deg * deg + d_other * d_other))
 
-            # Local entropy: Shannon entropy of normalized contributions
-            total = sum(contributions)
-            if total <= 0:
-                node_scores[nid] = 0.0
-                continue
+                if not contributions:
+                    node_scores[nid] = 0.0
+                    continue
 
-            probs = [c / total for c in contributions]
-            entropy = -sum(p * math.log(p) for p in probs if p > 0)
-            node_scores[nid] = entropy
+                # Local entropy: Shannon entropy of normalized contributions
+                total = sum(contributions)
+                if total <= 0:
+                    node_scores[nid] = 0.0
+                    continue
+
+                probs = [c / total for c in contributions]
+                entropy = -sum(p * math.log(p) for p in probs if p > 0)
+                node_scores[nid] = entropy
 
         scores = list(node_scores.values())
         n = len(scores)
