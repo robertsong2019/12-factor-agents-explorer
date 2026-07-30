@@ -1,6 +1,6 @@
 # Agent Memory Graph 🧠
 
-> A graph-native memory engine for AI agents — 17,900 lines, 400+ API methods, zero dependencies.
+> A graph-native memory engine for AI agents — 18,000+ lines, 460+ API methods, zero dependencies.
 
 **Zero dependencies** — pure Python stdlib + sqlite3.
 
@@ -58,11 +58,13 @@ print(mg.to_markdown())               # human-readable summary
 | **CRUD** | 12 | `add`, `update_node`, `link`, `delete_node`, `touch`, `clone_node` |
 | **Search** | 33 | `recall`, `search_unified`, `search_bm25`, `search_hybrid`, `search_graphrag`, `grep` |
 | **Graph Metrics** | 57 | `pagerank`, `betweenness_centrality`, `community_detect`, `clustering_coefficient`, `modularity` |
-| **Spectral / Information Theory** | 10 | `von_neumann_entropy`, `spectral_entropy_profile`, `semantic_divergence`, `divergence_scan` |
+| **Spectral / Information Theory** | 22 | `von_neumann_entropy`, `spectral_entropy_profile`, `spectral_entropy_contribution`, `entropy_stability_spectral`, `entropy_anomaly_detect`, `ego_entropy_profile`, `entropy_fingerprint`, `semantic_divergence`, `divergence_scan` |
 | **Memory Lifecycle** | 24 | `forgetting_curve`, `fifa_forget`, `consolidate_memory`, `sleep_consolidate`, `strategic_forget` |
 | **Workflow / Patterns** | 14 | `add_workflow`, `retrieve_workflows`, `workflow_success_patterns`, `workflow_compose` |
-| **Temporal / Versioning** | 29 | `evolve`, `temporal_snapshot`, `supersede`, `immutable_retrieve`, `revert_evolution` |
+| **Temporal / Versioning** | 31 | `evolve`, `temporal_snapshot`, `query_as_of`, `temporal_diff`, `supersede`, `immutable_retrieve`, `revert_evolution` |
 | **Embedding / Vector** | 19 | `add_embedding`, `search_similar`, `train_kge`, `kge_score` |
+| **Classification** | 6 | `rrf_classification`, `bayesian_classification`, `knn_classification`, `weighted_average_classification`, `classification_compare` |
+| **Diagnostics** | 3 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` |
 | **Serialization** | 24 | `export_json`, `to_markdown`, `serialize_dot`, `serialize_graphml`, `serialize_cytoscape` |
 
 ---
@@ -242,11 +244,20 @@ class MemoryAwareAgent:
 |--------|-------------|
 | `von_neumann_entropy()` | Graph structural entropy (Laplacian eigenvalues) |
 | `spectral_entropy_profile()` | Full spectral breakdown (gap, radius, complexity) |
+| `spectral_entropy_contribution()` | Leave-one-out VNE per node — spectral importance |
+| `entropy_stability_spectral()` | Monte Carlo VNE stability under perturbation |
+| `entropy_anomaly_detect()` | Spectral anomaly detection (node-level scores) |
+| `ego_entropy_profile(node_id, radius)` | Ego-local Shannon entropy — O(n·k²) |
+| `entropy_fingerprint()` | Compact 12-index entropy feature vector |
+| `fingerprint_distance(other)` | L2 distance between two graph fingerprints |
+| `graph_type_indicator()` | Topology classification (7 types) |
+| `node_entropy_importance()` | Unified per-node importance (contribution + ego + anomaly) |
 | `spectral_radius()` | Largest eigenvalue of adjacency matrix |
 | `fiedler_vector()` | Algebraic connectivity (2nd smallest Laplacian eigenvector) |
 | `semantic_divergence(other_graph)` | JSD/KL/CE between two graphs |
 | `divergence_scan(other_graph)` | Multi-resolution divergence analysis |
 | `graph_entropy()` | Shannon degree-distribution entropy |
+| `entropy_dashboard()` | Unified one-call entropy overview (all indices) |
 
 ### Memory Lifecycle
 
@@ -269,10 +280,32 @@ class MemoryAwareAgent:
 | `evolution_history(node_id)` | Change log |
 | `revert_evolution(...)` | Rollback to prior state |
 | `temporal_snapshot(timestamp)` | Point-in-time graph view |
+| `query_as_of(timestamp, query)` | Bi-temporal snapshot + query (Engram pattern) |
+| `temporal_diff(t1, t2)` | Diff between two temporal snapshots |
 | `supersede(node_id, replacement_id)` | Mark node as superseded |
 | `immutable_retrieve(node_id)` | Append-only retrieval |
 | `snapshot()` | Full graph snapshot |
 | `restore(snapshot_data)` | Restore from snapshot |
+
+### Classification
+
+Multi-method graph classification — compare reference graphs using different fusion strategies.
+
+| Method | Description |
+|--------|-------------|
+| `rrf_classification(candidate, references)` | Reciprocal Rank Fusion — rank-based aggregation |
+| `bayesian_classification(candidate, references)` | Confidence-weighted adaptive ensemble |
+| `knn_classification(candidate, references, k)` | k-nearest reference with distance-weighted voting |
+| `weighted_average_classification(...)` | Explicit weight control over modalities |
+| `classification_compare(candidate, references)` | Multi-method consensus report |
+
+### Diagnostics
+
+| Method | Description |
+|--------|-------------|
+| `graph_health_score()` | Composite 0–100 health metric (redundancy, staleness, connectivity) |
+| `entropy_dashboard()` | Unified entropy overview in one call |
+| `get_operation_history(node_id)` | MemOps-compatible audit trail |
 
 ### Serialization
 
@@ -288,6 +321,48 @@ class MemoryAwareAgent:
 
 ---
 
+## Information Theory Toolkit (Cycles 306–316)
+
+The graph's spectral toolkit evolved through three phases:
+
+### Phase 1: Foundation (Cycles 306–309)
+
+| Cycle | Method | Core Idea |
+|-------|--------|----------|
+| 306 | `entropy_contribution()` | Leave-one-out degree entropy — which nodes matter most? |
+| 307 | `entropy_stability()` | Monte Carlo perturbation — how resilient is the structure? |
+| 308 | `spectral_divergence()` | Laplacian eigenvalue JSD/KL/CE — graph shape comparison |
+| 309 | `spectral_divergence_scan()` | Multi-resolution — at which frequency do two graphs differ? |
+
+### Phase 2: Spectral & Ego-Local (Cycles 310–314)
+
+| Cycle | Method | Core Idea |
+|-------|--------|----------|
+| 310 | `spectral_entropy_contribution()` | Leave-one-out **von Neumann** entropy per node |
+| 311 | `entropy_stability_spectral()` | Monte Carlo VNE stability (remove/rewire modes) |
+| 312 | `entropy_anomaly_detect()` | Spectral anomaly scores — find structural outliers |
+| 313 | `ego_entropy_profile()` | O(n·k²) ego-local entropy — VNEstruct-inspired |
+| 314 | `entropy_fingerprint()` + `fingerprint_distance()` | 12-index compact feature vector for fast similarity |
+
+### Phase 3: Classification & Topology (Cycles 315–316)
+
+| Cycle | Method | Core Idea |
+|-------|--------|----------|
+| 315 | `graph_type_indicator()` | Heuristic topology: complete / star / path / cycle / tree / random / scale-free |
+| 316 | `node_entropy_importance()` | Unified ranking: fuses contribution + ego + anomaly |
+
+### Phase 4: Graph Classification (Cycles 326–330)
+
+| Cycle | Method | Core Idea |
+|-------|--------|----------|
+| 326 | `rrf_classification()` | Reciprocal Rank Fusion — rank-based multi-modal aggregation |
+| 327 | `bayesian_classification()` | Confidence-weighted adaptive ensemble |
+| 328 | `classification_compare()` | Multi-method consensus report |
+| 329 | `knn_classification()` | k-nearest reference with distance-weighted voting |
+| 330 | `weighted_average_classification()` | Explicit weight control over all 3 modalities |
+
+---
+
 ## Testing
 
 ```bash
@@ -295,7 +370,7 @@ cd agent-memory-graph
 python3 -m pytest test_memory_graph.py -q
 ```
 
-**5,400+ test cases** covering all API methods.
+**2,130+ test cases** covering all API methods.
 
 ---
 
@@ -309,4 +384,4 @@ python3 -m pytest test_memory_graph.py -q
 
 ---
 
-*Part of [Code Lab](../) · 268 days of iteration · Cycle 309+*
+*Part of [Code Lab](../) · 280 days of iteration · Cycle 330+*
