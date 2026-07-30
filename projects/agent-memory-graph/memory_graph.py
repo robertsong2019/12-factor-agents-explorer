@@ -35730,6 +35730,281 @@ class MemoryGraph:
             "margin":       margin,
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 327: bayesian_classification() — confidence-weighted
+    # adaptive ensemble (Research #038)
+    # ------------------------------------------------------------------
+
+    def bayesian_classification(self,
+                                references: list["MemoryGraph"],
+                                *,
+                                degree_index: str = "sombor",
+                                min_separation: float = 1e-6,
+                                include_quarantined: bool = False,
+                                ) -> Optional[dict]:
+        """Classify against reference graphs using **Bayesian fusion**.
+
+        Unlike RRF (rank-based, equal weight) or hybrid_classification
+        (fixed weights), Bayesian fusion **adapts weights per query**
+        based on how decisively each method separates the best match
+        from the rest.
+
+        **Core idea** (Research #038):
+
+        Each of the three methods (degree JSD, spectral divergence,
+        fingerprint distance) produces a *separation score* — how much
+        the best reference stands out from the runner-up, relative to
+        the full score range.  Methods that are more decisive for
+        *this particular query* get more influence.
+
+        **Algorithm:**
+
+        1. Compute raw scores for each method across all references.
+        2. Min-max normalise each method to [0, 1] (0 = best).
+        3. Compute per-method **separation**::
+
+               sep_m = (norm_second − norm_best) / (norm_max − norm_best)
+
+           where best/second are the two smallest normalised scores.
+           If all scores are identical, separation = 0 (no information).
+        4. Normalise separations to sum to 1 → **adaptive weights**.
+        5. Final score = Σ (w_m × norm_score_m).
+
+        **Why Bayesian?**
+
+        - **Self-adaptive**: a method that is ambiguous for one query
+          but decisive for another automatically gets different weight.
+        - **No tuning**: no free parameters (unlike hybrid's weight
+          tuple or RRF's k).
+        - **Per-method diagnostics**: return value includes each
+          method's raw score, normalised score, separation, and weight
+          — full transparency for triple-loop quality.
+        - **Graceful degradation**: if a method fails (returns None
+          or inf for all references), it's excluded and the remaining
+          methods re-normalise.
+
+        **Comparison with other strategies:**
+
+        ===========  ==========  ==========  ==========
+        Strategy     Weighting   Scale-inv?  Adaptive?
+        ===========  ==========  ==========  ==========
+        RRF          Equal rank  Yes         No
+        Hybrid       Fixed       No (norm)   No
+        **Bayesian** **Conf**    No (norm)   **Yes**
+        Max Conf     Winner      Per-method  Yes
+        ===========  ==========  ==========  ==========
+
+        Args:
+            references:          list of reference MemoryGraphs.
+            degree_index:        degree index for entropy distance.
+            min_separation:      floor to avoid div-by-zero when all
+                                 separations are near zero.
+            include_quarantined: passed to spectral methods.
+
+        Returns:
+            Dict with:
+            - ``best_match``: int — index of closest reference
+            - ``best_score``: float — ensemble score (lower = better)
+            - ``rankings``: list of dicts per reference with:
+              ``index``, ``score``, per-method ``_raw``/``_norm``/
+              ``_weight`` values, ``label``
+            - ``methods_used``: list of method names that contributed
+            - ``method_info``: dict per method with ``separation``
+              and ``weight`` — the key Bayesian diagnostic
+            - ``confidence``: float — ``(2nd − best) / best``
+            - ``margin``: float — ``2nd − best``
+            or ``None`` if no valid comparisons.
+        """
+        n = len(references)
+        if n == 0:
+            return None
+
+        # ── Step 1: Compute raw scores per method ──────────────────
+        method_names = ["degree_jsd", "spectral_divergence", "fingerprint_distance"]
+        raw_scores: dict[str, list[float | None]] = {}
+
+        # Degree JSD
+        deg: list[float | None] = []
+        for ref in references:
+            try:
+                val = self.entropy_distance(ref, index=degree_index)
+                deg.append(float(val) if val is not None else None)
+            except Exception:
+                deg.append(None)
+        raw_scores["degree_jsd"] = deg
+
+        # Spectral divergence
+        spec: list[float | None] = []
+        for ref in references:
+            try:
+                val = self.spectral_divergence(
+                    ref, measure="jsd", bins=20,
+                    include_quarantined=include_quarantined,
+                )
+                spec.append(float(val) if val is not None else None)
+            except Exception:
+                spec.append(None)
+        raw_scores["spectral_divergence"] = spec
+
+        # Fingerprint distance
+        fp: list[float | None] = []
+        for ref in references:
+            try:
+                val = self.fingerprint_distance(ref)
+                fp.append(float(val) if val is not None else None)
+            except Exception:
+                fp.append(None)
+        raw_scores["fingerprint_distance"] = fp
+
+        # ── Step 2: Min-max normalise each method ──────────────────
+        def _min_max(vals: list[float | None]) -> list[float | None]:
+            valid = [v for v in vals if v is not None]
+            if not valid:
+                return [None] * len(vals)
+            lo, hi = min(valid), max(valid)
+            rng = hi - lo
+            if rng < 1e-15:
+                # All identical — no discriminative power
+                return [0.0 if v is not None else None for v in vals]
+            return [(v - lo) / rng if v is not None else None for v in vals]
+
+        norm_scores = {m: _min_max(raw_scores[m]) for m in method_names}
+
+        # ── Step 3: Compute per-method separation ──────────────────
+        # separation = how decisively the best match stands out
+        def _separation(norms: list[float | None]) -> float:
+            valid = sorted(v for v in norms if v is not None)
+            if len(valid) < 2:
+                return 0.0
+            best_val = valid[0]
+            second_val = valid[1]
+            max_val = valid[-1]
+            denom = max_val - best_val
+            if denom < min_separation:
+                return 0.0
+            return (second_val - best_val) / denom
+
+        separations = {m: _separation(norm_scores[m]) for m in method_names}
+
+        # Exclude methods with zero separation or all-None scores
+        active_methods = [
+            m for m in method_names
+            if separations[m] > 0
+            and any(v is not None for v in norm_scores[m])
+        ]
+
+        if not active_methods:
+            # Fallback: if all methods have zero separation, use equal
+            # weights among methods that produced valid scores
+            active_methods = [
+                m for m in method_names
+                if any(v is not None for v in norm_scores[m])
+            ]
+            if not active_methods:
+                return None
+            for m in active_methods:
+                separations[m] = 1.0  # equal weight
+
+        # ── Step 4: Normalise separations → adaptive weights ───────
+        total_sep = sum(separations[m] for m in active_methods)
+        weights = {m: separations[m] / total_sep for m in active_methods}
+
+        # ── Step 5: Compute ensemble scores ────────────────────────
+        rankings = []
+        for i in range(n):
+            # Gather per-method normalised scores
+            per_method_norm = {}
+            available = []
+            for m in active_methods:
+                v = norm_scores[m][i]
+                per_method_norm[m] = v
+                if v is not None:
+                    available.append(v)
+
+            if not available:
+                continue
+
+            # If some methods are missing for this ref, redistribute
+            # weight among available methods
+            avail_methods = [
+                m for m in active_methods
+                if per_method_norm[m] is not None
+            ]
+            if len(avail_methods) < len(active_methods):
+                avail_total = sum(separations[m] for m in avail_methods)
+                if avail_total > 0:
+                    avail_weights = {
+                        m: separations[m] / avail_total for m in avail_methods
+                    }
+                else:
+                    avail_weights = {m: 1.0 / len(avail_methods) for m in avail_methods}
+            else:
+                avail_weights = {m: weights[m] for m in avail_methods}
+
+            score = sum(
+                avail_weights[m] * per_method_norm[m]
+                for m in avail_methods
+            )
+
+            entry = {
+                "index": i,
+                "score": round(score, 8),
+            }
+            for m in method_names:
+                entry[f"{m}_raw"] = (
+                    round(raw_scores[m][i], 8)
+                    if raw_scores[m][i] is not None else None
+                )
+                entry[f"{m}_norm"] = (
+                    round(norm_scores[m][i], 8)
+                    if norm_scores[m][i] is not None else None
+                )
+                entry[f"{m}_weight"] = round(avail_weights.get(m, 0.0), 8)
+
+            # Label
+            try:
+                label = (
+                    references[i].graph_meta.get("label")
+                    if hasattr(references[i], "graph_meta") else None
+                )
+            except Exception:
+                label = None
+            entry["label"] = label
+
+            rankings.append(entry)
+
+        if not rankings:
+            return None
+
+        rankings.sort(key=lambda x: x["score"])
+
+        best = rankings[0]["score"]
+        second = rankings[1]["score"] if len(rankings) > 1 else best
+        margin = round(second - best, 8)
+        confidence = (
+            round(margin / best, 8) if best > 1e-12
+            else float("inf") if margin > 0 else 0.0
+        )
+
+        # Method info diagnostic
+        method_info = {}
+        for m in method_names:
+            method_info[m] = {
+                "separation": round(separations.get(m, 0.0), 8),
+                "weight": round(weights.get(m, 0.0), 8),
+                "active": m in active_methods,
+            }
+
+        return {
+            "best_match":    rankings[0]["index"],
+            "best_score":    best,
+            "rankings":      rankings,
+            "methods_used":  active_methods,
+            "method_info":   method_info,
+            "confidence":    confidence,
+            "margin":        margin,
+        }
+
     # ── Cycle 313: Ego-local entropy profile (VNEstruct-inspired) ──
 
     def ego_entropy_profile(self, index: str = "sombor",
