@@ -13844,6 +13844,154 @@ class MemoryGraph:
             for r in rows
         ]
 
+    def query_as_of(self, timestamp: float, query: str = None,
+                    kind: str = None, include_edges: bool = True,
+                    edge_limit: int = 100) -> dict:
+        """Bi-temporal graph snapshot at a point in time (Engram pattern).
+
+        Returns the state of the knowledge graph as it existed at the given
+        timestamp, combining bi-temporal validity filtering with optional
+        full-text search.
+
+        Nodes are included if their [valid_from, valid_to) interval contains
+        the timestamp. Edges are included if both source and target nodes
+        are valid at the timestamp (implicit edge validity).
+
+        Args:
+            timestamp: Unix timestamp for the temporal snapshot
+            query: Optional BM25 search query to rank/filter nodes
+            kind: Optional kind filter for nodes
+            include_edges: Whether to include edges in the snapshot
+            edge_limit: Maximum number of edges to return
+
+        Returns:
+            dict with keys:
+            - timestamp: the queried timestamp
+            - node_count: number of nodes in the snapshot
+            - edge_count: number of edges in the snapshot
+            - nodes: list of node dicts {id, label, kind, data, valid_from, valid_to}
+            - edges: list of edge dicts {source, target, relation, weight}
+            - query_match_count: number of nodes matching the query (if query given)
+        """
+        # Get all nodes valid at timestamp
+        nodes = self.query_valid_at(timestamp, kind=kind)
+        node_ids = {n.id for n in nodes}
+
+        # If query given, rank and filter via BM25
+        query_match_count = len(nodes)
+        if query and self._fts_enabled:
+            try:
+                fts_results = self.search(query, limit=len(nodes) + 100)
+                fts_ids = {r["id"] for r in fts_results}
+                # Intersect: only return nodes that are both valid at T AND match query
+                query_match_count = len(node_ids & fts_ids)
+                ranked = [n for n in fts_results if n["id"] in node_ids]
+                nodes = [self.get_node(r["id"]) for r in ranked if self.get_node(r["id"])]
+            except Exception:
+                pass  # Fallback to all valid nodes if FTS fails
+
+        node_dicts = []
+        for n in nodes:
+            nd = {"id": n.id, "label": n.label, "kind": n.kind,
+                  "data": n.data, "valid_from": None, "valid_to": None}
+            # Fetch temporal info
+            row = self.conn.execute(
+                "SELECT valid_from, valid_to FROM nodes WHERE id=?", (n.id,)
+            ).fetchone()
+            if row:
+                nd["valid_from"] = row["valid_from"]
+                nd["valid_to"] = row["valid_to"]
+            node_dicts.append(nd)
+
+        # Filter edges: both endpoints must be valid at timestamp
+        edge_dicts = []
+        if include_edges and node_ids:
+            placeholders = ",".join(["?"] * len(node_ids))
+            sql = f"""
+                SELECT e.source, e.target, e.relation, e.weight
+                FROM edges e
+                WHERE e.source IN ({placeholders})
+                  AND e.target IN ({placeholders})
+                LIMIT ?
+            """
+            params = list(node_ids) + list(node_ids) + [edge_limit]
+            rows = self.conn.execute(sql, params).fetchall()
+            edge_dicts = [
+                {"source": r["source"], "target": r["target"],
+                 "relation": r["relation"], "weight": r["weight"]}
+                for r in rows
+            ]
+
+        return {
+            "timestamp": timestamp,
+            "node_count": len(node_dicts),
+            "edge_count": len(edge_dicts),
+            "nodes": node_dicts,
+            "edges": edge_dicts,
+            "query_match_count": query_match_count,
+        }
+
+    def temporal_diff(self, t1: float, t2: float,
+                      kind: str = None) -> dict:
+        """Compute the difference between two bi-temporal snapshots.
+
+        Identifies nodes and edges that were added, removed, or persisted
+        between two points in time.
+
+        Args:
+            t1: Earlier timestamp
+            t2: Later timestamp (t2 > t1)
+            kind: Optional kind filter
+
+        Returns:
+            dict with keys:
+            - t1, t2: queried timestamps
+            - nodes_added: node IDs valid at t2 but not t1
+            - nodes_removed: node IDs valid at t1 but not t2
+            - nodes_persisted: node IDs valid at both t1 and t2
+            - edges_added: edges at t2 but not t1
+            - edges_removed: edges at t1 but not t2
+            - edges_persisted: edges at both
+            - change_summary: {"node_delta": int, "edge_delta": int,
+                             "node_turnover_rate": float}
+        """
+        snap1 = self.query_as_of(t1, kind=kind, include_edges=True)
+        snap2 = self.query_as_of(t2, kind=kind, include_edges=True)
+
+        ids1 = {n["id"] for n in snap1["nodes"]}
+        ids2 = {n["id"] for n in snap2["nodes"]}
+
+        edge_set1 = {(e["source"], e["target"], e["relation"])
+                     for e in snap1["edges"]}
+        edge_set2 = {(e["source"], e["target"], e["relation"])
+                     for e in snap2["edges"]}
+
+        nodes_added = ids2 - ids1
+        nodes_removed = ids1 - ids2
+        nodes_persisted = ids1 & ids2
+
+        edges_added = edge_set2 - edge_set1
+        edges_removed = edge_set1 - edge_set2
+        edges_persisted = edge_set1 & edge_set2
+
+        total_nodes_at_t1 = len(ids1) if ids1 else 1
+        turnover = len(nodes_removed) / total_nodes_at_t1
+
+        return {
+            "t1": t1, "t2": t2,
+            "nodes_added": sorted(nodes_added),
+            "nodes_removed": sorted(nodes_removed),
+            "nodes_persisted": sorted(nodes_persisted),
+            "edges_added": [list(e) for e in sorted(edges_added)],
+            "edges_removed": [list(e) for e in sorted(edges_removed)],
+            "edges_persisted": [list(e) for e in sorted(edges_persisted)],
+            "change_summary": {
+                "node_delta": len(nodes_added) - len(nodes_removed),
+                "edge_delta": len(edges_added) - len(edges_removed),
+                "node_turnover_rate": round(turnover, 4),
+            },
+        }
+
     def get_history(self, node_id: str) -> list[dict]:
         """Get the full validity history chain for a node.
 

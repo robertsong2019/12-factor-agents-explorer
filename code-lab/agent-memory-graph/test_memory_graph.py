@@ -21130,3 +21130,344 @@ class TestSpectralEntropyProfile:
         p = mg.spectral_entropy_profile()
         assert ac_standalone is not None and p is not None
         assert abs(ac_standalone - p["algebraic_connectivity"]) < 0.01
+
+
+class TestQueryAsOf:
+    """Cycle 321: query_as_of — bi-temporal graph snapshot (Engram pattern)."""
+
+    def test_basic_snapshot(self):
+        """All nodes without temporal info should appear in any snapshot."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("Alice lives in NYC", kind="fact")
+        n2 = mg.add("Bob lives in London", kind="fact")
+        n3 = mg.add("Alice lives in Tokyo", kind="fact")
+        mg.link(n1.id, n2.id, "co_worker")
+        now = time.time()
+        result = mg.query_as_of(now)
+        assert result["timestamp"] == now
+        assert result["node_count"] == 3
+        assert result["edge_count"] == 1
+        assert len(result["nodes"]) == 3
+        assert len(result["edges"]) == 1
+        assert result["query_match_count"] == 3
+
+    def test_valid_from_filtering(self):
+        """Nodes with future valid_from should be excluded."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("Alice lives in NYC", kind="fact")
+        n2 = mg.add("Bob lives in London", kind="fact")
+        n3 = mg.add("Alice lives in Tokyo", kind="fact")
+        now = time.time()
+        mg.set_validity(n1.id, valid_from=now + 1000)
+        result = mg.query_as_of(now)
+        ids = {n["id"] for n in result["nodes"]}
+        assert n1.id not in ids
+        assert n2.id in ids
+        assert n3.id in ids
+        assert result["node_count"] == 2
+
+    def test_valid_to_filtering(self):
+        """Nodes with past valid_to should be excluded."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("Alice lives in NYC", kind="fact")
+        n2 = mg.add("Bob lives in London", kind="fact")
+        n3 = mg.add("Alice lives in Tokyo", kind="fact")
+        now = time.time()
+        mg.set_validity(n3.id, valid_to=now - 1)
+        result = mg.query_as_of(now)
+        ids = {n["id"] for n in result["nodes"]}
+        assert n3.id not in ids
+        assert result["node_count"] == 2
+
+    def test_superseded_node_excluded(self):
+        """Superseded nodes (valid_to set) should not appear in current snapshot."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("fact v1")
+        n2_id = mg.supersede(n1.id, "fact v2")
+        now = time.time()
+        result = mg.query_as_of(now)
+        ids = {n["id"] for n in result["nodes"]}
+        assert n1.id not in ids  # old version superseded
+        assert n2_id in ids   # new version active
+
+    def test_superseded_in_past_snapshot(self):
+        """Old version should appear in past snapshot, new version excluded."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("fact v1")
+        old_time = time.time()
+        time.sleep(0.01)
+        n2_id = mg.supersede(n1.id, "fact v2")
+        now = time.time()
+        # At old_time, only n1 should be valid
+        past_result = mg.query_as_of(old_time)
+        past_ids = {n["id"] for n in past_result["nodes"]}
+        assert n1.id in past_ids
+        assert n2_id not in past_ids
+        # At now, only n2 should be valid
+        now_result = mg.query_as_of(now)
+        now_ids = {n["id"] for n in now_result["nodes"]}
+        assert n1.id not in now_ids
+        assert n2_id in now_ids
+
+    def test_edge_filtering_by_validity(self):
+        """Edges with invalid endpoints should be excluded."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("A")
+        n2 = mg.add("B")
+        n3 = mg.add("C")
+        mg.link(n1.id, n2.id, "knows")
+        mg.link(n2.id, n3.id, "knows")
+        now = time.time()
+        mg.set_validity(n2.id, valid_to=now - 1)
+        result = mg.query_as_of(now)
+        assert result["edge_count"] == 0
+        assert result["node_count"] == 2
+
+    def test_edge_limit(self):
+        """Edge limit should cap the number of edges returned."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(f"N{i}") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "r")
+        now = time.time()
+        result = mg.query_as_of(now, edge_limit=2)
+        assert result["edge_count"] <= 2
+
+    def test_kind_filter(self):
+        """Kind filter should restrict nodes in snapshot."""
+        mg = MemoryGraph(":memory:")
+        mg.add("fact1", kind="fact")
+        mg.add("person1", kind="person")
+        mg.add("fact2", kind="fact")
+        now = time.time()
+        result = mg.query_as_of(now, kind="fact")
+        assert result["node_count"] == 2
+        kinds = {n["kind"] for n in result["nodes"]}
+        assert kinds == {"fact"}
+
+    def test_include_edges_false(self):
+        """When include_edges=False, edges should be empty."""
+        mg = MemoryGraph(":memory:")
+        mg.add("A", kind="fact")
+        mg.add("B", kind="fact")
+        mg.add("C", kind="fact")
+        now = time.time()
+        result = mg.query_as_of(now, include_edges=False)
+        assert result["edge_count"] == 0
+        assert len(result["edges"]) == 0
+        assert result["node_count"] == 3
+
+    def test_no_valid_nodes(self):
+        """Empty snapshot when no nodes are valid at the timestamp."""
+        mg = MemoryGraph(":memory:")
+        n = mg.add("future fact")
+        now = time.time()
+        mg.set_validity(n.id, valid_from=now + 10000)
+        result = mg.query_as_of(now)
+        assert result["node_count"] == 0
+        assert result["edge_count"] == 0
+        assert result["nodes"] == []
+        assert result["edges"] == []
+
+    def test_node_temporal_metadata(self):
+        """Node dicts should include valid_from and valid_to."""
+        mg = MemoryGraph(":memory:")
+        n = mg.add("timed fact")
+        now = time.time()
+        mg.set_validity(n.id, valid_from=now - 100, valid_to=now + 100)
+        result = mg.query_as_of(now)
+        assert len(result["nodes"]) == 1
+        nd = result["nodes"][0]
+        assert nd["valid_from"] is not None
+        assert nd["valid_to"] is not None
+
+    def test_quarantined_excluded(self):
+        """Quarantined nodes should be excluded from snapshot."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("active")
+        n2 = mg.add("quarantined")
+        mg.node_quarantine(n2.id, "test")
+        now = time.time()
+        result = mg.query_as_of(now)
+        ids = {n["id"] for n in result["nodes"]}
+        assert n1.id in ids
+        assert n2.id not in ids
+
+    def test_multiple_supersessions(self):
+        """Chain of supersessions should be correctly resolved at different times."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("v1")
+        t1 = time.time()
+        time.sleep(0.01)
+        n2 = mg.supersede(n1.id, "v2")
+        t2 = time.time()
+        time.sleep(0.01)
+        n3 = mg.supersede(n2, "v3")
+        t3 = time.time()
+
+        r1 = mg.query_as_of(t1)
+        assert {n["id"] for n in r1["nodes"]} == {n1.id}
+
+        r3 = mg.query_as_of(t3)
+        ids3 = {n["id"] for n in r3["nodes"]}
+        assert n1.id not in ids3
+        n3_id = n3 if isinstance(n3, str) else n3.id
+        assert n3_id in ids3
+
+    def test_with_query(self):
+        """Query should filter nodes via BM25 where possible."""
+        mg = MemoryGraph(":memory:")
+        mg.add("Alice lives in NYC", kind="fact")
+        mg.add("Bob lives in London", kind="fact")
+        now = time.time()
+        result = mg.query_as_of(now, query="Alice")
+        assert result["query_match_count"] >= 1
+
+    def test_large_graph_performance(self):
+        """query_as_of should handle 500+ nodes efficiently."""
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(f"node_{i}") for i in range(500)]
+        for i in range(0, 499):
+            mg.link(nodes[i].id, nodes[i+1].id, "r")
+        now = time.time()
+        start = time.time()
+        result = mg.query_as_of(now)
+        elapsed = time.time() - start
+        assert result["node_count"] == 500
+        assert result["edge_count"] <= 499
+        assert elapsed < 5.0, f"query_as_of took {elapsed:.2f}s on 500 nodes"
+
+    def test_return_structure(self):
+        """Return value should have all expected keys."""
+        mg = MemoryGraph(":memory:")
+        mg.add("A")
+        mg.add("B")
+        now = time.time()
+        result = mg.query_as_of(now)
+        expected_keys = {"timestamp", "node_count", "edge_count",
+                        "nodes", "edges", "query_match_count"}
+        assert set(result.keys()) == expected_keys
+
+
+class TestTemporalDiff:
+    """Cycle 322: temporal_diff — difference between two bi-temporal snapshots."""
+
+    def test_no_changes(self):
+        """Identical snapshots should yield empty diffs."""
+        mg = MemoryGraph(":memory:")
+        mg.add("A")
+        mg.add("B")
+        now = time.time()
+        diff = mg.temporal_diff(now, now)
+        assert diff["nodes_added"] == []
+        assert diff["nodes_removed"] == []
+        assert diff["edges_added"] == []
+        assert diff["edges_removed"] == []
+        assert diff["change_summary"]["node_delta"] == 0
+
+    def test_node_added(self):
+        """Node added between t1 and t2 should appear in nodes_added."""
+        mg = MemoryGraph(":memory:")
+        mg.add("old_fact")
+        t1 = time.time()
+        t2 = t1 + 100
+        n2 = mg.add("new_fact")
+        mg.set_validity(n2.id, valid_from=t1 + 50)
+        diff = mg.temporal_diff(t1, t2)
+        assert n2.id in diff["nodes_added"]
+
+    def test_node_removed_by_supersede(self):
+        """Superseded node should appear as removed."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("v1")
+        t1 = time.time()
+        time.sleep(0.01)
+        n2_id = mg.supersede(n1.id, "v2")
+        t2 = time.time()
+        diff = mg.temporal_diff(t1, t2)
+        assert n1.id in diff["nodes_removed"]
+        assert n2_id in diff["nodes_added"]
+
+    def test_node_removed_by_valid_to(self):
+        """Node with valid_to in the past (at t2) should be removed."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("expires")
+        t1 = time.time() - 100
+        t2 = time.time()
+        mg.set_validity(n1.id, valid_to=t1 + 50)
+        diff = mg.temporal_diff(t1, t2)
+        assert n1.id in diff["nodes_removed"]
+
+    def test_persisted_nodes(self):
+        """Nodes valid at both times should be in persisted."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("stable")
+        n2 = mg.add("stable2")
+        t1 = time.time() - 100
+        t2 = time.time()
+        diff = mg.temporal_diff(t1, t2)
+        assert n1.id in diff["nodes_persisted"]
+        assert n2.id in diff["nodes_persisted"]
+
+    def test_edge_removed_by_node_invalidation(self):
+        """Edge should be removed when one endpoint becomes invalid."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("A")
+        n2 = mg.add("B")
+        mg.link(n1.id, n2.id, "knows")
+        t1 = time.time() - 100
+        t2 = time.time()
+        mg.set_validity(n2.id, valid_to=t1 + 50)
+        diff = mg.temporal_diff(t1, t2)
+        assert len(diff["edges_removed"]) == 1
+
+    def test_change_summary(self):
+        """Change summary should correctly compute deltas and turnover."""
+        mg = MemoryGraph(":memory:")
+        mg.add("A")
+        mg.add("B")
+        t1 = time.time() - 100
+        t2 = time.time()
+        diff = mg.temporal_diff(t1, t2)
+        assert diff["change_summary"]["node_delta"] == 0
+        assert diff["change_summary"]["node_turnover_rate"] == 0.0
+
+    def test_kind_filter(self):
+        """Kind filter should restrict diffs to that kind."""
+        mg = MemoryGraph(":memory:")
+        mg.add("fact1", kind="fact")
+        mg.add("person1", kind="person")
+        t1 = time.time() - 100
+        t2 = time.time()
+        mg.add("fact2", kind="fact")
+        mg.add("person2", kind="person")
+        diff = mg.temporal_diff(t1, t2, kind="fact")
+        for nid in diff["nodes_persisted"]:
+            node = mg.get_node(nid)
+            if node:
+                assert node.kind == "fact"
+
+    def test_return_structure(self):
+        """Return value should have all expected keys."""
+        mg = MemoryGraph(":memory:")
+        t1 = time.time() - 100
+        t2 = time.time()
+        diff = mg.temporal_diff(t1, t2)
+        expected_keys = {"t1", "t2", "nodes_added", "nodes_removed",
+                        "nodes_persisted", "edges_added", "edges_removed",
+                        "edges_persisted", "change_summary"}
+        assert set(diff.keys()) == expected_keys
+        summary_keys = {"node_delta", "edge_delta", "node_turnover_rate"}
+        assert set(diff["change_summary"].keys()) == summary_keys
+
+    def test_turnover_rate(self):
+        """Turnover rate should be removed/total at t1."""
+        mg = MemoryGraph(":memory:")
+        n1 = mg.add("keep")
+        n2 = mg.add("remove")
+        t1 = time.time() - 100
+        t2 = time.time()
+        mg.set_validity(n2.id, valid_to=t1 + 50)
+        diff = mg.temporal_diff(t1, t2)
+        assert diff["change_summary"]["node_turnover_rate"] == 0.5
+
