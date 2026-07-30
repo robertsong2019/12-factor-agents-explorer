@@ -36501,6 +36501,143 @@ class MemoryGraph:
 
         return result
 
+    # ------------------------------------------------------------------
+    # Cycle 325: entropy_dashboard() — unified entropy overview
+    # ------------------------------------------------------------------
+
+    def entropy_dashboard(self, *, top_n: int = 5) -> Optional[dict]:
+        """One-call comprehensive entropy overview.
+
+        Aggregates all entropy-related signals into a single structured
+        dashboard — the ``stats()`` equivalent for the entropy toolkit.
+
+        **Sections:**
+
+        - **degree_entropy**: entropy_profile summary (15 indices)
+        - **spectral_entropy**: von Neumann + spectral profile highlights
+        - **fingerprint**: compact 12+ dim feature vector
+        - **health**: graph_health_score() summary
+        - **top_contributors**: top-N nodes by entropy contribution
+        - **density**: graph_information_density() summary
+        - **stats**: basic graph statistics
+
+        Each section is a compact dict with key metrics only.
+        Use the individual APIs for full detail.
+
+        Args:
+            top_n: Number of top contributor nodes to list.
+
+        Returns:
+            Dict with the sections above, or None if graph is empty.
+        """
+        stats = self.stats()
+        n_nodes = stats.get("nodes", 0)
+        n_edges = stats.get("edges", 0)
+        if n_nodes == 0:
+            return None
+
+        dashboard: dict = {
+            "stats": {"nodes": n_nodes, "edges": n_edges, **stats},
+        }
+
+        # ── Degree entropy ─────────────────────────────────────────
+        if n_edges > 0:
+            prof = self.entropy_profile()
+            if prof is not None:
+                dashboard["degree_entropy"] = {
+                    "mean":       prof.get("mean"),
+                    "std":        prof.get("std"),
+                    "range":      prof.get("range"),
+                    "most_heterogeneous": prof.get("most_heterogeneous"),
+                    "most_homogeneous":   prof.get("most_homogeneous"),
+                    "indices":    len(prof.get("values", {})),
+                }
+        else:
+            dashboard["degree_entropy"] = None
+
+        # ── Spectral entropy ───────────────────────────────────────
+        if n_edges > 0:
+            vn = self.von_neumann_entropy(normalized=True)
+            try:
+                spec_prof = self.spectral_entropy_profile()
+            except Exception:
+                spec_prof = None
+            dashboard["spectral_entropy"] = {
+                "von_neumann_normalized": vn,
+                "profile_available":     spec_prof is not None,
+            }
+            if spec_prof is not None:
+                dashboard["spectral_entropy"]["von_neumann_raw"] = (
+                    spec_prof.get("von_neumann", {}).get("value")
+                )
+        else:
+            dashboard["spectral_entropy"] = None
+
+        # ── Fingerprint ────────────────────────────────────────────
+        if n_edges > 0:
+            try:
+                fp = self.entropy_fingerprint()
+                if fp is not None:
+                    vec = fp.get("vector", [])
+                    dashboard["fingerprint"] = {
+                        "vector":      vec,
+                        "dimensions":  len(vec),
+                        "indices":     fp.get("indices", []),
+                    }
+                else:
+                    dashboard["fingerprint"] = None
+            except Exception:
+                dashboard["fingerprint"] = None
+        else:
+            dashboard["fingerprint"] = None
+
+        # ── Health ─────────────────────────────────────────────────
+        try:
+            health = self.graph_health_score()
+            dashboard["health"] = {
+                "score":    health["score"],
+                "grade":    health["grade"],
+                "status":   health["status"],
+                "weakest":  health["weakest"],
+            }
+        except Exception:
+            dashboard["health"] = None
+
+        # ── Top contributors ───────────────────────────────────────
+        if n_edges > 0:
+            try:
+                contrib = self.entropy_contribution()
+                if contrib is not None and isinstance(contrib, dict):
+                    ranked = contrib.get("ranked", [])
+                    if isinstance(ranked, list):
+                        dashboard["top_contributors"] = ranked[:top_n]
+                    else:
+                        dashboard["top_contributors"] = []
+                else:
+                    dashboard["top_contributors"] = []
+            except Exception:
+                dashboard["top_contributors"] = []
+        else:
+            dashboard["top_contributors"] = []
+
+        # ── Density ───────────────────────────────────────────────
+        if n_edges > 0:
+            try:
+                dens = self.graph_information_density()
+                if dens is not None and isinstance(dens, dict):
+                    dashboard["density"] = {
+                        k: v for k, v in dens.items()
+                        if isinstance(v, (int, float, str, bool))
+                    }
+                else:
+                    dashboard["density"] = None
+            except Exception:
+                dashboard["density"] = None
+        else:
+            dashboard["density"] = None
+
+        return dashboard
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
