@@ -36103,6 +36103,211 @@ class MemoryGraph:
             "measure":         measure,
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 323: graph_health_score() — composite health metric
+    # ------------------------------------------------------------------
+
+    def graph_health_score(self, *, weights: dict[str, float] | None = None,
+                           verbose: bool = False) -> dict:
+        """Composite 0-100 health score for the memory graph.
+
+        Combines six orthogonal signals into a single dashboard metric:
+
+        ============  =====  ===================================================
+        Component     Wt     What it measures
+        ============  =====  ===================================================
+        connectivity   25%  Inverse orphan fraction + component cohesion
+        density        20%  Information density (edges per node, normalised)
+        diversity      20%  Entropy profile spread (mean normalised entropy)
+        spectral       15%  Von Neumann spectral entropy (global topology)
+        redundancy     10%  Inverse redundancy ratio (less dup = healthier)
+        stability      10%  Entropy stability under perturbation
+        ============  =====  ===================================================
+
+        **Design principles:**
+
+        - Each component normalised to [0, 1] before weighting.
+        - Missing components (e.g. empty graph → no spectral entropy)
+          contribute 0 and their weight is redistributed.
+        - **score** = round(sum(component × weight) × 100, 1).
+        - **grade**: A (≥90), B (≥75), C (≥60), D (≥40), F (<40).
+
+        Args:
+            weights: Override default weights.  Keys: ``connectivity``,
+                ``density``, ``diversity``, ``spectral``, ``redundancy``,
+                ``stability``.  Values need not sum to 1 (auto-normalised).
+            verbose: If True, include raw values in the output.
+
+        Returns:
+            Dict with:
+            - ``score``: 0-100 float
+            - ``grade``: A/B/C/D/F
+            - ``status``: excellent/good/fair/poor/critical
+            - ``components``: {name: {score, weight, raw}}
+            - ``weakest``: name of lowest-scoring component
+            - ``recommendations``: list[str] of actionable advice
+        """
+        default_weights = {
+            "connectivity": 0.25,
+            "density":      0.20,
+            "diversity":    0.20,
+            "spectral":     0.15,
+            "redundancy":   0.10,
+            "stability":    0.10,
+        }
+        w = dict(default_weights)
+        if weights:
+            for k, v in weights.items():
+                if k in w:
+                    w[k] = v
+        # Normalise weights
+        wsum = sum(w.values())
+        if wsum <= 0:
+            w = dict(default_weights)
+            wsum = sum(w.values())
+        w = {k: v / wsum for k, v in w.items()}
+
+        stats = self.stats()
+        n_nodes = stats.get("nodes", 0)
+        n_edges = stats.get("edges", 0)
+
+        # ── Component 1: Connectivity (from gap_score) ────────────
+        conn_score = 0.0
+        conn_raw = None
+        if n_nodes > 0:
+            gap = self.knowledge_gap_report()
+            conn_raw = gap.get("gap_score", 50.0)
+            conn_score = max(0.0, min(1.0, conn_raw / 100.0))
+
+        # ── Component 2: Density ──────────────────────────────────
+        dens_score = 0.0
+        dens_raw = None
+        if n_nodes > 1:
+            max_edges = n_nodes * (n_nodes - 1)
+            dens_raw = (2.0 * n_edges) / max_edges if max_edges > 0 else 0.0
+            # Log-scale normalisation: raw density of 0.1 → ~0.5, 0.3 → ~0.8
+            import math
+            dens_score = min(1.0, math.log1p(dens_raw * 10) / math.log1p(10))
+
+        # ── Component 3: Diversity (entropy profile mean) ─────────
+        div_score = 0.0
+        div_raw = None
+        if n_edges > 0:
+            prof = self.entropy_profile()
+            if prof is not None:
+                div_raw = prof.get("mean", 0.0)
+                div_score = max(0.0, min(1.0, div_raw))
+
+        # ── Component 4: Spectral (von Neumann normalised) ────────
+        spec_score = 0.0
+        spec_raw = None
+        if n_edges > 0:
+            spec_raw = self.von_neumann_entropy(normalized=True)
+            if spec_raw is not None:
+                spec_score = max(0.0, min(1.0, spec_raw))
+
+        # ── Component 5: Redundancy (inverse of redundancy_score) ──
+        red_score = 1.0  # default: no redundancy = full health
+        red_raw = None
+        if n_nodes > 1:
+            red = self.redundancy_detect()
+            if isinstance(red, dict):
+                red_raw = red.get("redundancy_score", 0)
+                # redundancy_score: 0=no redundancy, 100=highly redundant
+                # Invert: health = 1 - redundancy/100
+                red_score = max(0.0, 1.0 - red_raw / 100.0)
+
+        # ── Component 6: Stability ────────────────────────────────
+        stab_score = 0.0
+        stab_raw = None
+        if n_edges >= 2:
+            try:
+                stab = self.entropy_stability(
+                    trials=20, mode="rewire", index="sombor")
+                if stab is not None:
+                    stab_raw = stab.get("stability_score")
+                    if stab_raw is not None:
+                        stab_score = max(0.0, min(1.0, stab_raw))
+            except Exception:
+                pass  # stability may fail on tiny graphs
+
+        # ── Aggregate ─────────────────────────────────────────────
+        components = {
+            "connectivity": {"score": conn_score, "weight": w["connectivity"], "raw": conn_raw},
+            "density":      {"score": dens_score, "weight": w["density"],      "raw": dens_raw},
+            "diversity":    {"score": div_score, "weight": w["diversity"],    "raw": div_raw},
+            "spectral":     {"score": spec_score, "weight": w["spectral"],     "raw": spec_raw},
+            "redundancy":   {"score": red_score, "weight": w["redundancy"],   "raw": red_raw},
+            "stability":    {"score": stab_score, "weight": w["stability"],    "raw": stab_raw},
+        }
+
+        score = sum(c["score"] * c["weight"] for c in components.values()) * 100
+        score = round(score, 1)
+
+        # Grade
+        if score >= 90:
+            grade, status = "A", "excellent"
+        elif score >= 75:
+            grade, status = "B", "good"
+        elif score >= 60:
+            grade, status = "C", "fair"
+        elif score >= 40:
+            grade, status = "D", "poor"
+        else:
+            grade, status = "F", "critical"
+
+        # Weakest component
+        weakest = min(components, key=lambda k: components[k]["score"])
+
+        # Recommendations
+        recs: list[str] = []
+        if conn_score < 0.5:
+            recs.append(
+                f"Connectivity is low ({conn_score:.0%}). "
+                "Add edges between isolated clusters — see knowledge_gap_report()."
+            )
+        if dens_score < 0.3 and n_nodes > 5:
+            recs.append(
+                f"Edge density is low ({dens_score:.0%}). "
+                "Consider adding relational edges between loosely connected memories."
+            )
+        if div_score < 0.3:
+            recs.append(
+                "Entropy diversity is low. "
+                "Graph structure is too uniform — add varied relationship types."
+            )
+        if spec_score < 0.3 and n_edges > 0:
+            recs.append(
+                "Spectral entropy is low. "
+                "Graph may be fragmented — consolidate disconnected components."
+            )
+        if red_score < 0.7:
+            recs.append(
+                f"Redundancy detected ({red_raw} redundant edges). "
+                "Run auto_consolidate() to merge duplicate connections."
+            )
+        if stab_score < 0.5 and n_edges >= 2:
+            recs.append(
+                "Entropy stability is low. "
+                "Graph structure is fragile under perturbation — strengthen hub connections."
+            )
+        if not recs:
+            recs.append("All components within healthy range. ✅")
+
+        result: dict = {
+            "score":         score,
+            "grade":         grade,
+            "status":        status,
+            "components":    components,
+            "weakest":       weakest,
+            "recommendations": recs,
+        }
+        if verbose:
+            result["node_count"] = n_nodes
+            result["edge_count"] = n_edges
+
+        return result
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
