@@ -36005,6 +36005,190 @@ class MemoryGraph:
             "margin":        margin,
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 328: classification_compare() — multi-method consensus
+    # report (capstone of classification suite)
+    # ------------------------------------------------------------------
+
+    def classification_compare(self,
+                               references: list["MemoryGraph"],
+                               *,
+                               degree_index: str = "sombor",
+                               include_quarantined: bool = False,
+                               ) -> Optional[dict]:
+        """Run **all classification methods** and produce a comparison
+        report.
+
+        This is the capstone of the classification suite.  Instead of
+        choosing one method, run them all and see where they agree,
+        where they disagree, and what the consensus says.
+
+        **Methods executed:**
+
+        1. ``graph_classification`` — degree-based entropy distance
+        2. ``spectral_classification`` — spectral divergence
+        3. ``hybrid_classification`` — fixed-weight ensemble
+        4. ``rrf_classification`` — Reciprocal Rank Fusion
+        5. ``bayesian_classification`` — adaptive-weight ensemble
+
+        **Key outputs:**
+
+        - **consensus_best**: the reference chosen by the majority of
+          methods.  If all methods agree, confidence is high.
+        - **agreement_score**: fraction of methods that chose the
+          consensus best (0 to 1).
+        - **per_method**: each method's best_match, score, and margin.
+        - **per_reference**: how many methods picked each reference,
+          and the average rank across methods.
+        - **disagreement_flag**: True if < 50% of methods agree.
+
+        **Production use:**
+
+        Call ``classification_compare()`` first.  If ``agreement_score``
+        is 1.0, trust the result.  If < 0.5, investigate *why* methods
+        disagree — it may indicate a genuinely ambiguous query or a
+        reference set that needs refinement.
+
+        Args:
+            references:          list of reference MemoryGraphs.
+            degree_index:        degree index for entropy distance.
+            include_quarantined: include quarantined nodes.
+
+        Returns:
+            Dict with:
+            - ``consensus_best``: int — majority-vote best reference
+            - ``agreement_score``: float — fraction agreeing
+            - ``agreement_count``: str — "N/M methods"
+            - ``disagreement_flag``: bool — True if agreement < 0.5
+            - ``methods_run``: list of method names executed
+            - ``methods_failed``: list of method names that errored
+            - ``per_method``: dict → {method: {best_match, best_score,
+              margin, confidence}}
+            - ``per_reference``: dict → {ref_idx: {votes, avg_rank,
+              methods_voted}}
+            - ``recommendation``: str — human-readable summary
+            or ``None`` if no methods succeeded.
+        """
+        n = len(references)
+        if n == 0:
+            return None
+
+        method_names = [
+            "graph_classification",
+            "spectral_classification",
+            "hybrid_classification",
+            "rrf_classification",
+            "bayesian_classification",
+        ]
+
+        # ── Run each method ────────────────────────────────────────
+        per_method: dict[str, dict] = {}
+        methods_run: list[str] = []
+        methods_failed: list[str] = []
+
+        for name in method_names:
+            try:
+                if name == "graph_classification":
+                    result = self.graph_classification(
+                        references, degree_index=degree_index)
+                elif name == "spectral_classification":
+                    result = self.spectral_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined)
+                elif name == "hybrid_classification":
+                    result = self.hybrid_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined)
+                elif name == "rrf_classification":
+                    result = self.rrf_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined)
+                elif name == "bayesian_classification":
+                    result = self.bayesian_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined)
+                else:
+                    continue
+
+                if result is not None:
+                    per_method[name] = {
+                        "best_match": result.get("best_match"),
+                        "best_score": result.get("best_score"),
+                        "margin":     result.get("margin"),
+                        "confidence": result.get("confidence"),
+                    }
+                    methods_run.append(name)
+                else:
+                    methods_failed.append(name)
+            except Exception:
+                methods_failed.append(name)
+
+        if not methods_run:
+            return None
+
+        # ── Tally votes per reference ──────────────────────────────
+        vote_counts: dict[int, list[str]] = {}
+        for m, info in per_method.items():
+            bm = info["best_match"]
+            if bm is not None:
+                vote_counts.setdefault(bm, []).append(m)
+
+        if not vote_counts:
+            return None
+
+        # Consensus: reference with most votes (ties → lowest avg score)
+        best_ref = max(vote_counts,
+                       key=lambda r: (len(vote_counts[r]),
+                                      -sum(per_method[m]["best_score"] or 0
+                                           for m in vote_counts[r])))
+        agreement = len(vote_counts[best_ref]) / len(methods_run)
+
+        # ── Per-reference summary ──────────────────────────────────
+        per_reference: dict[int, dict] = {}
+        for i in range(n):
+            voters = vote_counts.get(i, [])
+            # Compute average rank across all methods
+            ranks = []
+            for m, info in per_method.items():
+                bm = info["best_match"]
+                if bm is None:
+                    continue
+                # Build a simple rank: 1 if this ref is the method's
+                # best_match, else 2+ (we don't have full rankings
+                # per method here, so approximate)
+                ranks.append(1 if bm == i else 2)
+            avg_rank = round(sum(ranks) / len(ranks), 4) if ranks else None
+            per_reference[i] = {
+                "votes":         len(voters),
+                "vote_fraction": round(len(voters) / len(methods_run), 4),
+                "methods_voted": voters,
+                "avg_rank":      avg_rank,
+            }
+
+        # ── Recommendation text ────────────────────────────────────
+        if agreement == 1.0:
+            rec = (f"All {len(methods_run)} methods agree: "
+                   f"reference #{best_ref} is the best match.")
+        elif agreement >= 0.5:
+            rec = (f"Majority ({len(vote_counts[best_ref])}/"
+                   f"{len(methods_run)}) chose reference #{best_ref}.")
+        else:
+            rec = (f"Methods disagree — no majority. "
+                   f"Leading reference #{best_ref} with "
+                   f"{len(vote_counts[best_ref])}/{len(methods_run)} votes.")
+
+        return {
+            "consensus_best":     best_ref,
+            "agreement_score":    round(agreement, 4),
+            "agreement_count":    f"{len(vote_counts[best_ref])}/{len(methods_run)}",
+            "disagreement_flag":  agreement < 0.5,
+            "methods_run":        methods_run,
+            "methods_failed":     methods_failed,
+            "per_method":         per_method,
+            "per_reference":      per_reference,
+            "recommendation":     rec,
+        }
+
     # ── Cycle 313: Ego-local entropy profile (VNEstruct-inspired) ──
 
     def ego_entropy_profile(self, index: str = "sombor",
