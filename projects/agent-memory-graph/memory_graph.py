@@ -18174,6 +18174,199 @@ class MemoryGraph:
             result.append(entry)
         return result
 
+    def get_operation_history(self, *,
+                              operation_type: str | None = None,
+                              node_id: str | None = None,
+                              start_time: float | None = None,
+                              end_time: float | None = None,
+                              limit: int = 100,
+                              offset: int = 0,
+                              group_by: str = "none") -> dict:
+        """MemOps-compatible structured operation history.
+
+        Provides operation-level audit trail for agent memory evaluation.
+        Maps raw clock_log events into MemOps 6-category taxonomy:
+
+        ===========  =================================================
+        Category     Mapped operations
+        ===========  =================================================
+        remember     add (node creation)
+        link         link, add_causal_edge, add_workflow
+        update       update, tag, embed, confidence changes
+        forget       decay, forget_policy, security_purge, quarantine
+        reflect      consolidate, merge, compress, auto_heal
+        retrieve     query, search, retrieval_failure
+        ===========  =================================================
+
+        **Use cases:**
+
+        - MemOps benchmark evaluation (operation-level scoring)
+        - Debugging unexpected graph state changes
+        - Audit trail for governance/compliance
+        - Temporal analysis of memory operations
+
+        Args:
+            operation_type: Filter by MemOps category (remember/link/
+                update/forget/reflect/retrieve) or raw op name.
+            node_id: Filter to operations involving a specific node.
+            start_time: Unix timestamp lower bound (inclusive).
+            end_time: Unix timestamp upper bound (exclusive).
+            limit: Max entries to return (default 100).
+            offset: Pagination offset.
+            group_by: "none" (default), "type" (group by MemOps category),
+                or "time" (group by hour).
+
+        Returns:
+            Dict with:
+            - ``operations``: list of {lamport, op, memops_type, node_id,
+                details, wall_time, timestamp_iso}
+            - ``total``: total matching count (before limit/offset)
+            - ``summary``: {total_ops, by_type: {remember: N, ...}}
+            - ``time_range``: {earliest, latest} Unix timestamps
+        """
+        import datetime as _dt
+
+        # MemOps category mapping
+        MEMOPS_MAP = {
+            # remember
+            "add":               "remember",
+            "add_with_entropy":  "remember",
+            # link
+            "link":              "link",
+            "add_causal_edge":   "link",
+            "add_workflow":       "link",
+            "add_intention":      "link",
+            # update
+            "update":             "update",
+            "tag":               "update",
+            "embed":             "update",
+            "add_embedding":      "update",
+            "set_confidence":     "update",
+            "set_category":       "update",
+            # forget
+            "decay":              "forget",
+            "forget":             "forget",
+            "forget_policy":      "forget",
+            "security_purge":     "forget",
+            "quarantine":         "forget",
+            "soft_forget":        "forget",
+            "cue_reactivation":   "forget",
+            # reflect
+            "consolidate":        "reflect",
+            "merge":             "reflect",
+            "merge_nodes":        "reflect",
+            "compress":           "reflect",
+            "auto_heal":          "reflect",
+            "auto_consolidate":   "reflect",
+            # retrieve
+            "query":             "retrieve",
+            "search":            "retrieve",
+            "retrieval_failure":  "retrieve",
+            "drift":             "retrieve",
+        }
+
+        query_parts = [
+            "SELECT lamport, op, node_id, details, wall_time FROM clock_log"
+        ]
+        conditions = []
+        params = []
+
+        if operation_type:
+            # Check if it's a MemOps category or raw op
+            memops_ops = [k for k, v in MEMOPS_MAP.items() if v == operation_type]
+            if memops_ops:
+                placeholders = ",".join("?" * len(memops_ops))
+                conditions.append(f"op IN ({placeholders})")
+                params.extend(memops_ops)
+            else:
+                conditions.append("op = ?")
+                params.append(operation_type)
+
+        if node_id:
+            conditions.append("node_id = ?")
+            params.append(node_id)
+
+        if start_time is not None:
+            conditions.append("wall_time >= ?")
+            params.append(start_time)
+
+        if end_time is not None:
+            conditions.append("wall_time < ?")
+            params.append(end_time)
+
+        where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        # Total count
+        count_row = self.conn.execute(
+            f"SELECT COUNT(*) c FROM clock_log{where_clause}", params
+        ).fetchone()
+        total = count_row["c"] if count_row else 0
+
+        # Fetch with pagination
+        query_parts.append(where_clause)
+        query_parts.append(" ORDER BY lamport DESC LIMIT ? OFFSET ?")
+        full_query = "".join(query_parts)
+        rows = self.conn.execute(full_query, params + [limit, offset]).fetchall()
+
+        # Build operations list
+        operations = []
+        by_type: dict[str, int] = {}
+        earliest = None
+        latest = None
+        for r in rows:
+            memops_type = MEMOPS_MAP.get(r["op"], "other")
+            details = json.loads(r["details"]) if r["details"] else {}
+            wt = r["wall_time"]
+            if wt is not None:
+                if earliest is None or wt < earliest:
+                    earliest = wt
+                if latest is None or wt > latest:
+                    latest = wt
+            operations.append({
+                "lamport":      r["lamport"],
+                "op":           r["op"],
+                "memops_type":  memops_type,
+                "node_id":      r["node_id"],
+                "details":      details,
+                "wall_time":    wt,
+                "timestamp_iso": (_dt.datetime.fromtimestamp(wt).isoformat()
+                                   if wt else None),
+            })
+            by_type[memops_type] = by_type.get(memops_type, 0) + 1
+
+        result = {
+            "operations":  operations,
+            "total":       total,
+            "summary": {
+                "total_ops":   total,
+                "by_type":     by_type,
+                "categories":  sorted(by_type.keys()),
+            },
+            "time_range": {
+                "earliest":    earliest,
+                "latest":      latest,
+            },
+            "limit":       limit,
+            "offset":      offset,
+        }
+
+        # Optional grouping
+        if group_by == "type" and operations:
+            grouped: dict[str, list] = {}
+            for op in operations:
+                grouped.setdefault(op["memops_type"], []).append(op)
+            result["grouped"] = grouped
+        elif group_by == "time" and operations:
+            time_groups: dict[str, list] = {}
+            for op in operations:
+                wt = op.get("wall_time")
+                if wt:
+                    hour_key = _dt.datetime.fromtimestamp(wt).strftime("%Y-%m-%dT%H:00")
+                    time_groups.setdefault(hour_key, []).append(op)
+            result["grouped"] = time_groups
+
+        return result
+
     def on(self, event_type: str, callback: callable) -> str:
         """Subscribe to graph mutation events (typed pub/sub).
 
