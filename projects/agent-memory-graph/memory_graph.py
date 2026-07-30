@@ -35560,6 +35560,176 @@ class MemoryGraph:
             "margin": margin,
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 326: rrf_classification() — Reciprocal Rank Fusion
+    # ------------------------------------------------------------------
+
+    def rrf_classification(self, references: list["MemoryGraph"],
+                           *,
+                           k: int = 6,
+                           degree_index: str = "sombor",
+                           include_quarantined: bool = False,
+                           ) -> Optional[dict]:
+        """Classify against reference graphs using **Reciprocal Rank Fusion**.
+
+        RRF is a parameter-free ensemble method from information retrieval.
+        Instead of combining raw scores (which live on different scales),
+        it combines **rankings**: each method ranks the references, and the
+        fused score is the sum of reciprocal ranks.
+
+        **Formula:**
+
+        .. code-block:: text
+
+            RRF(ref_i) = Σ_m  1 / (k + rank_m(ref_i))
+
+        where ``rank_m(ref_i)`` is the rank (1-based) of reference *i*
+        under method *m*, and *k* is a smoothing constant (default 6).
+
+        **Why RRF?** (Research #038)
+
+        - **Scale-invariant**: degree JSD ∈ [0, 0.8], spectral ∈ [0, 2.5],
+          fingerprint ∈ [0, 15+]. RRF ignores all scale differences.
+        - **Zero-tuning**: no weight configuration needed.
+        - **Robust**: outlier scores from one method can't dominate.
+        - **Proven**: standard in web search (Cormack et al. 2009).
+
+        **Three ranking methods fused:**
+
+        1. **Degree JSD** (local structure)
+        2. **Spectral divergence** (global topology)
+        3. **Fingerprint distance** (multi-dimensional shape)
+
+        **k parameter:** k=60 was optimised for web search (hundreds of
+        results). For amg's 5-20 reference graphs, k=5-10 is more
+        discriminative. Default k=6 balances fusion smoothness and
+        discrimination.
+
+        Args:
+            references: List of reference MemoryGraphs.
+            k: RRF smoothing constant (default 6).
+            degree_index: Degree index for degree JSD.
+            include_quarantined: Include quarantined nodes.
+
+        Returns:
+            Dict with:
+            - ``best_match``: index of best reference
+            - ``best_score``: highest RRF score
+            - ``rankings``: [{index, rrf_score, degree_rank, spectral_rank,
+               fingerprint_rank, label}]
+            - ``k``: k parameter used
+            - ``methods_used``: list of methods that contributed
+            - ``confidence``: separation ratio (best / second)
+            - ``margin``: absolute gap
+        """
+        n = len(references)
+        if n == 0:
+            return None
+
+        # ── Compute raw scores per method ──────────────────────────
+        # Method 1: Degree-based entropy distance (JSD)
+        degree_scores = []
+        for ref in references:
+            try:
+                val = self.entropy_distance(ref, index=degree_index)
+                if isinstance(val, dict):
+                    val = val.get("distance", val.get("jsd", 0.0))
+                degree_scores.append(float(val) if val is not None else float('inf'))
+            except Exception:
+                degree_scores.append(float('inf'))
+
+        # Method 2: Spectral divergence
+        spectral_scores = []
+        for ref in references:
+            try:
+                val = self.spectral_divergence(ref, measure="jsd", bins=20,
+                                                include_quarantined=include_quarantined)
+                if isinstance(val, dict):
+                    val = val.get("jsd", val.get("divergence", 0.0))
+                spectral_scores.append(float(val) if val is not None else float('inf'))
+            except Exception:
+                spectral_scores.append(float('inf'))
+
+        # Method 3: Fingerprint distance
+        fp_scores = []
+        for ref in references:
+            try:
+                val = self.fingerprint_distance(ref)
+                if isinstance(val, dict):
+                    val = val.get("distance", val.get("l2_distance", 0.0))
+                fp_scores.append(float(val) if val is not None else float('inf'))
+            except Exception:
+                fp_scores.append(float('inf'))
+
+        # ── Compute ranks (1-based, lower score = better = rank 1) ──
+        def _rank(scores: list[float]) -> list[int]:
+            """Return ranks where rank 1 = smallest score."""
+            indexed = sorted(range(len(scores)), key=lambda i: scores[i])
+            ranks = [0] * len(scores)
+            for rank_pos, idx in enumerate(indexed, 1):
+                ranks[idx] = rank_pos
+            return ranks
+
+        degree_ranks = _rank(degree_scores)
+        spectral_ranks = _rank(spectral_scores)
+        fp_ranks = _rank(fp_scores)
+
+        # ── Check which methods are valid (not all inf) ────────────
+        methods_used = []
+        method_data = []
+        if not all(s == float('inf') for s in degree_scores):
+            methods_used.append("degree_jsd")
+            method_data.append(("degree_rank", degree_ranks))
+        if not all(s == float('inf') for s in spectral_scores):
+            methods_used.append("spectral_divergence")
+            method_data.append(("spectral_rank", spectral_ranks))
+        if not all(s == float('inf') for s in fp_scores):
+            methods_used.append("fingerprint_distance")
+            method_data.append(("fingerprint_rank", fp_ranks))
+
+        if not methods_used:
+            return None
+
+        # ── Compute RRF scores ─────────────────────────────────────
+        rankings = []
+        for i in range(n):
+            rrf = 0.0
+            entry: dict = {"index": i}
+            for method_name, ranks in method_data:
+                contribution = 1.0 / (k + ranks[i])
+                rrf += contribution
+                entry[method_name] = ranks[i]
+            entry["rrf_score"] = round(rrf, 8)
+            # Label
+            try:
+                ref_stats = references[i].stats()
+                entry["label"] = f"ref_{i}"
+            except Exception:
+                entry["label"] = f"ref_{i}"
+            # Raw scores for diagnostics
+            entry["degree_raw"] = round(degree_scores[i], 8) if degree_scores[i] != float('inf') else None
+            entry["spectral_raw"] = round(spectral_scores[i], 8) if spectral_scores[i] != float('inf') else None
+            entry["fingerprint_raw"] = round(fp_scores[i], 8) if fp_scores[i] != float('inf') else None
+            rankings.append(entry)
+
+        # Sort by RRF score descending (higher = better)
+        rankings.sort(key=lambda x: x["rrf_score"], reverse=True)
+
+        best = rankings[0]["rrf_score"]
+        second = rankings[1]["rrf_score"] if len(rankings) > 1 else 0.0
+        margin = round(best - second, 8)
+        confidence = round(best / second, 8) if second > 1e-12 else float('inf')
+
+        return {
+            "best_match":   rankings[0]["index"],
+            "best_score":   best,
+            "rankings":     rankings,
+            "k":            k,
+            "methods_used": methods_used,
+            "confidence":   confidence,
+            "margin":       margin,
+        }
+
     # ── Cycle 313: Ego-local entropy profile (VNEstruct-inspired) ──
 
     def ego_entropy_profile(self, index: str = "sombor",
