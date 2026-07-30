@@ -36411,6 +36411,271 @@ class MemoryGraph:
             "margin":        margin,
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 330: weighted_average_classification() — explicit weight
+    # control over all 3 modalities (Research #038 strategy 3/4)
+    # ------------------------------------------------------------------
+
+    def weighted_average_classification(
+        self,
+        references: list["MemoryGraph"],
+        *,
+        degree_weight: float = 1.0,
+        spectral_weight: float = 1.0,
+        fingerprint_weight: float = 1.0,
+        degree_index: str = "sombor",
+        spectral_measure: str = "jsd",
+        bins: int = 20,
+        normalise: str = "minmax",
+        include_quarantined: bool = False,
+    ) -> Optional[dict]:
+        """Classify against reference graphs using **user-controlled
+        weighted average** of all three topological modalities.
+
+        Unlike ``hybrid_classification`` (2 modalities) and
+        ``rrf_classification`` (parameter-free rank fusion), this method
+        gives the caller **explicit weight control** over all three
+        comparison domains:
+
+        1. **Degree-based** (local structure) — JSD on edge-contribution
+           distributions.
+        2. **Spectral** (global topology) — JSD on Laplacian eigenvalue
+           histograms.
+        3. **Fingerprint** (multi-dimensional shape) — L2 on entropy
+           feature vectors.
+
+        Each modality's raw scores are normalised to [0, 1] across the
+        reference set, then combined as:
+
+        .. code-block:: text
+
+            score_i = w_d * norm_degree_i
+                    + w_s * norm_spectral_i
+                    + w_f * norm_fingerprint_i
+
+        Weights are normalised to sum to 1. A weight of 0 excludes that
+        modality entirely.
+
+        **When to use this vs other ensemble methods?**
+
+        - ``hybrid_classification``: 2 modalities, good default.
+        - ``rrf_classification``: 3 modalities, parameter-free, robust.
+        - ``bayesian_classification``: 3 modalities, self-adaptive weights.
+        - **This method**: 3 modalities, **user decides** the emphasis.
+          Use when you have domain knowledge about which modality
+          matters more for your graph types.
+
+        **Normalisation modes:**
+
+        - ``"minmax"``: min-max scale to [0, 1]. Best match → 0.
+        - ``"softmax"``: softmax with temperature τ=1 on negated scores.
+          Produces probability-like distribution. Best match → highest.
+
+        Args:
+            references:          list of reference MemoryGraphs.
+            degree_weight:       weight for degree-based modality (≥ 0).
+            spectral_weight:     weight for spectral modality (≥ 0).
+            fingerprint_weight:  weight for fingerprint modality (≥ 0).
+            degree_index:        degree index for entropy distance.
+            spectral_measure:    divergence measure for spectral method
+                                 ("jsd", "kl", "ce").
+            bins:                bin count for spectral histogram.
+            normalise:           normalisation mode ("minmax" or "softmax").
+            include_quarantined: include quarantined nodes.
+
+        Returns:
+            Dict with:
+            - ``best_match``: int — index of closest reference
+            - ``best_score``: float — ensemble score (lower = better for
+              minmax, higher = better for softmax)
+            - ``rankings``: list of dicts with per-modality breakdowns
+            - ``weights``: tuple of normalised (degree, spectral, fingerprint)
+            - ``normalise``: normalisation mode used
+            - ``methods_used``: list of modalities that contributed
+            - ``confidence``: float — separation ratio
+            - ``margin``: float — absolute gap
+            or ``None`` if no valid comparisons could be made.
+        """
+        if not references:
+            return None
+
+        # Validate weights
+        for name, w in [("degree_weight", degree_weight),
+                         ("spectral_weight", spectral_weight),
+                         ("fingerprint_weight", fingerprint_weight)]:
+            if w < 0:
+                raise ValueError(f"{name} must be non-negative, got {w}")
+
+        total_w = degree_weight + spectral_weight + fingerprint_weight
+        if total_w <= 0:
+            raise ValueError(
+                "at least one weight must be positive")
+
+        w_d = degree_weight / total_w
+        w_s = spectral_weight / total_w
+        w_f = fingerprint_weight / total_w
+
+        if normalise not in ("minmax", "softmax"):
+            raise ValueError(
+                f"normalise must be 'minmax' or 'softmax', got '{normalise}'")
+
+        n = len(references)
+
+        # ── Compute raw scores per modality ──────────────────────
+        raw_degree: list[float | None] = []
+        raw_spectral: list[float | None] = []
+        raw_fingerprint: list[float | None] = []
+
+        for ref in references:
+            # Degree-based
+            try:
+                d = self.entropy_distance(ref, index=degree_index)
+                if isinstance(d, dict):
+                    d = d.get("distance", d.get("jsd", 0.0))
+                raw_degree.append(float(d) if d is not None else None)
+            except Exception:
+                raw_degree.append(None)
+
+            # Spectral
+            try:
+                s = self.spectral_divergence(
+                    ref, measure=spectral_measure, bins=bins,
+                    include_quarantined=include_quarantined)
+                if isinstance(s, dict):
+                    s = s.get("jsd", s.get("divergence", 0.0))
+                raw_spectral.append(float(s) if s is not None else None)
+            except Exception:
+                raw_spectral.append(None)
+
+            # Fingerprint
+            try:
+                f = self.fingerprint_distance(ref)
+                if isinstance(f, dict):
+                    f = f.get("distance", f.get("l2_distance", 0.0))
+                raw_fingerprint.append(float(f) if f is not None else None)
+            except Exception:
+                raw_fingerprint.append(None)
+
+        # ── Determine which modalities are active ────────────────
+        methods_used = []
+        if w_d > 0 and any(v is not None for v in raw_degree):
+            methods_used.append("degree")
+        if w_s > 0 and any(v is not None for v in raw_spectral):
+            methods_used.append("spectral")
+        if w_f > 0 and any(v is not None for v in raw_fingerprint):
+            methods_used.append("fingerprint")
+
+        if not methods_used:
+            return None
+
+        # ── Normalise scores ─────────────────────────────────────
+        def _normalise(values: list[float | None],
+                       mode: str) -> list[float | None]:
+            valid = [v for v in values if v is not None]
+            if not valid:
+                return [None] * len(values)
+            if mode == "minmax":
+                lo, hi = min(valid), max(valid)
+                rng = hi - lo
+                if rng < 1e-15:
+                    return [0.0 if v is not None else None for v in values]
+                return [(v - lo) / rng if v is not None else None
+                        for v in values]
+            else:  # softmax
+                import math
+                neg = [-v if v is not None else None for v in values]
+                valid_neg = [v for v in neg if v is not None]
+                if not valid_neg:
+                    return [None] * len(values)
+                max_neg = max(valid_neg)
+                exps = [math.exp(v - max_neg) if v is not None else None
+                        for v in neg]
+                denom = sum(v for v in exps if v is not None)
+                if denom < 1e-15:
+                    return [0.0 if v is not None else None for v in values]
+                return [v / denom if v is not None else None
+                        for v in exps]
+
+        norm_degree = _normalise(raw_degree, normalise)
+        norm_spectral = _normalise(raw_spectral, normalise)
+        norm_fingerprint = _normalise(raw_fingerprint, normalise)
+
+        # ── Compute weighted ensemble scores ────────────────────
+        rankings = []
+        for i in range(n):
+            nd = norm_degree[i]
+            ns = norm_spectral[i]
+            nf = norm_fingerprint[i]
+
+            # Compute weighted score using available modalities
+            score_parts: list[tuple[str, float, float]] = []  # (name, norm_val, weight)
+            if nd is not None and w_d > 0:
+                score_parts.append(("degree", nd, w_d))
+            if ns is not None and w_s > 0:
+                score_parts.append(("spectral", ns, w_s))
+            if nf is not None and w_f > 0:
+                score_parts.append(("fingerprint", nf, w_f))
+
+            if not score_parts:
+                continue
+
+            # Renormalise weights for available modalities
+            part_total = sum(w for _, _, w in score_parts)
+            if part_total < 1e-15:
+                continue
+
+            if normalise == "minmax":
+                ensemble = sum(w * v / part_total for _, v, w in score_parts)
+            else:  # softmax: higher = better, so use as-is
+                ensemble = sum(w * v / part_total for _, v, w in score_parts)
+
+            # Extract label
+            label = None
+            try:
+                label = references[i].graph_meta.get("label") \
+                    if hasattr(references[i], "graph_meta") else None
+            except Exception:
+                pass
+
+            rankings.append({
+                "index": i,
+                "score": round(ensemble, 8),
+                "degree_raw": round(raw_degree[i], 8)
+                    if raw_degree[i] is not None else None,
+                "spectral_raw": round(raw_spectral[i], 8)
+                    if raw_spectral[i] is not None else None,
+                "fingerprint_raw": round(raw_fingerprint[i], 8)
+                    if raw_fingerprint[i] is not None else None,
+                "degree_norm": round(nd, 8) if nd is not None else None,
+                "spectral_norm": round(ns, 8) if ns is not None else None,
+                "fingerprint_norm": round(nf, 8) if nf is not None else None,
+                "label": label,
+            })
+
+        if not rankings:
+            return None
+
+        # Sort: minmax → ascending (lower=better), softmax → descending
+        reverse = (normalise == "softmax")
+        rankings.sort(key=lambda x: x["score"], reverse=reverse)
+
+        best = rankings[0]["score"]
+        second = rankings[1]["score"] if len(rankings) > 1 else best
+        margin = round(abs(second - best), 8)
+        denom = abs(best) if abs(best) > 1e-12 else 1e-12
+        confidence = round(margin / denom, 8)
+
+        return {
+            "best_match":   rankings[0]["index"],
+            "best_score":   best,
+            "rankings":     rankings,
+            "weights":      (round(w_d, 8), round(w_s, 8), round(w_f, 8)),
+            "normalise":    normalise,
+            "methods_used": methods_used,
+            "confidence":   confidence,
+            "margin":       margin,
+        }
+
     # ── Cycle 313: Ego-local entropy profile (VNEstruct-inspired) ──
 
     def ego_entropy_profile(self, index: str = "sombor",
