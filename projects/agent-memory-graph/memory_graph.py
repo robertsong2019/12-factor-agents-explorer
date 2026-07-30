@@ -36189,6 +36189,228 @@ class MemoryGraph:
             "recommendation":     rec,
         }
 
+    # ── Cycle 329: k-NN classification with distance-weighted voting ──
+
+    def knn_classification(self,
+                          references: list["MemoryGraph"],
+                          *,
+                          k: int = 3,
+                          method: str = "hybrid",
+                          degree_index: str = "sombor",
+                          include_quarantined: bool = False,
+                          ) -> Optional[dict]:
+        """k-nearest reference graph classification with distance-
+        weighted voting.
+
+        Instead of returning only the single best match, this method
+        considers the **top-k** nearest references and aggregates their
+        votes weighted by inverse distance.  When multiple references
+        share a label (via ``graph_meta["label"]``), votes pool per
+        label — making the classifier robust when several prototypes
+        represent the same category.
+
+        **Motivation:**
+
+        Single-match classification is fragile when the query sits near
+        a decision boundary between two similar references.  A small
+        perturbation can flip the best match.  k-NN voting smooths
+        this out: the consensus of 3–5 neighbours is far more stable
+        than a single point estimate.
+
+        **Algorithm:**
+
+        1. Compute scores for all references using the chosen base
+           method (``hybrid``, ``graph``, ``spectral``, ``rrf``, or
+           ``bayesian``).
+        2. Sort ascending by score (lower = closer).
+        3. Take top-``k`` references (``k`` is clamped to
+           ``min(k, len(references))``).
+        4. Weight each neighbour by ``1 / (score + ε)`` where
+           ``ε = 1e-12`` prevents division by zero.
+        5. If labels are available, pool weights per label.
+        6. Return the label (or reference) with the highest pooled
+           weight.
+
+        **Weighting:**
+
+        Inverse-distance weighting means the closest neighbour has
+        the most influence, but the 2nd and 3rd neighbours still get
+        a voice.  This is preferable to majority voting (which treats
+        all k neighbours equally) when scores are well-separated.
+
+        **When to use:**
+
+        - **Multiple references per category** — the killer use case.
+          If you have 3 prototypes for "star" and 2 for "path", k-NN
+          pools their votes for a more robust decision.
+        - **Noisy or ambiguous queries** — k=3 or 5 smooths out
+          perturbations.
+        - **Not needed** when references are perfectly distinct and
+          well-separated — single-match from ``graph_classification``
+          is sufficient and faster.
+
+        Args:
+            references:          list of reference MemoryGraphs.
+            k:                   number of nearest neighbours (default 3).
+            method:              base scoring method:
+                                 ``"hybrid"``, ``"graph"``,
+                                 ``"spectral"``, ``"rrf"``, or
+                                 ``"bayesian"``.
+            degree_index:        degree index for entropy distance.
+            include_quarantined: include quarantined nodes.
+
+        Returns:
+            Dict with:
+            - ``best_label``: str or int — consensus label (or ref
+              index if no labels).
+            - ``best_ref``: int — index of the single closest match.
+            - ``best_score``: float — score of the closest match.
+            - ``k_used``: int — actual k (min(k, len(refs))).
+            - ``method``: str — base method name.
+            - ``k_nearest``: list of dicts, each with:
+              ``index``, ``label``, ``score``, ``vote_weight``,
+              ``vote_fraction``.
+            - ``label_votes``: dict → {label: total_weight}, sorted
+              descending.
+            - ``agreement``: float — winner's vote fraction.
+            - ``tie``: bool — True if top-2 labels within 10%.
+            - ``margin``: float — gap between top-2 vote weights.
+            or ``None`` if scoring fails for all references.
+        """
+        if k <= 0:
+            raise ValueError(
+                f"k must be a positive integer, got {k}")
+
+        n = len(references)
+        if n == 0:
+            return None
+
+        k_actual = min(k, n)
+
+        # ── Delegate to chosen base method for scoring ────────────
+        if method == "hybrid":
+            base = self.hybrid_classification(
+                references, degree_index=degree_index,
+                include_quarantined=include_quarantined)
+        elif method == "graph":
+            base = self.graph_classification(
+                references, method="jsd", index=degree_index)
+        elif method == "spectral":
+            base = self.spectral_classification(
+                references,
+                include_quarantined=include_quarantined)
+        elif method == "rrf":
+            base = self.rrf_classification(
+                references, degree_index=degree_index,
+                include_quarantined=include_quarantined)
+        elif method == "bayesian":
+            base = self.bayesian_classification(
+                references, degree_index=degree_index,
+                include_quarantined=include_quarantined)
+        else:
+            raise ValueError(
+                f"unknown method '{method}'; choose from "
+                f"hybrid/graph/spectral/rrf/bayesian")
+
+        if base is None:
+            return None
+
+        raw_rankings = base.get("rankings")
+        if not raw_rankings:
+            return None
+
+        # ── Normalise ranking entries to {index, score} ascending ──
+        # Different base methods use different score keys and sort
+        # orders.  Normalise so the rest of k-NN logic is uniform.
+        rankings = []
+        for entry in raw_rankings:
+            idx = entry.get("index")
+            # graph/hybrid/bayesian use "score" (ascending).
+            # rrf uses "rrf_score" (descending → negate).
+            if "score" in entry:
+                s = entry["score"]
+            elif "rrf_score" in entry:
+                s = -entry["rrf_score"]  # negate for ascending
+            else:
+                continue
+            rankings.append({"index": idx, "score": s})
+
+        if not rankings:
+            return None
+
+        # Sort ascending by normalised score (lower = closer)
+        rankings.sort(key=lambda x: x["score"])
+
+        # ── Extract labels for all references ──────────────────────
+        labels: list = []
+        for i in range(n):
+            try:
+                lbl = references[i].graph_meta.get("label") \
+                    if hasattr(references[i], "graph_meta") else None
+            except Exception:
+                lbl = None
+            labels.append(lbl if lbl is not None else i)
+
+        # ── Build k-nearest with vote weights ─────────────────────
+        eps = 1e-12
+        k_nearest = []
+        for entry in rankings[:k_actual]:
+            idx = entry["index"]
+            score = entry["score"]
+            # For RRF (negative scores from negation), use absolute
+            # value for distance weighting.
+            dist = abs(score)
+            weight = 1.0 / (dist + eps)
+            k_nearest.append({
+                "index":         idx,
+                "label":         labels[idx],
+                "score":         score,
+                "vote_weight":   round(weight, 8),
+            })
+
+        total_weight = sum(e["vote_weight"] for e in k_nearest)
+        for e in k_nearest:
+            e["vote_fraction"] = round(e["vote_weight"] / total_weight,
+                                        6) if total_weight > 0 else 0.0
+
+        # ── Pool votes per label ──────────────────────────────────
+        label_votes: dict = {}
+        for e in k_nearest:
+            label_votes[e["label"]] = round(
+                label_votes.get(e["label"], 0.0) + e["vote_weight"], 8)
+
+        sorted_labels = sorted(label_votes.items(),
+                               key=lambda x: -x[1])
+        best_label = sorted_labels[0][0]
+        best_vote = sorted_labels[0][1]
+
+        # Agreement = winner's share of total vote
+        agreement = round(best_vote / total_weight, 6) \
+            if total_weight > 0 else 0.0
+
+        # Tie detection: top-2 within 10% of each other
+        if len(sorted_labels) >= 2:
+            second_vote = sorted_labels[1][1]
+            margin = round(best_vote - second_vote, 8)
+            tie = (second_vote / best_vote) >= 0.9 if best_vote > 0 \
+                else True
+        else:
+            margin = round(best_vote, 8)
+            tie = False
+
+        return {
+            "best_label":   best_label,
+            "best_ref":      rankings[0]["index"],
+            "best_score":    rankings[0]["score"],
+            "k_used":        k_actual,
+            "method":        method,
+            "k_nearest":     k_nearest,
+            "label_votes":   dict(sorted_labels),
+            "agreement":     agreement,
+            "tie":           tie,
+            "margin":        margin,
+        }
+
     # ── Cycle 313: Ego-local entropy profile (VNEstruct-inspired) ──
 
     def ego_entropy_profile(self, index: str = "sombor",
