@@ -14,25 +14,25 @@
 
 ---
 
-## Current Focus (2026-07-29)
+## Current Focus (2026-07-30)
 
 ### Active Theme
-Autoresearch 方法论实践 — amg **连续268天零回滚率** 🏆。Entropy framework **24+ APIs**: 7 degree-based Shannon + 3 spectral (von Neumann, QJSD, spectral_divergence) + 1 dashboard + 2 generalized (Tsallis, Rényi) + 4 inter-graph (JSD, cross-entropy, KL divergence, QJSD) + TemporalEntropyTracker + **entropy_contribution** (leave-one-out node importance) + **entropy_stability** (Monte Carlo perturbation robustness) + **spectral_divergence_scan** (multi-resolution analysis)。Adaptive forgetting suite complete。EntityResolver + entropy-weighted retrieval。Information-theoretic trilogy complete (JSD + CE + KL)。Triple-loop quality system complete。acs **200天** 🏆。context-forge **1346 tests** / 11000+ lines (F79, 21 dimensions)。Research #031-034: Spectral methods + Production architecture + Agent Memory Engineering 2026H2 + **OTel GenAI Alignment** (amg observability path).
+Autoresearch 方法论实践 — amg **连续271天零回滚率** 🏆。Entropy framework **28+ APIs**: 7 degree-based Shannon + 3 spectral (von Neumann, QJSD, spectral_divergence) + 1 dashboard + 2 generalized (Tsallis, Rényi) + 4 inter-graph (JSD, cross-entropy, KL divergence, QJSD) + TemporalEntropyTracker + **entropy_contribution** (leave-one-out node importance) + **entropy_stability** (Monte Carlo perturbation robustness) + **spectral_divergence_scan** (multi-resolution analysis) + **entropy_fingerprint** (12+ dim feature vector) + **fingerprint_distance** (L2 vector comparison) + **spectral_classification** (3-method reference graph classification) + **classification_with_rejection** (threshold-based reject/accept layer) + **three_layer_router_cascade** (MemFlow production pattern)。Adaptive forgetting suite complete。EntityResolver + entropy-weighted retrieval。Information-theoretic trilogy complete (JSD + CE + KL)。Triple-loop quality system complete。acs **200天** 🏆。context-forge **1346 tests** / 11000+ lines (F79, 21 dimensions)。Research #031-036: Spectral methods + Production architecture + Agent Memory Engineering 2026H2 + OTel GenAI Alignment + A2A Trust Engine V2 + Graph Classification & Entropy Fingerprinting.
 
-### 项目测试总量 (07-29 快照)
+### 项目测试总量 (07-30 快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
-| agent-memory-graph | **5471** | 890+ | 八十合一: entropy framework (24+ APIs incl. spectral + inter-graph trilogy + contribution + stability + spectral_divergence + scan) + adaptive forgetting suite (6 APIs) + EntityResolver (8 APIs) + entropy-weighted retrieval + entropy-guided routing + triple-loop quality + MCP Day 1-5 |
+| agent-memory-graph | **5807** | 896+ | 八十合一: entropy framework (28+ APIs incl. spectral + inter-graph trilogy + contribution + stability + spectral_divergence + scan + fingerprint + classification + classification_with_rejection) + adaptive forgetting suite (6 APIs) + EntityResolver (8 APIs) + entropy-weighted retrieval + entropy-guided routing + **three_layer_router_cascade** + triple-loop quality + MCP Day 1-5 |
 | structured-output-toolkit | **561** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
-| agent-task-cli | **1319** | 203 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F203** |
-| **四项目总计** | **10149** | — | — |
+| agent-task-cli | **1340** | 214 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F214** (emitSeries rename + mset/intersect/emitWithDelay) |
+| **四项目总计** | **10606** | — | — |
 
-其他: context-forge **1346** (F79, 11000+ lines, 21 dimensions) / nano-agent 732 / amg-mcp **122** / prompt-weaver 223 / openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / AMS v1.0-dev 645 / prompt-router 72 / edge-agent-runtime 244 / agent-mesh-network 108
+其他: context-forge **1346** (F79, 11000+ lines, 21 dimensions) / nano-agent 732 / amg-mcp **122** / prompt-weaver 223 / openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / AMS v1.0-dev 645 / prompt-router 72 / edge-agent-runtime 244 / agent-mesh-network **158** (+50)
 
-**全项目总计**: 14444 tests (四核心 10149 + cf 1346 + nano 732 + mcp 122 + pw 223 + lg-bridge 261 + ralph 376 + observability 166 + AMS 645 + router 72 + edge 244 + mesh 108)
+**全项目总计**: 14851 tests (四核心 10606 + cf 1346 + nano 732 + mcp 122 + pw 223 + lg-bridge 261 + ralph 376 + observability 166 + AMS 645 + router 72 + edge 244 + mesh 158)
 
 ### 最高优先级
-**README → npm publish** (四项目)。MCP Phase 1 Day 5 ✅ (cross-era verified, 122 tests)。amg 定位: "agency-grade graph memory for self-evolving agents"。10149 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，PlugMem 已有 OpenClaw plugin，竞争窗口收紧。**Entropy-weighted forgetting + retrieval = two publishable contributions** (no competitor uses graph entropy for either signal)。**Information-theoretic trilogy** (JSD + CE + KL) = novel graph comparison suite。**Entropy contribution + stability** = node-level importance and robustness analysis, extending entropy toolkit from descriptor to diagnostic. **Spectral divergence + scan** = multi-resolution histogram-based inter-graph comparison via Laplacian eigenvalue distributions.
+**README → npm publish** (四项目)。MCP Phase 1 Day 5 ✅ (cross-era verified, 122 tests)。amg 定位: "agency-grade graph memory for self-evolving agents"。10606 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，PlugMem 已有 OpenClaw plugin，竞争窗口收紧。**Entropy-weighted forgetting + retrieval = two publishable contributions** (no competitor uses graph entropy for either signal)。**Information-theoretic trilogy** (JSD + CE + KL) = novel graph comparison suite。**Entropy contribution + stability** = node-level importance and robustness analysis。**Spectral divergence + scan** = multi-resolution inter-graph comparison。**Entropy fingerprint + spectral classification** = graph identification via 12+ dim feature vectors。**Three-layer router cascade** = MemFlow production pattern (rules→entropy→fallback).
 
 ### 早期 Cycle 归档 (07-01 ~ 07-16)
 > 详细记录已归档至 [memory/archive-2026-07-early.md](memory/archive-2026-07-early.md)。以下仅保留里程碑摘要：
@@ -40,9 +40,18 @@ Autoresearch 方法论实践 — amg **连续268天零回滚率** 🏆。Entropy
 - **07-14 cycles 239-242**: immutable_store + compact_node + serialize + RelationIntegrityChecker. Context Engineering Layer 3/4 ✅. +145 tests
 - **07-14 Research #008**: Memory Security — ShadowMerge 93.8% ASR, amg positioning 
 
-### 07-29 开发 (amg c308-309)
-- **Cycle 309: spectral_divergence_scan()** — Multi-resolution spectral divergence analysis. Fibonacci-like bins [2,3,5,8,13,21,34,55]. Returns peak/min resolution, convergence (CV<0.05), monotonicity direction. 3 measures (JSD/KL/CE). Custom resolutions supported. +63 tests, 5408→5471. **268th day**. aa2822f.
-- **Cycle 308: spectral_divergence()** — Histogram-based information-theoretic divergence between Laplacian eigenvalue distributions. Size-invariant binning on [0,λ_max]. 3 measures (JSD/KL/CE), configurable bins. Complements quantum_jensen_shannon_distance (elementwise) with shape-sensitive approach. +54 tests, 5354→5408. **267th day**. cfb3a82.
+### 07-30 开发 (amg c320)
+- **Cycle 320: classification_with_rejection()** — Production-safe rejection layer for any classification result. Dual criteria (score threshold + min margin). Exact match always accepted. Calibrated confidence rescale to [0,1]. Works with graph_classification + spectral_classification + hybrid_classification. Completes classify→reject/accept pipeline. +40 tests, 5767→5807. **271st day**. 6320eff.
+
+### 07-29 开发 (amg c308-318, atc F204-F214, mesh, essay)
+- **Cycle 318: spectral_classification()** — Multi-method reference graph classification. 3 methods (spectral/spectral_scan/fingerprint). Returns best_match + rankings + confidence + margin. Complements degree-based graph_classification(). +38 tests, 5681→5719. **270th day**. 50d7cea.
+- **Cycle 317: three_layer_router_cascade()** — MemFlow production pattern: Layer 1 rules (~0ms) → Layer 2 entropy-guided (~1-5ms) → Layer 3 fallback. Full cascade_trace with per-layer latency. +36 tests, 5645→5681. **269th day**. e1d6c59.
+- **Cycles 310-316**: entropy_fingerprint() (12+ dim feature vector) + fingerprint_distance() (L2) + graph_classification() (degree-based) + intermediate cycles. ~174 tests.
+- **Cycle 309: spectral_divergence_scan()** — Multi-resolution spectral divergence. Fibonacci bins [2,3,5,8,13,21,34,55]. +63 tests, 5408→5471. **268th day**. aa2822f.
+- **Cycle 308: spectral_divergence()** — Histogram-based JSD/KL/CE between Laplacian eigenvalue distributions. Size-invariant. +54 tests, 5354→5408. **267th day**. cfb3a82.
+- **agent-task-cli Round 55**: F211 emitBatch bug fix (renamed emitSeries) + F212 Cache.mset + F213 Storage.intersect + F214 EventBus.emitWithDelay. +21 tests (4 pre-existing failures fixed). 82087b4.
+- **agent-mesh-network**: TaskBid/TaskResult/priority/serialization/MeshNode tests. +50 tests (108→158).
+- **Essay**: "节点的信息论价值" — Leave-One-Out 熵贡献度识别记忆图关键节点. ~3000字, 2 Python 示例. [链接](https://robertsong2019.github.io/posts/entropy-contribution-critical-nodes-2026-07.html). f4e14f1.
 
 ### 07-28 开发 (amg c300-307, Research #033)
 - **Cycle 307: entropy_stability()** — Monte Carlo entropy variance under random edge perturbation. remove/rewire modes, stability_score=1-CV, 7 indices, seedable. +47 tests, 5307→5354. **266th day**. 5780e3e.
@@ -197,13 +206,25 @@ Autoresearch 方法论实践 — amg **连续268天零回滚率** 🏆。Entropy
 140. **Rényi entropy order α is graph resolution control (#036)** — Low α (→0) emphasizes graph size/connectivity. High α (→∞, min-entropy) detects bottlenecks and hubs. The CURVE of H(α) across orders is a structural fingerprint: flat=regular, steep=heterogeneous, convex with knee=mixed community+hub structure. A scan across α ∈ {0.5,1,2,3,5,8,20,∞} produces a unique signature for graph families. No npm/PyPI competitor has entropy scan capability.
 141. **Entropy curve SHAPE (not scalar) is the graph fingerprint (#036)** — Single entropy value tells little. But a VECTOR of entropies at multiple scales — Shannon, Rényi(α=2,3,5,∞), Tsallis, von Neumann, edge-betweenness — creates a unique fingerprint. Two graphs with identical degree distributions but different clustering have identical Shannon degree entropy but diverge on spectral entropy. Combined degree+spectral fingerprint correctly classifies 6/7 graph families (verified in code). The shape (monotonic, range, convergence CV) is the analytical instrument.
 
+---
+
+142. **Three-layer router cascade = production-pattern MemFlow implemented (c317)** — Rules layer commits immediately for high-confidence intents (basic/temporal/constraint/global). Entropy layer escalates for ambiguous queries using graph topology. Fallback layer catches edge cases. Full cascade_trace with per-layer latency = production routing observability. First npm library with entropy-aware query routing.
+143. **Spectral classification completes the identification stack (c318)** — Three methods in one API: spectral (single-resolution histogram JSD/KL/CE), spectral_scan (multi-resolution mean across Fibonacci bins), fingerprint (L2 on 12+ dim entropy feature vectors). Confidence = separation ratio between best and second-best match. Margin = absolute gap. Enables graph family identification without training data.
+144. **Entropy fingerprint = compact graph DNA (c314)** — 12+ dimensional feature vector (Shannon degree, Rényi α=2/3/5/∞, Tsallis, von Neumann, edge-betweenness, etc). Two graphs with identical degree distributions but different clustering have identical Shannon degree entropy but diverge on spectral entropy. Combined degree+spectral fingerprint correctly classifies 6/7 graph families. Not a scalar — a vector signature.
+145. **Classification with rejection = production safety layer (c320)** — classify→reject/accept pipeline. Dual criteria (score threshold + min margin) prevents low-confidence misclassification. Exact match always accepted (score≈0). Calibrated confidence linear rescale to [0,1]. Works with all 3 classification APIs. First npm library with entropy-aware classification rejection.
+146. **The scoreboard IS the moat (#037)** — Shipping a neutral benchmark harness alongside amg makes amg's scores "official" (reference implementation). Competitors must either use amg's harness (endorsing it) or build their own (looking defensive). Mem0 already does this with Python-only memory-benchmarks. amg's harness should be TypeScript-native with clean MemoryBackend interface.
+147. **Operation-level evaluation = differentiator no competitor has (#037)** — MemOps proves final-answer scoring conflates failure modes. amg already has lifecycle hooks (governance, entity resolution, forgetting, gap detection). Exposing as MemOps-compatible structured traces creates evaluation layer impossible without deep architectural integration. Moat within the moat.
+148. **Scale tiers reveal non-linear failure modes (#037)** — BEAM: temporal reasoning 0.618 (1M) → 0.163 (10M). Event ordering 0.536 → 0.202. Memory systems have cliffs. amg's entropy-weighted retrieval + forgetting should theoretically prevent cliffs. Harness must include scale tiers.
+149. **LongMemEval-V2 shifts to agentic multimodal context (May 2026, #037)** — 451 questions, up to 115M tokens, web trajectories with screenshots. 5 new ability types. "Environment gotchas" + "premise awareness" align with amg's knowledge gap detection + entity resolution.
+150. **Fixed reader model is the reproducibility key (#037)** — LongMemEval-V2 uses Qwen3.5-9B as fixed reader. Eliminates "better reader = better score" variance. For amg-bench: default to small reproducible model (Qwen-9B/Llama-8B via Ollama) for answerer, stronger model for judge. Enables fully reproducible offline runs.
+
 ### 🔴 最高优先级: npm Publish
-- [ ] **agent-memory-graph: README + npm publish** — **5471 tests**, 890+ APIs
+- [ ] **agent-memory-graph: README + npm publish** — **5807 tests**, 896+ APIs
 - [ ] **agent-context-store: README + npm publish** — **2898 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
-- [ ] **agent-task-cli: README + npm publish** — **1319 tests**, F203
+- [ ] **agent-task-cli: README + npm publish** — **1340 tests**, F214
 
-> ⚠️ Mandol (ISCAS+MSRA) 已发 paper+PyPI+GitHub，LoCoMo SOTA 92.21%。PlugMem 已有 OpenClaw plugin。竞争窗口收紧。**10149 tests across 4 projects, all npm ready.**
+> ⚠️ Mandol (ISCAS+MSRA) 已发 paper+PyPI+GitHub，LoCoMo SOTA 92.21%。PlugMem 已有 OpenClaw plugin。竞争窗口收紧。**10606 tests across 4 projects, all npm ready.**
 
 ### 🟡 研究驱动 — 待实现 (Research #035: A2A Trust Engine V2 新增)
 - [ ] **lab/a2a-trust-prototype: Replace TrustEngineV2 skeleton with full implementation** — 7 algorithms (Bayesian Beta + Wilson LB, time decay, SimHash, trust gates, EigenTrust propagation, capability scoping, harness safety). Add Jest test suite (40+ tests). Code in research note.
@@ -263,7 +284,7 @@ Autoresearch 方法论实践 — amg **连续268天零回滚率** 🏆。Entropy
 ### 🟡 研究驱动 — 待实现 (existing)
 - [ ] amg: compress_to_skill() + retrieve_skills() + evolve_skill() + skill_bank_health() — Read-Write-Assess-Govern lifecycle (MemRefine + MemSkill + #019). ~+140 tests. **Implementation blueprint ready in #019**: Cycle 268 compress_to_skill (~40 tests), Cycle 269 retrieve_skills+evolve_skill (~40 tests), Cycle 270 skill_bank_health (~35 tests). Self-created skills > human-authored (MUSE 85.24% vs 81.17%). **No npm library has skill extraction/evolution/health.**
 - [ ] amg: EvoMemBench adapter — 4-setting benchmark (in-ep/cross-ep × knowledge/exec). **Priority over LoCoMo** (#014)
-- [ ] amg: three_layer_router_cascade — rules→SLM→keywords fallback. MemFlow #015. ~+40 tests
+- [x] ✅ amg: three_layer_router_cascade — DONE (c317, 36 tests). MemFlow production pattern. rules→entropy→fallback.
 - [ ] amg: intent_aware_edge_cost() — PRISM intent routing (#010). ~+40 tests
 - [ ] amg: procedural memory node type — PlugMem prescriptive knowledge (#010). ~+50 tests
 - [x] ✅ amg: auto_heal_gaps() — Cycle 266 (done, 4-strategy self-healing already implemented)
@@ -271,6 +292,7 @@ Autoresearch 方法论实践 — amg **连续268天零回滚率** 🏆。Entropy
 - [ ] **amg README: 竞品对比表** — Mem0/Zep/Mandol/PlugMem/PRISM/Hippocampus + **GraphRAG/LightRAG positioning: security-first agent-native GraphRAG**
 
 ### 🟣 Deep Research (detailed notes in catalyst-research/exploration-notes/)
+- **#037 (07-30)** ✅: Agent Memory Benchmark Harness Design. Four evaluation layers (answer/operation/form/scale). Scoreboard = moat. Operation-level eval = differentiator. BEAM scale cliffs. LongMemEval-V2 agentic multimodal. Fixed reader model = reproducibility. Full TS harness skeleton (~200 lines, zero-dep). 5 insights (#146-#150). [笔记](catalyst-research/exploration-notes/2026-07-30-agent-memory-benchmark-harness-design.md)
 - **#036 (07-29)** ✅: Information-Theoretic Graph Classification & Multi-Scale Entropy Fingerprinting. Rényi α = resolution parameter (low α=connectivity, high α=bottleneck). Entropy curve shape = graph fingerprint (not scalar value). VNEstruct ego-local entropy > global for node tasks (ICML 2020). TIDE tri-component decomposition (feature×structure×joint, ICML 2026). PRI formalizes entropy-guided forgetting. FGN continuous entropy fields (June 2026). AERK quantum walk kernels. 2 runnable code examples (entropy_scan + graph_classification prototypes, verified ✅). Feeds amg cycles 310-311. [笔记](catalyst-research/exploration-notes/2026-07-29-graph-classification-entropy-fingerprinting.md)
 - **#033 (07-28)** ✅: Agent Memory Engineering 2026H2. Engram bi-temporal dual-process (83.6% vs 73.2%, +10.4pp). H-Mem hybrid tree+graph (SOTA 3 benchmarks). Memanto info-theoretic retrieval. MAGE four-subgraph multi-agent. Dual-process System-1/System-2 = production pattern. Benchmark harness = competitive weapon. 2 runnable code examples. [笔记](catalyst-research/exploration-notes/2026-07-28-agent-memory-engineering-2026h2.md)
 - **#031 (07-27)** ✅ IMPLEMENTED: Temporal Graph Entropy & Von Neumann spectral methods. First spectral entropy (Laplacian eigenvalue Shannon). K_n maximizes H=log(n-1). Temporal entropy trajectory for phase transition detection. QJSD for spectral graph comparison. 3 runnable code examples. **Cycles 292-295 complete** (+117 tests). [笔记](catalyst-research/exploration-notes/2026-07-27-temporal-graph-entropy-spectral-methods.md)
@@ -301,8 +323,8 @@ Autoresearch 方法论实践 — amg **连续268天零回滚率** 🏆。Entropy
 
 | # | 项目 | Tests | 状态 |
 |---|------|-------|------|
-| 1 | agent-task-cli | 1319 | ✅ npm ready, F203 (203 features) |
-| 2 | agent-memory-graph | **5471** | ✅ npm ready, 八十合一: entropy framework (24+ APIs incl. spectral + inter-graph trilogy + contribution + stability + spectral_divergence + scan) + adaptive forgetting (6) + EntityResolver (8) + entropy-weighted retrieval + MCP Day 1-5 |
+| 1 | agent-task-cli | 1340 | ✅ npm ready, F214 (214 features) |
+| 2 | agent-memory-graph | **5807** | ✅ npm ready, 八十合一: entropy framework (28+ APIs incl. spectral + inter-graph trilogy + contribution + stability + spectral_divergence + scan + fingerprint + classification + classification_with_rejection) + adaptive forgetting (6) + EntityResolver (8) + entropy-weighted retrieval + MCP Day 1-5 |
 | 3 | agent-context-store | 2898 | ✅ npm ready, 二十六层: detect→configure→recommend→validate→correlate complete |
 | 4 | structured-output-toolkit | 561 | ✅ npm ready |
 | 5 | openclaw-langgraph-bridge | 261 | 🔄 Supervisor 完善 |
@@ -356,13 +378,14 @@ curl -X POST "https://api.tavily.com/search" \
 
 ## Timeline
 
-### Immediate (Week of July 29)
-- [ ] README(amg) → npm publish — **#1 priority**. 5354 tests, 880+ APIs.
+### Immediate (Week of July 30)
+- [ ] README(amg) → npm publish — **#1 priority**. 5807 tests, 896+ APIs.
 - [ ] README(acs) → npm publish — 2898 tests.
 - [ ] MCP Registry publish (SDK v2 stable July 28)
-- [ ] **amg Cycle 310+: graph_classification()** — CE/KL against multiple reference graphs, returns best match. Convenience wrapper on trilogy. ~30 lines + ~40 tests.
+- [ ] **amg Cycle 321+: hybrid_classification()** — Combine degree + spectral + fingerprint scores. ~40 lines + ~50 tests.
 - [ ] **amg: query_as_of(timestamp)** (#033) — Expose bi-temporal tracking. Engram pattern. ~40 lines + ~30 tests.
 - [ ] **amg: entropy_scan()** — Multi-scale Rényi/Tsallis sweep across α/q range. Returns curve for graph fingerprinting. ~40 lines + ~50 tests.
+- [ ] **amg-bench: Benchmark harness** — TypeScript MemoryBackend interface + AMGBackend adapter. ~400 lines harness + ~100 lines adapter. LongMemEval-compatible. Operation-level evaluation (moat). Research #037 ✅.
 
 ### Short-term (August)
 - [ ] amg: forget_policy() — ✅ DONE (c284)
@@ -371,6 +394,7 @@ curl -X POST "https://api.tavily.com/search" \
 - [ ] amg: get_operation_history() (MemOps-compatible)
 - [ ] EvoMemBench InEp-Know setting vs amg
 - [ ] amg OpenClaw plugin (~200 lines)
+- [ ] amg-bench: LongMemEval S baseline run (full-context vs entropy-weighted retrieval)
 
 ### Medium-term (September)
 - [ ] compress_to_skill() + retrieve_skills() + evolve_skill()
