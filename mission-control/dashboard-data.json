@@ -1,218 +1,294 @@
 {
-  "lastUpdated": "2026-07-28T22:00:00Z",
-  "generatedAt": "2026-07-29 06:00 CST",
-  "activeNow": [
-    {
-      "job": "dashboard-update-morning",
+  "lastUpdated": "2026-07-30T22:01:12Z",
+  "generatedAt": "2026-07-31 06:01 CST",
+  "system": {
+    "gateway": {
       "status": "running",
-      "model": "glm-5.1"
-    }
-  ],
-  "actionRequired": [],
-  "crons": [
+      "pid": 438250,
+      "port": 34524,
+      "bind": "lan (0.0.0.0)",
+      "dashboard": "http://10.8.0.5:34524/sponf0/",
+      "rpcProbe": "ok",
+      "nodeVersion": "v22.22.1",
+      "openclawVersion": "2026.4.14"
+    },
+    "host": {
+      "os": "Linux 6.8.0-71-generic (x64)",
+      "hostname": "VM-0-5-ubuntu",
+      "uptime": "99 days, 16:40",
+      "loadAverage": "0.43, 0.16, 0.06",
+      "disk": {
+        "total": "50G",
+        "used": "40G",
+        "available": "7.1G",
+        "usage": "85%"
+      },
+      "memory": {
+        "totalMB": 1935,
+        "usedMB": 1079,
+        "freeMB": 541,
+        "availableMB": 856,
+        "swapTotalMB": 10179,
+        "swapUsedMB": 1009
+      }
+    },
+    "model": "zai/glm-5.1"
+  },
+  "cronSummary": {
+    "total": 20,
+    "ok": 17,
+    "error": 2,
+    "running": 1,
+    "errorJobs": [
+      "github-creative-evening",
+      "essay-generation-morning"
+    ]
+  },
+  "cronJobs": [
     {
-      "name": "dashboard-update-morning",
-      "schedule": "6:00 AM daily",
       "id": "f38e0365",
-      "lastRun": "2026-07-28T22:00:00Z",
-      "nextRun": "2026-07-29T22:00:00Z",
+      "name": "dashboard-update-morning",
+      "schedule": "0 6 * * *",
       "status": "running",
-      "errors": 0
+      "lastRun": "1d ago"
     },
     {
-      "name": "github-trending-daily",
-      "schedule": "7:00 AM daily CST",
       "id": "9b2a8701",
-      "lastRun": "2026-07-28T23:00:00Z",
-      "nextRun": "2026-07-29T23:00:00Z",
+      "name": "github-trending-daily",
+      "schedule": "0 7 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "23h ago"
     },
     {
-      "name": "github-trending-deep",
-      "schedule": "8:00 AM daily CST",
       "id": "2c714952",
-      "lastRun": "2026-07-28T00:00:00Z",
-      "nextRun": "2026-07-29T00:00:00Z",
+      "name": "github-trending-deep",
+      "schedule": "0 8 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "22h ago"
     },
     {
+      "id": "610a8d6d",
       "name": "github-creative-evening",
-      "schedule": "7:00 PM daily",
-      "id": "265091b6",
-      "lastRun": "2026-07-28T11:00:00Z",
-      "nextRun": "2026-07-29T11:00:00Z",
-      "status": "ok",
-      "errors": 0
+      "schedule": "0 19 * * *",
+      "status": "error",
+      "lastRun": "11h ago"
     },
     {
-      "name": "github-creative-evening (CST)",
-      "schedule": "7:00 PM daily CST",
       "id": "ad37c59a",
-      "lastRun": "2026-07-28T11:00:00Z",
-      "nextRun": "2026-07-29T11:00:00Z",
+      "name": "github-creative-evening",
+      "schedule": "0 19 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "11h ago"
     },
     {
+      "id": "265091b6",
       "name": "deep-exploration-evening",
-      "schedule": "8:00 PM daily",
-      "id": "bb46cb70",
-      "lastRun": "2026-07-28T12:00:00Z",
-      "nextRun": "2026-07-29T12:00:00Z",
+      "schedule": "0 20 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "10h ago"
     },
     {
-      "name": "deep-exploration-evening (CST)",
-      "schedule": "8:00 PM daily CST",
       "id": "a4bf5e2a",
-      "lastRun": "2026-07-28T12:00:00Z",
-      "nextRun": "2026-07-29T12:00:00Z",
+      "name": "deep-exploration-evening",
+      "schedule": "0 20 * * *",
       "status": "ok",
-      "errors": 0,
-      "model": "glm-5.1"
+      "lastRun": "10h ago"
     },
     {
-      "name": "code-lab-evening",
-      "schedule": "9:00 PM daily",
+      "id": "bb46cb70",
+      "name": "deep-exploration-evening",
+      "schedule": "0 12 * * UTC",
+      "status": "ok",
+      "lastRun": "10h ago"
+    },
+    {
       "id": "13a2f284",
-      "lastRun": "2026-07-28T13:00:00Z",
-      "nextRun": "2026-07-29T13:00:00Z",
+      "name": "code-lab-evening",
+      "schedule": "0 21 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "9h ago"
     },
     {
-      "name": "tool-development-evening (CST)",
-      "schedule": "10:00 PM daily CST",
       "id": "62bf7f3b",
-      "lastRun": "2026-07-28T14:00:00Z",
-      "nextRun": "2026-07-29T14:00:00Z",
-      "status": "ok",
-      "errors": 0,
-      "model": "glm-5.1"
-    },
-    {
       "name": "tool-development-evening",
-      "schedule": "10:00 PM daily",
+      "schedule": "0 22 * * *",
+      "status": "ok",
+      "lastRun": "8h ago"
+    },
+    {
       "id": "ce2fb615",
-      "lastRun": "2026-07-28T14:00:00Z",
-      "nextRun": "2026-07-29T14:00:00Z",
+      "name": "tool-development-evening",
+      "schedule": "0 22 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "8h ago"
     },
     {
-      "name": "key-development-1",
-      "schedule": "11:00 PM daily",
       "id": "78eac6fc",
-      "lastRun": "2026-07-28T15:00:00Z",
-      "nextRun": "2026-07-29T15:00:00Z",
+      "name": "key-development-1",
+      "schedule": "0 23 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "7h ago"
     },
     {
-      "name": "key-development-2",
-      "schedule": "12:00 AM daily",
       "id": "88679f9e",
-      "lastRun": "2026-07-28T16:00:00Z",
-      "nextRun": "2026-07-29T16:00:00Z",
+      "name": "key-development-2",
+      "schedule": "0 0 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "6h ago"
     },
     {
-      "name": "key-development-3",
-      "schedule": "1:00 AM daily",
       "id": "b0fd7e8d",
-      "lastRun": "2026-07-28T17:00:00Z",
-      "nextRun": "2026-07-29T17:00:00Z",
+      "name": "key-development-3",
+      "schedule": "0 1 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "5h ago"
     },
     {
-      "name": "knowledge-organization (CST)",
-      "schedule": "2:00 AM daily CST",
       "id": "1ea6e3b0",
-      "lastRun": "2026-07-28T18:00:00Z",
-      "nextRun": "2026-07-29T18:00:00Z",
-      "status": "ok",
-      "errors": 0,
-      "model": "glm-5.1"
-    },
-    {
       "name": "knowledge-organization",
-      "schedule": "2:00 AM daily",
+      "schedule": "0 2 * * *",
+      "status": "ok",
+      "lastRun": "4h ago"
+    },
+    {
       "id": "fd0515b0",
-      "lastRun": "2026-07-28T18:00:00Z",
-      "nextRun": "2026-07-29T18:00:00Z",
+      "name": "knowledge-organization",
+      "schedule": "0 2 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "4h ago"
     },
     {
-      "name": "project-testing-morning",
-      "schedule": "3:00 AM daily",
       "id": "f7510f1f",
-      "lastRun": "2026-07-28T19:00:00Z",
-      "nextRun": "2026-07-29T19:00:00Z",
+      "name": "project-testing-morning",
+      "schedule": "0 3 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "3h ago"
     },
     {
-      "name": "documentation-morning",
-      "schedule": "4:00 AM daily",
       "id": "77a5bcc6",
-      "lastRun": "2026-07-28T20:00:00Z",
-      "nextRun": "2026-07-29T20:00:00Z",
+      "name": "documentation-morning",
+      "schedule": "0 4 * * *",
       "status": "ok",
-      "errors": 0
+      "lastRun": "2h ago"
     },
     {
-      "name": "essay-generation-morning",
-      "schedule": "5:00 AM daily",
       "id": "686ec55c",
-      "lastRun": "2026-07-28T21:00:00Z",
-      "nextRun": "2026-07-29T21:00:00Z",
-      "status": "ok",
-      "errors": 0
+      "name": "essay-generation-morning",
+      "schedule": "0 5 * * *",
+      "status": "error",
+      "lastRun": "1h ago"
     },
     {
-      "name": "essay-generation-morning (CST)",
-      "schedule": "5:00 AM daily CST",
       "id": "f0362050",
-      "lastRun": "2026-07-28T21:00:00Z",
-      "nextRun": "2026-07-29T21:00:00Z",
+      "name": "essay-generation-morning",
+      "schedule": "0 5 * * *",
       "status": "ok",
-      "errors": 0,
-      "model": "glm-5.1"
+      "lastRun": "57m ago"
     }
   ],
   "sessions": {
-    "total": 57,
-    "model": "glm-5.1",
-    "mainSession": {
-      "age": "13m ago",
-      "tokens": "99k/200k (50%)",
-      "model": "glm-5",
-      "status": "active"
-    },
-    "recentCronSessions": 40,
-    "feishuSession": "13h ago",
-    "wecomSession": "120d ago",
-    "staleSessions": 10
+    "total": 16,
+    "list": [
+      {
+        "type": "agent:main:cron",
+        "lastActive": "24h ago",
+        "model": "glm-5.1",
+        "context": "33k/205k (16%)"
+      },
+      {
+        "type": "direct feishu",
+        "lastActive": "38h ago",
+        "model": "glm-5.1",
+        "context": "70k/205k (34%)"
+      },
+      {
+        "type": "direct subagent",
+        "lastActive": "4d ago",
+        "model": "glm-5.1",
+        "context": "unknown"
+      },
+      {
+        "type": "direct subagent",
+        "lastActive": "27d ago",
+        "model": "glm-5.1",
+        "context": "35k/205k (17%)"
+      },
+      {
+        "type": "direct subagent",
+        "lastActive": "77d ago",
+        "model": "glm-5",
+        "context": "34k/200k (17%)"
+      },
+      {
+        "type": "direct subagent",
+        "lastActive": "77d ago",
+        "model": "glm-5",
+        "context": "33k/200k (16%)"
+      },
+      {
+        "type": "direct wecom",
+        "lastActive": "122d ago",
+        "model": "glm-5.1",
+        "context": "19k/205k (9%)"
+      },
+      {
+        "type": "direct cron",
+        "lastActive": "135d ago",
+        "model": "glm-5",
+        "context": "53k/200k (26%)"
+      },
+      {
+        "type": "direct cron",
+        "lastActive": "135d ago",
+        "model": "glm-5",
+        "context": "64k/200k (32%)"
+      },
+      {
+        "type": "direct cron",
+        "lastActive": "135d ago",
+        "model": "glm-5",
+        "context": "53k/200k (27%)"
+      },
+      {
+        "type": "direct cron",
+        "lastActive": "135d ago",
+        "model": "glm-5",
+        "context": "34k/200k (17%)"
+      },
+      {
+        "type": "direct cron",
+        "lastActive": "135d ago",
+        "model": "glm-5",
+        "context": "28k/200k (14%)"
+      },
+      {
+        "type": "direct cron",
+        "lastActive": "135d ago",
+        "model": "glm-5",
+        "context": "25k/200k (12%)"
+      },
+      {
+        "type": "direct cron",
+        "lastActive": "135d ago",
+        "model": "glm-5",
+        "context": "34k/200k (17%)"
+      },
+      {
+        "type": "direct cron",
+        "lastActive": "136d ago",
+        "model": "glm-5",
+        "context": "21k/200k (11%)"
+      },
+      {
+        "type": "group wecom",
+        "lastActive": "137d ago",
+        "model": "glm-5",
+        "context": "13k/200k (7%)"
+      }
+    ]
   },
-  "gateway": {
-    "status": "running",
-    "pid": 438250,
-    "port": 34524,
-    "bind": "lan (0.0.0.0)",
-    "dashboard": "http://10.8.0.5:34524/sponf0/",
-    "rpcProbe": "ok"
-  },
-  "summary": {
-    "totalCronJobs": 19,
-    "healthy": 18,
-    "errors": 0,
-    "running": 1,
-    "lastUpdated": "2026-07-29T06:00:00+08:00"
+  "git": {
+    "repo": "robertsong2019/openclaw-workspace",
+    "lastCommit": "772326b docs: documentation improvement report 2026-07-31"
   }
 }
