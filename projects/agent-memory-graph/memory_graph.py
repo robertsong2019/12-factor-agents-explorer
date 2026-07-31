@@ -38106,6 +38106,267 @@ class MemoryGraph:
         mg.graph_meta = {"topology": topology, "label": label or topology, "n": n}
         return mg
 
+    # ── Cycle 335: Max-confidence meta-classification ──
+
+    def max_confidence_classification(
+        self,
+        references: list["MemoryGraph"],
+        *,
+        degree_index: str = "sombor",
+        include_quarantined: bool = False,
+        confidence_metric: str = "margin",
+        min_methods: int = 2,
+    ) -> Optional[dict]:
+        """Select the classification result from whichever method
+        has the **highest confidence** for this specific query.
+
+        Unlike ``classification_compare()`` (majority voting across
+        methods), this meta-classifier trusts the method that is most
+        *confident* for the current query.  Different query/reference
+        combinations favour different modalities — a star graph might
+        be easiest to classify by degree entropy, while a cycle is
+        easier by spectral analysis.
+
+        **Methods executed:**
+
+        1. ``graph_classification`` — degree-based entropy distance
+        2. ``spectral_classification`` — spectral divergence
+        3. ``hybrid_classification`` — fixed-weight ensemble
+        4. ``rrf_classification`` — Reciprocal Rank Fusion
+        5. ``bayesian_classification`` — adaptive-weight ensemble
+
+        **Confidence metrics:**
+
+        - ``"margin"`` (default): absolute gap ``2nd_best − best``.
+          Robust across methods since all produce distance scores.
+        - ``"confidence"``: relative separation ``(2nd-best − best)/best``.
+          Can be ``inf`` when best score ≈ 0.
+        - ``"z_score"``: ``(best − mean_others) / std_others``.
+          Measures how many standard deviations the best score is
+          below the rest.  Naturally normalised across methods with
+          different scales.
+
+        **When to use this vs ``classification_compare()``?
+
+        - ``classification_compare``: you want *consensus* — the
+          answer trusted by the majority of methods.
+        - ``max_confidence_classification``: you want *conviction* —
+          the answer from the method most sure of itself for this
+          query, even if it's a minority of one.
+
+        Practical guidance: use ``classification_compare`` when methods
+        tend to agree (high-signal regime).  Use
+        ``max_confidence_classification`` when methods disagree but one
+        has a clear, dominant separation (low-signal regime where one
+        modality captures structure the others miss).
+
+        Args:
+            references:          list of reference MemoryGraphs.
+            degree_index:        degree index for entropy distance.
+            include_quarantined: include quarantined nodes.
+            confidence_metric:   how to rank method confidence
+                                 ("margin", "confidence", "z_score").
+            min_methods:         minimum methods that must succeed
+                                 (default 2). If fewer succeed, returns
+                                 the single best available.
+
+        Returns:
+            Dict with:
+            - ``best_match``: int — index of closest reference
+            - ``best_score``: float — score from winning method
+            - ``winning_method``: str — name of most-confident method
+            - ``winning_confidence``: float — confidence value that won
+            - ``confidence_metric``: str — metric used for selection
+            - ``per_method``: dict → {method: {best_match, best_score,
+              margin, confidence, z_score}}
+            - ``methods_run``: list of method names executed
+            - "methods_failed": list of method names that errored
+            - "agreement": float — fraction of methods agreeing with
+              the winner (0 to 1)
+            - "margin_of_victory": float — confidence gap between
+              best and 2nd-best method
+            - "recommendation": str — human-readable summary
+            or ``None`` if no methods succeeded.
+        """
+        if not references:
+            return None
+
+        if confidence_metric not in ("margin", "confidence", "z_score"):
+            raise ValueError(
+                f"confidence_metric must be 'margin', 'confidence', "
+                f"or 'z_score', got '{confidence_metric}'")
+
+        method_names = [
+            "graph_classification",
+            "spectral_classification",
+            "hybrid_classification",
+            "rrf_classification",
+            "bayesian_classification",
+        ]
+
+        # ── Run each method and collect results ────────────────────
+        per_method: dict[str, dict] = {}
+        methods_run: list[str] = []
+        methods_failed: list[str] = []
+
+        for name in method_names:
+            try:
+                if name == "graph_classification":
+                    result = self.graph_classification(
+                        references, degree_index=degree_index)
+                elif name == "spectral_classification":
+                    result = self.spectral_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined)
+                elif name == "hybrid_classification":
+                    result = self.hybrid_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined)
+                elif name == "rrf_classification":
+                    result = self.rrf_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined)
+                elif name == "bayesian_classification":
+                    result = self.bayesian_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined)
+                else:
+                    continue
+
+                if result is not None:
+                    entry = {
+                        "best_match":  result.get("best_match"),
+                        "best_score":  result.get("best_score"),
+                        "margin":      result.get("margin"),
+                        "confidence":  result.get("confidence"),
+                    }
+
+                    # ── Compute z_score from rankings if available ──
+                    rankings = result.get("rankings", [])
+                    if rankings and len(rankings) >= 2:
+                        scores = [
+                            r.get("score", r.get("rrf_score", 0.0))
+                            for r in rankings
+                        ]
+                        if len(scores) >= 2:
+                            best_s = min(scores)
+                            rest = [s for s in scores if s != best_s]
+                            if rest:
+                                mean_rest = sum(rest) / len(rest)
+                                var_rest = sum(
+                                    (s - mean_rest) ** 2 for s in rest
+                                ) / len(rest)
+                                std_rest = math.sqrt(var_rest)
+                                z = ((best_s - mean_rest) / std_rest
+                                     if std_rest > 1e-12 else 0.0)
+                                entry["z_score"] = round(z, 8)
+                            else:
+                                entry["z_score"] = 0.0
+                        else:
+                            entry["z_score"] = 0.0
+                    else:
+                        entry["z_score"] = 0.0
+
+                    per_method[name] = entry
+                    methods_run.append(name)
+                else:
+                    methods_failed.append(name)
+            except Exception:
+                methods_failed.append(name)
+
+        if not methods_run:
+            return None
+
+        # ── If only 1 method succeeded, return its result directly ─
+        if len(methods_run) < min_methods:
+            name = methods_run[0]
+            info = per_method[name]
+            return {
+                "best_match":          info["best_match"],
+                "best_score":          info["best_score"],
+                "winning_method":      name,
+                "winning_confidence": info.get(confidence_metric, 0.0),
+                "confidence_metric":   confidence_metric,
+                "per_method":          per_method,
+                "methods_run":         methods_run,
+                "methods_failed":      methods_failed,
+                "agreement":           1.0,
+                "margin_of_victory":   0.0,
+                "recommendation":      (
+                    f"Only {len(methods_run)} method succeeded; "
+                    f"using {name}."
+                ),
+            }
+
+        # ── Rank methods by chosen confidence metric ──────────────
+        def _conf_val(info: dict) -> float:
+            v = info.get(confidence_metric, 0.0)
+            if v is None:
+                return 0.0
+            # For 'confidence', inf means best≈0 with positive margin —
+            # treat as very high confidence
+            if v == float("inf"):
+                return 1e18
+            return float(v)
+
+        # For margin and confidence: higher = more confident → max wins
+        # For z_score: lower (more negative) = more confident → min wins
+        if confidence_metric == "z_score":
+            ranked = sorted(
+                methods_run,
+                key=lambda m: _conf_val(per_method[m]),
+            )
+        else:
+            ranked = sorted(
+                methods_run,
+                key=lambda m: _conf_val(per_method[m]),
+                reverse=True,
+            )
+
+        winner = ranked[0]
+        runner_up = ranked[1] if len(ranked) > 1 else None
+        winner_conf = _conf_val(per_method[winner])
+        runner_conf = (_conf_val(per_method[runner_up])
+                        if runner_up else 0.0)
+        victory_margin = round(winner_conf - runner_conf, 8)
+
+        # ── Agreement: how many methods picked the same best_match ─
+        winner_best = per_method[winner]["best_match"]
+        agree_count = sum(
+            1 for m in methods_run
+            if per_method[m]["best_match"] == winner_best
+        )
+        agreement = round(agree_count / len(methods_run), 4)
+
+        # ── Recommendation text ────────────────────────────────────
+        if agreement == 1.0:
+            rec = (f"{winner} is most confident "
+                   f"({confidence_metric}={winner_conf:.6g}) and all "
+                   f"{len(methods_run)} methods agree on #{winner_best}.")
+        elif agree_count > 1:
+            rec = (f"{winner} has highest {confidence_metric} "
+                   f"({winner_conf:.6g}), and {agree_count}/"
+                   f"{len(methods_run)} methods agree on #{winner_best}.")
+        else:
+            rec = (f"{winner} is most confident "
+                   f"({confidence_metric}={winner_conf:.6g}) but "
+                   f"disagrees with other methods. "
+                   f"Only this method chose #{winner_best}.")
+
+        return {
+            "best_match":          winner_best,
+            "best_score":          per_method[winner]["best_score"],
+            "winning_method":      winner,
+            "winning_confidence": round(winner_conf, 8),
+            "confidence_metric":   confidence_metric,
+            "per_method":          per_method,
+            "methods_run":         methods_run,
+            "methods_failed":      methods_failed,
+            "agreement":           agreement,
+            "margin_of_victory":  victory_margin,
+            "recommendation":      rec,
+        }
+
     def classification_benchmark(
         self,
         *,
