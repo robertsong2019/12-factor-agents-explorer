@@ -37754,6 +37754,211 @@ class MemoryGraph:
 
         return dashboard
 
+    # ------------------------------------------------------------------
+    # Cycle 331: conditioned_traverse() — query-conditioned BFS (Research #040)
+    # ------------------------------------------------------------------
+
+    DEFAULT_RELATION_WEIGHTS = {
+        "causes": 1.0,
+        "depends_on": 0.9,
+        "enables": 0.8,
+        "relates_to": 0.5,
+        "similar_to": 0.4,
+        "derived_from": 0.7,
+        "part_of": 0.6,
+        "instance_of": 0.6,
+        "temporal_before": 0.3,
+        "contradicts": 0.1,
+    }
+
+    def conditioned_traverse(self, entry_id: str,
+                              intent_profile: dict = None,
+                              max_depth: int = 5,
+                              min_weight: float = 0.0,
+                              top_k: int = 20) -> dict:
+        """Query-conditioned BFS with per-relation traversal weights.
+
+        Inspired by HAGE (2605.09942): different query intents should
+        traverse different edge types. A causal query follows ``causes``
+        and ``depends_on`` edges; a similarity query follows ``similar_to``
+        and ``relates_to`` edges.
+
+        Each edge type has a traversal weight (0–1). At each BFS step,
+        edges with ``traversal_weight < min_weight`` are pruned. The
+        accumulated node score decays with depth and is multiplied by
+        the edge traversal weight, so nodes reached via high-weight
+        edges rank higher.
+
+        Args:
+            entry_id: Starting node ID.
+            intent_profile: Override or extend default relation weights.
+                Keys are relation names, values are floats in [0, 1].
+                Pass ``{"causes": 1.0, "depends_on": 1.0}`` to traverse
+                only causal/dependency edges.
+            max_depth: Maximum BFS depth.
+            min_weight: Prune edges with traversal weight below this.
+            top_k: Return at most this many nodes (sorted by score).
+
+        Returns:
+            Dict with ``entry``, ``visited`` (list of {node_id, depth,
+            score, path}), ``edge_types_used`` (set of relations
+            traversed), and ``stats`` (nodes_visited, edges_traversed,
+            max_depth_reached).
+        """
+        if not self.has_node(entry_id):
+            return {"entry": entry_id, "visited": [], "edge_types_used": set(),
+                    "stats": {"nodes_visited": 0, "edges_traversed": 0,
+                              "max_depth_reached": 0}}
+
+        # Merge default weights with user overrides
+        weights = dict(self.DEFAULT_RELATION_WEIGHTS)
+        if intent_profile:
+            weights.update(intent_profile)
+
+        visited = {}  # node_id → (depth, score, path)
+        visited[entry_id] = (0, 1.0, [entry_id])
+        edge_types_used = set()
+        edges_traversed = 0
+        queue = [(entry_id, 0, 1.0, [entry_id])]
+
+        while queue:
+            current_id, depth, score, path = queue.pop(0)
+            if depth >= max_depth:
+                continue
+
+            # Get outgoing edges
+            rows = self.conn.execute(
+                "SELECT target, relation, weight FROM edges WHERE source=?",
+                (current_id,)
+            ).fetchall()
+
+            for r in rows:
+                relation = r["relation"]
+                target = r["target"]
+                edge_w = weights.get(relation, 0.3)  # unknown relations get low weight
+
+                if edge_w < min_weight:
+                    continue
+
+                edges_traversed += 1
+                edge_types_used.add(relation)
+
+                # Score decays with depth, boosted by edge weight
+                new_score = score * edge_w * 0.85  # depth decay
+                new_path = path + [target]
+
+                if target not in visited or new_score > visited[target][1]:
+                    visited[target] = (depth + 1, new_score, new_path)
+                    queue.append((target, depth + 1, new_score, new_path))
+
+        # Build result sorted by score
+        result_nodes = []
+        for nid, (dep, sc, pth) in visited.items():
+            if nid == entry_id:
+                continue
+            result_nodes.append({
+                "node_id": nid,
+                "depth": dep,
+                "score": round(sc, 4),
+                "path": pth,
+            })
+        result_nodes.sort(key=lambda x: x["score"], reverse=True)
+        result_nodes = result_nodes[:top_k]
+
+        max_depth_reached = max((v[0] for v in visited.values()), default=0)
+
+        return {
+            "entry": entry_id,
+            "visited": result_nodes,
+            "edge_types_used": sorted(edge_types_used),
+            "stats": {
+                "nodes_visited": len(visited),
+                "edges_traversed": edges_traversed,
+                "max_depth_reached": max_depth_reached,
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # Cycle 332: project_graph() — relation-specific subgraph projection
+    # ------------------------------------------------------------------
+
+    def project_graph(self, relation_type: str,
+                      include_metadata: bool = True) -> 'MemoryGraph':
+        """Project graph onto a single relation type, returning a new MemoryGraph.
+
+        Inspired by HAGE (2605.09942): relation-specific views enable
+        multi-perspective retrieval. A temporal query projects to
+        temporal edges; a causal query projects to causal edges.
+
+        Unlike ``subgraph_by_edge_type()`` (which returns a dict), this
+        returns a proper ``MemoryGraph`` instance that supports all
+        graph algorithms (entropy, centrality, classification, etc.).
+
+        The projected graph contains:
+        - All nodes that participate in at least one edge of the given
+          relation type (or all nodes if the relation doesn't exist).
+        - Only edges of the specified relation type.
+
+        Args:
+            relation_type: Edge relation to project onto.
+            include_metadata: If True, copy node data/kind/tags.
+
+        Returns:
+            New MemoryGraph instance with filtered edges.
+        """
+        projected = MemoryGraph()
+
+        # Find all edges of this relation type
+        edge_rows = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges WHERE relation=?",
+            (relation_type,)
+        ).fetchall()
+
+        if not edge_rows:
+            return projected  # empty graph
+
+        # Collect node IDs that participate in these edges
+        node_ids = set()
+        for r in edge_rows:
+            node_ids.add(r["source"])
+            node_ids.add(r["target"])
+
+        # Copy nodes
+        placeholders = ",".join("?" for _ in node_ids)
+        node_rows = self.conn.execute(
+            f"SELECT * FROM nodes WHERE id IN ({placeholders})",
+            list(node_ids)
+        ).fetchall()
+
+        id_map = {}  # original_id → new_id (in case add() generates different IDs)
+        for r in node_rows:
+            data = json.loads(r["data"]) if r["data"] else {}
+            if not include_metadata:
+                data = {}
+            node = projected.add(
+                label=r["label"],
+                kind=r["kind"] if include_metadata else "fact",
+                data=data,
+                category=data.get("category") if include_metadata else None,
+            )
+            id_map[r["id"]] = node.id
+            # Preserve weight
+            if include_metadata and r["weight"] != 1.0:
+                projected.conn.execute(
+                    "UPDATE nodes SET weight=? WHERE id=?",
+                    (r["weight"], node.id)
+                )
+
+        # Copy edges
+        for r in edge_rows:
+            src = id_map.get(r["source"])
+            tgt = id_map.get(r["target"])
+            if src and tgt:
+                projected.link(src, tgt, r["relation"], r["weight"])
+
+        projected.conn.commit()
+        return projected
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
