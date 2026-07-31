@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-4394-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-6272-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -59,6 +59,8 @@
 - **情景模式挖掘** — 从 event/intention 节点发现重复行为模式，建议技能提升 (detect_skill_candidates)
 - **图采样统计** — 多次随机游走聚合分析：覆盖率、重访率、死端率 (walk_statistics)
 - **19 度拓扑指数 + 5 熵指数** — Sombor/Reduced Sombor/Randić/Zagreb M₁/ABC/GA 六族 (Cycles 278-280)，度加权 Shannon 熵分析，覆盖化学图论主流指标
+- **条件遍历与多视角** — HAGE 启发的意图感知遍历 + 关系投影图 + 多维度对比分析 (Cycles 331-333)
+- **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 (Cycles 326-335)
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## Why agent-memory-graph?
@@ -92,13 +94,13 @@ agent-memory-graph 的定位：**beyond recall — agency-grade graph memory —
 | **memorywire** | ✅ 5ops×4types | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **零依赖** | ✅ 仅 Python 标准库 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **LoCoMo Score** | 未测 | 49.0% | N/A | N/A | **92.21%** | 90.2% |
-| **Tests** | **4394** | ~500 | ~300 | ~800 | N/A | N/A |
+| **Tests** | **6272** | ~500 | ~300 | ~800 | N/A | N/A |
 
 ### 独特价值
 
 1. **唯一集成图质量管理系统** — 知识缺口检测 + 冗余检测 + 自动修复 + 统一健康评分。不是「记住更多」，而是「记住对的」
 2. **唯一安全优先设计** — 写入治理 (PASB 防护) + 读取筛选 + 决策链审计。更强 Agent 需要更强记忆治理
-3. **唯一完整检索管线** — BM25 + Vector KNN + PPR + GraphRAG + DRIFT + SimHash 双模 + 意图路由。768+ API 覆盖从关键词到知识图谱问答
+3. **唯一完整检索管线** — BM25 + Vector KNN + PPR + GraphRAG + DRIFT + SimHash 双模 + 意图路由。634+ public API 覆盖从关键词到知识图谱问答
 4. **唯一跨压缩级别** — 情景记忆 (L1) → 技能压缩 (L2) → 治理 (Govern)。Experience Compression Spectrum 全谱覆盖
 5. **零依赖 Python** — 仅用 sqlite3 + json + math。sqlite-vec 可选。可嵌入式部署
 
@@ -2280,7 +2282,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-4034 个测试覆盖所有 API（269 个 cycle，245 天零回滚）。
+6272 个测试覆盖所有 API（335 个 cycle，273 天零回滚）。
 
 ## 设计思路
 
@@ -3407,6 +3409,127 @@ Shannon 熵 of normalized GA edge contributions。p_e = (2√(d_u·d_v)/(d_u+d_v
 | zagreb_m1_entropy | 279 | d_u+d_v | 包含 |
 | abc_entropy | 280 | √((d_u+d_v-2)/(d_u·d_v)) | 过滤 |
 | ga_entropy | 280 | 2√(d_u·d_v)/(d_u+d_v) | 包含 |
+
+---
+
+### 条件遍历 (Cycle 331)
+
+#### `conditioned_traverse(entry_id, intent_profile=None, max_depth=5, min_weight=0.0, top_k=20) -> dict`
+
+HAGE (arXiv:2605.09942) 启发的查询条件 BFS 遍历。不同查询意图应遍历不同边类型：因果查询跟随 `causes` 和 `depends_on` 边，相似性查询跟随 `similar_to` 和 `relates_to` 边。
+
+每种边类型有遍历权重 (0–1)。BFS 每一步修剪权重低于 `min_weight` 的边。累积节点分数随深度衰减并乘以边遍历权重，因此通过高权重边到达的节点排名更高。
+
+```python
+result = mg.conditioned_traverse("node:rust", intent_profile={"causes": 1.0, "depends_on": 1.0})
+# {'entry': 'node:rust', 'visited': [{node_id, depth, score, path}, ...],
+#  'edge_types_used': ['causes', 'depends_on'],
+#  'stats': {'nodes_visited': 12, 'edges_traversed': 18, 'max_depth_reached': 3}}
+```
+
+---
+
+### 关系投影图 (Cycle 332)
+
+#### `project_graph(relation_type, include_metadata=True) -> MemoryGraph`
+
+将图投影到单一关系类型，返回新的 MemoryGraph 实例。与 `subgraph_by_edge_type()`（返回 dict）不同，此方法返回完整的 `MemoryGraph`，支持所有图算法（熵、中心性、分类等）。
+
+```python
+causal_graph = mg.project_graph("causes")
+print(causal_graph.stats())  # 仅包含 causes 边的子图统计
+print(causal_graph.graph_density())  # 因果子图的密度
+```
+
+---
+
+### 多视角分析 (Cycle 333)
+
+#### `multi_perspective_analysis(node_id=None, max_depth=3) -> dict`
+
+HAGE 启发的多关系维度对比分析。对图中每种关系类型独立分析，返回比较报告。
+
+每种关系类型计算：节点数、边数、密度、平均度。若提供 `node_id`，则从该节点出发按该关系为主导意图运行 `conditioned_traverse`。
+
+```python
+analysis = mg.multi_perspective_analysis(node_id="concept:ai")
+# {'perspectives': {'causes': {...}, 'similar_to': {...}, 'related_to': {...}},
+#  'relation_ranking': ['related_to', 'causes', 'similar_to'],
+#  'dominant_relation': 'related_to',
+#  'cross_perspective_nodes': [{node_id, perspectives, perspective_count}, ...]}
+```
+
+---
+
+### 分类基准评估 (Cycle 334)
+
+#### `classification_benchmark(*, topologies=None, sizes=None, num_references_per_category=2, num_queries=1, methods=None, include_quarantined=False) -> dict`
+
+标准化分类基准评估套件。生成 6 种规范图拓扑（star/path/cycle/complete/bipartite/tree）作为参考图和查询图，运行所有可用分类方法，报告每种方法的 accuracy/precision/recall/F1。
+
+6 种拓扑使用 `_bench_build_topology()` 静态方法构建：
+
+| 拓扑 | 结构 | 特征 |
+|------|------|------|
+| `star` | 中心 + 辐射 | 单 hub, 高度集中 |
+| `path` | 线性链 | 低密度, 长距离 |
+| `cycle` | 环形 | 均匀度, 无叶子 |
+| `complete` | 全连接 | 最大密度 |
+| `bipartite` | 二部图 | 跨集合连接 |
+| `tree` | 层次树 | 分支结构 |
+
+```python
+bench = mg.classification_benchmark(topologies=['star', 'path', 'cycle'],
+                                    sizes=[8, 12], num_references_per_category=3)
+# {'results': {'graph_classification': {'accuracy': 0.78, 'precision': 0.80, ...},
+#              'spectral_classification': {'accuracy': 0.89, ...}, ...},
+#  'best_method_per_topology': {'star': 'spectral', 'path': 'graph', ...},
+#  'confusion_matrix': {...},
+#  'overall_best_method': 'bayesian_classification'}
+```
+
+---
+
+### 最大置信度元分类 (Cycle 335)
+
+#### `max_confidence_classification(references, *, degree_index="sombor", include_quarantined=False, confidence_metric="margin", min_methods=2) -> dict`
+
+元分类器：从所有分类方法中选择对当前查询**置信度最高**的方法的结果。
+
+与 `classification_compare()`（多数投票）不同，此元分类器信任对自己的判断最有信心的方法。不同的查询/参考组合适合不同的模态——星型图可能最容易通过度熵分类，而环型图更容易通过谱分析分类。
+
+**执行 5 种基础方法：**
+
+1. `graph_classification` — 度熵距离
+2. `spectral_classification` — 谱发散
+3. `hybrid_classification` — 固定权重集成
+4. `rrf_classification` — Reciprocal Rank Fusion
+5. `bayesian_classification` — 自适应权重集成
+
+**三种置信度度量：**
+
+| 度量 | 公式 | 特点 |
+|------|------|------|
+| `margin` | `2nd_best − best` | 绝对差距，跨方法稳健 |
+| `confidence` | `(2nd-best − best)/best` | 相对比率，best≈0 时可为 inf |
+| `z_score` | `(best − mean_others)/std_others` | 标准差倍数，天然跨方法归一化 |
+
+```python
+result = mg.max_confidence_classification(references, confidence_metric="z_score")
+# {'best_match': 2, 'best_score': 0.034,
+#  'winning_method': 'spectral_classification',
+#  'winning_confidence': -1.82,
+#  'confidence_metric': 'z_score',
+#  'per_method': {'spectral_classification': {...}, 'graph_classification': {...}, ...},
+#  'agreement': 0.6,  # 3/5 methods agree
+#  'margin_of_victory': 0.45,
+#  'recommendation': 'spectral_classification has highest z_score...'}
+```
+
+**何时用 `max_confidence_classification` vs `classification_compare`？**
+
+- `classification_compare`：方法趋于一致时（高信号场景），想要**共识**
+- `max_confidence_classification`：方法分歧时（低信号场景），想要**确信** — 某一方法可能捕获了其他方法遗漏的结构特征
 
 ---
 

@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~18,000 | ⭐ 知识图谱记忆引擎：460+ API，覆盖图算法、信息论、图分类、时序演化、向量检索 |
+| [agent-memory-graph](agent-memory-graph/) | ~38,800 | ⭐ 知识图谱记忆引擎：634+ API，覆盖图算法、信息论、图分类、时序演化、向量检索 |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 18,000+ 行的完整图记忆引擎，包含 460+ 公开 API 和 2,130+ 测试用例。
+该项目已从 300 行的教学示例演化为 38,800+ 行的完整图记忆引擎，包含 634+ 公开 API 和 6,272+ 测试用例。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -56,13 +56,14 @@
 | **工作流/模式** | 14 | `add_workflow`, `retrieve_workflows`, `workflow_success_patterns` |
 | **时序/版本** | 31 | `evolve`, `temporal_snapshot`, `query_as_of`, `temporal_diff`, `supersede` |
 | **嵌入/向量** | 19 | `add_embedding`, `search_similar`, `train_kge`, `kge_score` |
-| **图分类** | 6 | `rrf_classification`, `bayesian_classification`, `knn_classification`, `classification_compare` |
+| **图分类** | 9 | `rrf_classification`, `bayesian_classification`, `knn_classification`, `classification_compare`, `max_confidence_classification` |
 | **诊断** | 3 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` |
+| **条件遍历** | 3 | `conditioned_traverse`, `project_graph`, `multi_perspective_analysis` |
 | **序列化** | 24 | `export_json`, `to_markdown`, `serialize_dot`, `serialize_graphml` |
 
-### 📐 信息论进化史（Cycles 306–316 + 326–330）
+### 📐 信息论进化史（Cycles 306–316 + 326–335）
 
-最新里程碑：用信息论工具量化图结构，从单一指标到完整分类体系。
+最新里程碑：用信息论工具量化图结构，从单一指标到完整分类体系，再到元分类器。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -70,6 +71,7 @@
 | 谱分析 | 310–314 | `spectral_entropy_contribution`, `ego_entropy_profile`, `entropy_fingerprint` | VNE per-node + ego-local + 指纹 |
 | 拓扑分类 | 315–316 | `graph_type_indicator`, `node_entropy_importance` | 7种拓扑 + 统一重要性排名 |
 | 图分类 | 326–330 | `rrf_classification`, `bayesian_classification`, `knn_classification` | 多模态参考图匹配 |
+| 元分类与基准 | 331–335 | `conditioned_traverse`, `multi_perspective_analysis`, `classification_benchmark`, `max_confidence_classification` | 条件遍历 + 基准评估 + 最大置信度元分类器 |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---
