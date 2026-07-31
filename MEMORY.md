@@ -22,7 +22,7 @@ Autoresearch 方法论实践 — amg **连续272天零回滚率** 🏆。Entropy
 ### 项目测试总量 (07-31 快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
-| agent-memory-graph | **6102** | 905+ | 八十合一: entropy framework (30+ APIs incl. 9-API classification suite: graph + spectral + hybrid + rrf + bayesian + compare + knn + weighted_average + rejection) + spectral + inter-graph trilogy + contribution + stability + spectral_divergence + scan + fingerprint + three_layer_router_cascade + adaptive forgetting suite (6 APIs) + EntityResolver (8 APIs) + entropy-weighted retrieval + entropy-guided routing + MCP Day 1-5 |
+| agent-memory-graph | **6161** | 908+ | 八十合一: entropy framework (30+ APIs incl. 9-API classification suite: graph + spectral + hybrid + rrf + bayesian + compare + knn + weighted_average + rejection) + spectral + inter-graph trilogy + contribution + stability + spectral_divergence + scan + fingerprint + three_layer_router_cascade + adaptive forgetting suite (6 APIs) + EntityResolver (8 APIs) + entropy-weighted retrieval + entropy-guided routing + MCP Day 1-5 + **conditioned_traverse + project_graph + multi_perspective_analysis** (Research #040) |
 | structured-output-toolkit | **561** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
 | agent-task-cli | **1354** | 217 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F217** (mdelete/union/drainChannel) |
 | **四项目总计** | **10915** | — | — |
@@ -40,7 +40,9 @@ Autoresearch 方法论实践 — amg **连续272天零回滚率** 🏆。Entropy
 - **07-14 cycles 239-242**: immutable_store + compact_node + serialize + RelationIntegrityChecker. Context Engineering Layer 3/4 ✅. +145 tests
 - **07-14 Research #008**: Memory Security — ShadowMerge 93.8% ASR, amg positioning 
 
-### 07-31 开发 (amg c329-330, classification suite COMPLETE)
+### 07-31 开发 (amg c329-333, classification suite COMPLETE + Research #040 APIs)
+- **Cycle 333: multi_perspective_analysis()** — Per-relation metrics (node/edge count, density, avg_degree) + cross-perspective node identification. HAGE-inspired multi-perspective analytical instrument. +17 tests, 6144→6161. **273rd day**. fe7808f.
+- **Cycles 331-332: conditioned_traverse() + project_graph()** — HAGE-inspired Research #040. conditioned_traverse: query-conditioned BFS with per-relation traversal weights + score decay. project_graph: relation-specific subgraph projection returning MemoryGraph instance. +42 tests, 6102→6144. **273rd day**. ccf0927.
 - **Cycle 330: weighted_average_classification()** — Explicit user-controlled weights over all 3 modalities (degree + spectral + fingerprint). Two normalisation modes (minmax, softmax). Weight renormalisation for partial failures. Research #038 strategy 3/4. +52 tests, 6050→6102. **272nd day**. 0fd28d5.
 - **Cycle 329: knn_classification()** — k-nearest reference graph classification with distance-weighted voting. Label pooling. Inverse-distance weighting. Tie detection. Works with all 5 base methods. Research #038 strategy 4/4. +56 tests, 5994→6050. **272nd day**. 3625811.
 - **Research #038 FULLY IMPLEMENTED**: All 4 ensemble strategies complete: RRF (c326, parameter-free rank fusion) + Bayesian (c327, adaptive confidence-weighted) + Weighted Average (c330, explicit user weights) + k-NN (c329, distance-weighted voting). Plus classification_compare (c328, multi-method consensus report). **9 classification APIs total**.
