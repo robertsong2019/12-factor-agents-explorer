@@ -37959,6 +37959,116 @@ class MemoryGraph:
         projected.conn.commit()
         return projected
 
+    # ------------------------------------------------------------------
+    # Cycle 333: multi_perspective_analysis() — comparative relation views
+    # ------------------------------------------------------------------
+
+    def multi_perspective_analysis(self, node_id: str = None,
+                                    max_depth: int = 3) -> dict:
+        """Multi-perspective graph analysis via per-relation projections.
+
+        Inspired by HAGE (2605.09942): different edge types reveal different
+        structural dimensions. This API analyzes each relation type
+        independently and returns a comparative report.
+
+        For each relation type found in the graph:
+        - Computes node_count, edge_count, density, avg_degree.
+        - If ``node_id`` is provided, runs ``conditioned_traverse`` from
+          that node using the relation as the dominant intent.
+
+        Args:
+            node_id: Optional focal node for per-relation traversal scores.
+            max_depth: Traversal depth per perspective.
+
+        Returns:
+            Dict with ``perspectives``, ``relation_ranking``,
+            ``dominant_relation``, and ``cross_perspective_nodes``.
+        """
+        rel_rows = self.conn.execute(
+            "SELECT DISTINCT relation FROM edges"
+        ).fetchall()
+        relations = [r["relation"] for r in rel_rows]
+
+        if not relations:
+            return {
+                "perspectives": {},
+                "relation_ranking": [],
+                "dominant_relation": None,
+                "cross_perspective_nodes": [],
+                "total_relations": 0,
+            }
+
+        perspectives = {}
+        node_in_views = {}  # original node_id → set of relations
+
+        for rel in relations:
+            # Count edges of this relation
+            edge_count = self.conn.execute(
+                "SELECT COUNT(*) as c FROM edges WHERE relation=?",
+                (rel,)
+            ).fetchone()["c"]
+
+            # Find nodes participating in this relation
+            node_rows = self.conn.execute(
+                "SELECT DISTINCT source AS id FROM edges WHERE relation=? "
+                "UNION SELECT DISTINCT target FROM edges WHERE relation=?",
+                (rel, rel)
+            ).fetchall()
+            node_ids = {r["id"] for r in node_rows}
+            n_nodes = len(node_ids)
+            density = (2 * edge_count / (n_nodes * (n_nodes - 1))) if n_nodes > 1 else 0.0
+            avg_degree = (2 * edge_count / n_nodes) if n_nodes > 0 else 0.0
+
+            view = {
+                "relation": rel,
+                "node_count": n_nodes,
+                "edge_count": edge_count,
+                "density": round(density, 4),
+                "avg_degree": round(avg_degree, 2),
+            }
+
+            for nid in node_ids:
+                if nid not in node_in_views:
+                    node_in_views[nid] = set()
+                node_in_views[nid].add(rel)
+
+            if node_id and node_id in node_ids:
+                trav = self.conditioned_traverse(
+                    node_id,
+                    intent_profile={rel: 1.0},
+                    max_depth=max_depth,
+                    min_weight=0.5,
+                    top_k=10,
+                )
+                view["traversal"] = {
+                    "reachable": trav["stats"]["nodes_visited"],
+                    "max_depth_reached": trav["stats"]["max_depth_reached"],
+                    "top_nodes": [
+                        {"id": v["node_id"], "score": v["score"]}
+                        for v in trav["visited"][:5]
+                    ],
+                }
+
+            perspectives[rel] = view
+
+        ranking = sorted(relations, key=lambda r: perspectives[r]["edge_count"], reverse=True)
+
+        cross_nodes = [
+            {"node_id": nid, "perspectives": sorted(rels),
+             "perspective_count": len(rels)}
+            for nid, rels in node_in_views.items()
+            if len(rels) > 1
+        ]
+        cross_nodes.sort(key=lambda x: x["perspective_count"], reverse=True)
+
+        return {
+            "perspectives": perspectives,
+            "relation_ranking": ranking,
+            "dominant_relation": ranking[0] if ranking else None,
+            "cross_perspective_nodes": cross_nodes[:20],
+            "total_relations": len(relations),
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
