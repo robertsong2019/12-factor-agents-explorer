@@ -10571,6 +10571,348 @@ export function analyzeCyclomaticComplexity(files = []) {
   };
 }
 
+/**
+ * F81: Cognitive complexity analysis.
+ *
+ * Unlike cyclomatic complexity (F77) which counts decision paths,
+ * cognitive complexity measures how hard code is to *understand*.
+ *
+ * Rules (based on SonarQube's cognitive complexity specification):
+ *
+ * B1. Nesting increments complexity:
+ *   - if/else if/else, switch, for, while, do, catch, ternary, &&, ||, ??
+ *   - Each gets +1 for the structure, +1 per nesting level
+ *
+ * B2. No increment for linear code:
+ *   - A long sequence of simple statements adds 0
+ *
+ * B3. Break/continue to label adds +1 (mental bookkeeping)
+ *
+ * B4. Recursion adds +1 per call
+ *
+ * B5. case labels in switch add +1 each
+ *
+ * Grade thresholds: A ≤5 avg, B ≤10, C ≤15, D ≤20, E ≤30, F >30
+ */
+export function analyzeCognitiveComplexity(files = []) {
+  const jsExt = /\.(js|mjs|cjs|ts|tsx|jsx)$/;
+  const issues = [];
+  let totalFunctions = 0;
+  let totalCognitive = 0;
+  const allScores = [];
+
+  for (const file of files) {
+    if (!file.path || !file.content) continue;
+    if (!jsExt.test(file.path)) continue;
+    if (/\.test\.|\.spec\./.test(file.path)) continue;
+
+    const funcs = findFunctionBoundaries(file.content);
+
+    for (const func of funcs) {
+      const score = computeCognitiveComplexity(func.body, func.name);
+      totalFunctions++;
+      totalCognitive += score;
+      allScores.push(score);
+
+      if (score >= 10) {
+        issues.push({
+          function: func.name,
+          file: file.path,
+          line: func.line,
+          complexity: score,
+          severity: score >= 20 ? 'high' : 'medium',
+        });
+      }
+    }
+  }
+
+  const avg = totalFunctions > 0
+    ? Math.round((totalCognitive / totalFunctions) * 10) / 10
+    : 0;
+  const max = allScores.length > 0 ? Math.max(...allScores) : 0;
+  const complexFunctions = allScores.filter(s => s >= 10).length;
+  const veryComplexFunctions = allScores.filter(s => s >= 20).length;
+
+  let score, grade;
+  if (totalFunctions === 0) { score = 100; grade = 'A'; }
+  else if (avg <= 5) { score = 100; grade = 'A'; }
+  else if (avg <= 10) { score = 80; grade = 'B'; }
+  else if (avg <= 15) { score = 60; grade = 'C'; }
+  else if (avg <= 20) { score = 40; grade = 'D'; }
+  else if (avg <= 30) { score = 20; grade = 'E'; }
+  else { score = 0; grade = 'F'; }
+
+  return {
+    stats: {
+      totalFunctions,
+      complexFunctions,
+      veryComplexFunctions,
+      avgCognitiveComplexity: avg,
+      maxCognitiveComplexity: max,
+    },
+    issues: issues.sort((a, b) => b.complexity - a.complexity),
+    score,
+    grade,
+  };
+}
+
+/**
+ * Compute cognitive complexity for a function body.
+ *
+ * Regex-based scanner that tracks nesting depth via brace counting.
+ * Only braces after control-flow constructs increase nesting.
+ */
+function computeCognitiveComplexity(body, funcName) {
+  // Strip strings, template literals, and comments
+  const code = stripStringsAndComments(body);
+
+  let score = 0;
+  let nesting = 0;          // current nesting level
+  let controlDepth = 0;     // nesting from control structures only
+  let braceStack = [];      // track which braces are control-flow vs other
+
+  // Scan character by character, but use regex to match keywords
+  const tokens = code.match(/&&|\|\||\?\?|\b\w+\b|[{}()?;:]/g) || [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+
+    // Control-flow keywords
+    if (t === 'if' || t === 'for' || t === 'while' || t === 'switch' ||
+        t === 'catch' || t === 'case') {
+      score += 1 + controlDepth;
+      continue;
+    }
+
+    // 'else' / 'else if' — just +1, no nesting bonus
+    if (t === 'else') {
+      score += 1;
+      continue;
+    }
+
+    if (t === 'do' || t === 'try' || t === 'finally') {
+      score += 1 + controlDepth;
+      continue;
+    }
+
+    // Logical operators in conditions
+    if (t === '&&' || t === '||' || t === '??') {
+      score += 1;
+      continue;
+    }
+
+    // Ternary (but not ?? which is two ? tokens)
+    if (t === '?') {
+      // Skip if this is the second ? of ??
+      if (i > 0 && tokens[i - 1] === '?') continue;
+      // Skip if next token is ? (first ? of ??)
+      if (i + 1 < tokens.length && tokens[i + 1] === '?') continue;
+      score += 1 + controlDepth;
+      continue;
+    }
+
+    // Opening brace after control-flow = nesting increases
+    if (t === '{') {
+      // Check if previous meaningful token indicates control-flow
+      const prev = lastNonWhitespace(tokens, i);
+      if (isControlEnd(tokens, i)) {
+        controlDepth++;
+        braceStack.push('control');
+      } else {
+        braceStack.push('other');
+      }
+      nesting++;
+      continue;
+    }
+
+    if (t === '}') {
+      if (nesting > 0) nesting--;
+      const marker = braceStack.pop();
+      if (marker === 'control' && controlDepth > 0) controlDepth--;
+      continue;
+    }
+
+    // Labeled break/continue
+    if (t === 'break' || t === 'continue') {
+      // Check if next token is a label (identifier, not a keyword)
+      const next = i + 1 < tokens.length ? tokens[i + 1] : '';
+      if (/^[a-zA-Z_]/.test(next) &&
+          !['case', 'default', 'if', 'for', 'while', 'switch',
+             'return', 'throw', 'new', 'typeof', 'void', 'in',
+             'of', 'instanceof'].includes(next)) {
+        score += 1;
+      }
+      continue;
+    }
+
+    // Recursion detection (skip function declarations)
+    if (funcName && t === funcName) {
+      const next = i + 1 < tokens.length ? tokens[i + 1] : '';
+      const prevToken = lastNonWhitespace(tokens, i);
+      if (next === '(' && !['function', 'const', 'let', 'var'].includes(prevToken)) {
+        score += 1;
+      }
+    }
+  }
+
+  return score;
+}
+
+function lastNonWhitespace(tokens, idx) {
+  for (let j = idx - 1; j >= 0; j--) {
+    if (tokens[j].trim()) return tokens[j];
+  }
+  return '';
+}
+
+/**
+ * Determine if a '{' at position braceIdx follows a control-flow construct.
+ * Checks backwards for ')' (end of if/for/while/switch/catch condition)
+ * or keywords like else/do/try/finally.
+ */
+function isControlEnd(tokens, braceIdx) {
+  const prev = lastNonWhitespace(tokens, braceIdx);
+  if (prev === ')') {
+    // Walk back past the parenthesized group to find the keyword before '('
+    // Start from braceIdx-2 since tokens[braceIdx-1] IS the ')' we already matched
+    let depth = 0;
+    for (let k = braceIdx - 2; k >= 0; k--) {
+      const tk = tokens[k];
+      if (tk === ')') depth++;
+      else if (tk === '(') {
+        if (depth === 0) {
+          // Found the matching '('. Check what's before it.
+          const beforeParen = lastNonWhitespace(tokens, k);
+          return ['if', 'for', 'while', 'switch', 'catch'].includes(beforeParen);
+        }
+        depth--;
+      }
+    }
+    return false;
+  }
+  return ['else', 'do', 'try', 'finally'].includes(prev);
+}
+
+function stripStringsAndComments(code) {
+  let result = '';
+  let i = 0;
+  while (i < code.length) {
+    // Line comment
+    if (code[i] === '/' && code[i + 1] === '/') {
+      while (i < code.length && code[i] !== '\n') i++;
+      continue;
+    }
+    // Block comment
+    if (code[i] === '/' && code[i + 1] === '*') {
+      i += 2;
+      while (i < code.length - 1 && !(code[i] === '*' && code[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+    // String literals (including template literals)
+    if (code[i] === '"' || code[i] === "'" || code[i] === '`') {
+      const quote = code[i];
+      i++;
+      while (i < code.length && code[i] !== quote) {
+        if (code[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      result += ' ';
+      continue;
+    }
+    result += code[i];
+    i++;
+  }
+  return result;
+}
+
+/**
+ * Find function boundaries in source code.
+ * Returns [{ name, body, line }]
+ */
+function findFunctionBoundaries(source) {
+  const funcs = [];
+  const lines = source.split('\n');
+
+  // Regex patterns for function declarations
+  const funcPatterns = [
+    { regex: /(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\([^)]*\)\s*\{/, nameGroup: 1 },
+    { regex: /(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?function\s*\([^)]*\)\s*\{/, nameGroup: 1 },
+    { regex: /(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>\s*\{/, nameGroup: 1 },
+  ];
+
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const line = lines[lineIdx];
+    for (const { regex, nameGroup } of funcPatterns) {
+      const match = line.match(regex);
+      if (!match) continue;
+
+      const name = match[nameGroup];
+
+      // Find the opening brace and match to closing
+      // Collect the full function body starting from this line
+      let depth = 0;
+      let started = false;
+      const bodyLines = [];
+
+      for (let j = lineIdx; j < lines.length; j++) {
+        const l = lines[j];
+        // Strip strings from the line for accurate brace counting
+        const stripped = stripStringsAndComments(l);
+        bodyLines.push(l);
+
+        for (const ch of stripped) {
+          if (ch === '{') { depth++; started = true; }
+          if (ch === '}') { depth--; }
+        }
+
+        if (started && depth === 0) {
+          break;
+        }
+      }
+
+      const body = bodyLines.join('\n');
+      funcs.push({ name, body, line: lineIdx + 1 });
+      break; // Don't match same line with multiple patterns
+    }
+  }
+  return funcs;
+}
+
+export function formatCognitiveComplexityReport(result) {
+  let report = '## 🧠 Cognitive Complexity Analysis\n\n';
+  report += `**Health Score: ${result.score}/100 (${result.grade})**\n\n`;
+  report += '### Summary\n\n';
+  report += `- Total functions: ${result.stats.totalFunctions}\n`;
+  report += `- Complex functions (≥10): ${result.stats.complexFunctions}\n`;
+  report += `- Very complex (≥20): ${result.stats.veryComplexFunctions}\n`;
+  report += `- Average cognitive complexity: ${result.stats.avgCognitiveComplexity}\n`;
+  report += `- Max cognitive complexity: ${result.stats.maxCognitiveComplexity}\n\n`;
+
+  if (result.issues.length > 0) {
+    report += '### Complex Functions\n\n';
+    report += '| Function | File:Line | Cognitive | Severity |\n';
+    report += '|----------|-----------|-----------|----------|\n';
+    for (const con of result.issues.slice(0, 20)) {
+      const fileName = con.file.split('/').pop();
+      report += `| \`${con.function}\` | ${fileName}:${con.line} | ${con.complexity} | ${con.severity} |\n`;
+    }
+    if (result.issues.length > 20) {
+      report += `\n_...and ${result.issues.length - 20} more_\n`;
+    }
+    report += '\n';
+    report += '### How Cognitive Complexity Differs from Cyclomatic\n\n';
+    report += '- **Cyclomatic** counts decision paths (branch coverage)\n';
+    report += '- **Cognitive** penalizes nesting depth and mental bookkeeping\n';
+    report += '- A flat chain of 10 if-statements: cyclomatic=11, cognitive=10\n';
+    report += '- A 3-level nested if: cyclomatic=4, cognitive=6 (1+2+3)\n';
+  } else {
+    report += '### ✅ No overly complex functions detected.\n';
+  }
+  return report;
+}
+
 function countDecisionPoints(code) {
   let count = 0;
   // if/else if/else
