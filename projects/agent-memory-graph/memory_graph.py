@@ -38069,6 +38069,255 @@ class MemoryGraph:
             "total_relations": len(relations),
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 334: classification_benchmark() — standardized evaluation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _bench_build_topology(topology: str, n: int, label: str = "") -> "MemoryGraph":
+        """Build a canonical graph of the given topology type."""
+        mg = MemoryGraph()
+        nodes = [mg.add(f"{topology}_{label}_{i}", "bench", {"topology": topology}) for i in range(n)]
+        if topology == "star":
+            for i in range(1, n):
+                mg.link(nodes[0].id, nodes[i].id, "rel", 1.0)
+        elif topology == "path":
+            for i in range(n - 1):
+                mg.link(nodes[i].id, nodes[i + 1].id, "rel", 1.0)
+        elif topology == "cycle":
+            for i in range(n):
+                mg.link(nodes[i].id, nodes[(i + 1) % n].id, "rel", 1.0)
+        elif topology == "complete":
+            for i in range(n):
+                for j in range(i + 1, n):
+                    mg.link(nodes[i].id, nodes[j].id, "rel", 1.0)
+        elif topology == "bipartite":
+            half = n // 2
+            left, right = nodes[:half], nodes[half:]
+            for a in left:
+                for b in right:
+                    mg.link(a.id, b.id, "rel", 1.0)
+        elif topology == "tree":
+            for i in range(1, n):
+                parent = (i - 1) // 2
+                mg.link(nodes[parent].id, nodes[i].id, "rel", 1.0)
+        else:
+            raise ValueError(f"Unknown topology: {topology}")
+        mg.graph_meta = {"topology": topology, "label": label or topology, "n": n}
+        return mg
+
+    def classification_benchmark(
+        self,
+        *,
+        topologies: list[str] = None,
+        sizes: list[int] = None,
+        num_references_per_category: int = 2,
+        num_queries: int = 1,
+        methods: list[str] = None,
+        include_quarantined: bool = False,
+    ) -> dict:
+        """Standardized classification benchmark suite.
+
+        Generates canonical graph topologies (star, path, cycle,
+        complete, bipartite, tree) as reference and query graphs, then
+        runs all available classification methods and reports
+        per-method accuracy, precision, recall, and F1.
+
+        This is the capstone evaluation tool for the classification
+        suite — it answers "which method works best for which topology?"
+
+        Args:
+            topologies: Graph types to test. Default: all 6.
+            sizes: Node counts to generate. Default: [8, 12].
+            num_references_per_category: Reference graphs per topology
+                type. More = harder classification.
+            num_queries: Query graphs per topology type.
+            methods: Classification methods to evaluate. Default: all 9.
+            include_quarantined: Whether to include quarantined refs.
+
+        Returns:
+            Dict with per-method results, confusion data, best method
+            per topology, and overall rankings.
+        """
+        if topologies is None:
+            topologies = ["star", "path", "cycle", "complete", "bipartite", "tree"]
+        if sizes is None:
+            sizes = [8, 12]
+        if methods is None:
+            methods = [
+                "graph", "spectral", "hybrid", "rrf", "bayesian",
+                "knn", "weighted_average", "compare",
+            ]
+
+        # --- Build reference set ---
+        references = []
+        category_labels = []  # parallel list: expected topology per ref
+        for topo in topologies:
+            for sz in sizes:
+                for r in range(num_references_per_category):
+                    ref = self._bench_build_topology(topo, sz, label=f"r{r}")
+                    ref.graph_meta = {"topology": topo, "label": topo, "n": sz}
+                    references.append(ref)
+                    category_labels.append(topo)
+
+        # --- Build queries ---
+        queries = []
+        expected = []
+        for topo in topologies:
+            for sz in sizes:
+                for q in range(num_queries):
+                    qi = self._bench_build_topology(topo, sz, label=f"q{q}")
+                    queries.append(qi)
+                    expected.append(topo)
+
+        if not queries or not references:
+            return {
+                "methods_evaluated": methods or [],
+                "topologies_tested": topologies,
+                "sizes": sizes,
+                "num_references": len(references),
+                "num_queries": len(queries),
+                "method_results": {},
+                "overall_best": None,
+                "overall_best_accuracy": 0.0,
+                "best_per_topology": {},
+                "confusion": {},
+            }
+
+        # --- Dispatch classification ---
+        method_results = {}
+
+        for method in methods:
+            predictions = []
+            confidences = []
+            for query in queries:
+                try:
+                    if method == "graph":
+                        r = query.graph_classification(references, include_quarantined=include_quarantined)
+                    elif method == "spectral":
+                        r = query.spectral_classification(references, include_quarantined=include_quarantined)
+                    elif method == "hybrid":
+                        r = query.hybrid_classification(references, include_quarantined=include_quarantined)
+                    elif method == "rrf":
+                        r = query.rrf_classification(references, include_quarantined=include_quarantined)
+                    elif method == "bayesian":
+                        r = query.bayesian_classification(references, include_quarantined=include_quarantined)
+                    elif method == "knn":
+                        r = query.knn_classification(references, include_quarantined=include_quarantined)
+                    elif method == "weighted_average":
+                        r = query.weighted_average_classification(references, include_quarantined=include_quarantined)
+                    elif method == "compare":
+                        r = query.classification_compare(references, include_quarantined=include_quarantined)
+                    else:
+                        predictions.append(None)
+                        confidences.append(0.0)
+                        continue
+
+                    if r is None:
+                        predictions.append(None)
+                        confidences.append(0.0)
+                    else:
+                        idx = r.get("best_ref_index", r.get("consensus_best", {}).get("index", 0))
+                        if isinstance(idx, dict):
+                            idx = idx.get("index", 0)
+                        if isinstance(idx, str):
+                            # Try to extract numeric index
+                            try:
+                                idx = int(idx)
+                            except (ValueError, TypeError):
+                                idx = 0
+                        idx = min(idx, len(category_labels) - 1)
+                        predictions.append(category_labels[idx])
+                        confidences.append(r.get("confidence", r.get("agreement_score", 0.0)))
+                except Exception:
+                    predictions.append(None)
+                    confidences.append(0.0)
+
+            # --- Score ---
+            correct = sum(1 for pred, exp in zip(predictions, expected) if pred == exp)
+            total = len(expected)
+            accuracy = correct / total if total > 0 else 0.0
+
+            # Per-topology accuracy
+            per_topo = {}
+            for topo in topologies:
+                topo_mask = [e == topo for e in expected]
+                topo_correct = sum(1 for p, e, m in zip(predictions, expected, topo_mask) if m and p == e)
+                topo_total = sum(topo_mask)
+                per_topo[topo] = {
+                    "correct": topo_correct,
+                    "total": topo_total,
+                    "accuracy": round(topo_correct / topo_total, 4) if topo_total > 0 else 0.0,
+                }
+
+            # Precision / Recall / F1 (macro-averaged)
+            tp = fp = fn = 0
+            for topo in topologies:
+                for pred, exp in zip(predictions, expected):
+                    if pred == topo and exp == topo:
+                        tp += 1
+                    elif pred == topo and exp != topo:
+                        fp += 1
+                    elif pred != topo and exp == topo:
+                        fn += 1
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+            avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+
+            method_results[method] = {
+                "accuracy": round(accuracy, 4),
+                "correct": correct,
+                "total": total,
+                "precision": round(precision, 4),
+                "recall": round(recall, 4),
+                "f1": round(f1, 4),
+                "avg_confidence": round(avg_conf, 4),
+                "per_topology": per_topo,
+                "predictions": predictions,
+            }
+
+        # --- Rank methods ---
+        ranked = sorted(method_results.items(), key=lambda x: x[1]["accuracy"], reverse=True)
+
+        # --- Best method per topology ---
+        best_per_topo = {}
+        for topo in topologies:
+            scored = [(m, method_results[m]["per_topology"][topo]["accuracy"]) for m in methods]
+            best_method, best_acc = max(scored, key=lambda x: x[1]) if scored else (None, 0.0)
+            best_per_topo[topo] = {
+                "best_method": best_method,
+                "accuracy": best_acc,
+            }
+
+        # --- Confusion summary (which topologies get confused) ---
+        confusion = {}
+        best_method = ranked[0][0] if ranked else None
+        if best_method:
+            preds = method_results[best_method]["predictions"]
+            for exp_topo in topologies:
+                for pred_topo in topologies:
+                    if exp_topo == pred_topo:
+                        continue
+                    count = sum(1 for p, e in zip(preds, expected) if e == exp_topo and p == pred_topo)
+                    if count > 0:
+                        key = f"{exp_topo}→{pred_topo}"
+                        confusion[key] = count
+
+        return {
+            "methods_evaluated": methods,
+            "topologies_tested": topologies,
+            "sizes": sizes,
+            "num_references": len(references),
+            "num_queries": len(queries),
+            "method_results": dict(ranked),
+            "overall_best": ranked[0][0] if ranked else None,
+            "overall_best_accuracy": ranked[0][1]["accuracy"] if ranked else 0.0,
+            "best_per_topology": best_per_topo,
+            "confusion": dict(sorted(confusion.items(), key=lambda x: x[1], reverse=True)),
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
