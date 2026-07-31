@@ -11686,6 +11686,250 @@ export function formatResourceLeaksReport(result) {
   return report;
 }
 
+/**
+ * F82: analyzeSecurityAntiPatterns() — scan for common security anti-patterns.
+ *
+ * Detects 8 categories of security issues in source code:
+ * 1. eval() / Function() constructor — code injection vectors
+ * 2. innerHTML / dangerouslySetInnerHTML / document.write — XSS vectors
+ * 3. SQL string concatenation — SQL injection risk
+ * 4. Prototype pollution — __proto__, constructor.prototype manipulation
+ * 5. Insecure randomness — Math.random() used in security contexts
+ * 6. Command injection — exec/spawn with string concatenation
+ * 7. ReDoS — catastrophic backtracking regex patterns (a+)+, (a*)*
+ * 8. Hardcoded credentials — password/token/secret/apikey literals
+ *
+ * Each issue has severity: critical / high / medium / low.
+ * Returns A-F grade based on weighted scoring.
+ */
+export function analyzeSecurityAntiPatterns(files = []) {
+  const issues = [];
+  let totalScanned = 0;
+
+  for (const filePath of files) {
+    let content;
+    try {
+      content = readFileSync(filePath, 'utf-8');
+    } catch {
+      continue;
+    }
+    totalScanned++;
+    const lines = content.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineNum = i + 1;
+
+      // 1. eval() / Function() constructor
+      if (/\beval\s*\(/.test(line) && !line.trim().startsWith('//') && !line.trim().startsWith('*')) {
+        issues.push({
+          file: filePath, line: lineNum, category: 'code-injection',
+          severity: 'critical',
+          message: 'eval() usage — code injection risk'
+        });
+      }
+      if (/new\s+Function\s*\(/.test(line) && !line.trim().startsWith('//')) {
+        issues.push({
+          file: filePath, line: lineNum, category: 'code-injection',
+          severity: 'critical',
+          message: 'new Function() constructor — dynamic code execution'
+        });
+      }
+
+      // 2. XSS vectors
+      if (/\.innerHTML\s*=/.test(line) && !line.trim().startsWith('//')) {
+        issues.push({
+          file: filePath, line: lineNum, category: 'xss',
+          severity: 'high',
+          message: 'innerHTML assignment — potential XSS vector'
+        });
+      }
+      if (/dangerouslySetInnerHTML/.test(line) && !line.trim().startsWith('//')) {
+        issues.push({
+          file: filePath, line: lineNum, category: 'xss',
+          severity: 'high',
+          message: 'dangerouslySetInnerHTML — React XSS bypass'
+        });
+      }
+      if (/document\.write\s*\(/.test(line) && !line.trim().startsWith('//')) {
+        issues.push({
+          file: filePath, line: lineNum, category: 'xss',
+          severity: 'high',
+          message: 'document.write() — XSS vector'
+        });
+      }
+
+      // 3. SQL injection — string concatenation in query-like contexts
+      if (/(?:query|execute|sql|db)\s*\(\s*["'`].*(?:\+|\$\{|%s)/i.test(line) ||
+          /(?:SELECT|INSERT|UPDATE|DELETE|CREATE|DROP)\s+.*\+/i.test(line)) {
+        if (!line.trim().startsWith('//')) {
+          issues.push({
+            file: filePath, line: lineNum, category: 'sql-injection',
+            severity: 'critical',
+            message: 'SQL string concatenation — injection risk'
+          });
+        }
+      }
+
+      // 4. Prototype pollution
+      if (/__proto__/.test(line) && !line.trim().startsWith('//') && !line.includes('hasOwnProperty')) {
+        issues.push({
+          file: filePath, line: lineNum, category: 'prototype-pollution',
+          severity: 'high',
+          message: '__proto__ access — prototype pollution risk'
+        });
+      }
+      if (/\.constructor\[/.test(line) || /\.constructor\.prototype/.test(line)) {
+        if (!line.trim().startsWith('//')) {
+          issues.push({
+            file: filePath, line: lineNum, category: 'prototype-pollution',
+            severity: 'high',
+            message: 'Constructor prototype chain manipulation'
+          });
+        }
+      }
+
+      // 5. Insecure randomness (Math.random in security contexts)
+      if (/Math\.random\s*\(/.test(line)) {
+        const context = lines.slice(Math.max(0, i - 3), Math.min(lines.length, i + 3)).join(' ').toLowerCase();
+        if (/token|password|secret|key|auth|session|crypt|hash|salt|nonce|otp/i.test(context)) {
+          issues.push({
+            file: filePath, line: lineNum, category: 'insecure-random',
+            severity: 'high',
+            message: 'Math.random() used in security-sensitive context'
+          });
+        } else {
+          issues.push({
+            file: filePath, line: lineNum, category: 'insecure-random',
+            severity: 'low',
+            message: 'Math.random() — not cryptographically secure'
+          });
+        }
+      }
+
+      // 6. Command injection — exec/spawn with concatenation or interpolation
+      if (/(?:exec|execSync|spawn|spawnSync|execFile)\s*\(\s*["'`].*\+/.test(line) ||
+          /(?:exec|execSync|spawn|spawnSync|execFile)\s*\(\s*`.*\$\{/.test(line)) {
+        if (!line.trim().startsWith('//')) {
+          issues.push({
+            file: filePath, line: lineNum, category: 'command-injection',
+            severity: 'critical',
+            message: 'exec/spawn with string interpolation — command injection risk'
+          });
+        }
+      }
+
+      // 7. ReDoS patterns — catastrophic backtracking
+      const redoPatterns = [
+        { regex: /\(.*\+.*\)\+/, label: '(...+)+ nested quantifier' },
+        { regex: /\(.*\*.*\)\*/, label: '(...*)* nested quantifier' },
+        { regex: /\(.*\+.*\)\*/, label: '(...+)* mixed nested quantifier' },
+        { regex: /\(.*\*.*\)\+/, label: '(...*)+ mixed nested quantifier' },
+      ];
+      // Check if line contains a RegExp constructor or regex literal with nested quantifiers
+      const isRegexContext = /new\s+RegExp|\/.*\/[gimsuy]*|\/.*=\s*~/.test(line);
+      if (isRegexContext) {
+        for (const { regex, label } of redoPatterns) {
+          if (regex.test(line)) {
+            issues.push({
+              file: filePath, line: lineNum, category: 'redos',
+              severity: 'medium',
+              message: `Potential ReDoS: ${label}`
+            });
+          }
+        }
+      }
+
+      // 8. Hardcoded credentials in assignments
+      const credMatch = line.match(/(?:password|passwd|secret|apikey|api_key|access_token|auth_token|private_key)\s*[:=]\s*["'`]([^"'`]{3,})["'`]/i);
+      if (credMatch && !line.includes('process.env') && !line.includes('config.') && !line.trim().startsWith('//')) {
+        const val = credMatch[1];
+        // Skip placeholders
+        if (!/^(?:your_|placeholder|example|xxx|change_me|<|\$\{)/i.test(val)) {
+          issues.push({
+            file: filePath, line: lineNum, category: 'hardcoded-credential',
+            severity: 'high',
+            message: `Hardcoded ${credMatch[1].toLowerCase().includes('pass') ? 'password' : 'credential'} literal`
+          });
+        }
+      }
+    }
+  }
+
+  // Weighted scoring
+  const weights = { critical: 20, high: 12, medium: 6, low: 2 };
+  const categoryCounts = {};
+  for (const issue of issues) {
+    categoryCounts[issue.category] = (categoryCounts[issue.category] || 0) + 1;
+  }
+
+  const totalPenalty = issues.reduce((sum, i) => sum + (weights[i.severity] || 0), 0);
+  const score = Math.max(0, 100 - totalPenalty);
+  let grade;
+  if (score >= 90) grade = 'A';
+  else if (score >= 75) grade = 'B';
+  else if (score >= 60) grade = 'C';
+  else if (score >= 40) grade = 'D';
+  else grade = 'F';
+
+  return {
+    issues,
+    summary: {
+      totalIssues: issues.length,
+      critical: issues.filter(i => i.severity === 'critical').length,
+      high: issues.filter(i => i.severity === 'high').length,
+      medium: issues.filter(i => i.severity === 'medium').length,
+      low: issues.filter(i => i.severity === 'low').length,
+      filesScanned: totalScanned,
+      categories: categoryCounts,
+      score,
+      grade
+    }
+  };
+}
+
+/**
+ * F82: formatSecurityAntiPatternsReport() — markdown report for security analysis.
+ */
+export function formatSecurityAntiPatternsReport(result) {
+  const s = result.summary;
+  let report = `## 🔒 Security Anti-Pattern Analysis\n\n`;
+  report += `**Grade: ${s.grade}** (score: ${s.score}/100)\n\n`;
+  report += `Files scanned: ${s.filesScanned} | Issues: ${s.totalIssues}`;
+  report += ` (critical: ${s.critical}, high: ${s.high}, medium: ${s.medium}, low: ${s.low})\n\n`;
+
+  // Category summary
+  if (Object.keys(s.categories).length > 0) {
+    report += `### Issue Categories\n\n`;
+    for (const [cat, count] of Object.entries(s.categories).sort((a, b) => b[1] - a[1])) {
+      const label = cat.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      report += `- **${label}**: ${count}\n`;
+    }
+    report += '\n';
+  }
+
+  // Issues table (sorted by severity)
+  if (result.issues.length > 0) {
+    const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    const sorted = [...result.issues].sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+
+    report += `| File | Line | Category | Severity | Issue |\n`;
+    report += `|------|------|----------|----------|-------|\n`;
+    for (const issue of sorted.slice(0, 40)) {
+      const catLabel = issue.category.replace(/-/g, ' ');
+      report += `| ${issue.file} | ${issue.line} | ${catLabel} | ${issue.severity} | ${issue.message} |\n`;
+    }
+    if (sorted.length > 40) {
+      report += `\n... and ${sorted.length - 40} more\n`;
+    }
+    report += '\n';
+  } else {
+    report += 'No security anti-patterns detected. ✅\n\n';
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
