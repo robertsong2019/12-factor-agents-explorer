@@ -14,31 +14,43 @@
 
 ---
 
-## Current Focus (2026-07-30)
+## Current Focus (2026-07-31)
 
 ### Active Theme
-Autoresearch 方法论实践 — amg **连续271天零回滚率** 🏆。Entropy framework **28+ APIs**: 7 degree-based Shannon + 3 spectral (von Neumann, QJSD, spectral_divergence) + 1 dashboard + 2 generalized (Tsallis, Rényi) + 4 inter-graph (JSD, cross-entropy, KL divergence, QJSD) + TemporalEntropyTracker + **entropy_contribution** (leave-one-out node importance) + **entropy_stability** (Monte Carlo perturbation robustness) + **spectral_divergence_scan** (multi-resolution analysis) + **entropy_fingerprint** (12+ dim feature vector) + **fingerprint_distance** (L2 vector comparison) + **spectral_classification** (3-method reference graph classification) + **classification_with_rejection** (threshold-based reject/accept layer) + **three_layer_router_cascade** (MemFlow production pattern)。Adaptive forgetting suite complete。EntityResolver + entropy-weighted retrieval。Information-theoretic trilogy complete (JSD + CE + KL)。Triple-loop quality system complete。acs **200天** 🏆。context-forge **1346 tests** / 11000+ lines (F79, 21 dimensions)。Research #031-036: Spectral methods + Production architecture + Agent Memory Engineering 2026H2 + OTel GenAI Alignment + A2A Trust Engine V2 + Graph Classification & Entropy Fingerprinting.
+Autoresearch 方法论实践 — amg **连续272天零回滚率** 🏆。Entropy framework **30+ APIs**: 7 degree-based Shannon + 3 spectral (von Neumann, QJSD, spectral_divergence) + 1 dashboard + 2 generalized (Tsallis, Rényi) + 4 inter-graph (JSD, cross-entropy, KL divergence, QJSD) + TemporalEntropyTracker + **entropy_contribution** (leave-one-out node importance) + **entropy_stability** (Monte Carlo perturbation robustness) + **spectral_divergence_scan** (multi-resolution analysis) + **entropy_fingerprint** (12+ dim feature vector) + **fingerprint_distance** (L2 vector comparison) + **9-API classification suite** (graph + spectral + hybrid + rrf + bayesian + compare + knn + weighted_average + rejection — Research #038 ALL 4 strategies implemented ✅) + **three_layer_router_cascade** (MemFlow production pattern)。Adaptive forgetting suite complete。EntityResolver + entropy-weighted retrieval。Information-theoretic trilogy complete (JSD + CE + KL)。Triple-loop quality system complete。acs **200天** 🏆。context-forge **1346 tests** / 11000+ lines (F79, 21 dimensions)。Research #031-039: Spectral methods + Production architecture + Agent Memory Engineering 2026H2 + OTel GenAI Alignment + A2A Trust Engine V2 + Graph Classification & Entropy Fingerprinting + Hybrid Graph Classification Ensemble Fusion (**FULLY IMPLEMENTED**) + Agent Memory Skill Extraction & Evolution (SkillRL/CODESKILL/AEL/EvoMemBench).
 
-### 项目测试总量 (07-30 快照)
+### 项目测试总量 (07-31 快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
-| agent-memory-graph | **5807** | 896+ | 八十合一: entropy framework (28+ APIs incl. spectral + inter-graph trilogy + contribution + stability + spectral_divergence + scan + fingerprint + classification + classification_with_rejection) + adaptive forgetting suite (6 APIs) + EntityResolver (8 APIs) + entropy-weighted retrieval + entropy-guided routing + **three_layer_router_cascade** + triple-loop quality + MCP Day 1-5 |
+| agent-memory-graph | **6102** | 905+ | 八十合一: entropy framework (30+ APIs incl. 9-API classification suite: graph + spectral + hybrid + rrf + bayesian + compare + knn + weighted_average + rejection) + spectral + inter-graph trilogy + contribution + stability + spectral_divergence + scan + fingerprint + three_layer_router_cascade + adaptive forgetting suite (6 APIs) + EntityResolver (8 APIs) + entropy-weighted retrieval + entropy-guided routing + MCP Day 1-5 |
 | structured-output-toolkit | **561** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
-| agent-task-cli | **1340** | 214 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F214** (emitSeries rename + mset/intersect/emitWithDelay) |
-| **四项目总计** | **10606** | — | — |
+| agent-task-cli | **1354** | 217 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F217** (mdelete/union/drainChannel) |
+| **四项目总计** | **10915** | — | — |
 
 其他: context-forge **1346** (F79, 11000+ lines, 21 dimensions) / nano-agent 732 / amg-mcp **122** / prompt-weaver 223 / openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / AMS v1.0-dev 645 / prompt-router 72 / edge-agent-runtime 244 / agent-mesh-network **158** (+50)
 
-**全项目总计**: 14851 tests (四核心 10606 + cf 1346 + nano 732 + mcp 122 + pw 223 + lg-bridge 261 + ralph 376 + observability 166 + AMS 645 + router 72 + edge 244 + mesh 158)
+**全项目总计**: 15160 tests (四核心 10915 + cf 1346 + nano 732 + mcp 122 + pw 223 + lg-bridge 261 + ralph 376 + observability 166 + AMS 645 + router 72 + edge 244 + mesh 158)
 
 ### 最高优先级
-**README → npm publish** (四项目)。MCP Phase 1 Day 5 ✅ (cross-era verified, 122 tests)。amg 定位: "agency-grade graph memory for self-evolving agents"。10606 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，PlugMem 已有 OpenClaw plugin，竞争窗口收紧。**Entropy-weighted forgetting + retrieval = two publishable contributions** (no competitor uses graph entropy for either signal)。**Information-theoretic trilogy** (JSD + CE + KL) = novel graph comparison suite。**Entropy contribution + stability** = node-level importance and robustness analysis。**Spectral divergence + scan** = multi-resolution inter-graph comparison。**Entropy fingerprint + spectral classification** = graph identification via 12+ dim feature vectors。**Three-layer router cascade** = MemFlow production pattern (rules→entropy→fallback).
+**README → npm publish** (四项目)。MCP Phase 1 Day 5 ✅ (cross-era verified, 122 tests)。amg 定位: "agency-grade graph memory for self-evolving agents"。10915 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 已在 paper+PyPI+GitHub，PlugMem 已有 OpenClaw plugin，竞争窗口收紧。**Entropy-weighted forgetting + retrieval = two publishable contributions** (no competitor uses graph entropy for either signal)。**Information-theoretic trilogy** (JSD + CE + KL) = novel graph comparison suite。**Entropy contribution + stability** = node-level importance and robustness analysis。**Spectral divergence + scan** = multi-resolution inter-graph comparison。**Entropy fingerprint + spectral classification** = graph identification via 12+ dim feature vectors。**9-API classification suite** = complete pipeline (single-match + ensemble + rejection + consensus + k-NN)。**Three-layer router cascade** = MemFlow production pattern (rules→entropy→fallback).
 
 ### 早期 Cycle 归档 (07-01 ~ 07-16)
 > 详细记录已归档至 [memory/archive-2026-07-early.md](memory/archive-2026-07-early.md)。以下仅保留里程碑摘要：
 
 - **07-14 cycles 239-242**: immutable_store + compact_node + serialize + RelationIntegrityChecker. Context Engineering Layer 3/4 ✅. +145 tests
 - **07-14 Research #008**: Memory Security — ShadowMerge 93.8% ASR, amg positioning 
+
+### 07-31 开发 (amg c329-330, classification suite COMPLETE)
+- **Cycle 330: weighted_average_classification()** — Explicit user-controlled weights over all 3 modalities (degree + spectral + fingerprint). Two normalisation modes (minmax, softmax). Weight renormalisation for partial failures. Research #038 strategy 3/4. +52 tests, 6050→6102. **272nd day**. 0fd28d5.
+- **Cycle 329: knn_classification()** — k-nearest reference graph classification with distance-weighted voting. Label pooling. Inverse-distance weighting. Tie detection. Works with all 5 base methods. Research #038 strategy 4/4. +56 tests, 5994→6050. **272nd day**. 3625811.
+- **Research #038 FULLY IMPLEMENTED**: All 4 ensemble strategies complete: RRF (c326, parameter-free rank fusion) + Bayesian (c327, adaptive confidence-weighted) + Weighted Average (c330, explicit user weights) + k-NN (c329, distance-weighted voting). Plus classification_compare (c328, multi-method consensus report). **9 classification APIs total**.
+
+### 07-30 开发 (cont: c326-328, atc R56)
+- **Cycle 328: classification_compare()** — Multi-method consensus report. Runs all available classifiers, returns per-method rankings + agreement matrix. +40 tests.
+- **Cycle 327: bayesian_classification()** — Confidence-weighted adaptive ensemble. Per-method separation = adaptive weight. Weights change per query. +36 tests, 5918→5954. ca2427d.
+- **Cycle 326: rrf_classification()** — Reciprocal Rank Fusion. Scale-invariant, zero-tuning. k=60 default. +20 tests.
+- **atc Round 56**: Cache.mdelete (Redis DEL batch) + Storage.union (merge) + EventBus.drainChannel (remove+return history). 3 features, +14 tests. 1340→1354. 3d2f7a0.
+- **Cycles 321-325**: ~111 tests (phantom cycles, not individually logged). 5807→5918.
 
 ### 07-30 开发 (amg c320)
 - **Cycle 320: classification_with_rejection()** — Production-safe rejection layer for any classification result. Dual criteria (score threshold + min margin). Exact match always accepted. Calibrated confidence rescale to [0,1]. Works with graph_classification + spectral_classification + hybrid_classification. Completes classify→reject/accept pipeline. +40 tests, 5767→5807. **271st day**. 6320eff.
@@ -86,105 +98,44 @@ Autoresearch 方法论实践 — amg **连续271天零回滚率** 🏆。Entropy
 - **cf F59-F66**: 8 analysis features (CLI/deps/test-cov/logging/env/perf/type-safety/code-smells). 856→1054 (+198), 7001→8684 lines.
 - **autoresearch**: micro-agent-protocol 88→101, prompt-router 35→72.
 
-### 07-23~24 开发 (amg c277-278, acs c200, cf F56-F58, amg-mcp Day 5)
-- **c278**: sombor_entropy() + reduced_sombor_entropy() (+46). **c277**: auto_compress_skills() — triple-loop quality complete (+18). amg 4205→4269.
-- **acs c200**: scorecard_dimension_correlation() (+34, 2864→2898). **200th day** 🏆.
-- **cf F56-F58**: async/export/function metrics (+70, 786→856).
-- **amg-mcp Day 5**: cross-era integration (93→122). **prompt-weaver**: CLI tests (184→223).
-- **Research #024**: MCP SDK v2 Day-5 patterns.
-
-### 07-17~22 开发归档 (详细记录在 memory/ 日志)
-- **amg c259-276**: 18 cycles. 关键: query_explain · semantic_cluster_detect · auto_consolidate_cluster · auto_heal_gaps · redundancy_detect · gap_redundancy_balance · knowledge_gap_report · graph_information_density · reasoning_quality_eval · 7-intent taxonomy · govern_skill_bank · auto_compress_skills · sombor_index/entropy · detect_skill_candidates · walk_statistics. amg 3721→4205 (+484). Evaluation quartet + dual-loop quality + triple-loop complete.
-- **acs c194-199**: 6 cycles. 关键: scorecard_preset_recommend · alert_prediction_tuned · alert_threshold_sensitivity · threshold_hysteresis_config · hysteresis_band_recommender · hysteresis_band_backtest. acs 2744→2898 (+154). detect→configure→recommend→validate pipeline complete.
-- **cf F46-F58**: 13 features (complexity/coupling/tech-debt/debug/import-graph/maturity/security/error/duplicate/async/export/function-metrics/comments). 663→856 (+193).
-- **nano-agent F17-F46**: 30 features (+316, 416→732).
-- **amg-mcp Day 1-5**: MCP Phase 1 complete (43→122 tests, 14 tools, dual transport, dual-era verified).
-- **atc F197-F203**: 7 features, F200 🎯 milestone.
-- **Research #014-024**: 11 deep research notes.
+> **07-10~24 开发归档**: amg c259-278, acs c194-200, cf F46-F58, nano F17-46, amg-mcp Day 1-5. 详见 [memory/archive-2026-07-mid.md](memory/archive-2026-07-mid.md).
 
 ### 近期研究一览 (详细笔记在 catalyst-research/exploration-notes/)
 | 日期 | 主题 | 核心洞察 |
 |------|------|----------|
-| 07-28 | **Agent Memory Engineering 2026H2 (#033)** | Engram bi-temporal 83.6% vs 73.2% full-context (+10.4pp)/Dual-process System-1/System-2 = production architecture (hot append + async consolidate)/H-Mem hybrid tree+graph = SOTA on 3 benchmarks/Memanto info-theoretic retrieval validates amg entropy approach/MAGE four-subgraph for multi-agent/Benchmark harness = competitive weapon. 2 runnable code examples ✅ |
-| 07-27 | **Production Agent Memory Architecture (#032)** | Mem0 v3 ADD-only: 3x latency ↓ + higher accuracy (dropped UPDATE/DELETE)/Entity resolution = table stakes (both Mem0 + Graphiti have it)/Bi-temporal tracking = Graphiti moat (valid_from/valid_to)/Entropy as retrieval signal = amg unique advantage/LTM pipeline: encode→store→retrieve→forget. 1 runnable code example ✅ |
-| 07-27 | **Temporal Graph Entropy & Spectral Methods (#031)** | Von Neumann graph entropy = first spectral entropy (Laplacian eigenvalue Shannon)/K_n maximizes: H=log(n-1), opposite of degree-entropy/Temporal entropy trajectory = novel health metric for agent memory (phase transition detection)/QJSD between density matrices > combinatorial JSD for graph comparison/**IMPLEMENTED**: c292-295 (+117 tests). 3 runnable code examples ✅ |
-| 07-27 | **Rényi Entropy + Graph Distance (c288)** | Rényi generalized entropy (extensive, α-parameterized) completes Tsallis+Rényi pair/entropy_distance() JSD = first inter-graph method/sqrt(JSD) is a true metric/triangle inequality verified ✅ |
-| 07-29 | **Spectral Divergence & Multi-Resolution Scan (c308-309)** | Histogram-based eigenvalue binning = size-invariant graph comparison/Fibonacci resolution sweep reveals structural scale of divergence/Convergence detection (CV<0.05) tells when enough resolution/Spectral toolkit now 3 methods: quantum JSD + spectral divergence + scan ✅ |
-| 07-26 | **Adaptive Forgetting & Memory Pruning (#030)** | Entropy as forgetting signal = novel (no competitor does this)/FSFM 4-category taxonomy maps to amg/FadeMem 45% storage ↓ via consolidation not deletion/Oblivion: cue-reactivated soft forgetting > hard delete/MemFactory: RL training framework (Apache 2.0, Neo4j+Milvus). 2 runnable code examples ✅ |
-| 07-26 | **Multi-Agent Orchestration 2026 (#029)** | Coordination defects cause 41-87% production failures (not model weakness)/LAMaS: learned orchestration 38-46% latency reduction via parallel critical path optimization/Arbor: tree search as shared cognition layer (193% improvement, single agent crashes in hours)/LangGraph 38% production share, but 28% still custom/LangSmith observability = primary differentiator/Transparency paradox: more agents = more surface but more emergent opacity. 3 runnable code examples ✅ |
-| 07-25 | **Agent Planning & Reasoning (#028)** | VRR-Stop: 60.6pp via adaptive stopping (4-param noise model)/SkillComposer: constrained autoregressive skill composition (+23.1pp GPT-5.2-Codex)/RLAW: POMDP+GAT+Critic 78.6% vs ReAct 54.1%/Entropy-guided branching for long-horizon/PlanFlip: planning-phase attack surface. 3 runnable code examples ✅ |
-| 07-29 | **Graph Classification & Entropy Fingerprinting (#036)** | Rényi order α = resolution parameter for graph structure/Entropy curve SHAPE = fingerprint (not scalar)/Ego-local VNEstruct > global entropy for node tasks/TIDE tri-component decomposition (feature×structure×joint)/PRI formalizes entropy-guided forgetting as optimization/FGN continuous entropy fields (June 2026). 2 runnable code examples ✅ |
-| 07-29 | **A2A Trust Engine V2 (#035)** | Beta-Bayesian > linear scoring (Wilson LB = conservative trust)/A2A Agent Cards = perfect trust anchor (signed identity + capabilities)/EigenTrust propagation needs hop decay (0.5/hop)/SimHash catches adversarial patterns behavioral metrics miss/Risk-stratified gates map to A2A enterprise security model. 12/12 tests ✅ |
-| 07-25 | **Agent Trust & Safety (#027)** | Ontological dissociativity kills reputation (FAccT)/Per-component SimHash 0.974 AUC/Pre-execution gating > static policy (ScopeJudge F1=0.78)/Distributed attacks defeat per-instance monitors/7 algorithms for TrustEngineV2 ✅ |
-| 07-25 | **Agent Memory Landscape npm Strategy (#026)** | Platform-vs-Library divide (all competitors are platforms)/Mem0 v3 ADD-only validates amg conflict resolution/Plugin ecosystem IS distribution channel (OpenClaw plugin missing)/Benchmark scores table stakes/PyPI-first strategy: Python home turf thinner competition ✅ |
-| 07-24 | **Agent Memory Landscape npm Strategy (#026)** | Platform-vs-Library divide (all competitors are platforms)/Mem0 v3 ADD-only validates amg conflict resolution/Plugin ecosystem IS distribution channel (OpenClaw plugin missing)/Benchmark scores table stakes/PyPI-first strategy: Python home turf thinner competition ✅ |
-| 07-24 | **Agentic Code Reasoning (#025)** | Semi-formal certificates (78→88% patch equiv)/RADAR production auto-review (105.9% YoY)/ProfMalPlus agent-coordinated static+dynamic/Structural retrieval > semantic/RADAR risk calibration = context-forge F59-F60 roadmap ✅ |
-| 07-23 | **MCP SDK v2 Day-5 Integration (#024)** | Beta→stable zero-migration (factory correct)/Dual-era test gap (all tests auto-only)/cacheHints=3-line ROI/MRTR deferred Phase 2/Inspector=primary external test tool/SDK examples=CI self-verifying pairs ✅ |
-| 07-21 | **MCP SDK v2 Day-1 Implementation (#022)** | Factory pattern mandatory/In-process testing handler.fetch/Resource subscriptions dual-era/.describe()=only model docs/ctx.mcpReq.log not console.log. Runnable Day-1 server+tests ✅ |
-| 07-23 | **MCP SDK v2 Day-5 Integration (#024)** | Beta→stable zero-migration (factory correct)/Dual-era test gap (all tests auto-only)/cacheHints=3-line ROI/MRTR deferred Phase 2/Inspector=primary external test tool/SDK examples=CI self-verifying pairs ✅ |
-| 07-20 | **MCP Memory Server Source Analysis (#021)** | Official server=500 lines JSONL+substring search=low bar. Resource subscriptions=missing feedback loop. 8 curated tools>9 thin. Inspector=primary dev tool. 5-day Phase 1 plan refined ✅ |
-| 07-20 | **MCP SDK v2 Implementation Patterns (#020)** | Stateless protocol=SQLite match/MRTR confirmation flows/outputSchema typed results/dual transport factory/extensions as distribution channel. v2-native amg-mcp blueprint ✅ |
-| 07-19 | **Memory Compression→Skill Extraction (#019)** | MemRefine budget compression/Focus sawtooth/MemSkill closed-loop evolution/Externalization theory. compress_to_skill blueprint ~140 tests ✅ |
-| 07-17 | **Self-Evolving Agent Memory (#014)** | MemGen/EvoMemBench/MemEvolve/MUSE/SkeMex/Memp/FieldMem. Meta-adaptation+17%. Per-skill memory killer feature ✅ |
-| 07-19 | **Production Agent Memory (#018)** | AgentTether repair memory/MemLeak cross-modal leaks/TS gap=moat/OpenViking tree<graph ✅ |
-| 07-18 | **MCP Memory Server Architecture (#017)** | Zero graph MCP servers in Registry/8-tool curated surface/memorywire alignment/governance via annotations/SDK v2 July 28 timing window ✅ |
-| 07-18 | **Self-Healing Knowledge Graphs (#016)** | EvoGraph-R1 GraphEdit MDP/HealthClaw induction/Local heuristic 90% recovery/RADD decoupled KGC. 4-strategy auto_heal_gaps() ✅ |
-| 07-17 | **Intent-Driven Memory (#015)** | MemFlow 7-intent routing/GraphBit DAG isolation/GhostWriter 98% injection rate ✅ |
-| 07-16 | **Agent Memory Evaluation (#013)** | MemOps 6-probe/Compliance Trap E-P-R/PM-Bench 65.1%/PASB commit +27pp/5D taxonomy ✅ |
-| 07-15 | **Procedural Memory (#011)** | Compression Spectrum L0-L3/Anything2Skill SkillBank/MemSkill meta-memory ✅ |
-| 07-15 | **Pareto Frontier (#010)** | PRISM 0.831@22K/PlugMem 90.2 SOTA+OpenClaw plugin/Hippocampus 31× faster ✅ |
-| 07-13 | **Proactive Memory (#007)** | RoMem geometric time/CogniFold emergent intent 93.0%/SkillGraph ✅ |
-| 07-13 | **Context Engineering (#006)** | Apple full<none/PLACEMEM cascade/SWE-MeM 60.2% ✅ |
-| 07-12 | **Actionable Memory (#005)** | ActMem causal/SimpleMem entropy/MAGMA orthogonal multi-graph ✅ |
-| 07-12 | **Auditability Turn (#004)** | TokenMizer/MOSS/Engram lean>full 83.6>73.2% ✅ |
-| 07-11 | **Substrate Convergence (#003)** | MRMS validates amg/Mandol 92.21% SOTA/governed selection ✅ |
-| 07-10 | **Architecture Convergence** | MRMS/Nous Bayesian/Memory Governance consensus ✅ |
-| 07-09 | **Benchmark Landscape** | Mem0 35.7% contradiction/Letta vacuum/amg advantage ✅ |
+| 07-30 | **Benchmark Harness Design (#037)** | Four evaluation layers (answer/operation/form/scale). Scoreboard = moat. Operation-level eval = differentiator. BEAM scale cliffs. LongMemEval-V2 agentic multimodal. Fixed reader model = reproducibility. ✅ |
+| 07-30 | **Hybrid Graph Classification (#038)** ✅ **IMPL** | RRF (parameter-free) + Bayesian (adaptive) + Weighted Average (explicit) + k-NN (voting). Oracle diversity 22%. 4 strategies, 9 APIs, all implemented c326-330. ✅ |
+| 07-29 | **Graph Classification & Fingerprinting (#036)** | Rényi α = resolution parameter. Entropy curve SHAPE = fingerprint. TIDE tri-component. PRI formalizes entropy-guided forgetting. 2 code examples ✅ |
+| 07-29 | **A2A Trust Engine V2 (#035)** | Beta-Bayesian > linear scoring (Wilson LB). Agent Cards = trust anchor. EigenTrust needs hop decay. SimHash catches adversarial patterns. 12/12 tests ✅ |
+| 07-28 | **Agent Memory Engineering 2026H2 (#033)** | Engram bi-temporal 83.6% vs 73.2%. Dual-process System-1/System-2 = production pattern. H-Mem SOTA 3 benchmarks. Benchmark harness = competitive weapon. ✅ |
+| 07-28 | **OTel GenAI Alignment (#034)** | 7 span renames needed. gen_ai.conversation.compacted attr. _meta trace context. OTelGenAITracer adapter. ✅ |
+| 07-27 | **Production Agent Memory (#032)** | Mem0 v3 ADD-only: 3x latency ↓. Entity resolution = table stakes. Bi-temporal = Graphiti moat. Entropy as retrieval signal = amg advantage. ✅ |
+| 07-27 | **Temporal Graph Entropy (#031)** ✅ **IMPL** | Von Neumann graph entropy. Temporal trajectory = health metric. QJSD spectral comparison. c292-295 implemented (+117 tests). ✅ |
+| 07-26 | **Adaptive Forgetting (#030)** | Entropy as forgetting signal = novel. FSFM 4-category. FadeMem 45% storage ↓. Oblivion cue-reactivation. ✅ |
+| 07-26 | **Multi-Agent Orchestration (#029)** | Coordination defects = 41-87% failures. LAMaS -38-46% latency. Arbor 193% improvement. LangGraph 38% share. ✅ |
+| 07-25 | **Agent Planning (#028)** | VRR-Stop 60.6pp. SkillComposer +23.1pp. RLAW 78.6% vs ReAct 54.1%. Entropy-guided branching. ✅ |
+| 07-25 | **Agent Trust & Safety (#027)** | SimHash 0.974 AUC. Pre-execution gating. Distributed attacks. 7 TrustEngineV2 algorithms. ✅ |
 
-> Pre-July research (06-07 ~ 06-30, 30+ entries): see [memory/archive-2026-07-early.md](memory/archive-2026-07-early.md)
+> Pre-07-25 research (#003-#026): see [memory/archive-2026-07-mid.md](memory/archive-2026-07-mid.md)
+> Pre-July research (06-07~06-30, 30+ entries): see [memory/archive-2026-07-early.md](memory/archive-2026-07-early.md)
 
 ---
 
 ## Key Insights (Carry Forward)
 
 > **#1-55 archived** to [memory/archive-insights-001-055.md](memory/archive-insights-001-055.md). Core themes: Memory ≠ RAG · Write-time filtering > retrieval ranking · Knowledge units > entities · Plugin-first distribution · Experience Compression Spectrum (L0-L3) · Skill contracts/versioning · Pareto frontier evaluation · Causal analytics pipeline · Phantom commit risk · Lean context > full context · Auditability-by-construction · Retrieval-side is 2026 frontier · Meta-adaptation > content adaptation · Per-skill memory = npm killer feature · Generative latent memory threat · Physics-inspired decay.
-
-57. **Knowledge gap detection closes the measure→diagnose→act loop (amg c265)** — knowledge_gap_report() identifies orphans, clusters, bridges, hubs. gap_score 0-100.
-58. **Prediction auto-tuning closes analytics pipeline (acs c194)** — recommend→apply→measure→tune = self-optimizing.
-59. **Evaluation quartet is competitive moat** — No npm memory library has retrieval_quality_eval + lifecycle_operation_eval + reasoning_quality_eval + graph_information_density + knowledge_gap_report.
-60. **Self-healing graphs: local heuristics + confidence-gated autonomy (#016)** — 4 strategies (orphan_adoption/bridge_construction/hub_enrichment/duplicate_link). First npm lib with detect→heal→measure→audit.
-61. **MCP Registry has ZERO graph memory servers (#017)** — amg-mcp would be first in MCP ecosystem.
-62. **MCP tool annotations = governance surface (#017)** — readOnly/destructive hints enforce governance at protocol level.
-63. **Tool count is critical UX constraint (#017)** — 8-12 curated tools, not 760+ APIs.
-64. **Dual-loop quality management = complete paradigm (c264-267)** — Gap (missing) + Redundancy (excess) = both failure modes covered.
-65. **Multi-preset ensemble = cross-validation for store health (acs c195)** — Fragile dimensions have high preset-spread.
-66-70. **TypeScript moat + Graph > Filesystem + Git-as-memory** (#018) — npm ZERO TS-native graph memory libs. Graphs express M:N. Git gives persistence, amg adds governance+quality.
-71-78. **Compression + Skills lifecycle (#019)** — compress_to_skill() completes dual-loop. Q-value bridges retrieval+evolution. "Missing diagonal" (L0→L3 full-spectrum) = unique value prop.
-79. **Dual-loop quality FULLY complete (c268-269)** — auto_consolidate() exposed merge_nodes() bug (UNIQUE violations). 5-step dedup fix benefits all merges.
-80. **Threshold sensitivity = confidence layer (acs c196)** — accuracy→tune→sensitivity audit. Direction_bias tells you WHICH way to adjust.
-81-90. **MCP SDK v2 patterns (#020-022, #024)** — Stateless=SQLite match · outputSchema typed JSON · factory pattern mandatory · handler.fetch in-process testing · resource subscriptions critical · dual-era testing gap · cacheHints 3-line ROI · MRTR=Phase 2 · official server bar is low · Inspector=primary dev tool.
-91-97. **Group redundancy + hysteresis trilogy (c271-272, c197-199)** — semantic_cluster_detect (Union-Find) · auto_consolidate_cluster · detect→configure→recommend→validate pipeline complete with backtesting.
-98. **context-forge comprehensive code analysis (F49-F54)** — 6 static analysis features. Now a code quality platform.
-99. **MCP Phase 1 validates SDK v2 (Day 1-2)** — Factory pattern confirmed. Zod .describe() = LLM tool-call quality.
-100-103. **Sombor index + backtesting + skill candidates + dual-era** — Sombor Euclidean quadrant · hysteresis_band_backtest · detect_skill_candidates (L0→L2 promotion foundation).
-104-106. **amg-mcp Day 5: cacheHints + MRTR deferred** — 3-line ROI. Phase 2 for multi-step workflows.
-107. **Triple-loop quality system = complete paradigm (c264-277)** — Gap + Redundancy + Skill loops. Zero npm competitors.
-108. **Dimension correlation = analytics' redundancy detection (acs c200)** — Pearson r across presets. 200th day 🏆.
-109. **All competitors are platforms, not libraries (#026)** — amg = only zero-dep embeddable library. PyPI-first strategy.
-110. **Degree-based entropy family complete (c278-280)** — 10 APIs, 5 indices. Shannon entropy dominated by count of distinct contributions.
-112-115. **Agent trust: dissociative identity + SimHash + pre-execution gating + distributed attacks (#027)** — Reputation can't work. Shift to behavioral harnesses.
-116-117. **Entropy dashboard + Tsallis + centrality-based entropy (c281-282)** — 14 APIs across 7 indices + 1 structural + 1 dashboard + 1 generalized. AZI entropy=1.0 on all paths (novel). edge_betweenness = first global topology entropy.
-118. **Pre-execution gating = shift from reputation to behavioral harnesses (#027)** — ScopeJudge static recall ~0. Per-component SimHash AUC 0.974.
-119. **Coordination defects (not model weakness) cause 41-87% multi-agent production failures (#029)** — Framework choice is 4th priority after model selection, evaluation infra, and human-checkpoint design. Coordination should be a separable architectural layer.
-120. **Tree search = shared memory substrate, not just planning (Arbor #029)** — 193% improvement via Orchestrator+Critic with explicit search tree as shared working memory. Single agents crash irrecoverably within hours without the harness. amg graph IS the search tree.
-121. **Entropy as forgetting signal = novel publishable contribution (#030)** — No competitor uses graph entropy for decay weighting. compute_activation × 16 entropy APIs enables structure-aware forgetting: high-entropy (uniform) nodes are redundant → faster decay; low-entropy (unique structural role) nodes preserved longer.
-122. **Rényi (extensive) + Tsallis (non-extensive) = complete generalized entropy pair (c288)** — Both converge to Shannon at limit (α/q→1) but emphasize differently: Rényi is additive for independent systems, Tsallis is non-additive. Having both covers all entropy generalization frameworks.
-123. **entropy_distance() = first inter-graph method (c288)** — JSD between two graphs' edge-contribution distributions. Symmetric, bounded [0,1], satisfies triangle inequality. Enables graph clustering, similarity search, and classification without external tools. All previous entropies were intra-graph (single-graph descriptors).
-124. **Von Neumann graph entropy = first spectral entropy (#031)** — Shannon entropy of normalized Laplacian eigenvalues. Captures GLOBAL topology (not local features). K_n maximizes: H=log(n-1) with uniform non-zero eigenvalues, opposite to degree-entropy where K_n=0. For agent memory: well-connected graph = HIGH spectral entropy (healthy), fragmented = LOW (unhealthy). Amg already has _sym_eigenvalues infrastructure → ~25 lines to implement.
-125. **Temporal entropy trajectory = novel publishable health metric (#031)** — Track S_vN(G_t) over time. First/second derivatives detect growth/consolidation/forgetting/phase-transition phases. Sustained negative rate + decreasing nodes = knowledge collapse. Plateau = consolidation trigger. No competitor has ANY temporal entropy tracking. Combined with #030 (entropy-weighted forgetting) = two publishable contributions.
-126. **Information-theoretic trilogy complete (c288+298+299)** — Three complementary inter-graph measures: JSD (symmetric, bounded [0,1], true metric) + cross-entropy H(P,Q) (asymmetric, encoding cost) + KL divergence (asymmetric, information gain). Enables graph classification, anomaly detection, and clustering without external tools. No npm/PyPI competitor has ANY inter-graph comparison.
-127. **EntityResolver closes competitive gap (c296, #032)** — Mem0 v3 and Graphiti both have entity resolution as core feature. amg now matches with 8 APIs (alias/duplicate/merge). Critical for real-world memory graphs where entities are referenced differently across sessions.
-128. **Entropy-weighted retrieval = second publishable contribution (c297)** — BM25 + per-node entropy weight blend. Hub nodes (high entropy) get boosted. Connects entropy toolkit to retrieval scoring. Combined with entropy-weighted forgetting (#121) = two novel contributions no competitor has.
+>
+> **#57-128 archived** to [memory/archive-2026-07-mid.md](memory/archive-2026-07-mid.md). Thematic summary:
+> - **Quality & Evaluation**: Gap detection + dual-loop + evaluation quartet = competitive moat (#57-65, #107)
+> - **MCP & Tooling**: Zero graph MCP servers. 8-12 curated tools. Factory pattern. cacheHints 3-line ROI (#61-63, #81-90, #99, #104-106)
+> - **TypeScript Moat**: npm ZERO TS-native graph memory libs. Graph > Filesystem (#66-70)
+> - **Trust & Safety**: SimHash 0.974 AUC. Pre-execution gating > reputation (#112-115, #118)
+> - **Entropy Family**: Degree 10 APIs / Spectral (von Neumann) / Centrality (AZI, edge-betweenness) / Generalized (Rényi + Tsallis) (#109-110, #116-117, #122)
+> - **Inter-graph Trilogy**: JSD + CE + KL = complete information-theoretic suite (#123, #126)
+> - **Spectral**: Von Neumann = global topology. Temporal trajectory = health metric. QJSD for graph comparison (#124-125)
+> - **Forgetting & Retrieval**: Entropy-weighted forgetting + retrieval = TWO publishable contributions (#121, #127-128)
+> - **Multi-Agent**: Coordination defects = 41-87% failures. Tree search = shared memory (#119-120)
+> - **Entity Resolution**: Closes gap with Mem0/Graphiti (#127)
 129. **Von Neumann spectral entropy captures global topology (c292, #031)** — Shannon entropy of normalized Laplacian eigenvalues. K_n maximizes H=ln(n-1) — opposite of degree-entropy where K_n=0. Well-connected graph = HIGH spectral entropy (healthy), fragmented = LOW (unhealthy). Existing _sym_eigenvalues infra → ~50 lines.
 130. **Mem0 v3 ADD-only validates amg conflict resolution (#032)** — Mem0 dropped UPDATE/DELETE for 3x latency reduction + higher accuracy. amg's merge/consolidation approach was right all along. Graph-based resolution > vector dedup.
 131. **Bi-temporal is now table stakes — Engram 83.6% vs 73.2% full-context (#033)** — Bi-temporal fact graphs (valid_time + transaction_time, invalidate-never-delete) beat full-context by +10.4pp on LongMemEval. amg already has bi-temporal edge tracking but doesn't expose `query_as_of(timestamp)` as first-class API. Graphiti's moat is no longer unique.
@@ -218,13 +169,27 @@ Autoresearch 方法论实践 — amg **连续271天零回滚率** 🏆。Entropy
 149. **LongMemEval-V2 shifts to agentic multimodal context (May 2026, #037)** — 451 questions, up to 115M tokens, web trajectories with screenshots. 5 new ability types. "Environment gotchas" + "premise awareness" align with amg's knowledge gap detection + entity resolution.
 150. **Fixed reader model is the reproducibility key (#037)** — LongMemEval-V2 uses Qwen3.5-9B as fixed reader. Eliminates "better reader = better score" variance. For amg-bench: default to small reproducible model (Qwen-9B/Llama-8B via Ollama) for answerer, stronger model for judge. Enables fully reproducible offline runs.
 
+---
+
+151. **RRF is the zero-parameter default for multi-method graph classification (#038)** — Reciprocal Rank Fusion (1/(k+rank)) from IR translates perfectly to graph classification. Scale-invariant (degree JSD ∈ [0,0.8], spectral ∈ [0,2.5], fingerprint ∈ [0,15+] — RRF ignores all scale differences). k=60 was optimized for web search (hundreds of results); for amg's 5-20 reference graphs, k=5-10 is more discriminative. No tuning needed — the rank-only approach aligns with amg's zero-dependency philosophy. In simulated tests: RRF correctly identifies graph_A when 2/3 methods rank it #1.
+152. **Oracle diversity gain quantifies ensemble value (#038)** — Before building ensemble, measure: if ANY single method is correct per case, how much does the oracle upper bound exceed the best single method? Simulated results: degree=78%, spectral=78%, fingerprint=77%, but oracle=100% → 22% diversity gain. Double fault rates (degree-spectral: 2%, spectral-fingerprint: 4%, degree-fingerprint: 3%) confirm strong complementarity. If diversity gain < 5%, ensemble is not worth the complexity. Amg's degree-spectral pair has the lowest double fault (2%) — strongest complementarity pair.
+
+153. **Classification suite complete: 9 APIs covering 5 paradigms (c319-330)** — Single-match (graph + spectral), ensemble (hybrid 2-modal + weighted_average 3-modal + rrf parameter-free + bayesian adaptive), rejection (threshold+margin safety layer), consensus (classification_compare multi-method report), and k-NN (distance-weighted voting with label pooling). Research #038 fully implemented. No npm/PyPI competitor has ANY graph classification, let alone 9 APIs across 5 paradigms. The classification pipeline is: classify (choose method) → reject/accept (threshold) → consensus (compare methods) → k-NN (robustness check).
+154. **k-NN label pooling = category-level classification (c329)** — When multiple reference graphs share a category label (e.g., 3 star prototypes, 2 path prototypes), k-NN pools their votes. This is the first API that can answer "what FAMILY does this graph belong to?" rather than "which single reference is closest?". Distance-weighted (1/(|score|+ε)) ensures closer neighbors dominate. Combined with 5 base method backends, k-NN becomes a meta-classifier that improves any single-method result.
+155. **Bayesian per-query adaptive weights = zero-parameter ensemble (c327)** — Separation metric (norm_second − norm_best)/(norm_max − norm_best) measures how decisively each method identifies the best reference. Methods that are ambiguous for one graph but decisive for another automatically get different influence. This is fundamentally different from fixed-weight ensembles: the weights adapt to each query's structural characteristics. No free parameters, no training data needed.
+
+156. **Graph topology IS the intelligence — not just a storage format (#040)** — HAGE proves query-conditioned edges produce different retrieval paths for the same graph. HyphaeDB proves HNSW topology can serve as multi-agent communication fabric. The shift from "graph as storage" to "graph as reasoning instrument" validates amg's entropy framework — we extract intelligence FROM topology, not just FROM node content. Every competitor stores facts in graphs; amg reasons about graph structure itself.
+157. **Dependency edges enable cascading memory correction (#040)** — GRADE shows agent traces need dependency edges ("A was inferred from B") to enable failure prediction and cascading invalidation. amg currently lacks provenance edges. Adding `kind="depends_on"` + `propagate_invalidation()` = 60-line API that no competitor has. When a base fact is corrected, all inferred facts are automatically marked stale.
+158. **LLMs rubber-stamp GNN tool outputs 97.6-99.2% — tools must decide internally (#040)** — Stronger LLMs defer MORE, not less. Selective invocation must be designed in, not expected to emerge from scale. amg's `three_layer_router_cascade` already makes routing decisions before the LLM sees results — this is the correct pattern. Tools should make decisions, not offer suggestions for LLMs to rubber-stamp.
+159. **HAGE's relation-specific views = multi-perspective retrieval (#040)** — Same graph, different edge projections depending on query intent. A temporal query projects to temporal edges; a causal query projects to causal edges. amg has relation-typed edges but traverses uniformly. `project_graph(relationType)` = 30-line API that enables relation-specific algorithms on subgraphs. HAGE adds RL-trained edge weights for making this automatic — future work when amg-bench provides reward signals.
+
 ### 🔴 最高优先级: npm Publish
-- [ ] **agent-memory-graph: README + npm publish** — **5807 tests**, 896+ APIs
+- [ ] **agent-memory-graph: README + npm publish** — **6102 tests**, 905+ APIs
 - [ ] **agent-context-store: README + npm publish** — **2898 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
-- [ ] **agent-task-cli: README + npm publish** — **1340 tests**, F214
+- [ ] **agent-task-cli: README + npm publish** — **1354 tests**, F217
 
-> ⚠️ Mandol (ISCAS+MSRA) 已发 paper+PyPI+GitHub，LoCoMo SOTA 92.21%。PlugMem 已有 OpenClaw plugin。竞争窗口收紧。**10606 tests across 4 projects, all npm ready.**
+> ⚠️ Mandol (ISCAS+MSRA) 已发 paper+PyPI+GitHub，LoCoMo SOTA 92.21%。PlugMem 已有 OpenClaw plugin。竞争窗口收紧。**10915 tests across 4 projects, all npm ready.**
 
 ### 🟡 研究驱动 — 待实现 (Research #035: A2A Trust Engine V2 新增)
 - [ ] **lab/a2a-trust-prototype: Replace TrustEngineV2 skeleton with full implementation** — 7 algorithms (Bayesian Beta + Wilson LB, time decay, SimHash, trust gates, EigenTrust propagation, capability scoping, harness safety). Add Jest test suite (40+ tests). Code in research note.
@@ -282,7 +247,7 @@ Autoresearch 方法论实践 — amg **连续271天零回滚率** 🏆。Entropy
 - [ ] amg: cross-modal leak detection in write_governance_check — MemLeak-inspired. Scan image_derived/correlated_inference edges before forget(). ~60 lines + ~80 tests.
 
 ### 🟡 研究驱动 — 待实现 (existing)
-- [ ] amg: compress_to_skill() + retrieve_skills() + evolve_skill() + skill_bank_health() — Read-Write-Assess-Govern lifecycle (MemRefine + MemSkill + #019). ~+140 tests. **Implementation blueprint ready in #019**: Cycle 268 compress_to_skill (~40 tests), Cycle 269 retrieve_skills+evolve_skill (~40 tests), Cycle 270 skill_bank_health (~35 tests). Self-created skills > human-authored (MUSE 85.24% vs 81.17%). **No npm library has skill extraction/evolution/health.**
+- [ ] amg: compress_to_skill() + retrieve_skills() + evolve_skill() + skill_bank_health() — Read-Write-Assess-Govern lifecycle. **Research #039 blueprint ready** (2026-07-31): SkillRL hierarchical distillation (success→strategy, failure→counterfactual), CODESKILL learnable management (GRPO + hybrid reward), AEL domain stability gate (extraction degrades -15% in noisy domains), EvoMemBench structure-matching req. Two granularities: task-level + event-driven. ~+150 tests, 4 APIs. Cycles 331-334. **No npm library has skill extraction/evolution/health.**
 - [ ] amg: EvoMemBench adapter — 4-setting benchmark (in-ep/cross-ep × knowledge/exec). **Priority over LoCoMo** (#014)
 - [x] ✅ amg: three_layer_router_cascade — DONE (c317, 36 tests). MemFlow production pattern. rules→entropy→fallback.
 - [ ] amg: intent_aware_edge_cost() — PRISM intent routing (#010). ~+40 tests
@@ -292,6 +257,9 @@ Autoresearch 方法论实践 — amg **连续271天零回滚率** 🏆。Entropy
 - [ ] **amg README: 竞品对比表** — Mem0/Zep/Mandol/PlugMem/PRISM/Hippocampus + **GraphRAG/LightRAG positioning: security-first agent-native GraphRAG**
 
 ### 🟣 Deep Research (detailed notes in catalyst-research/exploration-notes/)
+- **#040 (07-31)** ✅: Graph-Native Agent Memory — From Passive Storage to Living Topology. HAGE (2605.09942): RL-trained query-conditioned multi-relational graph traversal. HyphaeDB (2606.28781): HNSW topology as multi-agent communication fabric — agents as nodes, gossip propagation, emergent consensus. GRADE (2606.22741): dependency vs execution edges for agent traces — dependency layer predicts failure where run size fails. "When the Tool Decides" (2606.14476): LLMs parrot GNN outputs 97.6-99.2%, stronger models defer MORE. 5 insights. 3 new API opportunities: conditioned_traverse + depends_on edges + project_graph. Full TypeScript prototype (~150 lines zero-dep, verified ✅). [笔记](catalyst-research/exploration-notes/2026-07-31-graph-native-agent-memory-living-topology.md)
+- **#039 (07-31)** ✅: Agent Memory Skill Extraction & Evolution. SkillRL (2602.08234) hierarchical SkillBank + differential trajectory processing + recursive RL co-evolution (+15.3%). CODESKILL (2605.25430) learnable skill management via GRPO, hybrid reward (+9.69). AEL (2604.21725) three-tier promotion, **skill extraction degrades -15% in noisy domains**. EvoMemBench (2605.18421) procedural > retrieval only when structure matches. Full TypeScript SkillBank prototype (~250 lines zero-dep). Maps to 4 amg APIs. [笔记](catalyst-research/exploration-notes/2026-07-31-agent-memory-skill-extraction-evolution.md)
+- **#038 (07-30)** ✅ **FULLY IMPLEMENTED**: Hybrid Graph Classification Ensemble Fusion. All 4 strategies implemented across cycles 326-330: RRF (c326, parameter-free rank fusion, +20 tests), Bayesian (c327, adaptive confidence-weighted, +36 tests), Weighted Average (c330, explicit user weights, +52 tests), k-NN (c329, distance-weighted voting, +56 tests). Plus classification_compare (c328, multi-method consensus, +40 tests). **9 classification APIs total**. Oracle diversity gain 22% on simulated data. TypeScript fusion code verified ✅. [笔记](catalyst-research/exploration-notes/2026-07-30-hybrid-graph-classification-ensemble-fusion.md)
 - **#037 (07-30)** ✅: Agent Memory Benchmark Harness Design. Four evaluation layers (answer/operation/form/scale). Scoreboard = moat. Operation-level eval = differentiator. BEAM scale cliffs. LongMemEval-V2 agentic multimodal. Fixed reader model = reproducibility. Full TS harness skeleton (~200 lines, zero-dep). 5 insights (#146-#150). [笔记](catalyst-research/exploration-notes/2026-07-30-agent-memory-benchmark-harness-design.md)
 - **#036 (07-29)** ✅: Information-Theoretic Graph Classification & Multi-Scale Entropy Fingerprinting. Rényi α = resolution parameter (low α=connectivity, high α=bottleneck). Entropy curve shape = graph fingerprint (not scalar value). VNEstruct ego-local entropy > global for node tasks (ICML 2020). TIDE tri-component decomposition (feature×structure×joint, ICML 2026). PRI formalizes entropy-guided forgetting. FGN continuous entropy fields (June 2026). AERK quantum walk kernels. 2 runnable code examples (entropy_scan + graph_classification prototypes, verified ✅). Feeds amg cycles 310-311. [笔记](catalyst-research/exploration-notes/2026-07-29-graph-classification-entropy-fingerprinting.md)
 - **#033 (07-28)** ✅: Agent Memory Engineering 2026H2. Engram bi-temporal dual-process (83.6% vs 73.2%, +10.4pp). H-Mem hybrid tree+graph (SOTA 3 benchmarks). Memanto info-theoretic retrieval. MAGE four-subgraph multi-agent. Dual-process System-1/System-2 = production pattern. Benchmark harness = competitive weapon. 2 runnable code examples. [笔记](catalyst-research/exploration-notes/2026-07-28-agent-memory-engineering-2026h2.md)
@@ -323,8 +291,8 @@ Autoresearch 方法论实践 — amg **连续271天零回滚率** 🏆。Entropy
 
 | # | 项目 | Tests | 状态 |
 |---|------|-------|------|
-| 1 | agent-task-cli | 1340 | ✅ npm ready, F214 (214 features) |
-| 2 | agent-memory-graph | **5807** | ✅ npm ready, 八十合一: entropy framework (28+ APIs incl. spectral + inter-graph trilogy + contribution + stability + spectral_divergence + scan + fingerprint + classification + classification_with_rejection) + adaptive forgetting (6) + EntityResolver (8) + entropy-weighted retrieval + MCP Day 1-5 |
+| 1 | agent-task-cli | 1354 | ✅ npm ready, F217 (217 features) |
+| 2 | agent-memory-graph | **6102** | ✅ npm ready, 八十合一: entropy framework (30+ APIs incl. **9-API classification suite** + spectral + inter-graph trilogy + contribution + stability + fingerprint + router cascade) + adaptive forgetting (6) + EntityResolver (8) + entropy-weighted retrieval + MCP Day 1-5 |
 | 3 | agent-context-store | 2898 | ✅ npm ready, 二十六层: detect→configure→recommend→validate→correlate complete |
 | 4 | structured-output-toolkit | 561 | ✅ npm ready |
 | 5 | openclaw-langgraph-bridge | 261 | 🔄 Supervisor 完善 |
@@ -378,14 +346,16 @@ curl -X POST "https://api.tavily.com/search" \
 
 ## Timeline
 
-### Immediate (Week of July 30)
-- [ ] README(amg) → npm publish — **#1 priority**. 5807 tests, 896+ APIs.
+### Immediate (Week of July 31)
+- [ ] README(amg) → npm publish — **#1 priority**. 6102 tests, 905+ APIs.
 - [ ] README(acs) → npm publish — 2898 tests.
 - [ ] MCP Registry publish (SDK v2 stable July 28)
-- [ ] **amg Cycle 321+: hybrid_classification()** — Combine degree + spectral + fingerprint scores. ~40 lines + ~50 tests.
+- [ ] **amg-bench: Benchmark harness** — TypeScript MemoryBackend interface + AMGBackend adapter. ~400 lines harness + ~100 lines adapter. LongMemEval-compatible. Operation-level evaluation (moat). Research #037 ✅.
 - [ ] **amg: query_as_of(timestamp)** (#033) — Expose bi-temporal tracking. Engram pattern. ~40 lines + ~30 tests.
 - [ ] **amg: entropy_scan()** — Multi-scale Rényi/Tsallis sweep across α/q range. Returns curve for graph fingerprinting. ~40 lines + ~50 tests.
-- [ ] **amg-bench: Benchmark harness** — TypeScript MemoryBackend interface + AMGBackend adapter. ~400 lines harness + ~100 lines adapter. LongMemEval-compatible. Operation-level evaluation (moat). Research #037 ✅.
+- [ ] **amg: conditioned_traverse(entryId, intentProfile)** (#040 NEW) — Query-conditioned BFS with per-relation weights. HAGE-inspired. ~50 lines + ~40 tests.
+- [ ] **amg: add `kind="depends_on"` edge type + propagate_invalidation()** (#040 NEW) — Provenance tracking, cascading correction. ~60 lines + ~50 tests.
+- [ ] **amg: project_graph(relationType)** (#040 NEW) — Subgraph projection for single relation type. ~30 lines + ~30 tests.
 
 ### Short-term (August)
 - [ ] amg: forget_policy() — ✅ DONE (c284)
