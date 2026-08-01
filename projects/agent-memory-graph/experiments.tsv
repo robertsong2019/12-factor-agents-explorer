@@ -405,3 +405,13 @@ timestamp	commit	metric	value	status	description
 2026-08-01T00:00:00+08:00	2e14366	test_pass_rate	100%	keep	All 6223 passing, 51.48s.
 2026-08-01T01:00:00+08:00	6bc34dc	test_count	6223→6272	keep	Cycle 335: max_confidence_classification() — meta-classifier that dynamically selects the method with highest per-query confidence. Three confidence metrics: margin (absolute gap), confidence (relative ratio), z_score (std deviations below mean of other scores). Runs all 5 base methods. Agreement tracking. Margin of victory. Recommendation text. z_score sort direction (ascending=most negative wins). 49 tests. 273rd consecutive day.
 2026-08-01T01:00:00+08:00	6bc34dc	test_pass_rate	100%	keep	All 6272 passing, 50.23s.
+2026-08-01T21:10:00+08:00	3abd373	test_count	6335→6380	keep	Cycle 339: entropy_scan() shape descriptors + fingerprint vector. Enhances existing API with curve analysis (monotonicity/convexity/knee/area/gap/slope). Fingerprint vector for graph comparison. Shape uses unnormalized Rényi. 45 tests. 273rd consecutive day.
+2026-08-01T21:10:00+08:00	3abd373	test_pass_rate	1002026-08-01T21:10:00+08:00	3abd373	test_count	6335→6380	keep	Cycle 339: entropy_scan() shape descriptors + fingerprint vector. Curve analysis (monotonicity/convexity/knee/area/gap/slope). Fingerprint vector for graph comparison. 45 tests. 273rd consecutive day.
+2026-08-01T21:10:00+08:00	3abd373	test_pass_rate	100%	keep	All 6380 passing, 51.98s.
+2026-08-01T21:25:00+08:00	6e62d81	test_count	6380→6410	keep	Cycle 340: entropy_scan_compare() — L2 fingerprint distance + per-alpha divergence + shape delta + classification. 30 tests. 273rd consecutive day.
+2026-08-01T21:25:00+08:00	6e62d81	test_pass_rate	100%	keep	All 6410 passing, 51.17s.
+2026-08-01T21:40:00+08:00	a00f6cd	test_count	6410→6450	keep	Cycle 341: entropy_depth_profile() — BFS-layer Rényi entropy. Per-layer Shannon + Rényi₂ over induced subgraph. Growth ratio. SREGK-inspired. 40 tests. 273rd consecutive day.
+2026-08-01T21:40:00+08:00	a00f6cd	test_pass_rate	100%	keep	All 6450 passing, 51.07s.
+2026-08-01T21:55:00+08:00	45e449e	test_count	6450→6474	keep	Cycle 342: entropy_scan_summary() — human-readable topology summary. Edge distribution assessment, curve shape, complexity classification. 24 tests. 273rd consecutive day.
+2026-08-01T21:55:00+08:00	45e449e	test_pass_rate	100%	keep	All 6474 passing, 51.46s.
+2026-08-01T22:15:00+08:00	2d1a629	test_pass_rate	100%	keep	Cycle 336: propagate_correction(). 6497 passing, 51.72s.
