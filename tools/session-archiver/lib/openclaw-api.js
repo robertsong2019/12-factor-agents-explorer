@@ -11,7 +11,9 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const OPENCLAW_HOME = process.env.OPENCLAW_HOME || path.join(os.homedir(), ".openclaw");
+function getOpenclawHome() {
+  return process.env.OPENCLAW_HOME || path.join(os.homedir(), ".openclaw");
+}
 
 /**
  * Attempt to list live sessions by reading OpenClaw's data.
@@ -31,7 +33,7 @@ async function listLiveSessions() {
 async function fetchSessionHistory(sessionKey) {
   // When running inside OpenClaw agent, use sessions_history tool.
   // Standalone fallback: try to find session files
-  const sessionsDir = path.join(OPENCLAW_HOME, "sessions");
+  const sessionsDir = path.join(getOpenclawHome(), "sessions");
   if (fs.existsSync(sessionsDir)) {
     const files = fs.readdirSync(sessionsDir).filter((f) => f.includes(sessionKey));
     if (files.length > 0) {
