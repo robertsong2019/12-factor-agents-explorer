@@ -7215,6 +7215,150 @@ class MemoryGraph:
             "scan2": scan2,
         }
 
+    # ── Cycle 341: BFS depth entropy profile ───────────────────────────
+
+    def entropy_depth_profile(self, node_id: str,
+                               *,
+                               max_depth: int = 5,
+                               index: str = "sombor",
+                               ) -> Optional[list[dict]]:
+        """Per-layer Rényi entropy profile via BFS expansion from ``node_id``.
+
+        Starting from ``node_id``, expands outward in BFS layers. For each
+        layer *h* (0, 1, 2, …), computes:
+
+        - **Nodes** in this layer (the frontier)
+        - **Induced edge count** — edges with both endpoints in layers ≤ h
+        - **Shannon entropy** of the induced subgraph's edge contribution distribution
+        - **Rényi H₂** (α=2 collision entropy)
+        - **Layer growth ratio** — frontier_size(h) / frontier_size(h−1)
+        - **Cumulative node count** up to layer h
+
+        This is inspired by the SREGK h-layer expansion pattern (arXiv:2501.10549)
+        which connects local node entropy to global graph entropy through
+        successive neighborhood shells.
+
+        **When to use:**
+        - Understand information spread from a single seed node
+        - Compare nodes by their entropy reach profile
+        - Detect community boundaries (entropy plateau = boundary)
+        - Connect ``entropy_contribution(node)`` to global ``entropy_scan()``
+
+        Args:
+            node_id: Starting node for BFS expansion.
+            max_depth: Maximum BFS layers to expand (default 5).
+            index: Degree-based index for edge contributions.
+
+        Returns:
+            List of dicts, one per layer (0-indexed):
+            ``[{depth, frontier_nodes, cumulative_nodes, induced_edges,
+               shannon, renyi_2, growth_ratio}, …]``
+            or ``None`` if node doesn't exist or graph has no edges.
+        """
+        if not self.has_node(node_id):
+            return None
+
+        # Check edges exist
+        total_edges = self.conn.execute("SELECT COUNT(*) c FROM edges").fetchone()["c"]
+        if total_edges == 0:
+            return None
+
+        def _induced_entropy(cumulative_nodes: set[str]) -> Optional[dict]:
+            """Compute entropy over edges with both endpoints in the node set."""
+            if len(cumulative_nodes) < 2:
+                return {"shannon": 0.0, "renyi_2": 0.0, "edge_count": 0}
+            placeholders = ",".join("?" for _ in cumulative_nodes)
+            params = list(cumulative_nodes)
+            rows = self.conn.execute(
+                f"SELECT source, target FROM edges WHERE source IN ({placeholders}) AND target IN ({placeholders})",
+                params + params
+            ).fetchall()
+            edge_count = len(rows)
+            if edge_count == 0:
+                return {"shannon": 0.0, "renyi_2": 0.0, "edge_count": 0}
+
+            # Degree-based contributions for induced subgraph
+            from collections import Counter
+            deg = Counter()
+            for r in rows:
+                deg[r["source"]] += 1
+                deg[r["target"]] += 1
+
+            # Edge contributions via chosen index
+            contributions: list[float] = []
+            for r in rows:
+                d_s = deg[r["source"]]
+                d_t = deg[r["target"]]
+                if d_s > 0 and d_t > 0:
+                    if index == "sombor":
+                        contributions.append(math.sqrt(d_s * d_s + d_t * d_t))
+                    elif index == "reduced_sombor":
+                        contributions.append(math.sqrt((d_s - 1) ** 2 + (d_t - 1) ** 2))
+                    elif index == "randic":
+                        contributions.append(1.0 / math.sqrt(d_s * d_t))
+                    elif index == "zagreb_m1":
+                        contributions.append(float(d_s * d_t))
+                    elif index == "abc":
+                        contributions.append(math.sqrt((d_s + d_t - 2.0) / (d_s * d_t)))
+                    elif index == "ga":
+                        contributions.append(2.0 * math.sqrt(d_s * d_t) / (d_s + d_t))
+                    elif index == "augmented_zagreb":
+                        contributions.append((2.0 * math.sqrt(d_s * d_t) / (d_s + d_t)) ** 3)
+                    else:
+                        raise ValueError(f"Unknown index: {index}")
+
+            total = sum(contributions)
+            if total <= 0:
+                return {"shannon": 0.0, "renyi_2": 0.0, "edge_count": edge_count}
+            probs = [c / total for c in contributions]
+            shannon = -sum(p * math.log(p) for p in probs if p > 0)
+            s2 = sum(p * p for p in probs)
+            renyi_2 = -math.log(s2) if s2 > 0 else 0.0
+            return {"shannon": shannon, "renyi_2": renyi_2, "edge_count": edge_count}
+
+        # BFS layer by layer
+        visited = {node_id}
+        frontier = {node_id}
+        profile: list[dict] = []
+
+        for h in range(max_depth + 1):
+            # Compute entropy of the induced subgraph up to this layer
+            ent = _induced_entropy(visited)
+
+            # Growth ratio
+            if h == 0:
+                growth = 1.0
+            else:
+                prev_frontier = profile[h - 1]["frontier_count"]
+                growth = len(frontier) / prev_frontier if prev_frontier > 0 else 0.0
+
+            profile.append({
+                "depth": h,
+                "frontier_nodes": sorted(frontier),
+                "frontier_count": len(frontier),
+                "cumulative_nodes": len(visited),
+                "induced_edges": ent["edge_count"],
+                "shannon": round(ent["shannon"], 8),
+                "renyi_2": round(ent["renyi_2"], 8),
+                "growth_ratio": round(growth, 8),
+            })
+
+            # Expand frontier
+            next_frontier = set()
+            for nid in frontier:
+                for r in self.conn.execute(
+                    "SELECT target FROM edges WHERE source=? UNION SELECT source FROM edges WHERE target=?",
+                    (nid, nid)
+                ).fetchall():
+                    if r[0] not in visited:
+                        next_frontier.add(r[0])
+            if not next_frontier:
+                break
+            visited |= next_frontier
+            frontier = next_frontier
+
+        return profile
+
     def entropy_anomaly_detect(self, index: str = "sombor",
                                threshold: float = 2.0) -> Optional[dict]:
         """Detect nodes whose local entropy contribution deviates from the graph average.
