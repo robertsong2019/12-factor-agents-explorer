@@ -26370,6 +26370,7 @@ class MemoryGraph:
     # ────────────────────────────────────────────────────────────
     _CAUSAL_RELATIONS = frozenset({
         "causes", "prevents", "conflicts_with", "enables", "depends_on",
+        "derived_from", "computed_from",
     })
 
     def add_causal_edge(self, source_id: str, target_id: str,
@@ -26382,12 +26383,16 @@ class MemoryGraph:
         graph answer "what are the consequences of X?" rather than only
         "what is related to X?".
 
-        Five relation types are supported:
+        Seven relation types are supported:
         - ``causes``: source directly causes the target event/state.
         - ``prevents``: source stops or inhibits the target.
         - ``conflicts_with``: source and target cannot both hold.
         - ``enables``: source is a prerequisite for target.
         - ``depends_on``: source requires target to be true.
+        - ``derived_from``: source is derived (extracted, summarised,
+          inferred) from target — provenance / lineage tracking.
+        - ``computed_from``: source is computed (aggregated, transformed,
+          calculated) from target — deterministic lineage.
 
         The edge is stored via the regular ``link()`` mechanism with
         the relation as the edge type, and rich metadata (confidence,
@@ -26601,6 +26606,142 @@ class MemoryGraph:
         # Sort: longest chains first, then by total confidence
         results.sort(key=lambda c: (-len(c), -sum(e["confidence"] for e in c)))
         return results
+
+    # ── Derivation Provenance ───────────────────────────────────
+    def trace_derivation(self, node_id: str,
+                         max_depth: int = 10) -> dict:
+        """Trace the full provenance / derivation tree of a node.
+
+        Follows ``derived_from`` and ``computed_from`` edges backward
+        (from target to source) to reconstruct how a node came to be.
+
+        Unlike :meth:`trace_causal_chain` (which follows all causal
+        edges), this method focuses specifically on data-lineage:
+        *where did this knowledge come from?*
+
+        Each path in the result is a chain of ``source → target``
+        derivation edges, from the query node back to its roots.
+        Nodes with no incoming derivation edges are "roots" (original
+        observations, not derived from anything).
+
+        Args:
+            node_id: The node whose provenance to trace.
+            max_depth: Maximum derivation chain length (default 10).
+
+        Returns:
+            Dict with:
+            - ``node``: the starting node ID.
+            - ``roots``: list of root source node IDs (origins).
+            - ``chains``: list of derivation paths, each a list of
+              ``{source, target, relation, confidence}`` dicts.
+              Sorted longest-first.
+            - ``all_sources``: flat set of all upstream source IDs.
+            - ``depth_reached``: maximum chain length found.
+
+        Example::
+
+            >>> mg.add_causal_edge("summary", "raw_data",
+            ...                    "derived_from", confidence=0.9)
+            >>> mg.add_causal_edge("raw_data", "sensor_1",
+            ...                    "computed_from", confidence=1.0)
+            >>> mg.trace_derivation("summary")
+            {'node': 'summary',
+             'roots': ['sensor_1'],
+             'chains': [[
+                {'source': 'summary', 'target': 'raw_data',
+                 'relation': 'derived_from', 'confidence': 0.9},
+                {'source': 'raw_data', 'target': 'sensor_1',
+                 'relation': 'computed_from', 'confidence': 1.0},
+             ]],
+             'all_sources': ['raw_data', 'sensor_1'],
+             'depth_reached': 2}
+        """
+        derivation_relations = ("derived_from", "computed_from")
+
+        # Verify node exists
+        node = self.get_node(node_id)
+        if node is None:
+            return {"node": node_id, "roots": [], "chains": [],
+                    "all_sources": [], "depth_reached": 0,
+                    "error": "node not found"}
+
+        chains: list[list[dict]] = []
+        roots: set[str] = set()
+        all_sources: set[str] = set()
+        queue: list[tuple[str, list[dict], set]] = [
+            (node_id, [], {node_id})
+        ]
+
+        while queue:
+            current, path, visited = queue.pop(0)
+            if len(path) >= max_depth:
+                roots.add(current)
+                if path:
+                    chains.append(path)
+                continue
+
+            # Find outgoing derivation edges: current → target
+            # In add_causal_edge, source derives FROM target:
+            #   add_causal_edge(source="summary", target="raw", "derived_from")
+            #   means "summary is derived from raw".
+            # So to trace provenance, follow outgoing edges
+            # (where source = current node).
+            placeholders = ','.join('?' * len(derivation_relations))
+            rows = self.conn.execute(
+                f"SELECT source, target, relation FROM edges "
+                f"WHERE source=? AND relation IN ({placeholders})",
+                (current, *derivation_relations)
+            ).fetchall()
+
+            had_next = False
+            for row in rows:
+                tgt = row['target']  # upstream source node
+                rel = row['relation']
+                if tgt in visited:
+                    continue
+                had_next = True
+
+                # Get confidence from edge_props
+                prop_row = self.conn.execute(
+                    "SELECT properties FROM edge_props "
+                    "WHERE source=? AND target=? AND relation=?",
+                    (current, tgt, rel)
+                ).fetchone()
+                confidence = 1.0
+                if prop_row:
+                    try:
+                        props = json.loads(prop_row['properties'])
+                        confidence = props.get("confidence", 1.0)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                edge_dict = {
+                    "source": current,
+                    "target": tgt,
+                    "relation": rel,
+                    "confidence": confidence,
+                }
+                new_path = path + [edge_dict]
+                new_visited = visited | {tgt}
+                all_sources.add(tgt)
+                queue.append((tgt, new_path, new_visited))
+
+            if not had_next:
+                # No further derivations — this is a root
+                roots.add(current)
+                if path:
+                    chains.append(path)
+
+        # Sort chains: longest first, then by total confidence
+        chains.sort(key=lambda c: (-len(c), -sum(e["confidence"] for e in c)))
+
+        return {
+            "node": node_id,
+            "roots": sorted(roots),
+            "chains": chains,
+            "all_sources": sorted(all_sources),
+            "depth_reached": max((len(c) for c in chains), default=0),
+        }
 
     # ── Spreading Activation (Collins & Loftus 1975) ─────────────
     def spread_activation(
