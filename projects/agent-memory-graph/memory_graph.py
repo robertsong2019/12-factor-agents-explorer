@@ -7114,6 +7114,107 @@ class MemoryGraph:
         new_mg.conn.commit()
         return new_mg
 
+    # ── Cycle 340: Entropy scan comparison ──────────────────────────
+
+    def entropy_scan_compare(self, other: "MemoryGraph",
+                              *,
+                              index: str = "sombor",
+                              ) -> Optional[dict]:
+        """Compare two graphs' entropy scan profiles.
+
+        Computes ``entropy_scan()`` on both graphs and produces a
+        multi-dimensional comparison:
+
+        - **L2 distance** between fingerprint vectors
+        - **Per-α Rényi divergence** — where on the α spectrum the
+          two graphs differ most
+        - **Shape descriptor delta** — how monotonicity, convexity,
+          curve area, and gap differ
+        - **Classification**: whether the graphs are "similar" or
+          "different" based on fingerprint distance
+
+        **When to use:**
+        - Quick graph similarity check without inter-graph computation
+        - Track how a graph's entropy profile evolves over time
+        - Compare reference graphs for classification
+
+        Args:
+            other: The other MemoryGraph to compare against.
+            index: degree-based index for edge contributions.
+
+        Returns:
+            Dict with keys:
+            - ``distance``: float — L2 distance between fingerprints
+            - ``per_alpha_divergence``: list of {alpha, abs_diff}
+            - ``shape_delta``: dict of descriptor differences
+            - ``classification``: "similar" | "different"
+            - ``scan1``: result of entropy_scan() on self
+            - ``scan2``: result of entropy_scan() on other
+            or ``None`` if either graph is too small.
+        """
+        scan1 = self.entropy_scan(index=index)
+        scan2 = other.entropy_scan(index=index)
+        if scan1 is None or scan2 is None:
+            return None
+
+        fp1 = scan1["fingerprint"]
+        fp2 = scan2["fingerprint"]
+
+        # Pad shorter vector with zeros
+        n = max(len(fp1), len(fp2))
+        fp1_padded = fp1 + [0.0] * (n - len(fp1))
+        fp2_padded = fp2 + [0.0] * (n - len(fp2))
+
+        distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(fp1_padded, fp2_padded)))
+
+        # Per-α divergence (uses RAW Rényi values from fingerprint)
+        # fingerprint = [shannon, renyi_0, renyi_1, ..., tsalli_0, ..., area, gap, slope]
+        renyi_alphas = scan1["renyi"]["alphas"]
+        # RAW Rényi values start at index 1 (after shannon), length = len(alphas)
+        n_renyi = len(renyi_alphas)
+        renyi1 = fp1[1:1 + n_renyi]
+        renyi2 = fp2[1:1 + n_renyi]
+
+        per_alpha: list[dict] = []
+        for i, alpha in enumerate(renyi_alphas):
+            if i < len(renyi1) and i < len(renyi2):
+                per_alpha.append({
+                    "alpha": alpha,
+                    "abs_diff": abs(renyi1[i] - renyi2[i]),
+                })
+
+        # Find α with maximum divergence
+        max_div_alpha = None
+        max_div = 0.0
+        for p in per_alpha:
+            if p["abs_diff"] > max_div:
+                max_div = p["abs_diff"]
+                max_div_alpha = p["alpha"]
+
+        # Shape descriptor deltas
+        s1, s2 = scan1["shape"], scan2["shape"]
+        shape_delta = {
+            "area_delta": s1["curve_area"] - s2["curve_area"],
+            "gap_delta": s1["max_min_gap"] - s2["max_min_gap"],
+            "slope_delta": s1["slope_at_alpha2"] - s2["slope_at_alpha2"],
+            "monotonic_match": s1["monotonic"] == s2["monotonic"],
+            "convex_match": s1["convex"] == s2["convex"],
+        }
+
+        # Classification heuristic
+        classification = "similar" if distance < 0.5 else "different"
+
+        return {
+            "distance": round(distance, 8),
+            "per_alpha_divergence": per_alpha,
+            "max_divergence_alpha": max_div_alpha,
+            "max_divergence_value": round(max_div, 8),
+            "shape_delta": shape_delta,
+            "classification": classification,
+            "scan1": scan1,
+            "scan2": scan2,
+        }
+
     def entropy_anomaly_detect(self, index: str = "sombor",
                                threshold: float = 2.0) -> Optional[dict]:
         """Detect nodes whose local entropy contribution deviates from the graph average.
