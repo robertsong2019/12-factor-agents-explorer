@@ -26743,6 +26743,145 @@ class MemoryGraph:
             "depth_reached": max((len(c) for c in chains), default=0),
         }
 
+    def trace_derivation_impact(self, node_id: str,
+                                max_depth: int = 10) -> dict:
+        """Trace forward: what nodes were derived (directly or transitively)
+        from *node_id*?
+
+        This is the forward counterpart to :meth:`trace_derivation`.
+        Where ``trace_derivation`` asks "where did this come from?",
+        ``trace_derivation_impact`` asks "what depends on this?".
+
+        Follows ``derived_from`` and ``computed_from`` edges in the
+        forward direction (from target to source): given a root node,
+        find all nodes that derive from it.
+
+        Edge semantics recap:
+            ``add_causal_edge(source="summary", target="raw",
+            "derived_from")`` means *summary* is derived from *raw*.
+            So to find downstream impact of *raw*, we look for nodes
+            whose derivation edges point TO *raw* — i.e., rows where
+            ``target = node_id``.
+
+        Args:
+            node_id: The source node whose downstream impact to trace.
+            max_depth: Maximum chain length (default 10).
+
+        Returns:
+            Dict with:
+            - ``node``: the starting node ID.
+            - ``leaves``: list of leaf node IDs (terminal derived nodes
+              with no further derivations from them).
+            - ``chains``: list of impact paths, each a list of
+              ``{source, target, relation, confidence}`` dicts.
+              Sorted longest-first.
+            - ``all_dependents``: flat set of all downstream node IDs.
+            - ``depth_reached``: maximum chain length found.
+
+        Example::
+
+            >>> mg.add_causal_edge("summary", "raw_data",
+            ...                    "derived_from", confidence=0.9)
+            >>> mg.add_causal_edge("report", "summary",
+            ...                    "derived_from", confidence=0.8)
+            >>> mg.trace_derivation_impact("raw_data")
+            {'node': 'raw_data',
+             'leaves': ['report'],
+             'chains': [[
+                {'source': 'summary', 'target': 'raw_data',
+                 'relation': 'derived_from', 'confidence': 0.9},
+                {'source': 'report', 'target': 'summary',
+                 'relation': 'derived_from', 'confidence': 0.8},
+             ]],
+             'all_dependents': ['report', 'summary'],
+             'depth_reached': 2}
+        """
+        derivation_relations = ("derived_from", "computed_from")
+
+        # Verify node exists
+        node = self.get_node(node_id)
+        if node is None:
+            return {"node": node_id, "leaves": [], "chains": [],
+                    "all_dependents": [], "depth_reached": 0,
+                    "error": "node not found"}
+
+        chains: list[list[dict]] = []
+        leaves: set[str] = set()
+        all_dependents: set[str] = set()
+        queue: list[tuple[str, list[dict], set]] = [
+            (node_id, [], {node_id})
+        ]
+
+        while queue:
+            current, path, visited = queue.pop(0)
+            if len(path) >= max_depth:
+                leaves.add(current)
+                if path:
+                    chains.append(path)
+                continue
+
+            # Find incoming derivation edges: target = current
+            # If summary is derived_from raw_data, the edge row has
+            # source=summary, target=raw_data.
+            # To find what derives FROM raw_data, look for rows where
+            # target=raw_data (i.e., target=current).
+            placeholders = ','.join('?' * len(derivation_relations))
+            rows = self.conn.execute(
+                f"SELECT source, target, relation FROM edges "
+                f"WHERE target=? AND relation IN ({placeholders})",
+                (current, *derivation_relations)
+            ).fetchall()
+
+            had_next = False
+            for row in rows:
+                src = row['source']  # downstream dependent node
+                rel = row['relation']
+                if src in visited:
+                    continue
+                had_next = True
+
+                # Get confidence from edge_props
+                prop_row = self.conn.execute(
+                    "SELECT properties FROM edge_props "
+                    "WHERE source=? AND target=? AND relation=?",
+                    (src, current, rel)
+                ).fetchone()
+                confidence = 1.0
+                if prop_row:
+                    try:
+                        props = json.loads(prop_row['properties'])
+                        confidence = props.get("confidence", 1.0)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                edge_dict = {
+                    "source": src,
+                    "target": current,
+                    "relation": rel,
+                    "confidence": confidence,
+                }
+                new_path = path + [edge_dict]
+                new_visited = visited | {src}
+                all_dependents.add(src)
+                queue.append((src, new_path, new_visited))
+
+            if not had_next:
+                # No further dependents — this is a leaf
+                leaves.add(current)
+                if path:
+                    chains.append(path)
+
+        # Sort chains: longest first, then by total confidence
+        chains.sort(key=lambda c: (-len(c), -sum(e["confidence"] for e in c)))
+
+        return {
+            "node": node_id,
+            "leaves": sorted(leaves),
+            "chains": chains,
+            "all_dependents": sorted(all_dependents),
+            "depth_reached": max((len(c) for c in chains), default=0),
+        }
+
     # ── Spreading Activation (Collins & Loftus 1975) ─────────────
     def spread_activation(
         self,
