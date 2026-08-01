@@ -6850,6 +6850,187 @@ class MemoryGraph:
             "spectral_count": len(spectral_valid),
         }
 
+    def entropy_explain(self, *, verbose: bool = False) -> dict:
+        """Human-readable entropy interpretation with actionable insights.
+
+        Computes a comprehensive entropy profile and generates a natural
+        language explanation of what the entropy values mean for the graph's
+        structure and health. Designed for agentic consumption — agents can
+        use this to reason about their own memory state.
+
+        Interpretation layers:
+
+        1. **Degree diversity** — How evenly distributed are node degrees?
+           High = all nodes have similar connectivity. Low = some nodes are hubs.
+        2. **Spectral topology** — What does the Laplacian spectrum reveal?
+           High = well-connected globally. Low = structural bottlenecks.
+        3. **Fingerprint consistency** — Do degree-based and spectral agree?
+           Disagreement = complex topology (e.g., star graphs).
+        4. **Centrality focus** — Are edges concentrated through few nodes?
+           High edge_betweenness entropy = distributed flow. Low = bottleneck nodes.
+        5. **Recommendations** — Concrete improvement suggestions.
+
+        Args:
+            verbose: If True, include per-index breakdown.
+
+        Returns:
+            Dict with ``summary`` (str), ``layers`` (list of dicts with
+            ``name``, ``assessment``, ``value``, ``interpretation``),
+            ``fingerprint_consistency`` (float, 0-1), ``recommendations``
+            (list of str), ``indices_used`` (int).
+        """
+        stats = self.stats()
+        n = stats.get("nodes", 0)
+        e = stats.get("edges", 0)
+        if n < 3:
+            return {
+                "summary": f"Graph too small ({n} nodes) for meaningful entropy analysis.",
+                "layers": [],
+                "fingerprint_consistency": None,
+                "recommendations": ["Add more nodes and edges first."],
+                "indices_used": 0,
+            }
+
+        profile = self.entropy_profile()
+        layers = []
+        recs = []
+
+        # --- Layer 1: Degree diversity ---
+        degree_vals = profile.get("values", {})
+        sombor = degree_vals.get("sombor")
+        randic = degree_vals.get("randic")
+        deg_mean = profile.get("mean")
+        deg_std = profile.get("std")
+
+        if sombor is not None:
+            if sombor > 0.9:
+                assessment = "uniform"
+                interp = "Nodes have very similar connectivity — a regular, well-balanced graph."
+            elif sombor > 0.7:
+                assessment = "balanced"
+                interp = "Nodes have moderately diverse connectivity — a healthy, organic structure."
+            elif sombor > 0.4:
+                assessment = "heterogeneous"
+                interp = "Some nodes are hubs with many connections while others are peripheral."
+            else:
+                assessment = "concentrated"
+                interp = "Connectivity is heavily concentrated in a few dominant nodes."
+                recs.append("Consider distributing connections more evenly to reduce single-point dependency.")
+            layers.append({
+                "name": "degree_diversity",
+                "metric": "sombor_entropy",
+                "value": sombor,
+                "assessment": assessment,
+                "interpretation": interp,
+            })
+
+        # --- Layer 2: Spectral topology ---
+        spectral = profile.get("spectral_values", {})
+        vn = spectral.get("von_neumann")
+
+        if vn is not None:
+            # Von Neumann: high = well-connected, low = fragmented
+            if vn > 0.8:
+                assessment = "healthy"
+                interp = "Laplacian spectrum shows a well-connected global topology."
+            elif vn > 0.5:
+                assessment = "moderate"
+                interp = "Moderate global connectivity. Some structural bottlenecks may exist."
+            else:
+                assessment = "bottlenecked"
+                interp = "Low spectral entropy indicates structural bottlenecks or fragmentation."
+                recs.append("Add cross-community edges to improve global connectivity.")
+            layers.append({
+                "name": "spectral_topology",
+                "metric": "von_neumann_entropy",
+                "value": vn,
+                "assessment": assessment,
+                "interpretation": interp,
+            })
+
+        # --- Layer 3: Fingerprint consistency ---
+        fingerprint_vals = [v for _, v in degree_vals.items() if v is not None]
+        if fingerprint_vals and vn is not None:
+            fp_mean = sum(fingerprint_vals) / len(fingerprint_vals)
+            consistency = 1.0 - min(1.0, abs(fp_mean - vn) * 2)
+            if consistency > 0.85:
+                interp = "Degree-based and spectral entropy agree — topology is straightforward."
+            elif consistency > 0.6:
+                interp = "Degree and spectral entropy diverge — complex topology with non-trivial structure."
+            else:
+                interp = "Strong disagreement between degree and spectral views — graph has unusual topology (e.g., star, bipartite)."
+                recs.append("Investigate graph topology: degree-spectral disagreement often indicates hub-dominated or multipartite structures.")
+            layers.append({
+                "name": "fingerprint_consistency",
+                "metric": "degree_spectral_agreement",
+                "value": round(consistency, 3),
+                "assessment": "consistent" if consistency > 0.85 else "divergent",
+                "interpretation": interp,
+            })
+
+        # --- Layer 4: Centrality focus ---
+        eb = degree_vals.get("edge_betweenness")
+        if eb is not None:
+            if eb > 0.7:
+                assessment = "distributed"
+                interp = "Edge flow is well-distributed — no single edge is a critical bottleneck."
+            elif eb > 0.4:
+                assessment = "moderate"
+                interp = "Some edges carry disproportionate flow — potential resilience risk."
+            else:
+                assessment = "bottlenecked"
+                interp = "A few edges are critical for graph connectivity — removal would fragment the graph."
+                recs.append("Add redundant paths to reduce critical-edge dependency.")
+            layers.append({
+                "name": "centrality_focus",
+                "metric": "edge_betweenness_entropy",
+                "value": eb,
+                "assessment": assessment,
+                "interpretation": interp,
+            })
+
+        # --- Layer 5: Distance-based ---
+        wiener = degree_vals.get("wiener")
+        if wiener is not None:
+            if wiener > 0.7:
+                interp = "Path lengths are diverse — good structural richness."
+            elif wiener > 0.4:
+                interp = "Moderate path diversity."
+            else:
+                interp = "Path lengths are very uniform — graph may be too regular."
+                recs.append("Consider adding long-range connections to increase path diversity.")
+            layers.append({
+                "name": "path_diversity",
+                "metric": "wiener_entropy",
+                "value": wiener,
+                "assessment": "rich" if wiener > 0.7 else "uniform",
+                "interpretation": interp,
+            })
+
+        # --- Summary ---
+        if layers:
+            primary = layers[0] if layers else {}
+            summary_parts = [f"Graph ({n} nodes, {e} edges)"]
+            for l in layers[:3]:
+                summary_parts.append(f"{l['name']}: {l['assessment']} ({l['value']:.3f})")
+            summary = ". ".join(summary_parts) + "."
+        else:
+            summary = f"Graph ({n} nodes, {e} edges) — insufficient entropy data for interpretation."
+
+        if not recs:
+            recs.append("Graph entropy profile looks healthy. Continue adding nodes and edges as needed.")
+
+        result = {
+            "summary": summary,
+            "layers": layers,
+            "fingerprint_consistency": round(layers[2]["value"], 3) if len(layers) > 2 else None,
+            "recommendations": recs,
+            "indices_used": len(layers),
+        }
+        if verbose:
+            result["profile"] = profile
+        return result
+
     def entropy_anomaly_detect(self, index: str = "sombor",
                                threshold: float = 2.0) -> Optional[dict]:
         """Detect nodes whose local entropy contribution deviates from the graph average.
