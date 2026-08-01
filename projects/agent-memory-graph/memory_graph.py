@@ -7215,6 +7215,100 @@ class MemoryGraph:
             "scan2": scan2,
         }
 
+    # ── Cycle 342: Entropy scan human-readable summary ───────────────────
+
+    def entropy_scan_summary(self, index: str = "sombor") -> Optional[str]:
+        """Generate a human-readable topology summary from entropy scan.
+
+        Uses ``entropy_scan()`` shape descriptors to produce a natural
+        language description of the graph's information structure:
+
+        - **Heterogeneity**: uniform vs heterogeneous edge contributions
+        - **Curve shape**: monotonic, convex, knee position
+        - **Complexity class**: simple (regular/cycle) vs complex (irregular)
+        - **Structural insight**: what the entropy profile reveals
+
+        **When to use:**
+        - Quick graph topology assessment without visual inspection
+        - Logging / debugging graph structure
+        - Comparing graphs via natural language
+
+        Args:
+            index: degree-based index for edge contributions.
+
+        Returns:
+            Multi-line string description, or ``None`` if graph is too small.
+        """
+        scan = self.entropy_scan(index=index)
+        if scan is None:
+            return None
+
+        shape = scan["shape"]
+        shannon = scan["shannon"]
+        gap = shape["max_min_gap"]
+        area = shape["curve_area"]
+        knee = shape["knee_position"]
+        monotonic = shape["monotonic"]
+        convex = shape["convex"]
+        slope2 = shape["slope_at_alpha2"]
+
+        edge_count = self.conn.execute("SELECT COUNT(*) c FROM edges").fetchone()["c"]
+        node_count = self.conn.execute("SELECT COUNT(*) c FROM nodes").fetchone()["c"]
+
+        lines: list[str] = []
+        lines.append(f"Graph: {node_count} nodes, {edge_count} edges")
+        lines.append(f"Index: {index}")
+        lines.append(f"Shannon entropy: {shannon:.4f} (normalized, 1.0 = uniform)")
+
+        # Heterogeneity assessment
+        if gap < 0.01:
+            lines.append("Edge distribution: UNIFORM (all edges contribute equally)")
+        elif gap < 0.1:
+            lines.append(f"Edge distribution: SLIGHTLY heterogeneous (gap={gap:.4f})")
+        elif gap < 0.5:
+            lines.append(f"Edge distribution: MODERATELY heterogeneous (gap={gap:.4f})")
+        else:
+            lines.append(f"Edge distribution: HIGHLY heterogeneous (gap={gap:.4f})")
+
+        # Curve shape
+        shape_parts = []
+        if monotonic:
+            shape_parts.append("monotonically decreasing")
+        else:
+            shape_parts.append("non-monotonic")
+        if convex:
+            shape_parts.append("convex")
+        else:
+            shape_parts.append("non-convex (has inflection points)")
+        lines.append(f"Rényi curve: {', '.join(shape_parts)}")
+
+        if knee is not None:
+            lines.append(f"Knee at α={knee:.1f} (transition in information content)")
+
+        lines.append(f"Curve area: {area:.4f}")
+        lines.append(f"Slope at α=2: {slope2:.6f}")
+
+        # Complexity classification
+        if gap < 0.01 and monotonic:
+            lines.append("\nAssessment: SIMPLE topology (regular/cycle/star-like).")
+            lines.append("All edges carry similar information weight.")
+        elif gap < 0.1:
+            lines.append("\nAssessment: NEAR-REGULAR topology with minor variation.")
+            lines.append("Edge contributions are mostly uniform with slight heterogeneity.")
+        elif gap < 0.5:
+            lines.append("\nAssessment: MODERATE complexity.")
+            lines.append("Mix of high and low contribution edges suggests community structure.")
+        else:
+            lines.append("\nAssessment: HIGH complexity.")
+            lines.append("Strong heterogeneity indicates hubs, bridges, or multi-scale structure.")
+
+        # Fingerprint info
+        fp = scan["fingerprint"]
+        lines.append(f"\nFingerprint: {len(fp)} dimensions")
+        lines.append(f"  [{', '.join(f'{v:.4f}' for v in fp[:8])}{'...' if len(fp) > 8 else ''}]")
+
+        return "\n".join(lines)
+
     # ── Cycle 341: BFS depth entropy profile ───────────────────────────
 
     def entropy_depth_profile(self, node_id: str,
