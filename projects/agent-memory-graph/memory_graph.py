@@ -7031,6 +7031,57 @@ class MemoryGraph:
             result["profile"] = profile
         return result
 
+    def graph_digest(self, *, include_content: bool = False,
+                       include_weights: bool = True,
+                       include_temporal: bool = False) -> str:
+        """Content-addressed integrity hash of the graph.
+
+        Computes a SHA-256 hash from a canonical serialization of the
+        graph structure. Enables detecting tampering, comparing snapshots,
+        and deduplication.
+
+        The canonical representation sorts all nodes and edges to ensure
+        deterministic ordering regardless of insertion order.
+
+        Args:
+            include_content: Include node labels/content in the hash.
+                When False, only structural identity (IDs) is hashed.
+            include_weights: Include edge weights in the hash.
+            include_temporal: Include created timestamps in the hash.
+
+        Returns:
+            Hex-encoded SHA-256 digest string (64 chars).
+        """
+        import hashlib
+
+        parts = []
+        # Nodes: sorted by ID
+        node_rows = self.conn.execute(
+            "SELECT id, label, created FROM nodes ORDER BY id"
+        ).fetchall()
+        for row in node_rows:
+            if include_content:
+                parts.append("N:%s:%s" % (row['id'], row['label']))
+            else:
+                parts.append("N:%s" % row['id'])
+
+        # Edges: sorted by (source, target, relation)
+        edge_rows = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges ORDER BY source, target, relation"
+        ).fetchall()
+        for row in edge_rows:
+            weight_str = (":w=%s" % row['weight']) if include_weights else ""
+            parts.append("E:%s:%s:%s%s" % (row['source'], row['target'], row['relation'], weight_str))
+
+        # Temporal metadata (opt-in)
+        if include_temporal:
+            for row in node_rows:
+                if row['created'] is not None:
+                    parts.append("T:%s:%s" % (row['id'], row['created']))
+
+        canonical = "\n".join(parts)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def entropy_anomaly_detect(self, index: str = "sombor",
                                threshold: float = 2.0) -> Optional[dict]:
         """Detect nodes whose local entropy contribution deviates from the graph average.
