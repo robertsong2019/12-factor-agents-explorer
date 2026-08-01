@@ -26882,6 +26882,179 @@ class MemoryGraph:
             "depth_reached": max((len(c) for c in chains), default=0),
         }
 
+    def derivation_lineage_report(self, node_id: str,
+                                  *, max_depth: int = 10) -> dict:
+        """Unified lineage report: combines backward provenance
+        (``trace_derivation``) and forward impact
+        (``trace_derivation_impact``) into a single call.
+
+        This is the convenience API for answering the question
+        *"what is the full derivation context of this node?"* in
+        one shot — both where it came from and what depends on it.
+
+        The report includes summary metrics that are expensive to
+        compute from the raw traces alone:
+
+        - **fan_in**: number of direct upstream sources
+          (how many nodes did this derive from?).
+        - **fan_out**: number of direct downstream dependents
+          (how many nodes derive from this?).
+        - **lineage_size**: total nodes in the full lineage graph
+          (upstream + downstream + self, deduplicated).
+        - **max_upstream_depth**: longest backward chain.
+        - **max_downstream_depth**: longest forward chain.
+        - **is_root**: no upstream derivations (original observation).
+        - **is_leaf**: no downstream derivations (terminal node).
+        - **is_isolated**: both root and leaf (no lineage at all).
+        - **completeness**: fraction of chain edges with
+          confidence ≥ 0.8 (high-confidence lineage).
+        - **avg_confidence**: mean confidence across all edges.
+        - **bottleneck_score**: fan_out / max(fan_in, 1) — if > 1,
+          this node is a derivation bottleneck (many things depend
+          on it relative to how much it depends on others).
+        - **summary**: human-readable one-line description.
+
+        Args:
+            node_id: The node to analyse.
+            max_depth: Maximum chain depth for both directions.
+
+        Returns:
+            Dict with ``node``, ``backward`` (trace_derivation
+            result), ``forward`` (trace_derivation_impact result),
+            plus the summary metrics listed above.
+
+        Example::
+
+            >>> mg.add_causal_edge("summary", "raw", "derived_from")
+            >>> mg.add_causal_edge("report", "summary", "derived_from")
+            >>> rep = mg.derivation_lineage_report("summary")
+            >>> rep["is_root"]
+            False
+            >>> rep["is_leaf"]
+            False
+            >>> rep["bottleneck_score"]
+            1.0
+            >>> print(rep["summary"])
+            Node 'summary' has 1 upstream source, 1 downstream dependent.
+            Lineage spans 3 nodes (max depth: 1 up, 1 down). Avg confidence: 100%.
+        """
+        backward = self.trace_derivation(node_id, max_depth=max_depth)
+        forward = self.trace_derivation_impact(node_id, max_depth=max_depth)
+
+        # Direct fan-in/fan-out (immediate derivation edges only,
+        # not the full transitive closure from backward/forward)
+        derivation_relations = ("derived_from", "computed_from")
+        placeholders = ','.join('?' * len(derivation_relations))
+
+        # fan_in: how many nodes does this node directly derive from?
+        # Edges where source = node_id and relation is derivation.
+        direct_upstream = self.conn.execute(
+            f"SELECT DISTINCT target FROM edges "
+            f"WHERE source=? AND relation IN ({placeholders})",
+            (node_id, *derivation_relations)
+        ).fetchall()
+        fan_in = len(direct_upstream)
+
+        # fan_out: how many nodes directly derive from this node?
+        # Edges where target = node_id and relation is derivation.
+        direct_downstream = self.conn.execute(
+            f"SELECT DISTINCT source FROM edges "
+            f"WHERE target=? AND relation IN ({placeholders})",
+            (node_id, *derivation_relations)
+        ).fetchall()
+        fan_out = len(direct_downstream)
+
+        # Lineage graph size (transitive closure, deduplicated)
+        upstream_sources = set(backward.get("all_sources", []))
+        downstream_dependents = set(forward.get("all_dependents", []))
+        lineage_nodes = upstream_sources | downstream_dependents | {node_id}
+        lineage_size = len(lineage_nodes)
+
+        # Depths
+        max_upstream_depth = backward.get("depth_reached", 0)
+        max_downstream_depth = forward.get("depth_reached", 0)
+
+        # Classification
+        is_root = fan_in == 0
+        is_leaf = fan_out == 0
+        is_isolated = is_root and is_leaf
+
+        # Confidence analysis across all chains
+        all_confidences: list[float] = []
+        for chain in backward.get("chains", []):
+            all_confidences.extend(e["confidence"] for e in chain)
+        for chain in forward.get("chains", []):
+            all_confidences.extend(e["confidence"] for e in chain)
+
+        if all_confidences:
+            avg_confidence = sum(all_confidences) / len(all_confidences)
+            high_conf = sum(1 for c in all_confidences if c >= 0.8)
+            completeness = high_conf / len(all_confidences)
+        else:
+            avg_confidence = 1.0
+            completeness = 1.0
+
+        bottleneck_score = fan_out / max(fan_in, 1)
+
+        # Human-readable summary
+        if is_isolated:
+            summary = (
+                f"Node '{node_id}' has no derivation lineage "
+                f"(neither derived from anything nor derived from by others)."
+            )
+        else:
+            parts = [
+                f"Node '{node_id}' has",
+            ]
+            if fan_in:
+                parts.append(f"{fan_in} upstream source{'s' if fan_in != 1 else ''}")
+            if fan_in and fan_out:
+                parts.append("and")
+            if fan_out:
+                parts.append(
+                    f"{fan_out} downstream dependent{'s' if fan_out != 1 else ''}"
+                )
+            if not fan_in:
+                parts.append("no upstream sources (is a root)")
+            if not fan_out:
+                parts.append("no downstream dependents (is a leaf)")
+            summary = " ".join(parts) + "."
+
+            summary += (
+                f" Lineage spans {lineage_size} node"
+                f"{'s' if lineage_size != 1 else ''}"
+                f" (max depth: {max_upstream_depth} up,"
+                f" {max_downstream_depth} down)."
+            )
+            if all_confidences:
+                summary += (
+                    f" Avg confidence: {avg_confidence * 100:.0f}%."
+                )
+            if bottleneck_score > 1:
+                summary += (
+                    f" ⚠ Bottleneck: {fan_out} dependents vs"
+                    f" {fan_in} source{'s' if fan_in != 1 else ''}"
+                    f" (score: {bottleneck_score:.1f})."
+                )
+
+        return {
+            "node": node_id,
+            "backward": backward,
+            "forward": forward,
+            "fan_in": fan_in,
+            "fan_out": fan_out,
+            "lineage_size": lineage_size,
+            "max_upstream_depth": max_upstream_depth,
+            "max_downstream_depth": max_downstream_depth,
+            "is_root": is_root,
+            "is_leaf": is_leaf,
+            "is_isolated": is_isolated,
+            "completeness": completeness,
+            "avg_confidence": avg_confidence,
+            "bottleneck_score": bottleneck_score,
+            "summary": summary,
+        }
+
     # ── Spreading Activation (Collins & Loftus 1975) ─────────────
     def spread_activation(
         self,
