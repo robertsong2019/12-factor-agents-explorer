@@ -7942,10 +7942,93 @@ class MemoryGraph:
 
         # shannon already computed above from raw probs, normalized by ln(m)
 
+        # ── Cycle 339: Shape descriptors + fingerprint vector ──
+        # Compute UNNORMALIZED Rényi entropies directly from probs for shape analysis.
+        # Normalized values (used in the main curve above) compress the range and
+        # make uniform distributions identical (all → 1.0), losing topology signal.
+        # Unnormalized Rényi: H_α = 1/(1−α) · ln(Σ p_e^α) — bounded [0, ln(m)].
+        def _raw_renyi(p: list[float], alpha: float) -> float:
+            if abs(alpha - 1.0) < 1e-12:
+                return -sum(pi * math.log(pi) for pi in p if pi > 0)
+            s = sum(pi ** alpha for pi in p if pi > 0)
+            if s <= 0:
+                return 0.0
+            return math.log(s) / (1.0 - alpha)
+
+        raw_renyi = [_raw_renyi(probs, a) for a in alphas]
+        valid_renyi = [v for v in raw_renyi if v is not None]
+        n_r = len(valid_renyi)
+
+        # Monotonicity (strictly decreasing?)
+        monotonic = all(
+            valid_renyi[i] <= valid_renyi[i - 1] + 1e-10
+            for i in range(1, n_r)
+        ) if n_r > 1 else True
+
+        # Convexity (second differences ≥ 0?)
+        convex = True
+        for i in range(1, n_r - 1):
+            d2 = valid_renyi[i + 1] - 2 * valid_renyi[i] + valid_renyi[i - 1]
+            if d2 < -1e-10:
+                convex = False
+                break
+
+        # Knee detection (max |second difference|)
+        knee_position = None
+        max_d2 = 0.0
+        for i in range(1, n_r - 1):
+            d2 = abs(valid_renyi[i + 1] - 2 * valid_renyi[i] + valid_renyi[i - 1])
+            if d2 > max_d2:
+                max_d2 = d2
+                knee_position = alphas[i] if i < len(alphas) else None
+
+        # Curve area (trapezoidal integration over α values)
+        curve_area = 0.0
+        for i in range(1, n_r):
+            dx = alphas[i] - alphas[i - 1] if i < len(alphas) else 0.0
+            curve_area += dx * (valid_renyi[i] + valid_renyi[i - 1]) / 2.0
+
+        # Max-min gap (heterogeneity range) — uses RAW values
+        max_min_gap = (valid_renyi[0] - valid_renyi[-1]) if n_r > 0 else 0.0
+
+        # Slope at α ≈ 2
+        slope_at_alpha2 = 0.0
+        for i in range(1, len(raw_renyi)):
+            if i < len(alphas) and alphas[i] >= 2.0:
+                dx = alphas[i] - alphas[i - 1]
+                if dx > 0:
+                    slope_at_alpha2 = (raw_renyi[i] - raw_renyi[i - 1]) / dx
+                break
+
+        shape = {
+            "monotonic": monotonic,
+            "convex": convex,
+            "knee_position": knee_position,
+            "curve_area": round(curve_area, 8),
+            "max_min_gap": round(max_min_gap, 8),
+            "slope_at_alpha2": round(slope_at_alpha2, 8),
+        }
+
+        # Fingerprint vector: flatten raw entropies + shape scalars
+        raw_shannon = -sum(p * math.log(p) for p in probs if p > 0)
+        fingerprint: list[float] = [round(raw_shannon, 8)]
+        for v in raw_renyi:
+            fingerprint.append(round(v, 8))
+        # Include raw Tsallis for richer fingerprint
+        for q in qs:
+            if abs(q - 1.0) < 1e-12:
+                fingerprint.append(round(raw_shannon, 8))
+            else:
+                s = sum(p ** q for p in probs if p > 0)
+                fingerprint.append(round((1.0 - s) / (q - 1.0), 8))
+        fingerprint.extend([shape["curve_area"], shape["max_min_gap"], shape["slope_at_alpha2"]])
+
         return {
             "renyi": {"alphas": alphas, "values": renyi_values},
             "tsallis": {"qs": qs, "values": tsallis_values},
             "shannon": round(shannon, 8) if shannon is not None else None,
+            "shape": shape,
+            "fingerprint": fingerprint,
         }
 
     # ── Cycle 301: Graph classification via inter-graph trilogy ─
