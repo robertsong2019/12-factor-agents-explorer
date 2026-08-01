@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-6272-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-6622-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -60,6 +60,7 @@
 - **图采样统计** — 多次随机游走聚合分析：覆盖率、重访率、死端率 (walk_statistics)
 - **19 度拓扑指数 + 5 熵指数** — Sombor/Reduced Sombor/Randić/Zagreb M₁/ABC/GA 六族 (Cycles 278-280)，度加权 Shannon 熵分析，覆盖化学图论主流指标
 - **条件遍历与多视角** — HAGE 启发的意图感知遍历 + 关系投影图 + 多维度对比分析 (Cycles 331-333)
+- **数据溯源与修正传播** — derived_from/computed_from 边类型 + 向后溯源 + 向前影响分析 + 统一世系报告 + 级联修正标记 (Cycles 336-338)
 - **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 (Cycles 326-335)
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
@@ -94,13 +95,13 @@ agent-memory-graph 的定位：**beyond recall — agency-grade graph memory —
 | **memorywire** | ✅ 5ops×4types | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **零依赖** | ✅ 仅 Python 标准库 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **LoCoMo Score** | 未测 | 49.0% | N/A | N/A | **92.21%** | 90.2% |
-| **Tests** | **6272** | ~500 | ~300 | ~800 | N/A | N/A |
+| **Tests** | **6622** | ~500 | ~300 | ~800 | N/A | N/A |
 
 ### 独特价值
 
 1. **唯一集成图质量管理系统** — 知识缺口检测 + 冗余检测 + 自动修复 + 统一健康评分。不是「记住更多」，而是「记住对的」
 2. **唯一安全优先设计** — 写入治理 (PASB 防护) + 读取筛选 + 决策链审计。更强 Agent 需要更强记忆治理
-3. **唯一完整检索管线** — BM25 + Vector KNN + PPR + GraphRAG + DRIFT + SimHash 双模 + 意图路由。634+ public API 覆盖从关键词到知识图谱问答
+3. **唯一完整检索管线** — BM25 + Vector KNN + PPR + GraphRAG + DRIFT + SimHash 双模 + 意图路由。779+ public API 覆盖从关键词到知识图谱问答
 4. **唯一跨压缩级别** — 情景记忆 (L1) → 技能压缩 (L2) → 治理 (Govern)。Experience Compression Spectrum 全谱覆盖
 5. **零依赖 Python** — 仅用 sqlite3 + json + math。sqlite-vec 可选。可嵌入式部署
 
@@ -2282,7 +2283,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-6272 个测试覆盖所有 API（335 个 cycle，273 天零回滚）。
+6622 个测试覆盖所有 API（338 个 cycle，274 天零回滚）。
 
 ## 设计思路
 
@@ -3530,6 +3531,129 @@ result = mg.max_confidence_classification(references, confidence_metric="z_score
 
 - `classification_compare`：方法趋于一致时（高信号场景），想要**共识**
 - `max_confidence_classification`：方法分歧时（低信号场景），想要**确信** — 某一方法可能捕获了其他方法遗漏的结构特征
+
+### 级联修正传播 (Cycle 336)
+
+#### `propagate_correction(node_id, new_content=None, reason=None, corrected_by=None, impact_relations=None, mark_status="needs_review", max_depth=10) -> dict`
+
+当一个节点的内容被修正时，将修正标记**级联传播**到所有依赖它的节点。
+
+与 `invalidate_cascade()`（标记节点为无效）不同，此方法使用更柔和的 `_correction` 元数据标记，保留知识的同时发出"需要复审"信号。
+
+**遍历逻辑（与 `invalidate_cascade` 一致）：**
+- `depends_on`: A --depends_on--> current → 反向查找（找到指向当前节点的源）
+- `enables`: current --enables--> B → 正向查找
+
+```python
+mg.add_edge("report", "source_data", "depends_on")
+mg.add_edge("source_data", "chart", "enables")
+
+result = mg.propagate_correction(
+    "source_data",
+    new_content="修正后的数据",
+    reason="原始传感器读数偏差",
+    corrected_by="validator_v2"
+)
+# {'root': 'source_data',
+#  'impacted': ['source_data', 'report', 'chart'],
+#  'skipped': [],
+#  'count': 3,
+#  'depth_reached': 2,
+#  'reason': '原始传感器读数偏差',
+#  'corrected_by': 'validator_v2'}
+```
+
+**vs. `invalidate_cascade()`：**
+
+| 方法 | 标记方式 | 适用场景 |
+|------|---------|----------|
+| `invalidate_cascade` | `valid_until` → 节点无效 | 知识已失效，不应再被检索 |
+| `propagate_correction` | `_correction.status = needs_review` | 知识可能仍有效，但需人工复审 |
+
+---
+
+### 数据溯源与派生分析 (Cycles 337-338)
+
+#### 新增边类型
+
+| 边类型 | 语义 | 示例 |
+|--------|------|------|
+| `derived_from` | 派生来源 — A 的内容部分来源于 B | `summary` derived_from `raw_data` |
+| `computed_from` | 计算来源 — A 由 B 经计算/变换得到 | `score` computed_from `features` |
+
+#### `trace_derivation(node_id, max_depth=10) -> dict`
+
+**向后溯源** — 追踪一个节点的完整来源链。沿 `derived_from` / `computed_from` 边反向遍历，回答"这个知识从哪里来？"
+
+```python
+mg.add_causal_edge("summary", "raw_data", "derived_from", confidence=0.9)
+mg.add_causal_edge("raw_data", "sensor_1", "computed_from", confidence=1.0)
+
+mg.trace_derivation("summary")
+# {'node': 'summary',
+#  'roots': ['sensor_1'],
+#  'chains': [[
+#      {'source': 'summary', 'target': 'raw_data',
+#       'relation': 'derived_from', 'confidence': 0.9},
+#      {'source': 'raw_data', 'target': 'sensor_1',
+#       'relation': 'computed_from', 'confidence': 1.0},
+#  ]],
+#  'all_sources': ['raw_data', 'sensor_1'],
+#  'depth_reached': 2}
+```
+
+- 返回 `roots`（无上游来源的原始节点）、`chains`（溯源路径，长路径优先）、`all_sources`（所有上游节点）
+- 环安全 + `max_depth` 截断 + 菱形依赖去重
+
+#### `trace_derivation_impact(node_id, max_depth=10) -> dict`
+
+**向前影响分析** — `trace_derivation` 的前向对应。回答"哪些节点依赖于这个节点？"
+
+```python
+mg.add_causal_edge("summary", "raw_data", "derived_from", confidence=0.9)
+mg.add_causal_edge("report", "summary", "derived_from", confidence=0.8)
+
+mg.trace_derivation_impact("raw_data")
+# {'node': 'raw_data',
+#  'leaves': ['report'],
+#  'chains': [[
+#      {'source': 'summary', 'target': 'raw_data',
+#       'relation': 'derived_from', 'confidence': 0.9},
+#      {'source': 'report', 'target': 'summary',
+#       'relation': 'derived_from', 'confidence': 0.8},
+#  ]],
+#  'all_dependents': ['report', 'summary'],
+#  'depth_reached': 2}
+```
+
+- 返回 `leaves`（无下游派生的终端节点）、`chains`（影响路径）、`all_dependents`（所有下游节点）
+
+#### `derivation_lineage_report(node_id, max_depth=10) -> dict` — 便利 API
+
+一次调用合并向前 + 向后分析，并提供摘要指标：
+
+| 指标 | 说明 |
+|------|------|
+| `fan_in` / `fan_out` | 直接上游/下游数量 |
+| `lineage_size` | 完整世系图节点数 |
+| `is_root` | 无上游派生（原始观测） |
+| `is_leaf` | 无下游派生（终端节点） |
+| `bottleneck_score` | fan_out / max(fan_in, 1)，>1 表示派生瓶颈 |
+| `completeness` | 置信度 ≥ 0.8 的边占比 |
+| `avg_confidence` | 所有边的平均置信度 |
+
+```python
+rep = mg.derivation_lineage_report("summary")
+# rep["is_root"] → False
+# rep["is_leaf"] → False
+# rep["bottleneck_score"] → 1.0
+# rep["summary"] → "Node 'summary' has 1 upstream source, 1 downstream dependent."
+```
+
+**典型用例：**
+- 数据治理 — 识别关键瓶颈节点（高 bottleneck_score）
+- 可解释性 — 为 LLM 决策提供完整数据来源链
+- 影响评估 — 修正一个源数据前，查看所有受影响的下游结论
 
 ---
 
