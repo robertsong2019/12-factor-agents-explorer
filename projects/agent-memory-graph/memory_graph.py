@@ -7082,6 +7082,38 @@ class MemoryGraph:
         canonical = "\n".join(parts)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    def copy_graph(self) -> 'MemoryGraph':
+        """Deep copy of the entire graph into a new in-memory instance.
+
+        Copies all nodes (with labels, kinds, data, weights, tags),
+        and all edges (with relations, weights). Creates a fresh
+        SQLite database. The original is completely independent.
+
+        Returns:
+            A new MemoryGraph instance with identical content.
+        """
+        new_mg = MemoryGraph(":memory:")
+        # Copy nodes
+        node_rows = self.conn.execute(
+            "SELECT id, label, kind, data, created, accessed, weight, tags FROM nodes"
+        ).fetchall()
+        for row in node_rows:
+            new_mg.conn.execute(
+                "INSERT INTO nodes (id, label, kind, data, created, accessed, weight, tags) VALUES (?,?,?,?,?,?,?,?)",
+                (row['id'], row['label'], row['kind'], row['data'], row['created'], row['accessed'], row['weight'], row['tags']),
+            )
+        # Copy edges (no data column)
+        edge_rows = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges"
+        ).fetchall()
+        for row in edge_rows:
+            new_mg.conn.execute(
+                "INSERT OR IGNORE INTO edges (source, target, relation, weight) VALUES (?,?,?,?)",
+                (row['source'], row['target'], row['relation'], row['weight']),
+            )
+        new_mg.conn.commit()
+        return new_mg
+
     def entropy_anomaly_detect(self, index: str = "sombor",
                                threshold: float = 2.0) -> Optional[dict]:
         """Detect nodes whose local entropy contribution deviates from the graph average.
