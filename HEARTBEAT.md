@@ -22,6 +22,7 @@
 - [ ] prompt-mgr: 继续 template management features (102 tests)
 
 ### 已完成 ✅ (08-01)
+- [x] amg cycle 337: trace_derivation() — provenance tracking via derived_from/computed_from edges. 2 new causal relation types. BFS backward, returns roots+chains+all_sources. +25 tests (6497→6522). **273rd day**. 14df46a.
 - [x] amg cycle 336: propagate_correction() — cascading correction propagation. Companion to invalidate_cascade(). _correction metadata (needs_review). +23 tests (6474→6497). **273rd day**. 2d1a629.
 - [x] amg cycle 335: max_confidence_classification() — conviction-based meta-classifier. 3 confidence metrics (margin/confidence/z_score). Dynamic best-method-per-query selection. +49 tests (6223→6272). **273rd day**. 6bc34dc.
 - [x] amg cycle 334: classification_benchmark() — standardized evaluation suite. 6 topology types, all 8 methods, accuracy/precision/recall/F1 + confusion matrix. +62 tests (6161→6223). **273rd day**. 2e14366.
@@ -37,7 +38,7 @@
 - [x] 4 blog posts published (Shakespeare GPT, TinyStories GPT, Verus, AI-native IoT)
 
 ## 系统状态
-- **agent-memory-graph**: **6497 tests** — 912+ APIs。八十合一: **entropy framework** ✅ (30+ APIs) + **11-API classification suite** ✅ (graph + spectral + hybrid + rrf + bayesian + compare + knn + weighted_average + rejection + **benchmark** + **max_confidence**) + **adaptive forgetting suite** ✅ (6 APIs) + **EntityResolver** ✅ (8 APIs) + **entropy-weighted retrieval** ✅ + **entropy-guided query routing** ✅ + **TemporalEntropyTracker** ✅ + **triple-loop quality** ✅ + MCP Day 1-5 ✅ + **conditioned_traverse + project_graph + multi_perspective_analysis** ✅ (Research #040) + **invalidate_cascade + propagate_correction** ✅ (cascading correction)
+- **agent-memory-graph**: **6522 tests** — 913+ APIs。八十合一: **entropy framework** ✅ (30+ APIs) + **11-API classification suite** ✅ (graph + spectral + hybrid + rrf + bayesian + compare + knn + weighted_average + rejection + **benchmark** + **max_confidence**) + **adaptive forgetting suite** ✅ (6 APIs) + **EntityResolver** ✅ (8 APIs) + **entropy-weighted retrieval** ✅ + **entropy-guided query routing** ✅ + **TemporalEntropyTracker** ✅ + **triple-loop quality** ✅ + MCP Day 1-5 ✅ + **conditioned_traverse + project_graph + multi_perspective_analysis** ✅ (Research #040) + **invalidate_cascade + propagate_correction** ✅ (cascading correction) + **trace_derivation + derived_from/computed_from** ✅ (provenance tracking)
 - **agent-context-store**: **2898 tests** — 600+ APIs。二十六层 pipeline COMPLETE ✅
 - **structured-output-toolkit**: **571 tests**
 - **agent-task-cli**: **1354 tests** — F217
@@ -48,10 +49,11 @@
 - **agent-mesh-network**: **158 tests**
 - **prompt-mgr**: **102 tests**
 - **四项目总计**: 11085 tests ✅
-- **全项目总计**: 15553 tests
+- **全项目总计**: 15578 tests
 - **零回滚率**: amg 273天 🏆 / acs 200天 🏆
 
 ## 近期活动 (08-01)
+- **Cycle 337** ✅ (23:00): trace_derivation() + derived_from/computed_from — provenance tracking, 2 new causal edge types. BFS backward. +25 tests (6497→6522). **273rd day**. 14df46a.
 - **Cycle 336** ✅ (22:02): propagate_correction() — cascading correction propagation. _correction metadata. +23 tests (6474→6497). **273rd day**. 2d1a629.
 - **Cycle 335** ✅ (01:00): max_confidence_classification() — conviction-based meta-classifier. z_score scale-invariant innovation. +49 tests (6223→6272). **273rd day**. 6bc34dc.
 - **Cycle 334** ✅ (00:00): classification_benchmark() — standardized evaluation suite. 6 topology types, confusion matrix. +62 tests (6161→6223). **273rd day**. 2e14366.
@@ -71,7 +73,7 @@
 3. ⬜ README(agent-memory-graph) → npm publish — **BLOCKED on human action**
 4. ⬜ README(agent-context-store) → npm publish — **BLOCKED on human action**
 5. ⬜ amg-bench: Benchmark harness — Research #037 ✅, ready to implement
-6. ⬜ amg: depends_on edge + propagate_invalidation() (#040) — propagate_correction() ✅ done, invalidate_cascade ✅ already existed. Next: expand to more causal edge types (derived_from, computed_from)
+6. ⬜ amg: depends_on edge + propagate_invalidation() (#040) — propagate_correction() ✅ done, invalidate_cascade ✅ already existed. **trace_derivation() ✅ done (derived_from/computed_from provenance)**. Next: expand to more causal edge types or deeper lineage analysis
 
 ## 上次检查
 - **Knowledge org: 2026-08-01 02:02** — Verification run. Previous org (02:00) already captured all 08-01 changes. No new commits since. MEMORY.md 388 lines (under 400 threshold). All counts stable. experiments.tsv phantom at 19th occurrence (unresolved).

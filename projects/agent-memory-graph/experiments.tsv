@@ -415,3 +415,4 @@ timestamp	commit	metric	value	status	description
 2026-08-01T21:55:00+08:00	45e449e	test_count	6450→6474	keep	Cycle 342: entropy_scan_summary() — human-readable topology summary. Edge distribution assessment, curve shape, complexity classification. 24 tests. 273rd consecutive day.
 2026-08-01T21:55:00+08:00	45e449e	test_pass_rate	100%	keep	All 6474 passing, 51.46s.
 2026-08-01T22:15:00+08:00	2d1a629	test_pass_rate	100%	keep	Cycle 336: propagate_correction(). 6497 passing, 51.72s.
+2026-08-01T15:05	14df46a	test_count	6522	keep	c337: trace_derivation() + derived_from/computed_from relations. Provenance tracking via BFS. +25 tests (6497->6522). 273rd day.
