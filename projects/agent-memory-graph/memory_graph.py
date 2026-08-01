@@ -16086,6 +16086,134 @@ class MemoryGraph:
             "invalidated_by": invalidated_by,
         }
 
+    def propagate_correction(self, node_id: str, new_content: str = None,
+                             reason: str = None, corrected_by: str = None,
+                             impact_relations: list[str] = None,
+                             mark_status: str = "needs_review",
+                             max_depth: int = 10) -> dict:
+        """Propagate a content correction to dependent nodes.
+
+        When a node's content is corrected, dependent nodes (connected via
+        ``depends_on`` / ``enables`` edges) should be marked for review since
+        they may have been derived from the old content.
+
+        Unlike :meth:`invalidate_cascade` (which marks nodes invalid), this
+        method uses a softer ``_correction`` metadata flag, preserving the
+        knowledge while signalling it needs re-evaluation.
+
+        Traversal logic (same as ``invalidate_cascade``):
+        - ``depends_on``: A --depends_on--> current → A depends on current
+          → reverse lookup (find sources pointing to current).
+        - ``enables``: current --enables--> B → forward lookup.
+
+        Args:
+            node_id: The corrected node.
+            new_content: If provided, updates the root node's label.
+            reason: Human-readable reason for the correction.
+            corrected_by: Identifier of who made the correction.
+            impact_relations: Edge relations to traverse.
+                Default: ``['depends_on', 'enables']``.
+            mark_status: Status string to store in ``_correction`` metadata.
+            max_depth: Maximum BFS depth.
+
+        Returns:
+            Dict with ``root``, ``impacted`` (list of node IDs),
+            ``skipped`` (already-invalidated nodes), ``count``,
+            ``depth_reached``, ``reason``, ``corrected_by``.
+        """
+        if impact_relations is None:
+            impact_relations = ['depends_on', 'enables']
+        root_node = self.get_node(node_id)
+        if root_node is None:
+            return {"root": node_id, "impacted": [], "skipped": [],
+                    "count": 0, "depth_reached": 0, "reason": reason,
+                    "corrected_by": corrected_by,
+                    "error": "root node not found"}
+
+        # Optionally update root content
+        if new_content is not None:
+            self.conn.execute(
+                "UPDATE nodes SET label=? WHERE id=?",
+                (new_content, node_id))
+
+        impacted = []
+        skipped = []
+        visited = {node_id}
+        queue = [(node_id, 0)]  # (node_id, hops_from_root)
+        now = time.time()
+
+        while queue:
+            current_id, hops = queue.pop(0)
+            if hops > max_depth:
+                continue
+
+            node = self.get_node(current_id)
+            if node is None:
+                continue
+
+            # Check if already invalidated — skip if so
+            data = node.data if isinstance(node.data, dict) else json.loads(node.data)
+            temporal = data.get("_node_temporal", {})
+            if temporal.get("valid_until") is not None:
+                skipped.append(current_id)
+                continue  # skip invalidated nodes, but still traverse their edges
+
+            # Mark with correction metadata
+            data["_correction"] = {
+                "status": mark_status,
+                "source": node_id,
+                "reason": reason,
+                "corrected_by": corrected_by,
+                "corrected_at": now,
+                "hops": hops,
+            }
+            self.conn.execute(
+                "UPDATE nodes SET data=? WHERE id=?",
+                (json.dumps(data), current_id))
+            impacted.append(current_id)
+
+            # Reverse lookup for depends_on: find sources pointing to current
+            dep_rows = self.conn.execute(
+                "SELECT DISTINCT source FROM edges WHERE target=? AND relation='depends_on'",
+                (current_id,)
+            ).fetchall()
+            for row in dep_rows:
+                if row['source'] not in visited:
+                    visited.add(row['source'])
+                    queue.append((row['source'], hops + 1))
+
+            # Forward lookup for enables and other impact_relations
+            placeholders = ','.join('?' * len(impact_relations))
+            fwd_rows = self.conn.execute(
+                f"SELECT DISTINCT target FROM edges WHERE source=? AND relation IN ({placeholders})",
+                (current_id, *impact_relations)
+            ).fetchall()
+            for row in fwd_rows:
+                if row['target'] not in visited:
+                    visited.add(row['target'])
+                    queue.append((row['target'], hops + 1))
+
+        self.conn.commit()
+
+        # Compute depth reached (max hops among impacted nodes)
+        max_hops = 0
+        for nid in impacted:
+            n = self.get_node(nid)
+            nd = n.data if isinstance(n.data, dict) else json.loads(n.data)
+            c = nd.get("_correction", {})
+            if c.get("hops", 0) > max_hops:
+                max_hops = c["hops"]
+
+        return {
+            "root": node_id,
+            "impacted": impacted,
+            "skipped": skipped,
+            "count": len(impacted),
+            "depth_reached": max_hops,
+            "reason": reason,
+            "corrected_by": corrected_by,
+        }
+
     def node_valid_at(self, node_id: str,
                       timestamp: float = None) -> bool:
         """Check whether a node was valid at the given time.
