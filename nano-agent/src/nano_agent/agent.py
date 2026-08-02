@@ -49,6 +49,7 @@ class Agent:
         messages = self._build_messages(user_input, context)
 
         # 多轮迭代
+        response = {"content": "", "tool_calls": []}
         for iteration in range(self.max_iterations):
             self._log(f"\n📍 迭代 {iteration + 1}/{self.max_iterations}")
 
