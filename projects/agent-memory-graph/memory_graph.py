@@ -39751,7 +39751,7 @@ class MemoryGraph:
             for query in queries:
                 try:
                     if method == "graph":
-                        r = query.graph_classification(references, include_quarantined=include_quarantined)
+                        r = query.graph_classification(references)  # no include_quarantined param
                     elif method == "spectral":
                         r = query.spectral_classification(references, include_quarantined=include_quarantined)
                     elif method == "hybrid":
@@ -39775,16 +39775,28 @@ class MemoryGraph:
                         predictions.append(None)
                         confidences.append(0.0)
                     else:
-                        idx = r.get("best_ref_index", r.get("consensus_best", {}).get("index", 0))
+                        # Extract best-match index: each classification
+                        # method uses a different key name for the winner.
+                        #   best_match      — graph, spectral, hybrid, rrf,
+                        #                     bayesian, weighted_average
+                        #   best_ref         — knn
+                        #   consensus_best   — compare (already an int)
+                        idx = r.get(
+                            "best_match",
+                            r.get("best_ref", r.get("consensus_best")),
+                        )
+                        if idx is None:
+                            predictions.append(None)
+                            confidences.append(0.0)
+                            continue
                         if isinstance(idx, dict):
                             idx = idx.get("index", 0)
                         if isinstance(idx, str):
-                            # Try to extract numeric index
                             try:
                                 idx = int(idx)
                             except (ValueError, TypeError):
                                 idx = 0
-                        idx = min(idx, len(category_labels) - 1)
+                        idx = min(int(idx), len(category_labels) - 1)
                         predictions.append(category_labels[idx])
                         confidences.append(r.get("confidence", r.get("agreement_score", 0.0)))
                 except Exception:

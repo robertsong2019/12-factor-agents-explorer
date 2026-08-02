@@ -1,4 +1,4 @@
-"""Tests for classification_benchmark() — Cycle 334.
+"""Tests for classification_benchmark() — Cycle 334 + Cycle 340 fix.
 
 Tests the benchmark infrastructure itself (not classification accuracy):
 - Reference/query generation
@@ -10,6 +10,7 @@ Tests the benchmark infrastructure itself (not classification accuracy):
 - Parameter handling
 - Non-mutating
 - Edge cases
+- Prediction extraction correctness (Cycle 340 bugfix)
 """
 
 import pytest
@@ -432,3 +433,126 @@ class TestIntegration:
             for pred in entry["predictions"]:
                 if pred is not None:
                     assert pred in topologies
+
+
+# ---------------------------------------------------------------------
+# Prediction Extraction Correctness (Cycle 340 bugfix)
+# ---------------------------------------------------------------------
+
+class TestPredictionExtraction:
+    """Verify that benchmark correctly reads each method's best-match key.
+
+    Bug fixed in Cycle 340: benchmark looked for 'best_ref_index' which
+    doesn't exist in any classification method's return dict.  All
+    predictions silently defaulted to index 0, making every query
+    classify as the first reference (star).  These tests ensure each
+    method's actual key name is used.
+    """
+
+    def test_graph_method_produces_non_none_predictions(self):
+        """graph_classification returns 'best_match' (not 'best_ref_index')."""
+        r = _run_quick(methods=["graph"], topologies=["star", "path"], sizes=[6])
+        preds = r["method_results"]["graph"]["predictions"]
+        assert all(p is not None for p in preds), f"graph had None predictions: {preds}"
+
+    def test_compare_method_produces_non_none_predictions(self):
+        """classification_compare returns 'consensus_best' as int."""
+        r = _run_quick(methods=["compare"], topologies=["star", "path"], sizes=[6])
+        preds = r["method_results"]["compare"]["predictions"]
+        assert all(p is not None for p in preds), f"compare had None predictions: {preds}"
+
+    def test_knn_method_produces_non_none_predictions(self):
+        """knn_classification returns 'best_ref'."""
+        r = _run_quick(methods=["knn"], topologies=["star", "path"], sizes=[6])
+        preds = r["method_results"]["knn"]["predictions"]
+        assert all(p is not None for p in preds), f"knn had None predictions: {preds}"
+
+    def test_all_methods_non_none_with_canonical_topologies(self):
+        """With canonical (identical) reference and query topologies,
+        every method should produce a prediction — not None."""
+        methods = ["graph", "spectral", "hybrid", "rrf", "bayesian",
+                   "knn", "weighted_average", "compare"]
+        r = _run_quick(methods=methods, topologies=["star", "path", "cycle"], sizes=[8])
+        for m in methods:
+            preds = r["method_results"][m]["predictions"]
+            none_count = sum(1 for p in preds if p is None)
+            assert none_count == 0, f"{m} had {none_count}/{len(preds)} None predictions"
+
+    def test_star_query_classified_as_star(self):
+        """A canonical star query against canonical references should
+        be classified as 'star' by at least one method."""
+        r = _run_quick(
+            methods=["graph", "spectral", "hybrid"],
+            topologies=["star", "path", "cycle"],
+            sizes=[8],
+        )
+        # At least one method should get star right
+        star_correct = any(
+            r["method_results"][m]["per_topology"]["star"]["accuracy"] > 0
+            for m in ["graph", "spectral", "hybrid"]
+        )
+        assert star_correct, "No method correctly classified star topology"
+
+    def test_path_query_classified_as_path(self):
+        """A canonical path query should not always default to 'star'."""
+        r = _run_quick(
+            methods=["spectral", "hybrid", "rrf"],
+            topologies=["star", "path", "cycle", "complete"],
+            sizes=[8],
+        )
+        path_correct = any(
+            r["method_results"][m]["per_topology"]["path"]["accuracy"] > 0
+            for m in ["spectral", "hybrid", "rrf"]
+        )
+        assert path_correct, "No method correctly classified path topology"
+
+    def test_accuracy_not_all_zero(self):
+        """With canonical topologies, at least one method should have
+        accuracy > 0.  (Before fix, all non-star predictions were wrong.)"""
+        r = _run_quick(
+            methods=["graph", "spectral", "hybrid", "rrf", "bayesian",
+                     "knn", "weighted_average", "compare"],
+            topologies=["star", "path", "cycle"],
+            sizes=[8],
+        )
+        max_acc = max(entry["accuracy"] for entry in r["method_results"].values())
+        assert max_acc > 0.0, "All methods scored 0% — prediction extraction is broken"
+
+    def test_high_accuracy_with_canonical_topologies(self):
+        """With identical reference and query topologies, spectral/hybrid
+        should achieve >= 0.8 accuracy (they did 0.17 before the fix)."""
+        r = _run_quick(
+            methods=["spectral", "hybrid"],
+            topologies=["star", "path", "cycle", "complete", "bipartite", "tree"],
+            sizes=[8],
+        )
+        for m in ["spectral", "hybrid"]:
+            acc = r["method_results"][m]["accuracy"]
+            assert acc >= 0.8, f"{m} accuracy {acc} < 0.8 — prediction extraction may be broken"
+
+    def test_predictions_match_expected_order(self):
+        """With 1 ref per topology and 1 query per topology,
+        predictions should match the topology order exactly."""
+        topos = ["star", "path", "cycle", "complete", "bipartite", "tree"]
+        r = _run_quick(
+            methods=["spectral"],
+            topologies=topos,
+            sizes=[8],
+            num_references_per_category=1,
+            num_queries=1,
+        )
+        preds = r["method_results"]["spectral"]["predictions"]
+        assert preds == topos, f"Expected {topos}, got {preds}"
+
+    def test_confusion_empty_when_perfect(self):
+        """When all methods achieve 100% accuracy, confusion matrix is empty."""
+        r = _run_quick(
+            methods=["spectral"],
+            topologies=["star", "path", "cycle"],
+            sizes=[8],
+            num_references_per_category=1,
+            num_queries=1,
+        )
+        # With canonical topologies, spectral should be perfect
+        assert r["method_results"]["spectral"]["accuracy"] == 1.0
+        assert r["confusion"] == {}
