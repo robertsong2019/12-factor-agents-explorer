@@ -39888,6 +39888,314 @@ class MemoryGraph:
             "confusion": dict(sorted(confusion.items(), key=lambda x: x[1], reverse=True)),
         }
 
+    # ── Cycle 341: Classification noise robustness test ──
+
+    def classification_noise_test(
+        self,
+        *,
+        topologies: list[str] = None,
+        size: int = 10,
+        noise_levels: list[float] = None,
+        num_references_per_category: int = 2,
+        num_queries: int = 2,
+        methods: list[str] = None,
+        seed: int = 42,
+    ) -> dict:
+        """Test classification robustness under graph perturbation.
+
+        Generates canonical topology reference graphs, then creates
+        noisy query graphs by randomly adding and removing edges at
+        each noise level. Reports accuracy degradation curves per
+        method, revealing which classifiers are robust vs fragile.
+
+        Noise model:
+            - Each existing edge removed with probability ``noise_level``.
+            - Each non-existent edge added with probability ``noise_level``.
+            - e.g. noise_level=0.1 means 10% of edges removed and
+              ~10% of possible new edges added.
+
+        Args:
+            topologies: Graph types to test. Default: all 6.
+            size: Node count for all graphs (single size keeps
+                variables controlled).
+            noise_levels: Perturbation rates to sweep. Default:
+                [0.0, 0.05, 0.1, 0.2, 0.3].
+            num_references_per_category: Reference graphs per topology.
+            num_queries: Noisy queries per topology per noise level.
+            methods: Classification methods to evaluate. Default: all 8.
+            seed: Random seed for reproducibility.
+
+        Returns:
+            Dict with degradation curves per method, robustness AUC
+            scores, breakpoints, per-topology resilience, and summary.
+        """
+        import random as _random
+
+        if topologies is None:
+            topologies = ["star", "path", "cycle", "complete", "bipartite", "tree"]
+        if noise_levels is None:
+            noise_levels = [0.0, 0.05, 0.1, 0.2, 0.3]
+        if methods is None:
+            methods = [
+                "graph", "spectral", "hybrid", "rrf", "bayesian",
+                "knn", "weighted_average", "compare",
+            ]
+
+        # rng is created per-query below for reproducibility
+
+        # --- Build reference set (clean, no noise) ---
+        references = []
+        category_labels = []
+        for topo in topologies:
+            for r in range(num_references_per_category):
+                ref = self._bench_build_topology(topo, size, label=f"r{r}")
+                ref.graph_meta = {"topology": topo, "label": topo, "n": size}
+                references.append(ref)
+                category_labels.append(topo)
+
+        if not references or not topologies:
+            return {
+                "noise_levels": noise_levels,
+                "methods": methods,
+                "degradation_curves": {},
+                "robustness_score": {},
+                "rankings": [],
+                "breakpoint": {},
+                "per_topology_robustness": {},
+                "per_topology_at_noise": {},
+                "summary": "No references generated.",
+            }
+
+        # --- Generate noisy queries for each noise level ---
+        # Use deterministic per-query seeds to ensure reproducibility
+        # regardless of classification methods consuming global RNG state.
+        noisy_queries: dict[float, list] = {}
+        for nl in noise_levels:
+            queries_for_level = []
+            for ti, topo in enumerate(topologies):
+                for q in range(num_queries):
+                    qg = self._bench_build_topology(topo, size, label=f"q{q}")
+                    if nl > 0:
+                        # Derive a unique seed per (base_seed, noise, topology_idx, query_idx)
+                        q_seed = seed + int(nl * 10000) + ti * 100 + q
+                        self._apply_noise(qg, nl, _random.Random(q_seed))
+                    queries_for_level.append((qg, topo))
+            noisy_queries[nl] = queries_for_level
+
+        # --- Run classification at each noise level ---
+        degradation_curves: dict[str, dict[float, float]] = {
+            m: {} for m in methods
+        }
+        # Track per-topology accuracy across methods for robustness
+        per_topology_at_noise: dict[float, dict[str, float]] = {
+            nl: {} for nl in noise_levels
+        }
+
+        for nl in noise_levels:
+            queries = noisy_queries[nl]
+            # Per-topology tracking (averaged across methods)
+            topo_correct = {t: 0 for t in topologies}
+            topo_total = {t: 0 for t in topologies}
+
+            for method in methods:
+                method_correct = 0
+                method_total = 0
+                for query_graph, expected_topo in queries:
+                    try:
+                        if method == "graph":
+                            r = query_graph.graph_classification(references)
+                        elif method == "spectral":
+                            r = query_graph.spectral_classification(references)
+                        elif method == "hybrid":
+                            r = query_graph.hybrid_classification(references)
+                        elif method == "rrf":
+                            r = query_graph.rrf_classification(references)
+                        elif method == "bayesian":
+                            r = query_graph.bayesian_classification(references)
+                        elif method == "knn":
+                            r = query_graph.knn_classification(references)
+                        elif method == "weighted_average":
+                            r = query_graph.weighted_average_classification(references)
+                        elif method == "compare":
+                            r = query_graph.classification_compare(references)
+                        else:
+                            method_total += 1
+                            topo_total[expected_topo] += 1
+                            continue
+
+                        if r is None:
+                            method_total += 1
+                            topo_total[expected_topo] += 1
+                            continue
+
+                        idx = r.get(
+                            "best_match",
+                            r.get("best_ref", r.get("consensus_best")),
+                        )
+                        if idx is None:
+                            method_total += 1
+                            topo_total[expected_topo] += 1
+                            continue
+                        if isinstance(idx, dict):
+                            idx = idx.get("index", 0)
+                        if isinstance(idx, str):
+                            try:
+                                idx = int(idx)
+                            except (ValueError, TypeError):
+                                idx = 0
+                        idx = min(int(idx), len(category_labels) - 1)
+                        pred = category_labels[idx]
+
+                        method_total += 1
+                        topo_total[expected_topo] += 1
+                        if pred == expected_topo:
+                            method_correct += 1
+                            topo_correct[expected_topo] += 1
+                    except Exception:
+                        method_total += 1
+                        topo_total[expected_topo] += 1
+
+                acc = method_correct / method_total if method_total > 0 else 0.0
+                degradation_curves[method][nl] = round(acc, 4)
+
+            # Per-topology accuracy at this noise level (avg across methods)
+            for t in topologies:
+                per_topology_at_noise[nl][t] = round(
+                    topo_correct[t] / topo_total[t] if topo_total[t] > 0 else 0.0, 4
+                )
+
+        # --- Compute robustness score (AUC of accuracy vs noise) ---
+        sorted_levels = sorted(noise_levels)
+        robustness_score: dict[str, float] = {}
+        for method in methods:
+            curve = degradation_curves[method]
+            if len(sorted_levels) < 2:
+                robustness_score[method] = curve.get(sorted_levels[0], 0.0) if sorted_levels else 0.0
+            else:
+                auc = 0.0
+                for i in range(len(sorted_levels) - 1):
+                    a1 = curve.get(sorted_levels[i], 0.0)
+                    a2 = curve.get(sorted_levels[i + 1], 0.0)
+                    dn = sorted_levels[i + 1] - sorted_levels[i]
+                    auc += (a1 + a2) / 2 * dn
+                max_range = sorted_levels[-1] - sorted_levels[0]
+                robustness_score[method] = round(auc / max_range, 4) if max_range > 0 else round(auc, 4)
+
+        # --- Rankings ---
+        ranked = sorted(robustness_score.items(), key=lambda x: x[1], reverse=True)
+
+        # --- Breakpoint: first noise level where accuracy drops below 0.8 ---
+        breakpoint_map: dict[str, float | None] = {}
+        for method in methods:
+            bp = None
+            for nl in sorted_levels:
+                if degradation_curves[method].get(nl, 0.0) < 0.8:
+                    bp = nl
+                    break
+            breakpoint_map[method] = bp
+
+        # --- Per-topology robustness (AUC across noise levels) ---
+        per_topology_robustness: dict[str, float] = {}
+        for t in topologies:
+            vals = [per_topology_at_noise[nl].get(t, 0.0) for nl in sorted_levels]
+            if len(vals) < 2:
+                per_topology_robustness[t] = vals[0] if vals else 0.0
+            else:
+                auc = 0.0
+                for i in range(len(sorted_levels) - 1):
+                    auc += (vals[i] + vals[i + 1]) / 2 * (sorted_levels[i + 1] - sorted_levels[i])
+                max_range = sorted_levels[-1] - sorted_levels[0]
+                per_topology_robustness[t] = round(auc / max_range, 4) if max_range > 0 else round(auc, 4)
+
+        # --- Human-readable summary ---
+        best_method = ranked[0][0] if ranked else "none"
+        best_score = ranked[0][1] if ranked else 0.0
+        worst_method = ranked[-1][0] if ranked else "none"
+        worst_score = ranked[-1][1] if ranked else 0.0
+        clean_acc = degradation_curves.get(best_method, {}).get(0.0, 0.0)
+        max_noise = max(noise_levels) if noise_levels else 0.0
+        max_noise_acc = degradation_curves.get(best_method, {}).get(max_noise, 0.0)
+
+        topo_best = max(per_topology_robustness.items(), key=lambda x: x[1]) if per_topology_robustness else ("none", 0.0)
+        topo_worst = min(per_topology_robustness.items(), key=lambda x: x[1]) if per_topology_robustness else ("none", 0.0)
+
+        summary_parts = [
+            f"Noise robustness: {len(methods)} methods × {len(topologies)} topologies × {len(noise_levels)} noise levels.",
+            f"Most robust: {best_method} (AUC={best_score:.2f}).",
+            f"Least robust: {worst_method} (AUC={worst_score:.2f}).",
+        ]
+        if clean_acc > 0:
+            summary_parts.append(
+                f"{best_method}: {clean_acc:.0%} → {max_noise_acc:.0%} at noise={max_noise:.0%}."
+            )
+        if topo_worst[0] != "none":
+            summary_parts.append(
+                f"Most fragile topology: {topo_worst[0]} ({topo_worst[1]:.2f})."
+            )
+        if topo_best[0] != "none":
+            summary_parts.append(
+                f"Most resilient: {topo_best[0]} ({topo_best[1]:.2f})."
+            )
+        summary = " ".join(summary_parts)
+
+        return {
+            "noise_levels": noise_levels,
+            "methods": methods,
+            "topologies": topologies,
+            "size": size,
+            "degradation_curves": degradation_curves,
+            "robustness_score": robustness_score,
+            "rankings": [(m, s) for m, s in ranked],
+            "breakpoint": breakpoint_map,
+            "per_topology_robustness": per_topology_robustness,
+            "per_topology_at_noise": per_topology_at_noise,
+            "best_method": best_method,
+            "worst_method": worst_method,
+            "summary": summary,
+        }
+
+    @staticmethod
+    def _apply_noise(graph: "MemoryGraph", noise_level: float, rng) -> None:
+        """Apply random edge perturbation to a graph in-place.
+
+        For each existing edge, remove with probability ``noise_level``.
+        For each possible non-existent edge, add with probability
+        ``noise_level``.
+
+        Args:
+            graph: MemoryGraph to perturb.
+            noise_level: Probability of edge addition/removal (0-1).
+            rng: random.Random instance for reproducibility.
+        """
+        rows = graph.conn.execute("SELECT id FROM nodes ORDER BY rowid").fetchall()
+        node_ids = [r[0] for r in rows]
+        n = len(node_ids)
+        if n < 2:
+            return
+
+        # Collect existing edges in deterministic order (rowid = insertion order)
+        rows = graph.conn.execute("SELECT source, target FROM edges ORDER BY rowid").fetchall()
+        existing = set()
+        edge_list = []  # ordered list for deterministic rng
+        for s, t in rows:
+            existing.add((s, t))
+            edge_list.append((s, t))
+
+        # Remove edges (iterate in deterministic order)
+        to_remove = [(s, t) for s, t in edge_list if rng.random() < noise_level]
+        for s, t in to_remove:
+            graph.conn.execute("DELETE FROM edges WHERE source=? AND target=?", (s, t))
+        graph.conn.commit()
+
+        # Add random edges among non-existent pairs
+        for i in range(n):
+            for j in range(i + 1, n):
+                pair = (node_ids[i], node_ids[j])
+                rev = (node_ids[j], node_ids[i])
+                if pair not in existing and rev not in existing:
+                    if rng.random() < noise_level:
+                        graph.link(node_ids[i], node_ids[j], "rel", 1.0)
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
