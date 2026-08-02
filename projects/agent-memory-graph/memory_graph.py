@@ -3329,6 +3329,36 @@ class MemoryGraph:
         degs = [r["deg"] for r in rows]
         return sorted(degs, reverse=(order == "desc"))
 
+    def hub_nodes(self, n: int = 10) -> list[tuple[str, int]]:
+        """返回度数最高的 N 个节点 [(node_id, degree)]。"""
+        rows = self.conn.execute(
+            """SELECT n.id, (
+                SELECT COUNT(*) FROM edges e WHERE e.source = n.id OR e.target = n.id
+               ) AS deg FROM nodes n ORDER BY deg DESC LIMIT ?""",
+            (n,),
+        ).fetchall()
+        return [(str(r["id"]), r["deg"]) for r in rows]
+
+    def peripheral_nodes(self) -> list[str]:
+        """返回无向度数恰好为 1 的节点（叶子/悬挂节点）。"""
+        rows = self.conn.execute(
+            """SELECT n.id, (
+                SELECT COUNT(*) FROM edges e WHERE e.source = n.id OR e.target = n.id
+               ) AS deg FROM nodes n WHERE deg = 1"""
+        ).fetchall()
+        return [str(r["id"]) for r in rows]
+
+    def mean_degree(self) -> float:
+        """返回所有节点的平均度数。空图返回 0.0。"""
+        rows = self.conn.execute(
+            """SELECT (
+                SELECT COUNT(*) FROM edges e WHERE e.source = n.id OR e.target = n.id
+               ) AS deg FROM nodes n"""
+        ).fetchall()
+        if not rows:
+            return 0.0
+        return sum(r["deg"] for r in rows) / len(rows)
+
     def largest_component_size(self) -> int:
         """最大连通分量大小（基于 Union-Find）。"""
         nodes = [str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
