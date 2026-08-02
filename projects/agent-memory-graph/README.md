@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-6622-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-6692-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -61,7 +61,8 @@
 - **19 度拓扑指数 + 5 熵指数** — Sombor/Reduced Sombor/Randić/Zagreb M₁/ABC/GA 六族 (Cycles 278-280)，度加权 Shannon 熵分析，覆盖化学图论主流指标
 - **条件遍历与多视角** — HAGE 启发的意图感知遍历 + 关系投影图 + 多维度对比分析 (Cycles 331-333)
 - **数据溯源与修正传播** — derived_from/computed_from 边类型 + 向后溯源 + 向前影响分析 + 统一世系报告 + 级联修正标记 (Cycles 336-338)
-- **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 (Cycles 326-335)
+- **拓扑快捷统计** — hub_nodes/peripheral_nodes/mean_degree 一键获取关键结构指标 (Cycle 339)
+- **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 + 噪声鲁棒性测试 (Cycles 326-341)
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 
 ## Why agent-memory-graph?
@@ -101,7 +102,7 @@ agent-memory-graph 的定位：**beyond recall — agency-grade graph memory —
 
 1. **唯一集成图质量管理系统** — 知识缺口检测 + 冗余检测 + 自动修复 + 统一健康评分。不是「记住更多」，而是「记住对的」
 2. **唯一安全优先设计** — 写入治理 (PASB 防护) + 读取筛选 + 决策链审计。更强 Agent 需要更强记忆治理
-3. **唯一完整检索管线** — BM25 + Vector KNN + PPR + GraphRAG + DRIFT + SimHash 双模 + 意图路由。779+ public API 覆盖从关键词到知识图谱问答
+3. **唯一完整检索管线** — BM25 + Vector KNN + PPR + GraphRAG + DRIFT + SimHash 双模 + 意图路由。790+ public API 覆盖从关键词到知识图谱问答
 4. **唯一跨压缩级别** — 情景记忆 (L1) → 技能压缩 (L2) → 治理 (Govern)。Experience Compression Spectrum 全谱覆盖
 5. **零依赖 Python** — 仅用 sqlite3 + json + math。sqlite-vec 可选。可嵌入式部署
 
@@ -2283,7 +2284,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-6622 个测试覆盖所有 API（338 个 cycle，274 天零回滚）。
+6692 个测试覆盖所有 API（341 个 cycle，275 天零回滚）。
 
 ## 设计思路
 
@@ -3654,6 +3655,106 @@ rep = mg.derivation_lineage_report("summary")
 - 数据治理 — 识别关键瓶颈节点（高 bottleneck_score）
 - 可解释性 — 为 LLM 决策提供完整数据来源链
 - 影响评估 — 修正一个源数据前，查看所有受影响的下游结论
+
+---
+
+### 拓扑快捷统计 (Cycle 339)
+
+#### `hub_nodes(n=10) -> list[tuple[str, int]]`
+
+返回度数最高的 N 个节点，按度数降序排列。快速识别图中的关键枢纽节点。
+
+```python
+mg.hub_nodes(3)
+# [('concept:ai', 15), ('event:launch', 12), ('entity:openai', 9)]
+```
+
+#### `peripheral_nodes() -> list[str]`
+
+返回无向度数恰好为 1 的节点（叶子/悬挂节点）。这些是图中的边缘信息——
+仅与一个其他节点关联，可能是待丰富或待清理的候选。
+
+```python
+mg.peripheral_nodes()
+# ['note:draft_idea', 'tag:obsolete_v1', 'ref:broken_link']
+```
+
+#### `mean_degree() -> float`
+
+返回所有节点的平均度数。空图返回 0.0。快速衡量图的整体连通密度：
+
+| mean_degree | 含义 |
+|-------------|------|
+| ~0-1 | 稀疏图，大量孤立/叶子节点 |
+| ~2-3 | 中等连通 |
+| >4 | 密集图，高度互联 |
+
+```python
+mg.mean_degree()  # 2.45
+```
+
+**与 `lorenz_coefficient()` 的互补性：** `mean_degree` 告诉你平均连通度，
+`lorenz_coefficient` 告诉你度分布是否均匀。两者结合可快速刻画图的结构特征。
+
+---
+
+### 分类噪声鲁棒性测试 (Cycle 341)
+
+#### `classification_noise_test(*, topologies=None, size=10, noise_levels=None, num_references_per_category=2, num_queries=2, methods=None, seed=42) -> dict`
+
+测试分类方法在图扰动下的鲁棒性。生成标准拓扑参考图，然后在每个噪声级别
+下随机添加/删除边来创建噪声查询图，报告各方法的精度退化曲线。
+
+**噪声模型：**
+- 每条已存在的边以 `noise_level` 概率被删除
+- 每条不存在的边以 `noise_level` 概率被添加
+- 例如 noise_level=0.1：约 10% 的边被删除，约 10% 的可能新边被添加
+
+```python
+result = mg.classification_noise_test(
+    topologies=['star', 'path', 'complete'],
+    noise_levels=[0.0, 0.05, 0.1, 0.2, 0.3],
+    num_references_per_category=3,
+    num_queries=5,
+)
+
+# result['degradation_curves']['spectral']
+# → {0.0: 1.0, 0.05: 0.93, 0.1: 0.80, 0.2: 0.53, 0.3: 0.27}
+#
+# result['robustness_score']
+# → {'spectral': 0.72, 'bayesian': 0.68, 'graph': 0.55, ...}
+#
+# result['rankings']
+# → [('spectral', 0.72), ('bayesian', 0.68), ...]
+#
+# result['breakpoint']
+# → {'spectral': 0.1, 'bayesian': 0.1, 'graph': 0.05}
+#
+# result['summary']
+# → "Noise robustness: 8 methods × 6 topologies × 5 noise levels.
+#     Most robust: spectral (AUC=0.72).
+#     Least robust: graph (AUC=0.41).
+#     Most fragile topology: star (0.38).
+#     Most resilient: complete (0.75)."
+```
+
+**返回字段：**
+
+| 字段 | 说明 |
+|------|------|
+| `degradation_curves` | 每种方法在各噪声级别的精度 `{method: {noise: accuracy}}` |
+| `robustness_score` | 每种方法的 AUC（精度-噪声曲线下面积，归一化到 0-1） |
+| `rankings` | 方法按鲁棒性得分降序排列 |
+| `breakpoint` | 每种方法精度首次低于 0.8 的噪声级别（None = 从未低于） |
+| `per_topology_robustness` | 每种拓扑跨方法的平均鲁棒性 |
+| `per_topology_at_noise` | 每个噪声级别下每种拓扑的精度 |
+| `best_method` / `worst_method` | 鲁棒性最优/最差方法名 |
+| `summary` | 人类可读的一行摘要 |
+
+**典型用例：**
+- 选择分类方法 — 在噪声环境下应选择 robustness_score 最高的方法
+- 质量门槛 — 设定 breakpoint 作为可接受的噪声上限
+- 拓扑脆弱性诊断 — 识别哪些图结构对噪声最敏感
 
 ---
 

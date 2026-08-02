@@ -185,7 +185,7 @@ Agent(
     llm: Optional[LLMBackend],    # LLM 后端，默认 MockBackend
     tools: Optional[List[Tool]],  # 可用工具列表
     memory: Optional[Memory],     # 记忆管理器
-    max_iterations: int = 10,     # 最大迭代轮数
+    max_iterations: int = 10,     # 最大迭代轮数（0 = 仅返回 LLM 首次响应，不进入工具循环）
     verbose: bool = True          # 是否打印执行过程
 )
 ```
