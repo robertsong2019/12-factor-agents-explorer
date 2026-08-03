@@ -27085,6 +27085,340 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ── Code-Aware Agent Memory (Research #044) ──────────────────
+
+    CODE_NODE_KINDS = frozenset({
+        "function", "class", "file", "module", "variable", "test"
+    })
+    CODE_EDGE_KINDS = frozenset({
+        "calls", "imports", "defined_in", "depends_on",
+        "decided_by", "fixed_by", "tested_by"
+    })
+
+    def add_code_node(
+        self,
+        label: str,
+        kind: str,
+        *,
+        data: dict = None,
+        tags: list = None,
+    ) -> Node:
+        """Add a code-structure node (function, class, file, module).
+
+        Creates a node with a code-specific ``kind`` and structured
+        metadata.  The node is immediately queryable by all existing
+        graph APIs (search, traverse, entropy, classification, etc.).
+
+        Parameters
+        ----------
+        label
+            Human-readable name (e.g. ``"UserService.login()"``).
+        kind
+            One of :attr:`CODE_NODE_KINDS` — ``"function"``,
+            ``"class"``, ``"file"``, ``"module"``, ``"variable"``,
+            ``"test"``.
+        data
+            Optional metadata, e.g.
+            ``{"file": "src/auth.py", "line": 42,
+             "signature": "def login(token: str) -> bool"}``.
+        tags
+            Optional tags list.
+
+        Returns
+        -------
+        Node
+            The created node.
+
+        Raises
+        -----
+        ValueError
+            If *kind* is not in :attr:`CODE_NODE_KINDS`.
+
+        Example
+        -------
+        ::
+
+            >>> mg.add_code_node("UserService.login()", "function",
+            ...     data={"file": "src/auth.py", "line": 42})
+            >>> mg.add_code_node("test_login", "test",
+            ...     data={"file": "tests/test_auth.py", "line": 10})
+            >>> mg.link_by_label("test_login",
+            ...                  "UserService.login()", "tested_by")
+        """
+        if kind not in self.CODE_NODE_KINDS:
+            raise ValueError(
+                f"Invalid code node kind '{kind}'. "
+                f"Must be one of: {sorted(self.CODE_NODE_KINDS)}"
+            )
+        merged_data = data or {}
+        merged_data["_code"] = True  # marker for code-aware queries
+        return self.add(label, kind=kind, data=merged_data, tags=tags)
+
+    def explain_code(self, node_id: str) -> dict:
+        """Explain a code node's provenance, decisions, and dependents.
+
+        Wraps :meth:`trace_derivation` and :meth:`derivation_lineage_report`
+        for code-structure nodes, adding code-specific context.
+
+        Returns a unified view of:
+        * **origins** — where this code's knowledge came from.
+        * **decisions** — agent decisions (``decided_by`` edges).
+        * **bugfixes** — bug fixes (``fixed_by`` edges).
+        * **tests** — linked test nodes (``tested_by`` edges).
+        * **callers** — who calls this (incoming ``calls`` edges).
+        * **callees** — what this calls (outgoing ``calls`` edges).
+        * **imports** — what this imports / is imported by.
+
+        Parameters
+        ----------
+        node_id
+            The code node to explain.
+
+        Returns
+        -------
+        dict
+            Explanation with keys listed above, plus ``node``
+            (id/label/kind) and ``lineage`` (from
+            :meth:`derivation_lineage_report`).
+
+        Example
+        -------
+        ::
+
+            >>> mg.add_code_node("UserService.login()", "function")
+            >>> mg.add("Use bcrypt for password hashing", kind="decision")
+            >>> mg.link_by_label("UserService.login()",
+            ...     "Use bcrypt for password hashing", "decided_by")
+            >>> mg.explain_code(login_node_id)
+            {'node': {'id': '...', 'label': 'UserService.login()',
+                      'kind': 'function'},
+             'decisions': [{'id': '...', 'label': 'Use bcrypt ...'}],
+             'bugfixes': [], 'tests': [], 'callers': [], 'callees': [],
+             'imports': [], 'origins': [], 'lineage': {...}}
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return {"node": node_id, "error": "node not found"}
+
+        def _neighbors(direction: str, relation: str) -> list[dict]:
+            """Fetch neighbor nodes for a relation."""
+            if direction == "out":
+                rows = self.conn.execute(
+                    "SELECT target FROM edges WHERE source=? AND relation=?",
+                    (node_id, relation)
+                ).fetchall()
+                get = self.get_node
+                return [
+                    {"id": r["target"],
+                     "label": (n.label if (n := get(r["target"])) else "?"),
+                     "kind": (n.kind if n else "unknown")}
+                    for r in rows
+                ]
+            else:  # incoming
+                rows = self.conn.execute(
+                    "SELECT source FROM edges WHERE target=? AND relation=?",
+                    (node_id, relation)
+                ).fetchall()
+                get = self.get_node
+                return [
+                    {"id": r["source"],
+                     "label": (n.label if (n := get(r["source"])) else "?"),
+                     "kind": (n.kind if n else "unknown")}
+                    for r in rows
+                ]
+
+        # Collect code-specific context
+        decisions = _neighbors("out", "decided_by")
+        bugfixes = _neighbors("out", "fixed_by")
+        tests = _neighbors("out", "tested_by")
+        callers = _neighbors("in", "calls")
+        callees = _neighbors("out", "calls")
+        imports_out = _neighbors("out", "imports")
+        imports_in = _neighbors("in", "imports")
+
+        # General provenance
+        derivation = self.trace_derivation(node_id, max_depth=5)
+        origins = [
+            {"id": r, "label": (n.label if (n := self.get_node(r)) else "?")}
+            for r in derivation.get("roots", [])
+        ]
+
+        # Lineage report (handles missing gracefully)
+        try:
+            lineage = self.derivation_lineage_report(node_id)
+        except Exception:
+            lineage = None
+
+        return {
+            "node": {"id": node_id, "label": node.label, "kind": node.kind},
+            "decisions": decisions,
+            "bugfixes": bugfixes,
+            "tests": tests,
+            "callers": callers,
+            "callees": callees,
+            "imports": imports_out + imports_in,
+            "origins": origins,
+            "lineage": lineage,
+        }
+
+    def impact_analysis(
+        self,
+        node_id: str,
+        *,
+        max_depth: int = 5,
+    ) -> dict:
+        """BFS cascade through code dependency edges.
+
+        Starting from *node_id*, traverses outgoing ``calls`` and
+        ``depends_on`` edges to find all downstream code nodes that
+        would be affected by a change to the source.
+
+        This is the code-specific equivalent of
+        :meth:`trace_derivation_impact` but follows code-structure
+        edges (``calls``, ``depends_on``) rather than data-lineage
+        edges.
+
+        Parameters
+        ----------
+        node_id
+            The code node to analyze.
+        max_depth
+            Maximum BFS depth (default 5).
+
+        Returns
+        -------
+        dict
+            ``node`` — starting node info.
+            ``impacted`` — list of ``{id, label, kind, depth, path}``.
+            ``max_depth_reached`` — deepest impact level.
+            ``total_impacted`` — count of downstream nodes.
+
+        Example
+        -------
+        ::
+
+            >>> mg.add_code_node("auth.py", "file")
+            >>> mg.add_code_node("UserService", "class")
+            >>> mg.link_by_label("UserService", "auth.py", "defined_in")
+            >>> mg.add_code_node("login()", "function")
+            >>> mg.link_by_label("login()", "UserService", "defined_in")
+            >>> mg.impact_analysis(auth_py_id)
+            {'node': {...}, 'impacted': [
+                {'id': 'UserService_id', 'depth': 1, 'path': ['auth.py']},
+                {'id': 'login()_id', 'depth': 2, 'path': [...]},
+            ], 'max_depth_reached': 2, 'total_impacted': 2}
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return {"node": node_id, "impacted": [],
+                    "max_depth_reached": 0, "total_impacted": 0,
+                    "error": "node not found"}
+
+        cascade_relations = ("calls", "depends_on", "defined_in")
+        visited: set[str] = {node_id}
+        impacted: list[dict] = []
+        queue: list[tuple[str, int, list[str]]] = [(node_id, 0, [])]
+
+        while queue:
+            current, depth, path = queue.pop(0)
+            if depth >= max_depth:
+                continue
+            placeholders = ','.join('?' * len(cascade_relations))
+            rows = self.conn.execute(
+                f"SELECT target FROM edges WHERE source=? "
+                f"AND relation IN ({placeholders})",
+                (current, *cascade_relations)
+            ).fetchall()
+            for r in rows:
+                tid = r["target"]
+                if tid in visited:
+                    continue
+                visited.add(tid)
+                tn = self.get_node(tid)
+                new_path = path + [tid]
+                impacted.append({
+                    "id": tid,
+                    "label": tn.label if tn else "?",
+                    "kind": tn.kind if tn else "unknown",
+                    "depth": depth + 1,
+                    "path": new_path,
+                })
+                queue.append((tid, depth + 1, new_path))
+
+        max_depth_reached = max((i["depth"] for i in impacted), default=0)
+        return {
+            "node": {"id": node_id, "label": node.label, "kind": node.kind},
+            "impacted": sorted(impacted, key=lambda x: (x["depth"], x["label"])),
+            "max_depth_reached": max_depth_reached,
+            "total_impacted": len(impacted),
+        }
+
+    def code_subgraph(self, node_id: str, *, max_depth: int = 3) -> dict:
+        """Extract the local code-structure subgraph around a node.
+
+        Returns both incoming and outgoing code edges within *max_depth*,
+        useful for visualising what a code node is connected to.
+
+        Returns
+        -------
+        dict
+            ``center`` — the starting node.
+            ``nodes`` — all reachable code nodes.
+            ``edges`` — all code edges (calls, imports, defined_in,
+            depends_on, tested_by, decided_by, fixed_by).
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return {"center": node_id, "nodes": [], "edges": [],
+                    "error": "node not found"}
+
+        code_rels = tuple(self.CODE_EDGE_KINDS)
+        visited: set[str] = {node_id}
+        nodes_out: list[dict] = []
+        edges_out: list[dict] = []
+        queue: list[tuple[str, int]] = [(node_id, 0)]
+
+        while queue:
+            current, depth = queue.pop(0)
+            if depth >= max_depth:
+                continue
+            # Both directions
+            for direction, cols in [("out", ("target",)), ("in", ("source",))]:
+                if direction == "out":
+                    sql = (f"SELECT target AS neighbor, relation, weight "
+                           f"FROM edges WHERE source=? "
+                           f"AND relation IN ({','.join('?' * len(code_rels))})")
+                    params = (current, *code_rels)
+                else:
+                    sql = (f"SELECT source AS neighbor, relation, weight "
+                           f"FROM edges WHERE target=? "
+                           f"AND relation IN ({','.join('?' * len(code_rels))})")
+                    params = (current, *code_rels)
+                rows = self.conn.execute(sql, params).fetchall()
+                for r in rows:
+                    nid = r["neighbor"]
+                    edges_out.append({
+                        "source": current if direction == "out" else nid,
+                        "target": nid if direction == "out" else current,
+                        "relation": r["relation"],
+                        "weight": r["weight"],
+                    })
+                    if nid not in visited:
+                        visited.add(nid)
+                        nn = self.get_node(nid)
+                        if nn:
+                            nodes_out.append({
+                                "id": nid, "label": nn.label,
+                                "kind": nn.kind,
+                            })
+                        queue.append((nid, depth + 1))
+
+        return {
+            "center": {"id": node_id, "label": node.label, "kind": node.kind},
+            "nodes": nodes_out,
+            "edges": edges_out,
+        }
+
     # ── Spreading Activation (Collins & Loftus 1975) ─────────────
     def spread_activation(
         self,
