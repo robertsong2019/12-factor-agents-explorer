@@ -433,3 +433,5 @@ timestamp	commit	metric	value	status	description
 2026-08-03T21:40	61fb76e	code_lines	41066	keep	+195 lines memory_graph.py
 2026-08-03T21:55	ecfea38	test_count	6782	keep	Cycle 345: what_changed_since (temporal change tracker). +11 tests
 2026-08-03T21:55	ecfea38	code_lines	41221	keep	+155 lines memory_graph.py
+2026-08-03T22:35	ed569ec	test_count	6816	keep	Cycle 346: classification_cross_size (13th classification API). +34 tests
+2026-08-03T22:35	ed569ec	code_lines	41474	keep	+253 lines memory_graph.py (cross-size generalization)
