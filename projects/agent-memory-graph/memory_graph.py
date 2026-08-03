@@ -41275,7 +41275,258 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ── Cycle 347: Parameter sensitivity analysis (#14) ──
 
+    def classification_parameter_sensitivity(
+        self,
+        *,
+        topologies: list[str] = None,
+        size: int = 10,
+        num_references_per_category: int = 2,
+        num_queries: int = 2,
+        param_grid: dict = None,
+    ) -> dict:
+        """Evaluate how robust each classification method is to its
+        own hyperparameters.
+
+        Systematically varies key parameters of parameterised
+        classification methods and measures accuracy at each setting.
+        This answers: **"Which methods are safe to deploy with default
+        parameters, and which require careful tuning?"**
+
+        **Parameters tested:**
+
+        - ``spectral``: ``bins`` ∈ {5, 10, 20, 40, 60}
+        - ``rrf``: ``k`` ∈ {1, 3, 6, 10, 20}
+        - ``knn``: ``k`` ∈ {1, 2, 3, 5, 7}
+        - ``weighted_average``: weight balance (degree vs spectral
+          vs fingerprint) — 5 configurations
+
+        Methods without tunable parameters (``graph``, ``bayesian``,
+        ``compare``, ``hybrid``) are excluded since they have no
+        sensitivity to evaluate.
+
+        Complements ``classification_benchmark`` (default-parameter
+        accuracy), ``classification_noise_test`` (edge robustness),
+        and ``classification_cross_size`` (size generalisation) by
+        testing a fourth dimension: **hyperparameter stability**.
+
+        Args:
+            topologies: Graph types to test. Default: all 6.
+            size: Node count for all graphs (fixed to isolate
+                parameter effects).
+            num_references_per_category: Reference graphs per topology.
+            num_queries: Query graphs per topology.
+            param_grid: Override default parameter grid. Format:
+                ``{"spectral_bins": [5,10,...], "rrf_k": [...], ...}``.
+
+        Returns:
+            Dict with per-method sensitivity profiles including:
+            - accuracy at each parameter value
+            - stability score (1 - coefficient of variation)
+            - best/worst parameter values
+            - parameter sensitivity ranking
+        """
+        if topologies is None:
+            topologies = ["star", "path", "cycle", "complete", "bipartite", "tree"]
+        if param_grid is None:
+            param_grid = {
+                "spectral_bins": [5, 10, 20, 40, 60],
+                "rrf_k": [1, 3, 6, 10, 20],
+                "knn_k": [1, 2, 3, 5, 7],
+                "weighted_configs": [
+                    ("equal", 1.0, 1.0, 1.0),
+                    ("degree_heavy", 3.0, 1.0, 1.0),
+                    ("spectral_heavy", 1.0, 3.0, 1.0),
+                    ("fingerprint_heavy", 1.0, 1.0, 3.0),
+                    ("degree_only", 1.0, 0.0, 0.0),
+                ],
+            }
+
+        # --- Build reference & query sets (fixed topology+size) ---
+        references = []
+        category_labels = []
+        for topo in topologies:
+            for r in range(num_references_per_category):
+                ref = self._bench_build_topology(topo, size, label=f"r{r}")
+                ref.graph_meta = {"topology": topo, "label": topo, "n": size}
+                references.append(ref)
+                category_labels.append(topo)
+
+        queries = []
+        expected = []
+        for topo in topologies:
+            for q in range(num_queries):
+                qg = self._bench_build_topology(topo, size, label=f"q{q}")
+                queries.append(qg)
+                expected.append(topo)
+
+        if not queries or not references:
+            return {
+                "methods_tested": [],
+                "param_grid": param_grid,
+                "summary": "No queries or references generated.",
+            }
+
+        def _classify_with_param(method, query, **kwargs):
+            """Run a single classification with given params."""
+            try:
+                if method == "spectral":
+                    r = query.spectral_classification(references, bins=kwargs.get("bins", 20))
+                elif method == "rrf":
+                    r = query.rrf_classification(references, k=kwargs.get("k", 6))
+                elif method == "knn":
+                    r = query.knn_classification(references, k=kwargs.get("k", 3))
+                elif method == "weighted_average":
+                    r = query.weighted_average_classification(
+                        references,
+                        degree_weight=kwargs.get("dw", 1.0),
+                        spectral_weight=kwargs.get("sw", 1.0),
+                        fingerprint_weight=kwargs.get("fw", 1.0),
+                    )
+                else:
+                    return None
+                if r is None:
+                    return None
+                idx = r.get("best_match", r.get("best_ref", r.get("consensus_best")))
+                if idx is None:
+                    return None
+                if isinstance(idx, dict):
+                    idx = idx.get("index", 0)
+                if isinstance(idx, str):
+                    try:
+                        idx = int(idx)
+                    except (ValueError, TypeError):
+                        idx = 0
+                idx = min(int(idx), len(category_labels) - 1)
+                return category_labels[idx]
+            except Exception:
+                return None
+
+        def _run_param_sweep(method, param_name, param_values, extra_kwargs=None):
+            """Sweep one parameter and return accuracies."""
+            extra_kwargs = extra_kwargs or {}
+            results = {}
+            for pv in param_values:
+                correct = 0
+                total = 0
+                for i, qg in enumerate(queries):
+                    kwargs = {**extra_kwargs}
+                    if isinstance(pv, tuple) and len(pv) == 4:
+                        # weighted_average config tuple
+                        kwargs["dw"] = pv[1]
+                        kwargs["sw"] = pv[2]
+                        kwargs["fw"] = pv[3]
+                    else:
+                        kwargs[param_name] = pv
+                    pred = _classify_with_param(method, qg, **kwargs)
+                    total += 1
+                    if pred == expected[i]:
+                        correct += 1
+                label = pv[0] if isinstance(pv, tuple) else str(pv)
+                results[label] = round(correct / total, 4) if total > 0 else 0.0
+            return results
+
+        def _compute_stats(acc: dict):
+            """Compute mean, std, CV, stability, best/worst."""
+            vals = list(acc.values())
+            if not vals:
+                return {}
+            mean_acc = sum(vals) / len(vals)
+            variance = sum((v - mean_acc) ** 2 for v in vals) / len(vals)
+            std = variance ** 0.5
+            cv = std / mean_acc if mean_acc > 0 else 0.0
+            best_val = max(acc, key=acc.get)
+            worst_val = min(acc, key=acc.get)
+            return {
+                "accuracy_at_param": acc,
+                "mean_accuracy": round(mean_acc, 4),
+                "std_accuracy": round(std, 4),
+                "stability_score": round(1.0 - min(cv, 1.0), 4),
+                "best_param": best_val,
+                "best_accuracy": acc.get(best_val, 0.0),
+                "worst_param": worst_val,
+                "worst_accuracy": acc.get(worst_val, 0.0),
+                "accuracy_range": round(acc.get(best_val, 0.0) - acc.get(worst_val, 0.0), 4),
+            }
+
+        # --- Run sensitivity sweeps ---
+        sensitivity_profiles: dict[str, dict] = {}
+
+        if "spectral_bins" in param_grid:
+            acc = _run_param_sweep("spectral", "bins", param_grid["spectral_bins"])
+            stats = _compute_stats(acc)
+            sensitivity_profiles["spectral"] = {
+                "param_name": "bins",
+                "param_values": param_grid["spectral_bins"],
+                **stats,
+            }
+
+        if "rrf_k" in param_grid:
+            acc = _run_param_sweep("rrf", "k", param_grid["rrf_k"])
+            stats = _compute_stats(acc)
+            sensitivity_profiles["rrf"] = {
+                "param_name": "k",
+                "param_values": param_grid["rrf_k"],
+                **stats,
+            }
+
+        if "knn_k" in param_grid:
+            acc = _run_param_sweep("knn", "k", param_grid["knn_k"])
+            stats = _compute_stats(acc)
+            sensitivity_profiles["knn"] = {
+                "param_name": "k",
+                "param_values": param_grid["knn_k"],
+                **stats,
+            }
+
+        if "weighted_configs" in param_grid:
+            configs = param_grid["weighted_configs"]
+            acc = _run_param_sweep("weighted_average", None, configs)
+            stats = _compute_stats(acc)
+            sensitivity_profiles["weighted_average"] = {
+                "param_name": "weight_config",
+                "param_values": [c[0] for c in configs],
+                **stats,
+            }
+
+        # --- Rankings (by stability score) ---
+        ranked = sorted(
+            sensitivity_profiles.items(),
+            key=lambda x: x[1]["stability_score"],
+            reverse=True,
+        )
+
+        # --- Summary ---
+        if ranked:
+            most_stable = ranked[0]
+            least_stable = ranked[-1]
+            summary = (
+                f"Parameter sensitivity: {len(sensitivity_profiles)} parameterised methods tested "
+                f"across {len(topologies)} topologies at size {size}. "
+                f"Most parameter-robust: {most_stable[0]} "
+                f"(stability={most_stable[1]['stability_score']:.2f}, "
+                f"range={most_stable[1]['accuracy_range']:.2f}). "
+                f"Most parameter-sensitive: {least_stable[0]} "
+                f"(stability={least_stable[1]['stability_score']:.2f}, "
+                f"range={least_stable[1]['accuracy_range']:.2f})."
+            )
+        else:
+            summary = "No parameterised methods were tested."
+
+        return {
+            "size": size,
+            "topologies": topologies,
+            "num_references": len(references),
+            "num_queries": len(queries),
+            "param_grid": {k: v if not isinstance(v[0], tuple) else [c[0] for c in v]
+                           for k, v in param_grid.items() if v},
+            "sensitivity_profiles": sensitivity_profiles,
+            "rankings": [(m, p["stability_score"]) for m, p in ranked],
+            "most_stable": ranked[0][0] if ranked else "none",
+            "least_stable": ranked[-1][0] if ranked else "none",
+            "summary": summary,
+        }
 
 
 
