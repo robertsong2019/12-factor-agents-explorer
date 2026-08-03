@@ -423,3 +423,7 @@ timestamp	commit	metric	value	status	description
 2026-08-02T23:10+08:00	1dcc091	test_count	6622+13=6635	keep	Topology stats: hub_nodes(n) + peripheral_nodes() + mean_degree(). 13 new tests. All pass.
 2026-08-03T00:00:00+08:00	a47ec3c	test_count	6635→6645	keep	Cycle 340: Fix classification_benchmark prediction extraction. Two bugs: (1) extracted 'best_ref_index' which doesn't exist in any method → all predictions defaulted to index 0 (star), giving misleading 17% accuracy. Now correctly reads best_match/best_ref/consensus_best. (2) graph dispatch passed include_quarantined= kwarg graph_classification doesn't accept → silent TypeError → all None. Accuracy jumps from ~17% to ~100% for canonical topologies. +10 prediction-extraction tests. 274th day.
 2026-08-03T00:00:00+08:00	a47ec3c	test_pass_rate	100%	keep	All 6645 passing, 52.73s.
+2026-08-03T01:00:00+08:00	fcc1c17	test_count	6645→6692	keep	Cycle 341: classification_noise_test() — noise robustness evaluation. Sweeps noise levels, reports degradation curves per method, AUC robustness scores, breakpoints, per-topology resilience. Deterministic per-query seeds. _apply_noise() helper. 47 tests. 274th day.
+2026-08-03T01:00:00+08:00	fcc1c17	test_pass_rate	100%	keep	All 6692 passing, 54.69s.
+2026-08-03T21:10	5d29df1	test_count	6735	keep	Cycle 342: code-aware memory (4 APIs: add_code_node + explain_code + impact_analysis + code_subgraph). +43 tests
+2026-08-03T21:10	5d29df1	code_lines	40725	keep	+334 lines memory_graph.py
