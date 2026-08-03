@@ -27760,6 +27760,161 @@ class MemoryGraph:
             "code_density": round(density, 4),
         }
 
+    def what_changed_since(
+        self,
+        since: float,
+        *,
+        node_id: str = None,
+        kind: str = None,
+    ) -> dict:
+        """Report graph changes since a timestamp.
+
+        Answers: "I was here 3h ago — has anything changed?"
+
+        Returns new nodes, new edges, modified nodes (weight/data
+        changes), and superseded nodes since *since*.  Optional
+        *node_id* restricts to the neighborhood of a specific node.
+        Optional *kind* filters by node kind.
+
+        Parameters
+        ----------
+        since
+            Unix timestamp.  Reports changes strictly after this time.
+        node_id
+            If given, restrict to changes within *depth* = 2 of this node.
+        kind
+            Filter node additions by kind.
+
+        Returns
+        -------
+        dict
+            ``since`` — the input timestamp.
+            ``nodes_added`` — list of {id, label, kind, created}.
+            ``nodes_modified`` — list of {id, label, changes}.
+            ``nodes_superseded`` — list of {old_id, new_id}.
+            ``edges_added`` — list of {source, target, relation}.
+            ``summary`` — {total_changes, added, modified, superseded,
+            edges}.
+        """
+        now = time.time()
+
+        # New nodes since timestamp
+        if kind is not None:
+            new_rows = self.conn.execute(
+                "SELECT id, label, kind, created FROM nodes "
+                "WHERE created > ? AND kind=? ORDER BY created DESC",
+                (since, kind)
+            ).fetchall()
+        else:
+            new_rows = self.conn.execute(
+                "SELECT id, label, kind, created FROM nodes "
+                "WHERE created > ? ORDER BY created DESC",
+                (since,)
+            ).fetchall()
+
+        nodes_added = [
+            {"id": r["id"], "label": r["label"],
+             "kind": r["kind"], "created": r["created"]}
+            for r in new_rows
+        ]
+
+        # Superseded nodes (valid_to set after since)
+        supersede_rows = self.conn.execute(
+            "SELECT id, label, valid_to FROM nodes "
+            "WHERE valid_to IS NOT NULL AND valid_to > ? "
+            "ORDER BY valid_to DESC",
+            (since,)
+        ).fetchall()
+        nodes_superseded = [
+            {"old_id": r["id"], "label": r["label"],
+             "valid_to": r["valid_to"]}
+            for r in supersede_rows
+        ]
+
+        # Modified nodes: weight changes logged in clock_log
+        mod_rows = self.conn.execute(
+            "SELECT DISTINCT node_id FROM clock_log "
+            "WHERE lamport > 0 AND op IN ('update','tag','embed',"
+            "'confidence','activate','evolve') "
+            "AND CAST(json_extract(details, '$.wall_time') AS REAL) > ?",
+            (since,)
+        ).fetchall()
+        nodes_modified = []
+        for r in mod_rows:
+            if r["node_id"]:
+                node = self.get_node(r["node_id"])
+                if node:
+                    nodes_modified.append({
+                        "id": node.id, "label": node.label,
+                        "kind": node.kind,
+                    })
+
+        # New edges since timestamp
+        edge_rows = self.conn.execute(
+            "SELECT source, target, relation FROM edges "
+            "WHERE EXISTS ("
+            "  SELECT 1 FROM clock_log "
+            "  WHERE op = 'link' "
+            "  AND json_extract(details, '$.wall_time') IS NOT NULL "
+            "  AND CAST(json_extract(details, '$.wall_time') AS REAL) > ?"
+            ") "
+            "LIMIT 200",
+            (since,)
+        ).fetchall()
+        # Fallback: just count edges (might not have wall_time in clock_log)
+        if not edge_rows:
+            # Use total edge count as proxy
+            edge_count = self.conn.execute(
+                "SELECT COUNT(*) c FROM edges"
+            ).fetchone()["c"]
+        else:
+            edge_count = len(edge_rows)
+
+        edges_added = [
+            {"source": r["source"], "target": r["target"],
+             "relation": r["relation"]}
+            for r in edge_rows
+        ]
+
+        # Filter by neighborhood if node_id given
+        if node_id is not None:
+            neighbor_ids = {node_id}
+            for n in self.neighbors(node_id):
+                neighbor_ids.add(n.id)
+            for n in self.neighbors_filtered(node_id, direction="in"):
+                neighbor_ids.add(n.id)
+            nodes_added = [
+                n for n in nodes_added if n["id"] in neighbor_ids
+            ]
+            nodes_modified = [
+                n for n in nodes_modified if n["id"] in neighbor_ids
+            ]
+            edges_added = [
+                e for e in edges_added
+                if e["source"] in neighbor_ids or e["target"] in neighbor_ids
+            ]
+
+        total_changes = (
+            len(nodes_added) + len(nodes_modified)
+            + len(nodes_superseded) + len(edges_added)
+        )
+
+        return {
+            "since": since,
+            "now": now,
+            "nodes_added": nodes_added,
+            "nodes_modified": nodes_modified,
+            "nodes_superseded": nodes_superseded,
+            "edges_added": edges_added,
+            "summary": {
+                "total_changes": total_changes,
+                "added": len(nodes_added),
+                "modified": len(nodes_modified),
+                "superseded": len(nodes_superseded),
+                "edges": len(edges_added),
+            },
+        }
+
     # ── Spreading Activation (Collins & Loftus 1975) ─────────────
     def spread_activation(
         self,
