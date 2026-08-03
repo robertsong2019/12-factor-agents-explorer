@@ -308,6 +308,9 @@ export const toolHandlers: Record<string, (args: any) => Promise<any>> = {
 // --- Handler implementations ---
 
 async function executeWebSearch(args: any): Promise<any> {
+  if (!args.query || typeof args.query !== "string") {
+    throw new Error("web_search requires a 'query' string parameter");
+  }
   return { tool: "web_search", query: args.query, results: [], note: "Web search requires OpenClaw API integration." };
 }
 
