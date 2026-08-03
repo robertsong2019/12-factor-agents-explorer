@@ -431,3 +431,5 @@ timestamp	commit	metric	value	status	description
 2026-08-03T21:25	e7481ea	code_lines	40871	keep	+146 lines memory_graph.py
 2026-08-03T21:40	61fb76e	test_count	6771	keep	Cycle 344: query_believed_as_of + temporal_delta_query (TRUE bi-temporal). +17 tests
 2026-08-03T21:40	61fb76e	code_lines	41066	keep	+195 lines memory_graph.py
+2026-08-03T21:55	ecfea38	test_count	6782	keep	Cycle 345: what_changed_since (temporal change tracker). +11 tests
+2026-08-03T21:55	ecfea38	code_lines	41221	keep	+155 lines memory_graph.py
