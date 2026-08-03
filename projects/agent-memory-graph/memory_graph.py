@@ -41816,6 +41816,443 @@ class MemoryGraph:
             "methods_used": methods_used,
         }
 
+    def classification_report(
+        self,
+        references: list["MemoryGraph"],
+        queries: list["MemoryGraph"],
+        expected_labels: list[str],
+        *,
+        methods: list[str] = None,
+        degree_index: str = "sombor",
+        spectral_measure: str = "jsd",
+        bins: int = 20,
+        normalise: str = "minmax",
+        include_quarantined: bool = False,
+    ) -> dict:
+        """Detailed classification evaluation report with confusion matrix.
+
+        Given a reference set, a list of query graphs, and their
+        expected labels, this method runs one or more classification
+        algorithms and produces a comprehensive evaluation report
+        including per-class precision / recall / F1, a full confusion
+        matrix, error analysis, and cross-method comparison.
+
+        **Motivation** (Research #046):
+
+        - ``classification_benchmark`` generates canonical topologies
+          internally and reports macro-averaged metrics only.
+        - ``classification_noise_test`` measures robustness but does
+          not show *which* categories are confused.
+        - Users evaluating classification on **real data** (not
+          canonical topologies) need a structured confusion matrix
+          with per-class breakdowns and error analysis.
+        - This method fills that gap — a standalone evaluation tool
+          that accepts explicit ``(query, label)`` pairs.
+
+        **Algorithm:**
+
+        1. **Classify** each query against the references using every
+           requested method.
+        2. **Build confusion matrix** — ``matrix[actual][predicted]``
+           counts for each method.
+        3. **Per-class metrics** — precision, recall, F1, support,
+           and most-confused-with for each label.
+        4. **Overall metrics** — accuracy, macro-F1, weighted-F1.
+        5. **Error analysis** — list all misclassifications, identify
+           most confused pairs, compute per-label confusion rates.
+        6. **Cross-method comparison** — best method per class,
+           overall recommendation.
+
+        Args:
+            references: Reference MemoryGraph objects (one or more
+                per category).
+            queries: Query MemoryGraph objects to classify.
+            expected_labels: Ground-truth label for each query
+                (parallel to *queries*).
+            methods: Classification methods to evaluate. Default:
+                ``["graph", "spectral", "hybrid"]``.
+            degree_index: Degree index for graph classification.
+            spectral_measure: Divergence measure for spectral.
+            bins: Histogram bins for spectral fingerprint.
+            normalise: Score normalisation method.
+            include_quarantined: Whether to include quarantined refs.
+
+        Returns:
+            Dict with the following structure::
+
+                {
+                  "labels": ["star", "path", ...],
+                  "methods_evaluated": ["graph", "spectral", ...],
+                  "num_queries": int,
+                  "num_references": int,
+                  "per_method": {
+                    "graph": {
+                      "accuracy": float,
+                      "macro_precision": float,
+                      "macro_recall": float,
+                      "macro_f1": float,
+                      "weighted_precision": float,
+                      "weighted_recall": float,
+                      "weighted_f1": float,
+                      "error_count": int,
+                      "confusion_matrix": {
+                        "star": {"star": int, "path": int, ...},
+                        "path": {"star": int, "path": int, ...},
+                      },
+                      "normalised_matrix": {
+                        "star": {"star": float, "path": float, ...},
+                      },
+                      "per_class": {
+                        "star": {
+                          "precision": float,
+                          "recall": float,
+                          "f1": float,
+                          "support": int,
+                          "tp": int, "fp": int, "fn": int,
+                          "most_confused_with": str_or_None,
+                          "confusion_rate": float,
+                        },
+                      },
+                      "errors": [
+                        (query_idx, actual, predicted), ...
+                      ],
+                      "most_confused_pairs": [
+                        (actual, predicted, count), ...
+                      ],
+                    },
+                  },
+                  "best_method_overall": str,
+                  "best_method_per_class": {
+                    "star": {"method": str, "f1": float},
+                  },
+                  "hardest_queries": [
+                    {"query_idx": int,
+                     "actual": str,
+                     "methods_correct": int,
+                     "methods_total": int},
+                  ],
+                  "summary": str,
+                }
+        """
+        if not queries or not expected_labels:
+            return {
+                "labels": [],
+                "methods_evaluated": methods or [],
+                "num_queries": 0,
+                "num_references": len(references),
+                "per_method": {},
+                "best_method_overall": None,
+                "best_method_per_class": {},
+                "hardest_queries": [],
+                "summary": "No queries provided.",
+            }
+        if len(queries) != len(expected_labels):
+            raise ValueError(
+                f"queries ({len(queries)}) and expected_labels "
+                f"({len(expected_labels)}) must have the same length"
+            )
+
+        if methods is None:
+            methods = ["graph", "spectral", "hybrid"]
+
+        # Derive reference labels from graph_meta or node data.
+        ref_labels = []
+        for ref in references:
+            meta = getattr(ref, "graph_meta", None)
+            label = (meta or {}).get("label", (meta or {}).get("topology", "unknown"))
+            ref_labels.append(label)
+
+        all_labels = sorted(set(expected_labels) | set(ref_labels))
+
+        # --- Helper: run a single classification method ---
+        def _run_method(method_name: str):
+            """Return predictions list (parallel to queries)."""
+            preds = []
+            for query in queries:
+                try:
+                    if method_name == "graph":
+                        r = query.graph_classification(references)
+                    elif method_name == "spectral":
+                        r = query.spectral_classification(
+                            references,
+                            measure=spectral_measure,
+                            bins=bins,
+                            include_quarantined=include_quarantined,
+                        )
+                    elif method_name == "hybrid":
+                        r = query.hybrid_classification(
+                            references, include_quarantined=include_quarantined)
+                    elif method_name == "rrf":
+                        r = query.rrf_classification(
+                            references, include_quarantined=include_quarantined)
+                    elif method_name == "bayesian":
+                        r = query.bayesian_classification(
+                            references, include_quarantined=include_quarantined)
+                    elif method_name == "knn":
+                        r = query.knn_classification(
+                            references, include_quarantined=include_quarantined)
+                    elif method_name == "weighted_average":
+                        r = query.weighted_average_classification(
+                            references, include_quarantined=include_quarantined)
+                    elif method_name == "compare":
+                        r = query.classification_compare(
+                            references, include_quarantined=include_quarantined)
+                    else:
+                        preds.append(None)
+                        continue
+
+                    if r is None:
+                        preds.append(None)
+                        continue
+
+                    idx = r.get(
+                        "best_match",
+                        r.get("best_ref", r.get("consensus_best")),
+                    )
+                    if idx is None:
+                        preds.append(None)
+                        continue
+                    if isinstance(idx, dict):
+                        idx = idx.get("index", 0)
+                    if isinstance(idx, str):
+                        try:
+                            idx = int(idx)
+                        except (ValueError, TypeError):
+                            idx = 0
+                    idx = min(int(idx), len(ref_labels) - 1)
+                    preds.append(ref_labels[idx])
+                except Exception:
+                    preds.append(None)
+            return preds
+
+        # --- Evaluate each method ---
+        per_method = {}
+        # Track per-query correctness across methods for hardest_queries.
+        query_correct_count = [0] * len(queries)
+
+        for method_name in methods:
+            predictions = _run_method(method_name)
+
+            # Build confusion matrix.
+            matrix = {a: {p: 0 for p in all_labels} for a in all_labels}
+            errors = []
+            for qi, (pred, exp) in enumerate(zip(predictions, expected_labels)):
+                if exp not in matrix:
+                    matrix[exp] = {p: 0 for p in all_labels}
+                if pred is None:
+                    pred = "<none>"
+                    if pred not in matrix[exp]:
+                        matrix[exp][pred] = 0
+                if pred not in matrix[exp]:
+                    matrix[exp][pred] = 0
+                matrix[exp][pred] += 1
+                if pred != exp:
+                    errors.append((qi, exp, pred))
+                else:
+                    query_correct_count[qi] += 1
+
+            # Normalised matrix (row-normalised).
+            norm_matrix = {}
+            for actual, row in matrix.items():
+                row_total = sum(row.values())
+                if row_total > 0:
+                    norm_matrix[actual] = {
+                        p: round(c / row_total, 4) for p, c in row.items()
+                    }
+                else:
+                    norm_matrix[actual] = {p: 0.0 for p in row}
+
+            # Per-class metrics.
+            per_class = {}
+            for label in all_labels:
+                tp = matrix.get(label, {}).get(label, 0)
+                fp = sum(
+                    matrix.get(other, {}).get(label, 0)
+                    for other in all_labels
+                    if other != label
+                )
+                fn = sum(
+                    matrix.get(label, {}).get(other, 0)
+                    for other in all_labels
+                    if other != label
+                )
+                support = tp + fn
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1 = (
+                    2 * precision * recall / (precision + recall)
+                    if (precision + recall) > 0
+                    else 0.0
+                )
+                # Most confused with.
+                confused = [
+                    (other, matrix.get(label, {}).get(other, 0))
+                    for other in all_labels
+                    if other != label and matrix.get(label, {}).get(other, 0) > 0
+                ]
+                confused.sort(key=lambda x: x[1], reverse=True)
+                most_confused = confused[0][0] if confused else None
+                confusion_rate = (
+                    (support - tp) / support if support > 0 else 0.0
+                )
+                per_class[label] = {
+                    "precision": round(precision, 4),
+                    "recall": round(recall, 4),
+                    "f1": round(f1, 4),
+                    "support": support,
+                    "tp": tp,
+                    "fp": fp,
+                    "fn": fn,
+                    "most_confused_with": most_confused,
+                    "confusion_rate": round(confusion_rate, 4),
+                }
+
+            # Overall metrics.
+            correct = sum(
+                1 for p, e in zip(predictions, expected_labels) if p == e
+            )
+            total = len(expected_labels)
+            accuracy = correct / total if total > 0 else 0.0
+
+            # Macro averages.
+            valid_labels = [l for l in all_labels if per_class[l]["support"] > 0]
+            macro_p = (
+                sum(per_class[l]["precision"] for l in valid_labels)
+                / len(valid_labels)
+                if valid_labels
+                else 0.0
+            )
+            macro_r = (
+                sum(per_class[l]["recall"] for l in valid_labels)
+                / len(valid_labels)
+                if valid_labels
+                else 0.0
+            )
+            macro_f1 = (
+                sum(per_class[l]["f1"] for l in valid_labels)
+                / len(valid_labels)
+                if valid_labels
+                else 0.0
+            )
+
+            # Weighted averages (by support).
+            total_support = sum(per_class[l]["support"] for l in valid_labels)
+            if total_support > 0:
+                weighted_p = sum(
+                    per_class[l]["precision"] * per_class[l]["support"]
+                    for l in valid_labels
+                ) / total_support
+                weighted_r = sum(
+                    per_class[l]["recall"] * per_class[l]["support"]
+                    for l in valid_labels
+                ) / total_support
+                weighted_f1 = sum(
+                    per_class[l]["f1"] * per_class[l]["support"]
+                    for l in valid_labels
+                ) / total_support
+            else:
+                weighted_p = weighted_r = weighted_f1 = 0.0
+
+            # Most confused pairs.
+            confused_pairs = []
+            for actual in all_labels:
+                for predicted in all_labels:
+                    if actual == predicted:
+                        continue
+                    count = matrix.get(actual, {}).get(predicted, 0)
+                    if count > 0:
+                        confused_pairs.append((actual, predicted, count))
+            confused_pairs.sort(key=lambda x: x[2], reverse=True)
+
+            per_method[method_name] = {
+                "accuracy": round(accuracy, 4),
+                "macro_precision": round(macro_p, 4),
+                "macro_recall": round(macro_r, 4),
+                "macro_f1": round(macro_f1, 4),
+                "weighted_precision": round(weighted_p, 4),
+                "weighted_recall": round(weighted_r, 4),
+                "weighted_f1": round(weighted_f1, 4),
+                "error_count": len(errors),
+                "confusion_matrix": matrix,
+                "normalised_matrix": norm_matrix,
+                "per_class": per_class,
+                "errors": errors,
+                "most_confused_pairs": confused_pairs,
+            }
+
+        # --- Best method overall (by accuracy) ---
+        ranked = sorted(
+            per_method.items(),
+            key=lambda x: x[1]["accuracy"],
+            reverse=True,
+        )
+        best_overall = ranked[0][0] if ranked else None
+
+        # --- Best method per class (by F1) ---
+        best_per_class = {}
+        for label in all_labels:
+            scored = [
+                (m, per_method[m]["per_class"][label]["f1"])
+                for m in methods
+                if label in per_method.get(m, {}).get("per_class", {})
+            ]
+            if scored:
+                best_m, best_f1 = max(scored, key=lambda x: x[1])
+                best_per_class[label] = {
+                    "method": best_m,
+                    "f1": round(best_f1, 4),
+                }
+
+        # --- Hardest queries (fewest methods correct) ---
+        hardest = [
+            {
+                "query_idx": qi,
+                "actual": expected_labels[qi],
+                "methods_correct": query_correct_count[qi],
+                "methods_total": len(methods),
+            }
+            for qi in range(len(queries))
+            if query_correct_count[qi] < len(methods)
+        ]
+        hardest.sort(key=lambda x: x["methods_correct"])
+        hardest_queries = hardest[:10]  # top 10 hardest
+
+        # --- Summary text ---
+        if best_overall:
+            best_acc = per_method[best_overall]["accuracy"]
+            worst_method = ranked[-1][0] if len(ranked) > 1 else None
+            parts = [
+                f"Evaluated {len(methods)} method(s) on {len(queries)} queries",
+                f"across {len(all_labels)} classes.",
+                f"Best overall: {best_overall} ({best_acc:.1%} accuracy).",
+            ]
+            if worst_method and worst_method != best_overall:
+                worst_acc = per_method[worst_method]["accuracy"]
+                parts.append(
+                    f"Worst: {worst_method} ({worst_acc:.1%})."
+                )
+            # Mention most confused pair from best method.
+            best_confused = per_method[best_overall]["most_confused_pairs"]
+            if best_confused:
+                a, p, c = best_confused[0]
+                parts.append(
+                    f"Top confusion ({best_overall}): {a}→{p} ({c})."
+                )
+            summary = " ".join(parts)
+        else:
+            summary = "No methods evaluated."
+
+        return {
+            "labels": all_labels,
+            "methods_evaluated": methods,
+            "num_queries": len(queries),
+            "num_references": len(references),
+            "per_method": dict(ranked),
+            "best_method_overall": best_overall,
+            "best_method_per_class": best_per_class,
+            "hardest_queries": hardest_queries,
+            "summary": summary,
+        }
 
 
 
