@@ -18709,6 +18709,201 @@ class MemoryGraph:
             },
         }
 
+    def query_believed_as_of(
+        self,
+        valid_time: float,
+        transaction_time: float = None,
+        node_id: str = None,
+        *,
+        depth: int = 1,
+        kind: str = None,
+        limit: int = 100,
+    ) -> dict:
+        """TRUE bi-temporal query — "what did we believe at time TT about time VT?"
+
+        Standard bi-temporal model has TWO time axes:
+
+        - **valid_time** (VT): When the fact was true in the real world.
+        - **transaction_time** (TT): When the system recorded the fact.
+
+        :meth:`query_as_of` filters only by valid_time.  This method
+        adds an optional transaction_time filter, enabling questions
+        like "What did we know at 3 PM about the state at noon?"
+
+        Parameters
+        ----------
+        valid_time
+            The real-world time to query (valid_from/valid_to axis).
+        transaction_time
+            When the system recorded the fact.  If None (default),
+            uses the current time (no TT filtering).  Nodes with
+            ``txn_time > transaction_time`` are excluded — they
+            hadn't been recorded yet.
+        node_id
+            Optional seed for localized BFS.
+        depth
+            BFS depth (localized mode).
+        kind
+            Optional node kind filter.
+        limit
+            Max nodes.
+
+        Returns
+        -------
+        dict
+            ``valid_time``, ``transaction_time``, ``mode``,
+            ``nodes``, ``edges``, ``stats``.
+
+        Example
+        -------
+        ::
+
+            >>> # At noon, fact A was recorded as true
+            >>> mg.add("Server is up", kind="fact")
+            >>> # At 2 PM, we learned it was actually down since 11 AM
+            >>> mg.supersede(node_id, "Server is down")
+            >>> # What did we believe at 1 PM about noon?
+            >>> mg.query_believed_as_of(
+            ...     valid_time=noon_ts,
+            ...     transaction_time=1pm_ts)
+            # Returns: "Server is up" (that's what we believed at 1 PM)
+        """
+        tt = transaction_time if transaction_time is not None else time.time()
+
+        # First get the valid_time snapshot
+        base = self.query_as_of(valid_time, node_id=node_id,
+                                 depth=depth, kind=kind, limit=limit)
+
+        # Then filter by transaction_time (txn_time column)
+        # Also apply created-as-valid_from heuristic: nodes without explicit
+        # valid_from are treated as valid from their creation time.
+        filtered_nodes = []
+        excluded = []
+        for n in base["nodes"]:
+            row = self.conn.execute(
+                "SELECT txn_time, created, valid_from FROM nodes WHERE id=?",
+                (n["id"],)
+            ).fetchone()
+            if row is None:
+                filtered_nodes.append(n)
+                continue
+            # Transaction-time filter: node must have been recorded by TT
+            node_tt = row["txn_time"] if row["txn_time"] is not None else row["created"]
+            if node_tt is not None and node_tt > tt:
+                excluded.append(n["id"])
+                continue
+            # Created-as-valid_from heuristic: if valid_from is NULL,
+            # treat created time as the start of validity.
+            vf = row["valid_from"] if row["valid_from"] is not None else row["created"]
+            if vf is not None and vf > valid_time:
+                excluded.append(n["id"])
+                continue
+            filtered_nodes.append(n)
+
+        # Filter edges: exclude edges where either endpoint was excluded
+        excluded_set = set(excluded)
+        filtered_edges = [
+            e for e in base["edges"]
+            if e["source"] not in excluded_set
+            and e["target"] not in excluded_set
+        ]
+
+        return {
+            "valid_time": valid_time,
+            "transaction_time": tt,
+            "mode": base["mode"],
+            "nodes": filtered_nodes,
+            "edges": filtered_edges,
+            "stats": {
+                "nodes": len(filtered_nodes),
+                "edges": len(filtered_edges),
+                "depth_reached": base.get("stats", {}).get("depth_reached"),
+                "excluded_by_tt": len(excluded),
+            },
+        }
+
+    def temporal_delta_query(
+        self,
+        t1: float,
+        t2: float,
+        *,
+        transaction_time: float = None,
+    ) -> dict:
+        """Bi-temporal delta: what changed between t1 and t2 (as believed at TT)?
+
+        Wraps :meth:`temporal_diff` with an optional transaction_time
+        filter.  Shows what the system *believed* changed between two
+        valid_times, from the perspective of *transaction_time*.
+
+        Parameters
+        ----------
+        t1
+            Earlier valid_time.
+        t2
+            Later valid_time.
+        transaction_time
+            Optional TT filter.  If None, uses current time.
+
+        Returns
+        -------
+        dict
+            All keys from :meth:`temporal_diff`, plus:
+            - ``transaction_time``: the TT filter used.
+            - ``tt_filtered``: count of nodes excluded by TT.
+        """
+        if transaction_time is not None:
+            # Get both snapshots with TT filter
+            snap1 = self.query_believed_as_of(
+                t1, transaction_time=transaction_time)
+            snap2 = self.query_believed_as_of(
+                t2, transaction_time=transaction_time)
+            nodes1 = {n["id"] for n in snap1["nodes"]}
+            nodes2 = {n["id"] for n in snap2["nodes"]}
+            edges1 = {
+                (e["source"], e["target"], e["relation"])
+                for e in snap1["edges"]
+            }
+            edges2 = {
+                (e["source"], e["target"], e["relation"])
+                for e in snap2["edges"]
+            }
+            tt_filtered = (
+                snap1["stats"].get("excluded_by_tt", 0) +
+                snap2["stats"].get("excluded_by_tt", 0)
+            )
+        else:
+            # Delegate to existing temporal_diff
+            result = self.temporal_diff(t1, t2)
+            result["transaction_time"] = time.time()
+            result["tt_filtered"] = 0
+            return result
+
+        nodes_added = sorted(nodes2 - nodes1)
+        nodes_removed = sorted(nodes1 - nodes2)
+        nodes_stable = len(nodes1 & nodes2)
+        edges_added = sorted(edges2 - edges1)
+        edges_removed = sorted(edges1 - edges2)
+        edges_stable = len(edges1 & edges2)
+
+        total_n = max(len(nodes1 | nodes2), 1)
+        total_e = max(len(edges1 | edges2), 1)
+
+        return {
+            "t1": t1,
+            "t2": t2,
+            "transaction_time": transaction_time,
+            "nodes_added": nodes_added,
+            "nodes_removed": nodes_removed,
+            "nodes_stable": nodes_stable,
+            "edges_added": [list(e) for e in edges_added],
+            "edges_removed": [list(e) for e in edges_removed],
+            "edges_stable": edges_stable,
+            "node_churn": round((len(nodes_added) + len(nodes_removed)) / total_n, 4),
+            "edge_churn": round((len(edges_added) + len(edges_removed)) / total_e, 4),
+            "growth_rate": round((len(nodes2) - len(nodes1)) / max(len(nodes1), 1), 4),
+            "tt_filtered": tt_filtered,
+        }
+
     def trace_decision_chain(self, topic: str = None,
                              node_id: str = None) -> list[dict]:
         """Trace the decision/supersession chain for a topic or node.
