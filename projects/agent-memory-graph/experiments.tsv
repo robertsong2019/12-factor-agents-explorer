@@ -427,3 +427,5 @@ timestamp	commit	metric	value	status	description
 2026-08-03T01:00:00+08:00	fcc1c17	test_pass_rate	100%	keep	All 6692 passing, 54.69s.
 2026-08-03T21:10	5d29df1	test_count	6735	keep	Cycle 342: code-aware memory (4 APIs: add_code_node + explain_code + impact_analysis + code_subgraph). +43 tests
 2026-08-03T21:10	5d29df1	code_lines	40725	keep	+334 lines memory_graph.py
+2026-08-03T21:25	e7481ea	test_count	6754	keep	Cycle 343: record_code_decision + code_nodes_by_kind + code_graph_summary. +19 tests
+2026-08-03T21:25	e7481ea	code_lines	40871	keep	+146 lines memory_graph.py
