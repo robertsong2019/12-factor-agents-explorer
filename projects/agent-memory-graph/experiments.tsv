@@ -437,3 +437,6 @@ timestamp	commit	metric	value	status	description
 2026-08-03T22:35	ed569ec	code_lines	41474	keep	+253 lines memory_graph.py (cross-size generalization)
 2026-08-03T23:10	7c1a271	test_count	6848	keep	Cycle 347: classification_parameter_sensitivity (14th classification API). +32 tests
 2026-08-03T23:10	7c1a271	code_lines	41725	keep	+251 lines memory_graph.py (param sensitivity sweep)
+2026-08-04T00:00:00+08:00	3c881d1	test_count	6848→6892	keep	Cycle 348: classification_learned_weights (15th classification API). Grid-search optimal modality weights from labelled training data. Cached per-modality scoring. 44 tests. 275th day.
+2026-08-04T00:00:00+08:00	3c881d1	test_pass_rate	100%	keep	All 6892 passing, 83.89s.
+2026-08-04T00:00:00+08:00	3c881d1	code_lines	41725→42364	keep	+639 lines (275 source/docstring + 364 test)
