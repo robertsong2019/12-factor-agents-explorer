@@ -41025,6 +41025,259 @@ class MemoryGraph:
                 if pair not in existing and rev not in existing:
                     if rng.random() < noise_level:
                         graph.link(node_ids[i], node_ids[j], "rel", 1.0)
+    # ── Cycle 346: Cross-size classification generalization ──
+
+    def classification_cross_size(
+        self,
+        *,
+        reference_size: int = 10,
+        query_sizes: list[int] = None,
+        topologies: list[str] = None,
+        num_references_per_category: int = 2,
+        num_queries: int = 2,
+        methods: list[str] = None,
+    ) -> dict:
+        """Test classification generalization across different graph sizes.
+
+        Builds reference graphs at ``reference_size`` nodes, then
+        queries with graphs of varying sizes.  Reveals which methods
+        are **size-invariant** (stable accuracy regardless of size
+        delta) vs **size-sensitive** (accuracy collapses when query
+        size differs from reference size).
+
+        This complements ``classification_benchmark`` (fixed sizes)
+        and ``classification_noise_test`` (edge perturbation at fixed
+        size) by testing a third dimension: **structural scaling**.
+
+        Real-world motivation: a memory graph grows over time.
+        A pattern recognised at 10 nodes should still be identifiable
+        at 15 or 20 nodes if the classifier is truly capturing
+        *topology* rather than memorising *size*.
+
+        Args:
+            reference_size: Node count for all reference graphs.
+            query_sizes: Node counts for query graphs.  Default:
+                [6, 8, 10, 12, 14, 16] (i.e. deltas -4…+6).
+            topologies: Graph types to test.  Default: all 6.
+            num_references_per_category: Reference graphs per topology.
+            num_queries: Query graphs per topology per size.
+            methods: Classification methods.  Default: all 8.
+
+        Returns:
+            Dict with per-method accuracy at each query size,
+            size-invariance scores, generalisation rankings, and
+            per-topology scaling resilience.
+        """
+        if query_sizes is None:
+            query_sizes = [6, 8, 10, 12, 14, 16]
+        if topologies is None:
+            topologies = ["star", "path", "cycle", "complete", "bipartite", "tree"]
+        if methods is None:
+            methods = [
+                "graph", "spectral", "hybrid", "rrf", "bayesian",
+                "knn", "weighted_average", "compare",
+            ]
+
+        # --- Build reference set (all at reference_size) ---
+        references = []
+        category_labels = []
+        for topo in topologies:
+            for r in range(num_references_per_category):
+                ref = self._bench_build_topology(topo, reference_size, label=f"r{r}")
+                ref.graph_meta = {"topology": topo, "label": topo, "n": reference_size}
+                references.append(ref)
+                category_labels.append(topo)
+
+        if not references or not query_sizes:
+            return {
+                "reference_size": reference_size,
+                "query_sizes": query_sizes or [],
+                "methods": methods,
+                "size_accuracy_curves": {},
+                "size_invariance_score": {},
+                "rankings": [],
+                "best_method": None,
+                "summary": "No references or query sizes provided.",
+            }
+
+        # --- Build queries at each target size ---
+        # queries_by_size: size -> list of (graph, expected_topology)
+        queries_by_size: dict[int, list] = {}
+        for qs in query_sizes:
+            qlist = []
+            for topo in topologies:
+                for q in range(num_queries):
+                    qg = self._bench_build_topology(topo, qs, label=f"q{q}")
+                    qlist.append((qg, topo))
+            queries_by_size[qs] = qlist
+
+        # --- Run classification at each query size ---
+        size_accuracy_curves: dict[str, dict[int, float]] = {
+            m: {} for m in methods
+        }
+        # Per-topology accuracy at each size delta (averaged across methods)
+        per_topology_at_size: dict[int, dict[str, float]] = {
+            qs: {} for qs in query_sizes
+        }
+
+        for qs in query_sizes:
+            queries = queries_by_size[qs]
+            topo_correct = {t: 0 for t in topologies}
+            topo_total = {t: 0 for t in topologies}
+
+            for method in methods:
+                method_correct = 0
+                method_total = 0
+
+                for query_graph, expected_topo in queries:
+                    try:
+                        if method == "graph":
+                            r = query_graph.graph_classification(references)
+                        elif method == "spectral":
+                            r = query_graph.spectral_classification(references)
+                        elif method == "hybrid":
+                            r = query_graph.hybrid_classification(references)
+                        elif method == "rrf":
+                            r = query_graph.rrf_classification(references)
+                        elif method == "bayesian":
+                            r = query_graph.bayesian_classification(references)
+                        elif method == "knn":
+                            r = query_graph.knn_classification(references)
+                        elif method == "weighted_average":
+                            r = query_graph.weighted_average_classification(references)
+                        elif method == "compare":
+                            r = query_graph.classification_compare(references)
+                        else:
+                            method_total += 1
+                            topo_total[expected_topo] += 1
+                            continue
+
+                        if r is None:
+                            method_total += 1
+                            topo_total[expected_topo] += 1
+                            continue
+
+                        idx = r.get(
+                            "best_match",
+                            r.get("best_ref", r.get("consensus_best")),
+                        )
+                        if idx is None:
+                            method_total += 1
+                            topo_total[expected_topo] += 1
+                            continue
+                        if isinstance(idx, dict):
+                            idx = idx.get("index", 0)
+                        if isinstance(idx, str):
+                            try:
+                                idx = int(idx)
+                            except (ValueError, TypeError):
+                                idx = 0
+                        idx = min(int(idx), len(category_labels) - 1)
+                        pred = category_labels[idx]
+
+                        method_total += 1
+                        topo_total[expected_topo] += 1
+                        if pred == expected_topo:
+                            method_correct += 1
+                            topo_correct[expected_topo] += 1
+                    except Exception:
+                        method_total += 1
+                        topo_total[expected_topo] += 1
+
+                acc = method_correct / method_total if method_total > 0 else 0.0
+                size_accuracy_curves[method][qs] = round(acc, 4)
+
+            for t in topologies:
+                per_topology_at_size[qs][t] = round(
+                    topo_correct[t] / topo_total[t] if topo_total[t] > 0 else 0.0, 4
+                )
+
+        # --- Size-invariance score ---
+        # Measures how stable accuracy is across sizes.
+        # Score = mean accuracy across all query sizes.
+        # A perfectly size-invariant method scores = baseline accuracy
+        # at every size.  We also compute "delta decay": how much
+        # accuracy drops at the furthest sizes.
+        size_invariance_score: dict[str, float] = {}
+        size_decay: dict[str, dict] = {}
+
+        ref_acc = {}  # accuracy when query_size == reference_size
+        for method in methods:
+            curve = size_accuracy_curves[method]
+            accs = [curve.get(qs, 0.0) for qs in query_sizes]
+            mean_acc = sum(accs) / len(accs) if accs else 0.0
+            size_invariance_score[method] = round(mean_acc, 4)
+
+            # Reference accuracy (query at same size as references)
+            ref_a = curve.get(reference_size, 0.0)
+            ref_acc[method] = ref_a
+
+            # Decay at extremes
+            if query_sizes:
+                min_qs = min(query_sizes)
+                max_qs = max(query_sizes)
+                min_acc = curve.get(min_qs, 0.0)
+                max_acc = curve.get(max_qs, 0.0)
+                size_decay[method] = {
+                    "ref_accuracy": round(ref_a, 4),
+                    "min_size": min_qs,
+                    "min_size_accuracy": round(min_acc, 4),
+                    "max_size": max_qs,
+                    "max_size_accuracy": round(max_acc, 4),
+                    "shrink_drop": round(ref_a - min_acc, 4) if ref_a >= min_acc else 0.0,
+                    "grow_drop": round(ref_a - max_acc, 4) if ref_a >= max_acc else 0.0,
+                }
+
+        # --- Rankings (by size-invariance score) ---
+        ranked = sorted(size_invariance_score.items(), key=lambda x: x[1], reverse=True)
+
+        # --- Per-topology scaling resilience ---
+        per_topology_resilience: dict[str, float] = {}
+        sorted_sizes = sorted(query_sizes)
+        for t in topologies:
+            vals = [per_topology_at_size[qs].get(t, 0.0) for qs in sorted_sizes]
+            per_topology_resilience[t] = round(sum(vals) / len(vals), 4) if vals else 0.0
+
+        # --- Summary ---
+        best_method = ranked[0][0] if ranked else "none"
+        best_score = ranked[0][1] if ranked else 0.0
+        worst_method = ranked[-1][0] if ranked else "none"
+        worst_score = ranked[-1][1] if ranked else 0.0
+
+        topo_best = max(per_topology_resilience.items(), key=lambda x: x[1]) if per_topology_resilience else ("none", 0.0)
+        topo_worst = min(per_topology_resilience.items(), key=lambda x: x[1]) if per_topology_resilience else ("none", 0.0)
+
+        summary_parts = [
+            f"Cross-size generalisation: {len(methods)} methods × {len(topologies)} topologies × {len(query_sizes)} sizes.",
+            f"References at size {reference_size}; queries at sizes {sorted_sizes}.",
+            f"Most size-invariant: {best_method} (mean acc={best_score:.2f}).",
+            f"Least size-invariant: {worst_method} (mean acc={worst_score:.2f}).",
+        ]
+        if topo_worst[0] != "none":
+            summary_parts.append(f"Hardest to scale: {topo_worst[0]} ({topo_worst[1]:.2f}).")
+        if topo_best[0] != "none":
+            summary_parts.append(f"Easiest to scale: {topo_best[0]} ({topo_best[1]:.2f}).")
+        summary = " ".join(summary_parts)
+
+        return {
+            "reference_size": reference_size,
+            "query_sizes": query_sizes,
+            "methods": methods,
+            "topologies": topologies,
+            "size_accuracy_curves": size_accuracy_curves,
+            "size_invariance_score": size_invariance_score,
+            "size_decay": size_decay,
+            "rankings": [(m, s) for m, s in ranked],
+            "per_topology_at_size": per_topology_at_size,
+            "per_topology_resilience": per_topology_resilience,
+            "best_method": best_method,
+            "worst_method": worst_method,
+            "summary": summary,
+        }
+
+
+
+
 
 
 def demo():
