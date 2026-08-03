@@ -27419,6 +27419,152 @@ class MemoryGraph:
             "edges": edges_out,
         }
 
+    def record_code_decision(
+        self,
+        code_node_ids: list[str],
+        content: str,
+        *,
+        kind: str = "decision",
+        confidence: float = 1.0,
+        data: dict = None,
+    ) -> Node:
+        """Record an agent decision/experience linked to code nodes.
+
+        Creates an experience node (``decision``, ``bugfix``, ``insight``,
+        etc.) and links it to one or more code-structure nodes via
+        ``decided_by`` / ``fixed_by`` / ``discovered_by`` edges.
+
+        This bridges the gap between code structure (what the code
+        looks like) and agent experience (what the agent did with it),
+        creating a unified code-aware memory graph.
+
+        Parameters
+        ----------
+        code_node_ids
+            Code node(s) the decision relates to.
+        content
+            Human-readable description of the decision.
+        kind
+            Node kind: ``"decision"``, ``"bugfix"``, ``"insight"``,
+            ``"observation"`` (default ``"decision"``).
+        confidence
+            Confidence weight 0–1 (default 1.0).
+        data
+            Optional metadata dict.
+
+        Returns
+        -------
+        Node
+            The created experience node.
+
+        Example
+        -------
+        ::
+
+            >>> fn = mg.add_code_node("login()", "function")
+            >>> mg.record_code_decision([fn.id],
+            ...     "Switched to bcrypt for password hashing",
+            ...     kind="decision", confidence=0.95)
+        """
+        # Map node kind → edge relation
+        kind_to_edge = {
+            "decision": "decided_by",
+            "bugfix": "fixed_by",
+            "insight": "discovered_by",
+            "observation": "observed_by",
+        }
+        edge_relation = kind_to_edge.get(kind, "decided_by")
+
+        # Create the experience node
+        exp_data = data or {}
+        exp_data["_code_experience"] = True
+        exp_node = self.add(content, kind=kind, data=exp_data)
+
+        # Link code nodes → experience node
+        for code_id in code_node_ids:
+            # Verify code node exists
+            code_node = self.get_node(code_id)
+            if code_node is None:
+                continue
+            # code → experience (so explain_code finds it)
+            self.link(code_id, exp_node.id, edge_relation)
+
+        return exp_node
+
+    def code_nodes_by_kind(
+        self,
+        kind: str,
+        *,
+        limit: int = 100,
+    ) -> list[Node]:
+        """Return all code nodes of a specific kind.
+
+        Convenience wrapper around :meth:`nodes_by_kind` that filters
+        for code-structure nodes (``data._code == True``).
+
+        Parameters
+        ----------
+        kind
+            Code node kind (``"function"``, ``"class"``, ``"file"``,
+            ``"module"``, ``"variable"``, ``"test"``).
+        limit
+            Max results (default 100).
+
+        Returns
+        -------
+        list[Node]
+            Code nodes sorted by weight (descending).
+        """
+        nodes = self.find_by_kind(kind)
+        code_nodes = [n for n in nodes if n.data.get("_code")]
+        return code_nodes[:limit]
+
+    def code_graph_summary(self) -> dict:
+        """Return summary statistics of the code-aware subgraph.
+
+        Aggregates counts by node kind and edge kind, plus basic
+        topology stats (components, density).
+
+        Returns
+        -------
+        dict
+            ``nodes_by_kind`` — {function: N, class: N, ...}.
+            ``edges_by_kind`` — {calls: N, imports: N, ...}.
+            ``total_code_nodes`` — int.
+            ``total_code_edges`` — int.
+            ``code_density`` — edges / max_possible (0–1).
+        """
+        node_kinds = {}
+        for k in self.CODE_NODE_KINDS:
+            rows = self.conn.execute(
+                "SELECT COUNT(*) c FROM nodes WHERE kind=? "
+                "AND json_extract(data, '$._code') = 1",
+                (k,)
+            ).fetchone()
+            if rows["c"] > 0:
+                node_kinds[k] = rows["c"]
+
+        edge_kinds = {}
+        for k in self.CODE_EDGE_KINDS:
+            rows = self.conn.execute(
+                "SELECT COUNT(*) c FROM edges WHERE relation=?", (k,)
+            ).fetchone()
+            if rows["c"] > 0:
+                edge_kinds[k] = rows["c"]
+
+        total_nodes = sum(node_kinds.values())
+        total_edges = sum(edge_kinds.values())
+        max_edges = total_nodes * (total_nodes - 1) if total_nodes > 1 else 1
+        density = total_edges / max_edges if max_edges > 0 else 0.0
+
+        return {
+            "nodes_by_kind": node_kinds,
+            "edges_by_kind": edge_kinds,
+            "total_code_nodes": total_nodes,
+            "total_code_edges": total_edges,
+            "code_density": round(density, 4),
+        }
+
     # ── Spreading Activation (Collins & Loftus 1975) ─────────────
     def spread_activation(
         self,

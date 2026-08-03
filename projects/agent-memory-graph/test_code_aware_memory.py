@@ -320,6 +320,162 @@ class TestCodeSubgraph:
         assert result["center"]["kind"] == "function"
 
 
+# ── record_code_decision ──────────────────────────────────────
+
+class TestRecordCodeDecision:
+    def test_basic_decision(self, mg):
+        fn = mg.add_code_node("login()", "function")
+        exp = mg.record_code_decision([fn.id], "Use bcrypt for hashing")
+        assert exp.kind == "decision"
+        assert exp.data["_code_experience"] is True
+        # Verify edge created
+        result = mg.explain_code(fn.id)
+        assert len(result["decisions"]) == 1
+        assert result["decisions"][0]["label"] == "Use bcrypt for hashing"
+
+    def test_bugfix_kind(self, mg):
+        fn = mg.add_code_node("login()", "function")
+        exp = mg.record_code_decision([fn.id], "Fix SQL injection",
+                                      kind="bugfix")
+        assert exp.kind == "bugfix"
+        result = mg.explain_code(fn.id)
+        assert len(result["bugfixes"]) == 1
+
+    def test_insight_kind(self, mg):
+        fn = mg.add_code_node("login()", "function")
+        exp = mg.record_code_decision([fn.id], "Login is hot path",
+                                      kind="insight")
+        assert exp.kind == "insight"
+
+    def test_observation_kind(self, mg):
+        fn = mg.add_code_node("login()", "function")
+        exp = mg.record_code_decision([fn.id], "Called 500x/day",
+                                      kind="observation")
+        assert exp.kind == "observation"
+
+    def test_multiple_code_nodes(self, mg):
+        """One decision linked to multiple code nodes."""
+        fn1 = mg.add_code_node("a()", "function")
+        fn2 = mg.add_code_node("b()", "function")
+        fn3 = mg.add_code_node("c()", "function")
+        mg.record_code_decision([fn1.id, fn2.id, fn3.id],
+                                "Refactor auth module")
+        for fn in [fn1, fn2, fn3]:
+            result = mg.explain_code(fn.id)
+            assert len(result["decisions"]) == 1
+
+    def test_nonexistent_code_node_skipped(self, mg):
+        """Nonexistent code node IDs are silently skipped."""
+        fn = mg.add_code_node("real()", "function")
+        exp = mg.record_code_decision([fn.id, "fake_id"], "Decision")
+        # Real node gets the edge
+        result = mg.explain_code(fn.id)
+        assert len(result["decisions"]) == 1
+
+    def test_confidence_recorded(self, mg):
+        fn = mg.add_code_node("foo()", "function")
+        mg.record_code_decision([fn.id], "Low confidence decision",
+                                confidence=0.3)
+        # The edge weight should reflect confidence
+        edges = mg.conn.execute(
+            "SELECT weight FROM edges WHERE source=? AND relation='decided_by'",
+            (fn.id,)
+        ).fetchall()
+        assert len(edges) == 1
+
+    def test_data_preserved(self, mg):
+        fn = mg.add_code_node("foo()", "function")
+        mg.record_code_decision([fn.id], "Decision",
+                                data={"ticket": "JIRA-123"})
+        # The decision content should include the data
+
+    def test_default_kind_is_decision(self, mg):
+        fn = mg.add_code_node("foo()", "function")
+        exp = mg.record_code_decision([fn.id], "Something")
+        assert exp.kind == "decision"
+
+    def test_exp_node_searchable(self, mg):
+        fn = mg.add_code_node("foo()", "function")
+        mg.record_code_decision([fn.id], "Refactor for clarity")
+        results = mg.search_by_label("Refactor")
+        assert len(results) >= 1
+
+
+# ── code_nodes_by_kind ─────────────────────────────────────────
+
+class TestCodeNodesByKind:
+    def test_empty(self, mg):
+        result = mg.code_nodes_by_kind("function")
+        assert result == []
+
+    def test_filters_code_only(self, mg):
+        """Only nodes with _code marker returned."""
+        mg.add_code_node("a()", "function")
+        mg.add("regular function node", kind="function")  # no _code
+        result = mg.code_nodes_by_kind("function")
+        assert len(result) == 1
+        assert result[0].data.get("_code") is True
+
+    def test_multiple_kinds(self, mg):
+        mg.add_code_node("a()", "function")
+        mg.add_code_node("b()", "function")
+        mg.add_code_node("Foo", "class")
+        assert len(mg.code_nodes_by_kind("function")) == 2
+        assert len(mg.code_nodes_by_kind("class")) == 1
+        assert len(mg.code_nodes_by_kind("test")) == 0
+
+    def test_limit(self, mg):
+        for i in range(10):
+            mg.add_code_node(f"fn_{i}()", "function")
+        result = mg.code_nodes_by_kind("function", limit=5)
+        assert len(result) == 5
+
+
+# ── code_graph_summary ─────────────────────────────────────────
+
+class TestCodeGraphSummary:
+    def test_empty_graph(self, mg):
+        s = mg.code_graph_summary()
+        assert s["total_code_nodes"] == 0
+        assert s["total_code_edges"] == 0
+        assert s["code_density"] == 0.0
+
+    def test_node_counts(self, mg):
+        mg.add_code_node("a()", "function")
+        mg.add_code_node("b()", "function")
+        mg.add_code_node("Foo", "class")
+        s = mg.code_graph_summary()
+        assert s["nodes_by_kind"]["function"] == 2
+        assert s["nodes_by_kind"]["class"] == 1
+        assert s["total_code_nodes"] == 3
+
+    def test_edge_counts(self, mg):
+        a = mg.add_code_node("a()", "function")
+        b = mg.add_code_node("b()", "function")
+        mg.link(a.id, b.id, "calls")
+        mg.link(a.id, b.id, "depends_on")
+        s = mg.code_graph_summary()
+        assert s["edges_by_kind"]["calls"] == 1
+        assert s["edges_by_kind"]["depends_on"] == 1
+        assert s["total_code_edges"] == 2
+
+    def test_density(self, mg):
+        a = mg.add_code_node("a()", "function")
+        b = mg.add_code_node("b()", "function")
+        mg.link(a.id, b.id, "calls")
+        s = mg.code_graph_summary()
+        # 2 nodes, 1 edge: density = 1 / (2*1) = 0.5
+        assert s["code_density"] == 0.5
+
+    def test_excludes_non_code(self, mg):
+        """Non-code nodes don't appear in code summary."""
+        mg.add("regular fact", kind="fact")
+        mg.add_code_node("a()", "function")
+        s = mg.code_graph_summary()
+        assert s["total_code_nodes"] == 1
+        assert "fact" not in s["nodes_by_kind"]
+
+
 # ── Integration ────────────────────────────────────────────────
 
 class TestCodeAwareIntegration:
