@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~40,400 | ⭐ 知识图谱记忆引擎：790+ API，覆盖图算法、信息论、图分类、数据溯源、时序演化、向量检索 |
+| [agent-memory-graph](agent-memory-graph/) | ~42,500 | ⭐ 知识图谱记忆引擎：800+ API，覆盖图算法、信息论、图分类、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询 |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 40,400+ 行的完整图记忆引擎，包含 790+ 公开 API 和 6,692+ 测试用例。
+该项目已从 300 行的教学示例演化为 42,500+ 行的完整图记忆引擎，包含 800+ 公开 API 和 6,850+ 测试用例，横跨 136 个测试文件。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -57,11 +57,16 @@
 | **时序/版本** | 31 | `evolve`, `temporal_snapshot`, `query_as_of`, `temporal_diff`, `supersede` |
 | **嵌入/向量** | 19 | `add_embedding`, `search_similar`, `train_kge`, `kge_score` |
 | **图分类** | 9 | `rrf_classification`, `bayesian_classification`, `knn_classification`, `classification_compare`, `max_confidence_classification` |
+| **分类评估** | 5 | `classification_benchmark`, `classification_noise_test`, `classification_cross_size`, `classification_parameter_sensitivity`, `classification_report` |
+| **分类优化** | 1 | `classification_learned_weights` — 网格搜索最优模态权重 |
+| **代码感知** | 8 | `add_code_node`, `explain_code`, `impact_analysis`, `code_subgraph`, `record_code_decision`, `code_nodes_by_kind`, `code_graph_summary` |
+| **双时序** | 2 | `query_believed_as_of`, `temporal_delta_query` — 真·双时序查询（valid time + transaction time）|
+| **变更追踪** | 1 | `what_changed_since` — 时间戳以来的图变更报告 |
 | **诊断** | 3 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` |
 | **条件遍历** | 3 | `conditioned_traverse`, `project_graph`, `multi_perspective_analysis` |
 | **序列化** | 24 | `export_json`, `to_markdown`, `serialize_dot`, `serialize_graphml` |
 
-### 📐 信息论进化史（Cycles 306–316 + 326–341）
+### 📐 信息论进化史（Cycles 306–316 + 326–349）
 
 最新里程碑：用信息论工具量化图结构，从单一指标到完整分类体系，再到元分类器。
 
@@ -75,6 +80,13 @@
 | 数据溯源与修正传播 | 336–338 | `propagate_correction`, `trace_derivation`, `trace_derivation_impact`, `derivation_lineage_report` | 级联修正标记 + 向后溯源 + 向前影响分析 + 统一世系报告 |
 | 拓扑快捷统计 | 339 | `hub_nodes`, `peripheral_nodes`, `mean_degree` | 度数最高的 N 个节点 + 叶子节点 + 平均度数 |
 | 噪声鲁棒性 | 340–341 | `classification_benchmark` (fix), `classification_noise_test` | 基准预测修复 + 噪声退化曲线 + 鲁棒性 AUC + breakpoint |
+| 代码感知记忆 | 342–343 | `add_code_node`, `explain_code`, `impact_analysis`, `code_subgraph`, `record_code_decision`, `code_graph_summary` | 函数/类/文件节点 + 决策记录 + 影响分析 + 代码子图 |
+| 双时序查询 | 344 | `query_believed_as_of`, `temporal_delta_query` | 真·双时序模型（valid time + transaction time）|
+| 变更追踪 | 345 | `what_changed_since` | 时间戳以来的新增/修改/废弃节点报告 |
+| 跨尺寸泛化 | 346 | `classification_cross_size` | 参考图与查询图尺寸差异时的分类稳定性 |
+| 参数敏感性 | 347 | `classification_parameter_sensitivity` | 超参数鲁棒性评估（spectral bins, RRF k, KNN k 等）|
+| 权重学习 | 348 | `classification_learned_weights` | 从标注数据网格搜索最优模态权重组合 |
+| 分类报告 | 349 | `classification_report` | 混淆矩阵 + 每类 precision/recall/F1 + 错误分析 |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---
