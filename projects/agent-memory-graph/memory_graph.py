@@ -42457,6 +42457,271 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 351: classification_calibrate — Temperature scaling for
+    # distance-based confidence.  Research #046 ✅.
+    # ------------------------------------------------------------------
+
+    def classification_calibrate(
+        self,
+        references: list["MemoryGraph"],
+        queries: list["MemoryGraph"],
+        expected_labels: list[str],
+        *,
+        method: str = "graph",
+        degree_index: str = "sombor",
+        spectral_measure: str = "jsd",
+        bins: int = 20,
+        n_bins: int = 10,
+        temperature_grid: tuple[float, ...] | None = None,
+        include_quarantined: bool = False,
+    ) -> dict:
+        """Temperature scaling for graph classification confidence.
+
+        Graph distance scores (JSD, spectral, fingerprint L2) cluster
+        in narrow bands, producing systematically **under-confident**
+        probability distributions.  This method finds the optimal
+        temperature *T* that sharpens or softens the softmax over
+        reference scores to minimise Expected Calibration Error (ECE).
+
+        **Motivation** (Research #046):
+
+        - Raw graph similarity scores compress output space into
+          narrow ranges (e.g. JSD \u2208 [0, 0.8], spectral \u2208 [0, 2.5]).
+        - Without normalisation + temperature, raw scores cannot
+          be interpreted as probabilities.
+        - GNN calibration literature (Wang et al., 2021) confirms
+          GNNs are systematically under-confident (T<1 needed).
+
+        **Algorithm:**
+
+        1. **Classify** each query against references using *method*.
+        2. **Normalise** raw scores to [0, 1] (1 = closest match).
+        3. **Softmax** with temperature *T* to get per-reference
+          probabilities.
+        4. **Grid-search** *T* to minimise ECE.
+        5. **Report** reliability diagram data (per-bin accuracy vs
+          confidence).
+
+        Args:
+            references: Reference MemoryGraph objects.
+            queries: Query MemoryGraph objects.
+            expected_labels: Ground-truth label per query.
+            method: Classification method (graph/spectral/hybrid/rrf/
+                weighted_average/bayesian).
+            degree_index: Degree index for graph method.
+            spectral_measure: Spectral divergence measure.
+            bins: Histogram bins for spectral.
+            n_bins: Number of confidence bins for ECE.
+            temperature_grid: Temperature values to search. Default:
+                ``tuple(round(0.1 * t, 1) for t in range(1, 51))``
+                = [0.1, 0.2, ..., 5.0].
+            include_quarantined: Include quarantined refs.
+
+        Returns:
+            Dict with:
+            - ``optimal_temperature``: float
+            - ``ece_at_optimal``: float (best ECE achieved)
+            - ``ece_at_default``: float (ECE at T=1.0)
+            - ``improvement``: float (ECE reduction)
+            - ``reliability_diagram``: list of per-bin dicts
+            - ``per_query``: list of (confidence, correct) pairs
+            - ``accuracy``: overall classification accuracy
+        """
+        import math as _math
+
+        if not queries:
+            raise ValueError("Need at least one query for calibration.")
+        if len(expected_labels) != len(queries):
+            raise ValueError(
+                f"expected_labels length {len(expected_labels)} != "
+                f"queries length {len(queries)}"
+            )
+
+        ref_labels = [
+            r.graph_meta.get("label", f"ref_{i}")
+            for i, r in enumerate(references)
+        ]
+
+        # Step 1: Run classification for each query, collect raw scores.
+        raw_results: list[dict] = []  # (scores_dict, best_idx, correct)
+        for qi, query in enumerate(queries):
+            if method == "graph":
+                result = query.graph_classification(
+                    references, index=degree_index,
+                )
+            elif method == "spectral":
+                result = query.spectral_classification(
+                    references, measure=spectral_measure,
+                    bins=bins, include_quarantined=include_quarantined,
+                )
+            elif method == "hybrid":
+                result = query.hybrid_classification(
+                    references, degree_index=degree_index,
+                    spectral_measure=spectral_measure, bins=bins,
+                    include_quarantined=include_quarantined,
+                )
+            elif method == "rrf":
+                result = query.rrf_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            elif method == "weighted_average":
+                result = query.weighted_average_classification(
+                    references, degree_index=degree_index,
+                    spectral_measure=spectral_measure, bins=bins,
+                    include_quarantined=include_quarantined,
+                )
+            elif method == "bayesian":
+                result = query.bayesian_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            else:
+                raise ValueError(f"Unknown method: {method!r}")
+
+            if result is None:
+                continue
+
+            # Extract raw scores per reference.
+            rankings = result.get("rankings", [])
+            if rankings and isinstance(rankings[0], dict):
+                scores = {
+                    r.get("index", i): r.get("score", 0.0)
+                    for i, r in enumerate(rankings)
+                }
+            else:
+                # Fallback: only have best_score.
+                scores = {result.get("best_match", 0): result.get("best_score", 0.0)}
+
+            best_idx = result.get("best_match", 0)
+            predicted = ref_labels[best_idx] if isinstance(best_idx, int) and best_idx < len(ref_labels) else str(best_idx)
+            correct = predicted == expected_labels[qi]
+
+            raw_results.append({
+                "scores": scores,
+                "best_idx": best_idx,
+                "correct": correct,
+            })
+
+        if not raw_results:
+            raise ValueError("No valid classification results.")
+
+        # Step 2: Define ECE computation at a given temperature.
+        def _compute_ece(temperature: float) -> tuple[float, list[dict]]:
+            """Return (ece, bin_data) for given temperature."""
+            pairs: list[tuple[float, bool]] = []  # (confidence, correct)
+            for rr in raw_results:
+                scores = rr["scores"]
+                if not scores:
+                    continue
+                # Normalise scores to [0,1] where 1 = closest match.
+                vals = list(scores.values())
+                min_s = min(vals)
+                max_s = max(vals)
+                rng = max_s - min_s
+                if rng < 1e-12:
+                    # All scores equal → uniform confidence.
+                    norm = {k: 1.0 / len(vals) for k in scores}
+                else:
+                    norm = {
+                        k: 1.0 - (v - min_s) / rng
+                        for k, v in scores.items()
+                    }
+                # Softmax with temperature.
+                logits = [v / max(temperature, 1e-9) for v in norm.values()]
+                max_logit = max(logits)
+                exp_vals = [_math.exp(l - max_logit) for l in logits]
+                sum_exp = sum(exp_vals)
+                probs = [e / sum_exp for e in exp_vals]
+                # Confidence = probability of predicted class.
+                best_idx = rr["best_idx"]
+                keys = list(norm.keys())
+                try:
+                    pred_pos = keys.index(best_idx)
+                except ValueError:
+                    pred_pos = 0
+                confidence = probs[pred_pos] if pred_pos < len(probs) else 0.0
+                pairs.append((confidence, rr["correct"]))
+
+            if not pairs:
+                return 0.0, []
+
+            bin_size = 1.0 / n_bins
+            bin_data: list[dict] = []
+            ece = 0.0
+            for b in range(n_bins):
+                lo = b * bin_size
+                hi = (b + 1) * bin_size
+                if b == n_bins - 1:
+                    in_bin = [p for p in pairs if lo <= p[0] <= hi + 1e-9]
+                else:
+                    in_bin = [p for p in pairs if lo <= p[0] < hi]
+                if not in_bin:
+                    bin_data.append({
+                        "bin_range": [round(lo, 4), round(hi, 4)],
+                        "count": 0,
+                        "accuracy": 0.0,
+                        "avg_confidence": 0.0,
+                        "gap": 0.0,
+                    })
+                    continue
+                acc = sum(1 for _, c in in_bin if c) / len(in_bin)
+                avg_conf = sum(c for c, _ in in_bin) / len(in_bin)
+                gap = abs(acc - avg_conf)
+                ece += (len(in_bin) / len(pairs)) * gap
+                bin_data.append({
+                    "bin_range": [round(lo, 4), round(hi, 4)],
+                    "count": len(in_bin),
+                    "accuracy": round(acc, 4),
+                    "avg_confidence": round(avg_conf, 4),
+                    "gap": round(gap, 4),
+                })
+            return ece, bin_data
+
+        # Step 3: Grid-search optimal temperature.
+        if temperature_grid is None:
+            temperature_grid = tuple(
+                round(0.1 * t, 1) for t in range(1, 51)
+            )  # [0.1, 0.2, ..., 5.0]
+
+        best_T = 1.0
+        best_ece = float("inf")
+        best_bins: list[dict] = []
+        for T in temperature_grid:
+            ece_T, bins_T = _compute_ece(T)
+            if ece_T < best_ece:
+                best_ece = ece_T
+                best_T = T
+                best_bins = bins_T
+
+        # Compute ECE at default T=1.0 for comparison.
+        default_ece, _ = _compute_ece(1.0)
+
+        # Collect per-query confidence at optimal T.
+        _, optimal_bins = _compute_ece(best_T)
+
+        # Overall accuracy.
+        correct_count = sum(1 for rr in raw_results if rr["correct"])
+        accuracy = correct_count / len(raw_results) if raw_results else 0.0
+
+        return {
+            "method": method,
+            "num_queries": len(raw_results),
+            "optimal_temperature": best_T,
+            "ece_at_optimal": round(best_ece, 6),
+            "ece_at_default": round(default_ece, 6),
+            "improvement": round(default_ece - best_ece, 6),
+            "reliability_diagram": optimal_bins,
+            "accuracy": round(accuracy, 6),
+            "summary": (
+                f"Calibration ({method}): optimal T={best_T}, "
+                f"ECE {default_ece:.4f}\u2192{best_ece:.4f} "
+                f"({default_ece - best_ece:+.4f}). "
+                f"Accuracy {accuracy:.1%}."
+            ),
+        }
+
 
 
 def demo():
