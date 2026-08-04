@@ -42722,6 +42722,285 @@ class MemoryGraph:
             ),
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 352: optimize_reference_set — Prototype selection via
+    # ENN / CCCD.  Research #046 ✅.
+    # ------------------------------------------------------------------
+
+    def optimize_reference_set(
+        self,
+        references: list["MemoryGraph"],
+        labels: list[str],
+        *,
+        method: str = "graph",
+        algorithm: str = "enn",
+        k: int = 3,
+        degree_index: str = "sombor",
+        include_quarantined: bool = False,
+    ) -> dict:
+        """Find the minimum sufficient reference set via prototype
+        selection.
+
+        Removes redundant or harmful references using classical
+        nearest-neighbor prototype selection algorithms adapted
+        for graph similarity.
+
+        **Algorithms:**
+
+        - ``"enn"`` \u2014 Edited Nearest Neighbor: remove reference
+          *R\u1d62* if the majority of its *k* nearest neighbours
+          (among other references) belong to a different family.
+          Addresses: *"do we need both path AND cycle?"*
+
+        - ``"cccd"`` \u2014 Class Cover Catch Digraph (greedy): for
+          each label, find the minimum set of references that
+          \u201ccovers\u201d all same-label members.  A reference
+          *R* covers a same-label member *M* if *d(R, M)* <
+          *d(R, nearest different-label reference)*.
+
+        - ``"greedy"`` \u2014 Greedy set cover: minimise |S| such
+          that every reference is within \u03b5 of a same-label
+          member in *S*.
+
+        **Motivation** (Research #046):
+
+        ENN and CCCD map directly from 50-year-old NN literature to
+        graph reference optimisation.  With 6 canonical topologies
+        this is trivial; with 50\u2013100 accumulated references it
+        identifies redundancy.  No npm/PyPI graph library has
+        reference set optimisation.
+
+        Args:
+            references: Reference MemoryGraph objects.
+            labels: Ground-truth label for each reference.
+            method: Classification/similarity method for computing
+                pairwise distances (graph/spectral/hybrid/rrf/...).
+            algorithm: ``"enn"``, ``"cccd"``, or ``"greedy"``.
+            k: Number of nearest neighbors for ENN.
+            degree_index: Degree index for graph method.
+            include_quarantined: Include quarantined refs.
+
+        Returns:
+            Dict with:
+            - ``selected_indices``: list of int (indices into *references*)
+            - ``removed_indices``: list of int
+            - ``selected_labels``: list of str
+            - ``original_size``: int
+            - ``optimized_size``: int
+            - ``reduction``: float (fraction removed)
+            - ``per_label_kept``: dict label→int count
+            - ``summary``: str
+        """
+        n = len(references)
+        if n < 2:
+            raise ValueError("Need at least 2 references.")
+        if len(labels) != n:
+            raise ValueError(
+                f"labels length {len(labels)} != "
+                f"references length {n}"
+            )
+
+        # Step 1: Compute pairwise similarity matrix.
+        # dist[i][j] = distance from references[i] to references[j].
+        dist: list[list[float]] = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            for j in range(i + 1, n):
+                if method == "graph":
+                    result = references[i].graph_classification(
+                        [references[j]], index=degree_index,
+                    )
+                elif method == "spectral":
+                    result = references[i].spectral_classification(
+                        [references[j]],
+                        include_quarantined=include_quarantined,
+                    )
+                elif method == "hybrid":
+                    result = references[i].hybrid_classification(
+                        [references[j]],
+                        include_quarantined=include_quarantined,
+                    )
+                elif method == "rrf":
+                    result = references[i].rrf_classification(
+                        [references[j]],
+                        include_quarantined=include_quarantined,
+                    )
+                else:
+                    result = references[i].graph_classification(
+                        [references[j]], index=degree_index,
+                    )
+                d = result.get("best_score", 0.0) if result else 0.0
+                dist[i][j] = d
+                dist[j][i] = d
+
+        # Step 2: Run the selected algorithm.
+        if algorithm == "enn":
+            selected = self._enn_select(
+                n, labels, dist, k
+            )
+        elif algorithm == "cccd":
+            selected = self._cccd_select(n, labels, dist)
+        elif algorithm == "greedy":
+            selected = self._greedy_set_cover(n, labels, dist)
+        else:
+            raise ValueError(f"Unknown algorithm: {algorithm!r}")
+
+        removed = [i for i in range(n) if i not in selected]
+        selected_labels = [labels[i] for i in selected]
+
+        # Per-label statistics.
+        unique_labels = sorted(set(labels))
+        per_label_original = {l: labels.count(l) for l in unique_labels}
+        per_label_kept = {l: selected_labels.count(l) for l in unique_labels}
+
+        reduction = 1.0 - (len(selected) / n) if n > 0 else 0.0
+
+        return {
+            "algorithm": algorithm,
+            "method": method,
+            "selected_indices": sorted(selected),
+            "removed_indices": sorted(removed),
+            "selected_labels": selected_labels,
+            "original_size": n,
+            "optimized_size": len(selected),
+            "reduction": round(reduction, 6),
+            "per_label_original": per_label_original,
+            "per_label_kept": per_label_kept,
+            "summary": (
+                f"{algorithm.upper()}: kept {len(selected)}/{n} "
+                f"({1.0 - reduction:.0%} retained, "
+                f"{reduction:.0%} removed). "
+                f"Labels: "
+                + ", ".join(
+                    f"{l} {per_label_kept[l]}/{per_label_original[l]}"
+                    for l in unique_labels
+                )
+            ),
+        }
+
+    @staticmethod
+    def _enn_select(
+        n: int,
+        labels: list[str],
+        dist: list[list[float]],
+        k: int = 3,
+    ) -> set[int]:
+        """Edited Nearest Neighbor prototype selection.
+
+        Remove reference R_i if the majority of its k nearest
+        neighbors (among other references) belong to a different
+        family.
+        """
+        selected = set(range(n))
+        for i in range(n):
+            # Find k nearest neighbors of i (excluding self).
+            neighbours = sorted(
+                range(n), key=lambda j: dist[i][j] if j != i else float('inf')
+            )
+            knn = [j for j in neighbours if j != i][:k]
+            # Count labels among k nearest.
+            same_label = sum(
+                1 for j in knn if labels[j] == labels[i]
+            )
+            if same_label < len(knn) / 2:
+                selected.discard(i)
+        return selected
+
+    @staticmethod
+    def _cccd_select(
+        n: int,
+        labels: list[str],
+        dist: list[list[float]],
+    ) -> set[int]:
+        """Class Cover Catch Digraph (greedy approximation).
+
+        For each label, find minimum set of references that cover
+        all same-label members.  A reference R covers member M if
+        d(R, M) < d(R, nearest different-label reference).
+        """
+        selected: set[int] = set()
+        unique_labels = sorted(set(labels))
+        for lbl in unique_labels:
+            members = [i for i in range(n) if labels[i] == lbl]
+            non_members = [i for i in range(n) if labels[i] != lbl]
+            if not members:
+                continue
+            if not non_members:
+                # All same label — keep one representative.
+                selected.add(members[0])
+                continue
+            # Compute cover radius for each member.
+            # radius[i] = distance to nearest different-label ref.
+            radii = {}
+            for m in members:
+                radii[m] = min(dist[m][nm] for nm in non_members)
+            # Greedy set cover: repeatedly pick the member that
+            # covers the most uncovered same-label members.
+            covered: set[int] = set()
+            uncovered = set(members)
+            while uncovered:
+                best_ref = max(
+                    uncovered,
+                    key=lambda m: sum(
+                        1 for other in uncovered
+                        if dist[m][other] < radii[m]
+                    )
+                )
+                selected.add(best_ref)
+                # Mark all members covered by best_ref.
+                newly_covered = {
+                    other for other in uncovered
+                    if dist[best_ref][other] < radii[best_ref]
+                }
+                newly_covered.add(best_ref)  # covers itself
+                covered.update(newly_covered)
+                uncovered -= newly_covered
+        return selected
+
+    @staticmethod
+    def _greedy_set_cover(
+        n: int,
+        labels: list[str],
+        dist: list[list[float]],
+    ) -> set[int]:
+        """Greedy set cover: minimise |S| such that every reference
+        is within \u03b5 of a same-label member in S.
+
+        Uses median same-label distance as \u03b5.
+        """
+        import statistics as _stats
+        selected: set[int] = set()
+        unique_labels = sorted(set(labels))
+        for lbl in unique_labels:
+            members = [i for i in range(n) if labels[i] == lbl]
+            if len(members) <= 1:
+                selected.update(members)
+                continue
+            # Compute pairwise same-label distances.
+            same_dists = [
+                dist[members[i]][members[j]]
+                for i in range(len(members))
+                for j in range(i + 1, len(members))
+            ]
+            eps = _stats.median(same_dists) if same_dists else 0.0
+            # Greedy: pick members until all are covered.
+            uncovered = set(members)
+            while uncovered:
+                best_ref = max(
+                    uncovered,
+                    key=lambda m: sum(
+                        1 for other in uncovered
+                        if dist[m][other] <= eps + 1e-12
+                    )
+                )
+                selected.add(best_ref)
+                covered = {
+                    other for other in uncovered
+                    if dist[best_ref][other] <= eps + 1e-12
+                }
+                covered.add(best_ref)
+                uncovered -= covered
+        return selected
+
 
 
 def demo():
