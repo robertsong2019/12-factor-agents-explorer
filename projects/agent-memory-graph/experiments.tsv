@@ -455,3 +455,6 @@ timestamp	commit	metric	value	status	description
 2026-08-04T23:00	431d01c	test_count	7126→7174	keep	Cycle 355: classification_noise_adaptive (22nd classification API). Auto-selects method based on estimated query noise. +48 tests. 275th day.
 2026-08-04T23:00	431d01c	test_pass_rate	100%	keep	All 7174 passing, 96.51s.
 2026-08-04T23:00	431d01c	code_lines	43629→43930	keep	+301 lines source/docstring + 575 test
+2026-08-05T00:00:00+08:00	02261f2	test_count	7174→7220	keep	Cycle 356: classification_confusion_explain (23rd classification API). Per-modality explainability — decomposes winning margin into degree/spectral/fingerprint contributions. 46 tests. 276th day.
+2026-08-05T00:00:00+08:00	02261f2	test_pass_rate	100%	keep	All 7220 passing, 98.15s.
+2026-08-05T00:00:00+08:00	02261f2	code_lines	43930→44195	keep	+265 lines source/docstring + 458 test
