@@ -43434,6 +43434,307 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ── Cycle 355: Noise-adaptive classification ──
+
+    def classification_noise_adaptive(
+        self,
+        references: list["MemoryGraph"],
+        *,
+        noise_profile: dict | None = None,
+        degree_index: str = "sombor",
+        include_quarantined: bool = False,
+    ) -> dict:
+        """Auto-select the best classification method based on estimated query noise.
+
+        Estimates how noisy the query graph is relative to the reference
+        set, then selects the classification method that is most robust
+        at that noise level.
+
+        **Noise estimation** compares the query's structural fingerprint
+        (edge density, average degree, spectral radius) against each
+        reference.  The minimum deviation across all references gives
+        the estimated noise level.
+
+        **Method selection** uses one of:
+
+        1. ``noise_profile`` — a dict from :meth:`classification_noise_test`
+           containing ``robustness_score`` and ``breakpoint`` per method.
+        2. **Built-in heuristic** — a static mapping derived from empirical
+           results: RRF and graph-based methods are robust at high noise;
+        spectral and KNN are better at low noise.
+
+        **Noise → method mapping** (built-in heuristic):
+
+        ======== =================================
+        Noise    Selected method
+        ======== =================================
+        < 0.05   ``spectral`` (precise, low noise)
+        0.05–0.15 ``graph`` (balanced)
+        0.15–0.3 ``rrf`` (robust to perturbation)
+        > 0.3    ``consensus`` (safety net)
+        ======== =================================
+
+        Args:
+            references: Reference graphs to classify against.
+            noise_profile: Optional output from :meth:`classification_noise_test`.
+                When provided, the method uses empirical robustness data
+                instead of the heuristic mapping.
+            degree_index: Degree index for graph-based methods.
+            include_quarantined: Include quarantined references.
+
+        Returns:
+            Dict with:
+
+            - ``label`` — predicted label (``None`` on failure).
+            - ``best_match`` — index of best matching reference.
+            - ``method_used`` — name of the selected method.
+            - ``estimated_noise`` — estimated noise level (0–1).
+            - ``noise_tier`` — categorical noise level.
+            - "low" / "moderate" / "high" / "very high".
+            - ``method_rationale`` — why this method was chosen.
+            - ``structural_deviations`` — per-reference deviation scores.
+            - ``raw_result`` — full output from the selected method.
+            - ``summary`` — human-readable one-liner.
+
+        Example::
+
+            >>> mg = MemoryGraph()
+            >>> refs = [mg._bench_build_topology(t, 10, label=t)
+            ...         for t in ("star", "path", "cycle")]
+            >>> query = mg._bench_build_topology("star", 10, label="?")
+            >>> result = query.classification_noise_adaptive(refs)
+            >>> result["label"]
+            'star'
+            >>> result["noise_tier"]
+            'low'
+        """
+        if not references:
+            return {
+                "label": None,
+                "best_match": None,
+                "method_used": None,
+                "estimated_noise": 0.0,
+                "noise_tier": "unknown",
+                "method_rationale": "No references provided.",
+                "structural_deviations": [],
+                "raw_result": None,
+                "summary": "No references provided.",
+            }
+
+        # --- Phase 1: Estimate query noise level ---
+        q_stats = self.stats()
+        q_nodes = q_stats.get("nodes", 0)
+        q_edges = q_stats.get("edges", 0)
+        q_density = q_edges / (q_nodes * (q_nodes - 1) / 2) if q_nodes > 1 else 0.0
+        q_avg_deg = 2 * q_edges / q_nodes if q_nodes > 0 else 0.0
+        q_spec_rad = self.spectral_radius()
+
+        deviations: list[dict] = []
+        for i, ref in enumerate(references):
+            r_stats = ref.stats()
+            r_nodes = r_stats.get("nodes", 0)
+            r_edges = r_stats.get("edges", 0)
+            r_density = r_edges / (r_nodes * (r_nodes - 1) / 2) if r_nodes > 1 else 0.0
+            r_avg_deg = 2 * r_edges / r_nodes if r_nodes > 0 else 0.0
+            r_spec_rad = ref.spectral_radius()
+
+            # Structural deviation: weighted combination of normalized differences
+            dens_diff = abs(q_density - r_density) / (r_density + 1e-12) if r_density > 0 else 1.0
+            deg_diff = abs(q_avg_deg - r_avg_deg) / (r_avg_deg + 1e-12) if r_avg_deg > 0 else 1.0
+            spec_diff = (
+                abs((q_spec_rad or 0) - (r_spec_rad or 0)) / ((r_spec_rad or 1) + 1e-12)
+                if r_spec_rad is not None and q_spec_rad is not None
+                else 1.0
+            )
+            # Node count penalty: different sizes increase estimated noise
+            node_diff = abs(q_nodes - r_nodes) / max(q_nodes, r_nodes, 1)
+
+            deviation = (dens_diff + deg_diff + spec_diff + node_diff) / 4.0
+            deviations.append({
+                "ref_index": i,
+                "ref_label": (
+                    getattr(ref, "graph_meta", {}).get("label", f"ref_{i}")
+                    if isinstance(getattr(ref, "graph_meta", None), dict)
+                    else f"ref_{i}"
+                ),
+                "deviation": round(deviation, 6),
+                "density_diff": round(dens_diff, 6),
+                "degree_diff": round(deg_diff, 6),
+                "spectral_diff": round(spec_diff, 6),
+                "node_diff": round(node_diff, 6),
+            })
+
+        # Best-matching reference has minimum deviation
+        deviations.sort(key=lambda d: d["deviation"])
+        min_deviation = deviations[0]["deviation"] if deviations else 0.0
+
+        # Map deviation to noise level (clamp 0–1)
+        estimated_noise = min(max(min_deviation, 0.0), 1.0)
+
+        # Classify noise tier
+        if estimated_noise < 0.05:
+            noise_tier = "low"
+        elif estimated_noise < 0.15:
+            noise_tier = "moderate"
+        elif estimated_noise < 0.30:
+            noise_tier = "high"
+        else:
+            noise_tier = "very high"
+
+        # --- Phase 2: Select best method for this noise level ---
+        method_rationale = ""
+
+        if noise_profile and "robustness_score" in noise_profile:
+            # Use empirical data from classification_noise_test
+            scores = noise_profile["robustness_score"]
+            breakpoints = noise_profile.get("breakpoint", {})
+
+            # Find methods whose breakpoint hasn't been exceeded
+            viable = []
+            for mname, score in scores.items():
+                bp = breakpoints.get(mname)
+                if bp is None or bp > estimated_noise:
+                    viable.append((mname, score))
+
+            if viable:
+                viable.sort(key=lambda x: x[1], reverse=True)
+                selected_method = viable[0][0]
+                method_rationale = (
+                    f"Empirical: '{selected_method}' has best robustness AUC "
+                    f"({viable[0][1]:.2f}) among methods surviving at noise={estimated_noise:.2f}."
+                )
+            else:
+                # All methods past their breakpoint — use consensus
+                selected_method = "consensus"
+                method_rationale = (
+                    f"All methods past breakpoints at noise={estimated_noise:.2f}. "
+                    f"Falling back to consensus for safety."
+                )
+        else:
+            # Built-in heuristic mapping
+            if estimated_noise < 0.05:
+                selected_method = "spectral"
+                method_rationale = (
+                    f"Low noise ({estimated_noise:.3f}) → spectral classification "
+                    f"(precise, exploits fine-grained spectral features)."
+                )
+            elif estimated_noise < 0.15:
+                selected_method = "graph"
+                method_rationale = (
+                    f"Moderate noise ({estimated_noise:.3f}) → graph classification "
+                    f"(balanced robustness via degree-based indices)."
+                )
+            elif estimated_noise < 0.30:
+                selected_method = "rrf"
+                method_rationale = (
+                    f"High noise ({estimated_noise:.3f}) → RRF classification "
+                    f"(rank-fusion is most robust to structural perturbation)."
+                )
+            else:
+                selected_method = "consensus"
+                method_rationale = (
+                    f"Very high noise ({estimated_noise:.3f}) → consensus "
+                    f"(majority-vote safety net across all methods)."
+                )
+
+        # --- Phase 3: Run the selected method ---
+        raw_result = None
+        best_match = None
+        label = None
+
+        try:
+            if selected_method == "spectral":
+                raw_result = self.spectral_classification(
+                    references, include_quarantined=include_quarantined,
+                )
+            elif selected_method == "graph":
+                raw_result = self.graph_classification(
+                    references, index=degree_index,
+                )
+            elif selected_method == "hybrid":
+                raw_result = self.hybrid_classification(
+                    references, include_quarantined=include_quarantined,
+                )
+            elif selected_method == "rrf":
+                raw_result = self.rrf_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            elif selected_method == "bayesian":
+                raw_result = self.bayesian_classification(
+                    references, include_quarantined=include_quarantined,
+                )
+            elif selected_method == "knn":
+                raw_result = self.knn_classification(
+                    references, include_quarantined=include_quarantined,
+                )
+            elif selected_method == "weighted_average":
+                raw_result = self.weighted_average_classification(
+                    references, include_quarantined=include_quarantined,
+                )
+            elif selected_method == "max_confidence":
+                raw_result = self.max_confidence_classification(
+                    references, include_quarantined=include_quarantined,
+                )
+            elif selected_method == "consensus":
+                raw_result = self.classification_consensus(
+                    references, self,
+                    degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+                # Consensus returns label directly
+                if raw_result and raw_result.get("label") is not None:
+                    label = raw_result["label"]
+                    # Find matching reference index
+                    for i, ref in enumerate(references):
+                        ref_label = (
+                            getattr(ref, "graph_meta", {}).get("label", f"ref_{i}")
+                            if isinstance(getattr(ref, "graph_meta", None), dict)
+                            else f"ref_{i}"
+                        )
+                        if ref_label == label:
+                            best_match = i
+                            break
+        except Exception:
+            pass
+
+        # Extract best_match for non-consensus methods
+        if best_match is None and raw_result is not None:
+            idx = raw_result.get("best_match", raw_result.get("best_ref"))
+            if idx is not None:
+                if isinstance(idx, dict):
+                    idx = idx.get("index", 0)
+                try:
+                    best_match = int(idx)
+                except (ValueError, TypeError):
+                    best_match = None
+
+        if label is None and best_match is not None and 0 <= best_match < len(references):
+            ref = references[best_match]
+            label = (
+                getattr(ref, "graph_meta", {}).get("label", f"ref_{best_match}")
+                if isinstance(getattr(ref, "graph_meta", None), dict)
+                else f"ref_{best_match}"
+            )
+
+        summary = (
+            f"Noise-adaptive: noise={estimated_noise:.3f} ({noise_tier}) → "
+            f"{selected_method} → '{label}' "
+            f"(best_match={best_match})"
+        )
+
+        return {
+            "label": label,
+            "best_match": best_match,
+            "method_used": selected_method,
+            "estimated_noise": round(estimated_noise, 6),
+            "noise_tier": noise_tier,
+            "method_rationale": method_rationale,
+            "structural_deviations": deviations,
+            "raw_result": raw_result,
+            "summary": summary,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")

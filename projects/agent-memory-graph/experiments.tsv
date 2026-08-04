@@ -452,3 +452,6 @@ timestamp	commit	metric	value	status	description
 2026-08-04T22:05	5d8d0e2	test_count	7096→7126	keep	Cycle 354: classification_consensus() — majority-vote meta-classifier. 21st classification API. 30 tests. 275th day.
 2026-08-04T22:05	5d8d0e2	test_pass_rate	100%	keep	All 7126 passing, 93.60s.
 2026-08-04T22:05	5d8d0e2	code_lines	42982→43629	keep	+647 lines (190 source/docstring + 434 test)
+2026-08-04T23:00	431d01c	test_count	7126→7174	keep	Cycle 355: classification_noise_adaptive (22nd classification API). Auto-selects method based on estimated query noise. +48 tests. 275th day.
+2026-08-04T23:00	431d01c	test_pass_rate	100%	keep	All 7174 passing, 96.51s.
+2026-08-04T23:00	431d01c	code_lines	43629→43930	keep	+301 lines source/docstring + 575 test
