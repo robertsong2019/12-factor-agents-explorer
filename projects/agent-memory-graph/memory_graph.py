@@ -42539,7 +42539,9 @@ class MemoryGraph:
             )
 
         ref_labels = [
-            r.graph_meta.get("label", f"ref_{i}")
+            getattr(r, "graph_meta", {}).get("label", f"ref_{i}")
+            if isinstance(getattr(r, "graph_meta", None), dict)
+            else f"ref_{i}"
             for i, r in enumerate(references)
         ]
 
@@ -43000,6 +43002,213 @@ class MemoryGraph:
                 covered.add(best_ref)
                 uncovered -= covered
         return selected
+
+    # ------------------------------------------------------------------
+    # Cycle 353: classification_compare_methods — McNemar test +
+    # bootstrap CI for pairwise method comparison.
+    # Research #046 ✅.
+    # ------------------------------------------------------------------
+
+    def classification_compare_methods(
+        self,
+        references: list["MemoryGraph"],
+        queries: list["MemoryGraph"],
+        expected_labels: list[str],
+        *,
+        methods: list[str] | None = None,
+        degree_index: str = "sombor",
+        include_quarantined: bool = False,
+        n_bootstrap: int = 1000,
+        seed: int = 42,
+    ) -> dict:
+        """Statistical comparison of classification methods.
+
+        **McNemar's test** for paired comparison: for each query,
+        both methods classify it.  n01 = A wrong B right, n10 =
+        A right B wrong.  Under H\u2080 (methods equivalent),
+        \u03c7\u00b2 = (|n01 - n10| - 1)\u00b2 / (n01 + n10)
+        follows \u03c7\u00b2\u2081.
+
+        **Bootstrap CI** for accuracy difference: resample queries
+        with replacement *n_bootstrap* times, compute accuracy
+        difference each time, report 95% percentile interval.
+
+        Args:
+            references: Reference graphs.
+            queries: Query graphs.
+            expected_labels: Ground-truth per query.
+            methods: List of method names to compare pairwise.
+                Default: ["graph", "spectral", "hybrid", "rrf"].
+            degree_index: Degree index for graph method.
+            include_quarantined: Include quarantined refs.
+            n_bootstrap: Bootstrap iterations.
+            seed: Random seed for reproducibility.
+
+        Returns:
+            Dict with:
+            - ``methods``: list of method names compared
+            - ``accuracy``: dict method→accuracy
+            - ``pairwise``: dict "A_vs_B" → {mcnemar_chi2, p_value, n01, n10, significant}
+            - ``bootstrap_ci``: dict "A_vs_B" → {lower, upper}
+            - ``summary``: str
+        """
+        import math as _math
+        import random as _random
+
+        if not queries:
+            raise ValueError("Need at least one query.")
+        if len(expected_labels) != len(queries):
+            raise ValueError(
+                f"expected_labels length {len(expected_labels)} != "
+                f"queries length {len(queries)}"
+            )
+
+        if methods is None:
+            methods = ["graph", "spectral", "hybrid", "rrf"]
+
+        ref_labels = [
+            getattr(r, "graph_meta", {}).get("label", f"ref_{i}")
+            if isinstance(getattr(r, "graph_meta", None), dict)
+            else f"ref_{i}"
+            for i, r in enumerate(references)
+        ]
+
+        # Step 1: Run each method on each query, collect correctness.
+        method_correct: dict[str, list[bool]] = {}
+        method_acc: dict[str, float] = {}
+
+        for mname in methods:
+            correct_list: list[bool] = []
+            for qi, query in enumerate(queries):
+                if mname == "graph":
+                    result = query.graph_classification(
+                        references, index=degree_index,
+                    )
+                elif mname == "spectral":
+                    result = query.spectral_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "hybrid":
+                    result = query.hybrid_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "rrf":
+                    result = query.rrf_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "weighted_average":
+                    result = query.weighted_average_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "bayesian":
+                    result = query.bayesian_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "knn":
+                    result = query.knn_classification(
+                        references,
+                    )
+                elif mname == "max_confidence":
+                    result = query.max_confidence_classification(
+                        references, degree_index=degree_index,
+                        include_quarantined=include_quarantined,
+                    )
+                else:
+                    raise ValueError(f"Unknown method: {mname!r}")
+
+                if result is None:
+                    correct_list.append(False)
+                    continue
+
+                idx = result.get("best_match")
+                if idx is None:
+                    idx = result.get("best_ref", 0)
+                predicted = ref_labels[idx] if isinstance(idx, int) and idx < len(ref_labels) else str(idx)
+                correct_list.append(predicted == expected_labels[qi])
+
+            method_correct[mname] = correct_list
+            method_acc[mname] = sum(correct_list) / len(correct_list)
+
+        # Step 2: Pairwise McNemar tests.
+        pairwise: dict[str, dict] = {}
+        for i, ma in enumerate(methods):
+            for mb in methods[i + 1:]:
+                ca = method_correct[ma]
+                cb = method_correct[mb]
+                n01 = sum(1 for a, b in zip(ca, cb) if not a and b)
+                n10 = sum(1 for a, b in zip(ca, cb) if a and not b)
+                n_disc = n01 + n10
+                if n_disc == 0:
+                    chi2 = 0.0
+                    p_value = 1.0
+                else:
+                    chi2 = (abs(n01 - n10) - 1) ** 2 / n_disc
+                    # p-value from chi-square with df=1
+                    # Survival function approximation.
+                    p_value = _math.erfc(_math.sqrt(chi2 / 2))
+                key = f"{ma}_vs_{mb}"
+                pairwise[key] = {
+                    "n01": n01,
+                    "n10": n10,
+                    "chi2": round(chi2, 6),
+                    "p_value": round(p_value, 6),
+                    "significant": p_value < 0.05,
+                    "better": ma if n10 > n01 else (mb if n01 > n10 else "tie"),
+                }
+
+        # Step 3: Bootstrap CI for accuracy differences.
+        rng = _random.Random(seed)
+        n_q = len(queries)
+        bootstrap_ci: dict[str, dict] = {}
+        for i, ma in enumerate(methods):
+            for mb in methods[i + 1:]:
+                ca = method_correct[ma]
+                cb = method_correct[mb]
+                diffs: list[float] = []
+                for _ in range(n_bootstrap):
+                    idxs = [rng.randint(0, n_q - 1) for _ in range(n_q)]
+                    acc_a = sum(1 for j in idxs if ca[j]) / n_q
+                    acc_b = sum(1 for j in idxs if cb[j]) / n_q
+                    diffs.append(acc_a - acc_b)
+                diffs.sort()
+                lo_idx = int(0.025 * n_bootstrap)
+                hi_idx = int(0.975 * n_bootstrap)
+                key = f"{ma}_vs_{mb}"
+                bootstrap_ci[key] = {
+                    "lower": round(diffs[lo_idx], 6),
+                    "upper": round(diffs[hi_idx], 6),
+                }
+
+        # Summary.
+        parts = [f"{m}: {method_acc[m]:.1%}" for m in methods]
+        summary = (
+            "Method comparison: " + ", ".join(parts) + ". "
+        )
+        # Report any significant differences.
+        sig = [
+            f"{k} ({v['better']} better, p={v['p_value']:.3f})"
+            for k, v in pairwise.items()
+            if v["significant"]
+        ]
+        if sig:
+            summary += "Significant: " + "; ".join(sig) + "."
+        else:
+            summary += "No significant differences."
+
+        return {
+            "methods": methods,
+            "accuracy": {m: round(a, 6) for m, a in method_acc.items()},
+            "pairwise": pairwise,
+            "bootstrap_ci": bootstrap_ci,
+            "n_queries": len(queries),
+            "n_bootstrap": n_bootstrap,
+            "summary": summary,
+        }
 
 
 
