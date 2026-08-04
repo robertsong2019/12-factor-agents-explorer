@@ -444,3 +444,7 @@ timestamp	commit	metric	value	status	description
 2026-08-04T01:00:00+08:00	44db88a	test_count	6892→6974	keep	Cycle 349: classification_report() — detailed evaluation with confusion matrix, per-class metrics, error analysis, hardest queries. 16th classification API. 82 tests. 275th day.
 2026-08-04T01:00:00+08:00	44db88a	test_pass_rate	100%	keep	All 6974 passing, 85.71s.
 2026-08-04T01:00:00+08:00	44db88a	code_lines	42364→42450	keep	+440 lines source/docstring + 816 test
+2026-08-04T21:00	0d005c1	tests	7014	100%	PASS	Cycle 350: classification_loocv (17th API, +40 tests)
+2026-08-04T21:10	809e86c	tests	7044	100%	PASS	Cycle 351: classification_calibrate (18th API, +30 tests)
+2026-08-04T21:25	8089add	tests	7074	100%	PASS	Cycle 352: optimize_reference_set (19th API, +30 tests)
+2026-08-04T21:40	d230b92	tests	7096	100%	PASS	Cycle 353: classification_compare_methods (20th API, +22 tests)
