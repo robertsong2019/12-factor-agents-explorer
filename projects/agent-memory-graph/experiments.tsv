@@ -458,3 +458,6 @@ timestamp	commit	metric	value	status	description
 2026-08-05T00:00:00+08:00	02261f2	test_count	7174→7220	keep	Cycle 356: classification_confusion_explain (23rd classification API). Per-modality explainability — decomposes winning margin into degree/spectral/fingerprint contributions. 46 tests. 276th day.
 2026-08-05T00:00:00+08:00	02261f2	test_pass_rate	100%	keep	All 7220 passing, 98.15s.
 2026-08-05T00:00:00+08:00	02261f2	code_lines	43930→44195	keep	+265 lines source/docstring + 458 test
+2026-08-05T01:00:00+08:00	6acec44	test_count	7220→7269	keep	Cycle 357: classification_counterfactual (24th classification API). Counterfactual flip analysis: per-modality flip thresholds, robustness classification, easiest flip path. 49 tests. 277th day.
+2026-08-05T01:00:00+08:00	6acec44	test_pass_rate	100%	keep	All 7269 passing, 99.36s.
+2026-08-05T01:00:00+08:00	6acec44	code_lines	44195→44754	keep	+399 lines source + 467 test
