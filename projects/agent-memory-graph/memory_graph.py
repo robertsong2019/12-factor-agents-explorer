@@ -43735,6 +43735,271 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ─────────────────────────────────────────────────────────────
+    #  Cycle 356 — classification_confusion_explain()
+    #  Explain *why* a query was classified as its predicted label
+    #  by decomposing the winning margin into per-modality contributions.
+    # ─────────────────────────────────────────────────────────────
+
+    def classification_confusion_explain(
+        self,
+        references: list["MemoryGraph"],
+        *,
+        predicted_label: str | None = None,
+        runner_up_label: str | None = None,
+        degree_index: str = "sombor",
+        spectral_measure: str = "jsd",
+        bins: int = 20,
+        normalise: str = "minmax",
+        include_quarantined: bool = False,
+    ) -> dict:
+        """Explain *why* this graph was classified as its predicted label.
+
+        Given a set of reference graphs, this method computes how each
+        structural modality (degree entropy, spectral entropy, topological
+        fingerprint) contributes to the classification decision.
+
+        It answers questions like:
+
+        * "Was it the degree distribution or the spectral profile that
+            made the classifier choose 'star'?"
+        * "How close was the runner-up?"
+        * "Which modality *opposed* the decision (i.e. favoured a
+            different label)?"
+
+        **Algorithm:**
+
+        1. Compute per-modality distances from ``self`` to every
+            reference (same as :meth:`weighted_average_classification`).
+        2. If ``predicted_label`` is not given, determine the predicted
+            label via :meth:`weighted_average_classification` with equal
+            weights.
+        3. If ``runner_up_label`` is not given, find the second-closest
+            reference by weighted-average distance.
+        4. For each modality, compute the **margin** — the distance to
+            the runner-up minus the distance to the predicted label.
+            A positive margin means this modality *supports* the
+            prediction; a negative margin means it *opposes* it.
+        5. Rank modalities by |margin| to show which one was most
+            decisive.
+
+        Args:
+            references: Reference graphs (each should have a distinct label).
+            predicted_label: The predicted label to explain. If ``None``
+                auto-determined via equal-weight classification.
+            runner_up_label: The runner-up label. If ``None``, the
+                second-closest reference is used.
+            degree_index: Degree index for degree-based distance.
+            spectral_measure: Spectral divergence measure.
+            bins: Number of bins for spectral/fingerprint histograms.
+            normalise: Normalisation mode (``minmax`` or ``none``).
+            include_quarantined: Include quarantined references.
+
+        Returns:
+            Dict with:
+
+            - ``predicted_label`` — the explained label.
+            - ``runner_up_label`` — the closest competing label.
+            - ``margin`` — overall winning margin (>0 means correct).
+            - ``decision_aligned`` — True if all modalities agree.
+            - ``per_modality`` — dict of modality → {
+                predicted_distance, runner_up_distance, margin,
+                contribution_fraction, supports_prediction
+              }.
+            - ``modality_ranking`` — modalities sorted by |margin| desc.
+            - ``decisive_modality`` — the modality with largest |margin|.
+            - ``opposing_modalities`` — modalities with negative margin.
+            - ``reference_distances`` — per-reference per-modality distances.
+            - ``summary`` — human-readable explanation.
+        """
+        if not references:
+            return {
+                "predicted_label": None,
+                "runner_up_label": None,
+                "margin": 0.0,
+                "decision_aligned": True,
+                "per_modality": {},
+                "modality_ranking": [],
+                "decisive_modality": None,
+                "opposing_modalities": [],
+                "reference_distances": [],
+                "summary": "No references provided.",
+            }
+
+        def _safe_label(ref, idx):
+            gm = getattr(ref, "graph_meta", None)
+            if isinstance(gm, dict) and "label" in gm:
+                return gm["label"]
+            return f"ref_{idx}"
+
+        # --- Phase 1: Compute per-modality distances to each reference ---
+        modalities = ["degree", "spectral", "fingerprint"]
+        ref_labels = [_safe_label(r, i) for i, r in enumerate(references)]
+
+        per_ref_distances: list[dict] = []
+        for i, ref in enumerate(references):
+            deg_d = self.entropy_distance(ref, index=degree_index)
+            spec_d = self.spectral_divergence(
+                ref, measure=spectral_measure, bins=bins,
+                include_quarantined=include_quarantined,
+            )
+            fp_d = self.fingerprint_distance(ref)
+            per_ref_distances.append({
+                "ref_index": i,
+                "label": ref_labels[i],
+                "degree": deg_d if deg_d is not None else float("inf"),
+                "spectral": spec_d if spec_d is not None else float("inf"),
+                "fingerprint": fp_d if fp_d is not None else float("inf"),
+            })
+
+        # --- Phase 2: Determine predicted and runner-up labels ---
+        # Use equal-weight weighted average if not specified
+        if predicted_label is None:
+            wa_result = self.weighted_average_classification(
+                references,
+                degree_weight=1.0,
+                spectral_weight=1.0,
+                fingerprint_weight=1.0,
+                degree_index=degree_index,
+                spectral_measure=spectral_measure,
+                bins=bins,
+                normalise=normalise,
+                include_quarantined=include_quarantined,
+            )
+            if wa_result and "best_match" in wa_result:
+                best_idx = wa_result["best_match"]
+                # Try to extract label from rankings or reference
+                rankings = wa_result.get("rankings", [])
+                if rankings and best_idx < len(rankings):
+                    predicted_label = rankings[best_idx].get("label")
+                if predicted_label is None and best_idx < len(references):
+                    predicted_label = _safe_label(references[best_idx], best_idx)
+
+        if predicted_label is None:
+            return {
+                "predicted_label": None,
+                "runner_up_label": None,
+                "margin": 0.0,
+                "decision_aligned": True,
+                "per_modality": {},
+                "modality_ranking": [],
+                "decisive_modality": None,
+                "opposing_modalities": [],
+                "reference_distances": per_ref_distances,
+                "summary": "Could not determine a predicted label.",
+            }
+
+        # Find predicted reference index
+        pred_idx = None
+        for i, lbl in enumerate(ref_labels):
+            if lbl == predicted_label:
+                pred_idx = i
+                break
+        if pred_idx is None:
+            pred_idx = 0
+            predicted_label = ref_labels[0]
+
+        # Find runner-up: second-closest by average distance
+        if runner_up_label is None:
+            avg_dists = []
+            for prd in per_ref_distances:
+                avg = (prd["degree"] + prd["spectral"] + prd["fingerprint"]) / 3.0
+                avg_dists.append((prd["label"], avg, prd["ref_index"]))
+            avg_dists.sort(key=lambda x: x[1])
+            # Runner-up is the second closest (after predicted)
+            for lbl, _, idx in avg_dists:
+                if lbl != predicted_label:
+                    runner_up_label = lbl
+                    runner_up_idx = idx
+                    break
+            else:
+                runner_up_label = avg_dists[0][0] if avg_dists else predicted_label
+                runner_up_idx = avg_dists[0][2] if avg_dists else 0
+        else:
+            runner_up_idx = None
+            for i, lbl in enumerate(ref_labels):
+                if lbl == runner_up_label:
+                    runner_up_idx = i
+                    break
+            if runner_up_idx is None:
+                runner_up_idx = 0 if pred_idx != 0 else min(1, len(references) - 1)
+                runner_up_label = ref_labels[runner_up_idx]
+
+        pred_d = per_ref_distances[pred_idx]
+        runner_d = per_ref_distances[runner_up_idx]
+
+        # --- Phase 3: Per-modality margin analysis ---
+        per_modality: dict[str, dict] = {}
+        total_abs_margin = 0.0
+
+        for mod in modalities:
+            p_dist = pred_d[mod]
+            r_dist = runner_d[mod]
+            margin = r_dist - p_dist  # positive = supports prediction
+            per_modality[mod] = {
+                "predicted_distance": round(p_dist, 6),
+                "runner_up_distance": round(r_dist, 6),
+                "margin": round(margin, 6),
+                "contribution_fraction": 0.0,  # filled after loop
+                "supports_prediction": margin > 0,
+            }
+            total_abs_margin += abs(margin)
+
+        # Fill contribution fractions
+        for mod in modalities:
+            if total_abs_margin > 0:
+                per_modality[mod]["contribution_fraction"] = round(
+                    abs(per_modality[mod]["margin"]) / total_abs_margin, 6
+                )
+
+        # --- Phase 4: Ranking and summary ---
+        modality_ranking = sorted(
+            modalities,
+            key=lambda m: abs(per_modality[m]["margin"]),
+            reverse=True,
+        )
+        decisive_modality = modality_ranking[0] if modality_ranking else None
+        opposing_modalities = [
+            m for m in modalities if per_modality[m]["margin"] < 0
+        ]
+        overall_margin = sum(per_modality[m]["margin"] for m in modalities)
+        decision_aligned = len(opposing_modalities) == 0
+
+        # Build human-readable summary
+        parts = []
+        parts.append(
+            f"Predicted '{predicted_label}' over '{runner_up_label}' "
+            f"(overall margin={overall_margin:.4f})."
+        )
+        if decisive_modality:
+            dm = per_modality[decisive_modality]
+            direction = "supported" if dm["margin"] > 0 else "opposed"
+            parts.append(
+                f"{decisive_modality} was most decisive ({direction}, "
+                f"margin={dm['margin']:.4f}, "
+                f"contribution={dm['contribution_fraction']:.1%})."
+            )
+        if opposing_modalities:
+            opp_names = ", ".join(opposing_modalities)
+            parts.append(f"Opposing modalities: {opp_names}.")
+        else:
+            parts.append("All modalities agree with the prediction.")
+
+        summary = " ".join(parts)
+
+        return {
+            "predicted_label": predicted_label,
+            "runner_up_label": runner_up_label,
+            "margin": round(overall_margin, 6),
+            "decision_aligned": decision_aligned,
+            "per_modality": per_modality,
+            "modality_ranking": modality_ranking,
+            "decisive_modality": decisive_modality,
+            "opposing_modalities": opposing_modalities,
+            "reference_distances": per_ref_distances,
+            "summary": summary,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
