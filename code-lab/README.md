@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~42,500 | ⭐ 知识图谱记忆引擎：800+ API，覆盖图算法、信息论、图分类、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询 |
+| [agent-memory-graph](agent-memory-graph/) | ~46,000 | ⭐ 知识图谱记忆引擎：1000+ API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询 |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 42,500+ 行的完整图记忆引擎，包含 800+ 公开 API 和 6,850+ 测试用例，横跨 136 个测试文件。
+该项目已从 300 行的教学示例演化为 46,000+ 行的完整图记忆引擎，包含 1000+ 公开 API 和 7,269+ 测试用例，横跨 137 个测试文件。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -56,8 +56,11 @@
 | **工作流/模式** | 14 | `add_workflow`, `retrieve_workflows`, `workflow_success_patterns` |
 | **时序/版本** | 31 | `evolve`, `temporal_snapshot`, `query_as_of`, `temporal_diff`, `supersede` |
 | **嵌入/向量** | 19 | `add_embedding`, `search_similar`, `train_kge`, `kge_score` |
-| **图分类** | 9 | `rrf_classification`, `bayesian_classification`, `knn_classification`, `classification_compare`, `max_confidence_classification` |
+| **图分类（基础+集成）** | 9 | `graph_classification`, `spectral_classification`, `fingerprint_classification`, `rrf_classification`, `bayesian_classification`, `knn_classification`, `classification_compare`, `max_confidence_classification`, `hybrid_classification` |
 | **分类评估** | 5 | `classification_benchmark`, `classification_noise_test`, `classification_cross_size`, `classification_parameter_sensitivity`, `classification_report` |
+| **统计验证** | 3 | `classification_loocv`, `classification_calibrate`, `optimize_reference_set` — 留一交叉验证 + 温度校准(ECE) + 参考集优化(ENN/CCCD) |
+| **分类元策略** | 2 | `classification_compare_methods`, `classification_consensus` — 跨方法对比 + 多数投票元分类器 |
+| **分类可解释性** | 2 | `classification_confusion_explain`, `classification_counterfactual` — 逐模态贡献分解 + 反事实翻转分析 |
 | **分类优化** | 1 | `classification_learned_weights` — 网格搜索最优模态权重 |
 | **代码感知** | 8 | `add_code_node`, `explain_code`, `impact_analysis`, `code_subgraph`, `record_code_decision`, `code_nodes_by_kind`, `code_graph_summary` |
 | **双时序** | 2 | `query_believed_as_of`, `temporal_delta_query` — 真·双时序查询（valid time + transaction time）|
@@ -66,9 +69,9 @@
 | **条件遍历** | 3 | `conditioned_traverse`, `project_graph`, `multi_perspective_analysis` |
 | **序列化** | 24 | `export_json`, `to_markdown`, `serialize_dot`, `serialize_graphml` |
 
-### 📐 信息论进化史（Cycles 306–316 + 326–349）
+### 📐 信息论进化史（Cycles 306–316 + 326–357）
 
-最新里程碑：用信息论工具量化图结构，从单一指标到完整分类体系，再到元分类器。
+最新里程碑：24-API 分类套件完成 — 从单一匹配到集成融合、元策略、统计验证、直到可解释性。完整的 single-match → ensemble → meta → evaluation → optimization → **explainability** 流水线。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -87,6 +90,10 @@
 | 参数敏感性 | 347 | `classification_parameter_sensitivity` | 超参数鲁棒性评估（spectral bins, RRF k, KNN k 等）|
 | 权重学习 | 348 | `classification_learned_weights` | 从标注数据网格搜索最优模态权重组合 |
 | 分类报告 | 349 | `classification_report` | 混淆矩阵 + 每类 precision/recall/F1 + 错误分析 |
+| 统计验证 | 350–352 | `classification_loocv`, `classification_calibrate`, `optimize_reference_set` | 留一交叉验证 + 温度校准(ECE) + ENN/CCCD 参考集优化 |
+| 分类元策略 | 353–354 | `classification_compare_methods`, `classification_consensus` | 跨方法对比报告 + 多数投票元分类器 |
+| 噪声自适应 | 355 | `classification_noise_adaptive` | 检测查询噪声水平，自动选择最鲁棒分类方法 |
+| 可解释性 | 356–357 | `classification_confusion_explain`, `classification_counterfactual` | 逐模态贡献分解(为何选这个) + 反事实翻转分析(怎样会改变结果) |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---
