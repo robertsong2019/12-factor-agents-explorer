@@ -42254,6 +42254,209 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 350: classification_loocv — Leave-One-Out Cross-Validation
+    # for reference graphs.  Research #046 ✅.
+    # ------------------------------------------------------------------
+
+    def classification_loocv(
+        self,
+        references: list["MemoryGraph"],
+        labels: list[str],
+        *,
+        method: str = "graph",
+        degree_index: str = "sombor",
+        spectral_measure: str = "jsd",
+        bins: int = 20,
+        normalise: str = "minmax",
+        include_quarantined: bool = False,
+    ) -> dict:
+        """Leave-one-out cross-validation for reference graph set.
+
+        For each reference *R\u1d62*, hold it out and classify it
+        against the remaining *N-1* references.  This directly tests
+        whether the entropy fingerprint captures enough structural
+        essence to identify an **unseen** topology.
+
+        **Motivation** (Research #046):
+
+        Standard k-fold CV randomly partitions data.  LOOCV for
+        reference graphs has a unique semantics: *"can we identify a
+        graph topology we've never seen before, using only the
+        structural fingerprints of other topologies?"*  With 6
+        canonical topologies this is 6 iterations \u2014 trivially
+        cheap.
+
+        The per-fold diagnostic pinpoints exactly which structural
+        features are insufficient.  If path\u2192star is the dominant
+        confusion pair (validated in noise_test c341), LOOCV will
+        reveal it.
+
+        Args:
+            references: Reference MemoryGraph objects.
+            labels: Ground-truth label for each reference (parallel
+                to *references*).
+            method: Classification method: ``"graph"``,
+                ``"spectral"``, ``"hybrid"``, ``"rrf"``,
+                ``"weighted_average"``, ``"bayesian"``, ``"knn"``,
+                ``"max_confidence"``.
+            degree_index: Degree index for graph classification.
+            spectral_measure: Divergence measure for spectral.
+            bins: Histogram bins for spectral.
+            normalise: Score normalisation mode.
+            include_quarantined: Include quarantined refs.
+
+        Returns:
+            Dict with per-fold results, overall accuracy, confusion
+            matrix, and hardest fold.
+        """
+        n = len(references)
+        if n < 2:
+            raise ValueError("Need at least 2 references for LOOCV.")
+        if len(labels) != n:
+            raise ValueError(
+                f"labels length {len(labels)} != "
+                f"references length {n}"
+            )
+
+        fold_results: list[dict] = []
+        confusion: dict[str, dict[str, int]] = {}
+        correct_count = 0
+
+        for i in range(n):
+            held_out = references[i]
+            true_label = labels[i]
+            remaining_refs = [r for j, r in enumerate(references) if j != i]
+            remaining_labels = [l for j, l in enumerate(labels) if j != i]
+
+            # Dispatch to the requested classification method.
+            # All methods return best_match as an int index into refs.
+            if method == "graph":
+                result = held_out.graph_classification(
+                    remaining_refs, index=degree_index,
+                )
+            elif method == "spectral":
+                result = held_out.spectral_classification(
+                    remaining_refs, measure=spectral_measure,
+                    bins=bins, include_quarantined=include_quarantined,
+                )
+            elif method == "hybrid":
+                result = held_out.hybrid_classification(
+                    remaining_refs, degree_index=degree_index,
+                    spectral_measure=spectral_measure, bins=bins,
+                    include_quarantined=include_quarantined,
+                )
+            elif method == "rrf":
+                result = held_out.rrf_classification(
+                    remaining_refs, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            elif method == "weighted_average":
+                result = held_out.weighted_average_classification(
+                    remaining_refs, degree_index=degree_index,
+                    spectral_measure=spectral_measure, bins=bins,
+                    normalise=normalise,
+                    include_quarantined=include_quarantined,
+                )
+            elif method == "bayesian":
+                result = held_out.bayesian_classification(
+                    remaining_refs, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            elif method == "knn":
+                result = held_out.knn_classification(
+                    remaining_refs, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            elif method == "max_confidence":
+                result = held_out.max_confidence_classification(
+                    remaining_refs, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            else:
+                raise ValueError(f"Unknown method: {method!r}")
+
+            if result is None:
+                # No valid comparison — assign default.
+                predicted_label = remaining_labels[0]
+                score = 0.0
+            else:
+                # All classification methods return best_match as int
+                # index, except knn which uses best_ref.
+                idx = result.get("best_match")
+                if idx is None:
+                    idx = result.get("best_ref", 0)
+                if isinstance(idx, str):
+                    # Some methods may return label string.
+                    predicted_label = idx
+                else:
+                    predicted_label = remaining_labels[idx]
+                score = result.get("best_score", 0.0)
+
+            is_correct = predicted_label == true_label
+            if is_correct:
+                correct_count += 1
+
+            # Build confusion entry.
+            if true_label not in confusion:
+                confusion[true_label] = {}
+            confusion[true_label][predicted_label] = (
+                confusion[true_label].get(predicted_label, 0) + 1
+            )
+
+            # Extract score for the predicted match.
+            score = (
+                result.get("best_score")
+                or result.get("margin")
+                or 0.0
+            )
+
+            fold_results.append({
+                "fold": i,
+                "held_out_label": true_label,
+                "predicted_label": predicted_label,
+                "correct": is_correct,
+                "score": round(score, 6) if isinstance(score, (int, float)) else score,
+                "num_remaining_refs": len(remaining_refs),
+            })
+
+        accuracy = correct_count / n if n > 0 else 0.0
+
+        # Identify hardest fold (first incorrect one, or lowest score).
+        incorrect_folds = [f for f in fold_results if not f["correct"]]
+        if incorrect_folds:
+            hardest = min(incorrect_folds, key=lambda f: f["score"] if isinstance(f["score"], (int, float)) else 0)
+        else:
+            hardest = None
+
+        # Build summary string.
+        if incorrect_folds:
+            confusions_str = ", ".join(
+                f"{f['held_out_label']}\u2192{f['predicted_label']}"
+                for f in incorrect_folds
+            )
+            summary = (
+                f"LOOCV {method}: {correct_count}/{n} correct "
+                f"({accuracy:.1%}). Misclassified: {confusions_str}."
+            )
+        else:
+            summary = (
+                f"LOOCV {method}: {correct_count}/{n} correct "
+                f"({accuracy:.1%}). Perfect identification."
+            )
+
+        return {
+            "method": method,
+            "num_references": n,
+            "accuracy": round(accuracy, 6),
+            "correct": correct_count,
+            "fold_results": fold_results,
+            "confusion": confusion,
+            "hardest_fold": hardest,
+            "all_correct": correct_count == n,
+            "summary": summary,
+        }
+
 
 
 def demo():
