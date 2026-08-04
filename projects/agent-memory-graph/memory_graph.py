@@ -43212,6 +43212,229 @@ class MemoryGraph:
 
 
 
+    def classification_consensus(
+        self,
+        references: list["MemoryGraph"],
+        query: "MemoryGraph",
+        *,
+        methods: list[str] | None = None,
+        degree_index: str = "sombor",
+        include_quarantined: bool = False,
+        weights: dict[str, float] | None = None,
+    ) -> dict:
+        """Meta-classifier: run all methods, return **majority vote** + agreement.
+
+        Unlike :meth:`hybrid_classification` (combines graph + spectral
+        *scores*) or :meth:`rrf_classification` (fuses *rankings* of 3
+        methods), **consensus** treats each classification method as an
+        independent voter. Every method produces a single label prediction;
+        the majority label wins.
+
+        **When to use:**
+
+        - Production systems needing maximum reliability.
+        - When you have ≥ 4 methods and want a safety net.
+        - When individual methods occasionally disagree.
+
+        **Confidence** is the fraction of methods agreeing with the
+        winner (0–1).  A consensus at 100% means every method agreed;
+        below 50% means no majority (ambiguous query).
+
+        **Weighted mode:** Pass ``weights={"graph": 2.0, "rrf": 1.5}``
+        to give some methods more voting power (e.g. based on
+        :meth:`classification_noise_test` or :meth:`classification_learned_weights`
+        results).
+
+        Args:
+            references: Reference graphs.
+            query: Query graph to classify.
+            methods: Method names to run. Default: all 8 single-label
+                methods (``graph``, ``spectral``, ``hybrid``, ``rrf``,
+                ``bayesian``, ``knn``, ``weighted_average``, ``max_confidence``).
+            degree_index: Degree index for graph-based methods.
+            include_quarantined: Include quarantined references.
+            weights: Optional per-method voting weights. Missing methods
+                get weight 1.0.
+
+        Returns:
+            Dict with:
+
+            - ``label`` — winning label (``None`` if tie or no method succeeded).
+            - ``confidence`` — agreement fraction (0–1).
+            - ``margin`` — vote gap between top-2 labels.
+            - ``vote_counts`` — dict ``{label: weighted_vote_sum}``.
+            - ``per_method`` — dict ``{method: {label, succeeded}}``.
+            - ``methods_agreeing`` — list of method names that picked the winner.
+            - ``methods_disagreeing`` — list of method names that picked another label.
+            - ``n_methods_run`` — number of methods attempted.
+            - ``n_methods_succeeded`` — number that returned a prediction.
+            - ``tie`` — ``True`` if top-2 labels had equal votes.
+            - ``summary`` — human-readable one-liner.
+
+        Example::
+
+            >>> mg = MemoryGraph()
+            >>> ref1 = mg._bench_build_topology("star", 8, label="star")
+            >>> ref2 = mg._bench_build_topology("cycle", 8, label="cycle")
+            >>> query = mg._bench_build_topology("star", 8, label="?")
+            >>> result = query.classification_consensus([ref1, ref2], query)
+            >>> result["label"]
+            'star'
+            >>> result["confidence"] >= 0.5
+            True
+        """
+        import collections as _collections
+
+        if methods is None:
+            methods = [
+                "graph", "spectral", "hybrid", "rrf",
+                "bayesian", "knn", "weighted_average", "max_confidence",
+            ]
+
+        # Run each method, collect label predictions.
+        per_method: dict[str, dict] = {}
+        for mname in methods:
+            entry: dict = {"label": None, "succeeded": False}
+            try:
+                if mname == "graph":
+                    result = query.graph_classification(
+                        references, index=degree_index,
+                    )
+                elif mname == "spectral":
+                    result = query.spectral_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "hybrid":
+                    result = query.hybrid_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "rrf":
+                    result = query.rrf_classification(
+                        references,
+                        degree_index=degree_index,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "bayesian":
+                    result = query.bayesian_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "knn":
+                    result = query.knn_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "weighted_average":
+                    result = query.weighted_average_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                elif mname == "max_confidence":
+                    result = query.max_confidence_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                else:
+                    entry["error"] = f"Unknown method: {mname}"
+                    per_method[mname] = entry
+                    continue
+
+                if result is not None:
+                    idx = result.get("best_match")
+                    if idx is not None and 0 <= idx < len(references):
+                        ref = references[idx]
+                        label = (
+                            getattr(ref, "graph_meta", {}).get("label", f"ref_{idx}")
+                            if isinstance(getattr(ref, "graph_meta", None), dict)
+                            else f"ref_{idx}"
+                        )
+                        entry["label"] = label
+                        entry["succeeded"] = True
+            except Exception as exc:
+                entry["error"] = str(exc)
+
+            per_method[mname] = entry
+
+        # Tally weighted votes.
+        vote_counts: _collections.defaultdict = _collections.defaultdict(float)
+        for mname, entry in per_method.items():
+            if entry["succeeded"] and entry["label"] is not None:
+                w = 1.0
+                if weights and mname in weights:
+                    w = weights[mname]
+                vote_counts[entry["label"]] += w
+
+        n_succeeded = sum(
+            1 for e in per_method.values() if e["succeeded"]
+        )
+
+        if not vote_counts:
+            return {
+                "label": None,
+                "confidence": 0.0,
+                "margin": 0.0,
+                "vote_counts": {},
+                "per_method": per_method,
+                "methods_agreeing": [],
+                "methods_disagreeing": [],
+                "n_methods_run": len(methods),
+                "n_methods_succeeded": n_succeeded,
+                "tie": False,
+                "summary": "No method produced a prediction.",
+            }
+
+        # Sort labels by vote count (desc), then alphabetical for stability.
+        ranked = sorted(
+            vote_counts.items(),
+            key=lambda kv: (-kv[1], kv[0]),
+        )
+        winner_label = ranked[0][0]
+        winner_votes = ranked[0][1]
+        runner_up_votes = ranked[1][1] if len(ranked) > 1 else 0.0
+        total_votes = sum(vote_counts.values())
+
+        tie = (
+            len(ranked) > 1
+            and abs(ranked[0][1] - ranked[1][1]) < 1e-12
+        )
+
+        confidence = winner_votes / total_votes if total_votes > 0 else 0.0
+        margin = winner_votes - runner_up_votes
+
+        agreeing = [
+            m for m, e in per_method.items()
+            if e["succeeded"] and e["label"] == winner_label
+        ]
+        disagreeing = [
+            m for m, e in per_method.items()
+            if e["succeeded"] and e["label"] != winner_label
+        ]
+
+        summary = (
+            f"Consensus: '{winner_label}' "
+            f"({len(agreeing)}/{n_succeeded} methods agree, "
+            f"confidence={confidence:.0%})"
+        )
+        if tie:
+            summary += " [TIE]"
+
+        return {
+            "label": winner_label,
+            "confidence": round(confidence, 6),
+            "margin": round(margin, 6),
+            "vote_counts": {k: round(v, 6) for k, v in ranked},
+            "per_method": per_method,
+            "methods_agreeing": agreeing,
+            "methods_disagreeing": disagreeing,
+            "n_methods_run": len(methods),
+            "n_methods_succeeded": n_succeeded,
+            "tie": tie,
+            "summary": summary,
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
