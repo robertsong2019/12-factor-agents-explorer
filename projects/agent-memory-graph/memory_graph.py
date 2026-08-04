@@ -44000,6 +44000,315 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ----------------------------------------------------------------
+    # Cycle 357: classification_counterfactual
+    # ----------------------------------------------------------------
+    def classification_counterfactual(
+        self,
+        references: list["MemoryGraph"],
+        *,
+        predicted_label: str | None = None,
+        runner_up_label: str | None = None,
+        degree_index: str = "sombor",
+        spectral_measure: str = "jsd",
+        bins: int = 20,
+        normalise: str = "minmax",
+        include_quarantined: bool = False,
+    ) -> dict:
+        """Compute *what would need to change* to flip the classification.
+
+        Given a set of reference graphs, this method determines the
+        minimal per-modality distance shift required to change the
+        predicted label from the current classification to the
+        runner-up.
+
+        It complements :meth:`classification_confusion_explain` by
+        answering the **counterfactual** question:
+
+        * "How close was the classification to flipping?"
+        * "Which modality offers the easiest path to change the result?"
+        * "What is the robustness margin of each modality?"
+
+        **Algorithm:**
+
+        1. Compute per-modality distances from ``self`` to every
+           reference (same as :meth:`classification_confusion_explain`).
+        2. Auto-determine predicted and runner-up labels if not given.
+        3. For each modality, compute the **flip threshold** — the
+           distance shift needed for the runner-up to overtake the
+           predicted label on that modality alone.
+        4. Compute the **overall flip distance** — the total weighted
+           shift needed across all modalities combined.
+        5. Classify robustness: ``robust`` (large margin),
+           ``borderline`` (small margin), or ``fragile`` (very small).
+
+        Args:
+            references: Reference graphs (each with a distinct label).
+            predicted_label: The predicted label. If ``None``,
+                auto-determined via equal-weight classification.
+            runner_up_label: The runner-up label. If ``None``,
+                auto-determined as second-closest.
+            degree_index: Degree index for degree-based distance.
+            spectral_measure: Spectral divergence measure.
+            bins: Number of bins for spectral/fingerprint histograms.
+            normalise: Normalisation mode.
+            include_quarantined: Include quarantined references.
+
+        Returns:
+            Dict with:
+
+            - ``predicted_label`` — current classification.
+            - ``runner_up_label`` — the alternative label.
+            - ``overall_margin`` — current winning margin (>0 means
+              prediction is safe).
+            - ``robustness`` — ``"robust"``, ``"borderline"``, or
+              ``"fragile"``.
+            - ``flip_distance`` — minimum total shift to flip.
+            - ``easiest_modality`` — modality requiring smallest shift.
+            - ``per_modality`` — dict of modality → {
+                predicted_distance, runner_up_distance,
+                current_margin, flip_threshold,
+                relative_difficulty, flip_direction
+              }.
+            - ``modality_difficulty_ranking`` — modalities sorted by
+              flip_threshold ascending (easiest to flip first).
+            - ``flip_scenarios`` — list of single-modality flip
+              descriptions.
+            - ``summary`` — human-readable counterfactual explanation.
+        """
+        if not references:
+            return {
+                "predicted_label": None,
+                "runner_up_label": None,
+                "overall_margin": 0.0,
+                "robustness": "unknown",
+                "flip_distance": 0.0,
+                "easiest_modality": None,
+                "per_modality": {},
+                "modality_difficulty_ranking": [],
+                "flip_scenarios": [],
+                "summary": "No references provided.",
+            }
+
+        def _safe_label(ref, idx):
+            gm = getattr(ref, "graph_meta", None)
+            if isinstance(gm, dict) and "label" in gm:
+                return gm["label"]
+            return f"ref_{idx}"
+
+        modalities = ["degree", "spectral", "fingerprint"]
+        ref_labels = [_safe_label(r, i) for i, r in enumerate(references)]
+
+        # --- Phase 1: Compute per-modality distances ---
+        per_ref_distances: list[dict] = []
+        for i, ref in enumerate(references):
+            deg_d = self.entropy_distance(ref, index=degree_index)
+            spec_d = self.spectral_divergence(
+                ref, measure=spectral_measure, bins=bins,
+                include_quarantined=include_quarantined,
+            )
+            fp_d = self.fingerprint_distance(ref)
+            per_ref_distances.append({
+                "ref_index": i,
+                "label": ref_labels[i],
+                "degree": deg_d if deg_d is not None else float("inf"),
+                "spectral": spec_d if spec_d is not None else float("inf"),
+                "fingerprint": fp_d if fp_d is not None else float("inf"),
+            })
+
+        # --- Phase 2: Determine predicted and runner-up labels ---
+        if predicted_label is None:
+            wa_result = self.weighted_average_classification(
+                references,
+                degree_weight=1.0,
+                spectral_weight=1.0,
+                fingerprint_weight=1.0,
+                degree_index=degree_index,
+                spectral_measure=spectral_measure,
+                bins=bins,
+                normalise=normalise,
+                include_quarantined=include_quarantined,
+            )
+            if wa_result and "best_match" in wa_result:
+                best_idx = wa_result["best_match"]
+                rankings = wa_result.get("rankings", [])
+                if rankings and best_idx < len(rankings):
+                    predicted_label = rankings[best_idx].get("label")
+                if predicted_label is None and best_idx < len(references):
+                    predicted_label = _safe_label(references[best_idx], best_idx)
+
+        if predicted_label is None:
+            return {
+                "predicted_label": None,
+                "runner_up_label": None,
+                "overall_margin": 0.0,
+                "robustness": "unknown",
+                "flip_distance": 0.0,
+                "easiest_modality": None,
+                "per_modality": {},
+                "modality_difficulty_ranking": [],
+                "flip_scenarios": [],
+                "summary": "Could not determine a predicted label.",
+            }
+
+        pred_idx = None
+        for i, lbl in enumerate(ref_labels):
+            if lbl == predicted_label:
+                pred_idx = i
+                break
+        if pred_idx is None:
+            pred_idx = 0
+            predicted_label = ref_labels[0]
+
+        if runner_up_label is None:
+            avg_dists = []
+            for prd in per_ref_distances:
+                avg = (prd["degree"] + prd["spectral"] + prd["fingerprint"]) / 3.0
+                avg_dists.append((prd["label"], avg, prd["ref_index"]))
+            avg_dists.sort(key=lambda x: x[1])
+            for lbl, _, idx in avg_dists:
+                if lbl != predicted_label:
+                    runner_up_label = lbl
+                    runner_up_idx = idx
+                    break
+            else:
+                runner_up_label = avg_dists[0][0] if avg_dists else predicted_label
+                runner_up_idx = avg_dists[0][2] if avg_dists else 0
+        else:
+            runner_up_idx = None
+            for i, lbl in enumerate(ref_labels):
+                if lbl == runner_up_label:
+                    runner_up_idx = i
+                    break
+            if runner_up_idx is None:
+                runner_up_idx = 0 if pred_idx != 0 else min(1, len(references) - 1)
+                runner_up_label = ref_labels[runner_up_idx]
+
+        pred_d = per_ref_distances[pred_idx]
+        runner_d = per_ref_distances[runner_up_idx]
+
+        # --- Phase 3: Per-modality counterfactual analysis ---
+        per_modality: dict[str, dict] = {}
+        flip_thresholds = []
+
+        for mod in modalities:
+            p_dist = pred_d[mod]
+            r_dist = runner_d[mod]
+            current_margin = r_dist - p_dist  # >0 means predicted is closer
+
+            # Flip threshold: how much the predicted distance needs to
+            # increase (or runner-up decrease) for this modality alone
+            # to flip. If margin > 0, need to close the gap by margin + epsilon.
+            # If margin < 0, this modality already favours runner-up.
+            if current_margin > 0:
+                flip_threshold = current_margin
+                flip_direction = "increase_predicted_distance"
+            elif current_margin < 0:
+                flip_threshold = 0.0  # already flipped for this modality
+                flip_direction = "already_favors_runner_up"
+            else:
+                flip_threshold = 0.0
+                flip_direction = "tied"
+
+            per_modality[mod] = {
+                "predicted_distance": round(p_dist, 6),
+                "runner_up_distance": round(r_dist, 6),
+                "current_margin": round(current_margin, 6),
+                "flip_threshold": round(flip_threshold, 6),
+                "relative_difficulty": 0.0,  # filled after loop
+                "flip_direction": flip_direction,
+            }
+            flip_thresholds.append((mod, flip_threshold))
+
+        # Relative difficulty: flip_threshold / max_threshold
+        max_threshold = max(ft for _, ft in flip_thresholds) if flip_thresholds else 0.0
+        if max_threshold > 0:
+            for mod in modalities:
+                ft = per_modality[mod]["flip_threshold"]
+                per_modality[mod]["relative_difficulty"] = round(ft / max_threshold, 6)
+
+        # --- Phase 4: Ranking and overall metrics ---
+        modality_difficulty_ranking = sorted(
+            modalities,
+            key=lambda m: per_modality[m]["flip_threshold"],
+        )
+        easiest_modality = modality_difficulty_ranking[0] if modality_difficulty_ranking else None
+
+        overall_margin = sum(per_modality[m]["current_margin"] for m in modalities)
+        # Flip distance: minimum total shift across all modalities
+        # for the runner-up to win overall. This is overall_margin / 3
+        # (since 3 modalities contribute equally with equal weights).
+        flip_distance = max(overall_margin / 3.0, 0.0) if overall_margin > 0 else 0.0
+
+        # Robustness classification
+        if overall_margin > 0.3:
+            robustness = "robust"
+        elif overall_margin > 0.05:
+            robustness = "borderline"
+        else:
+            robustness = "fragile"
+
+        # --- Phase 5: Flip scenarios ---
+        flip_scenarios = []
+        for mod in modality_difficulty_ranking:
+            pm = per_modality[mod]
+            if pm["flip_threshold"] == 0.0:
+                if pm["flip_direction"] == "already_favors_runner_up":
+                    flip_scenarios.append(
+                        f"{mod} already favours '{runner_up_label}' "
+                        f"(margin={pm['current_margin']:.4f})."
+                    )
+                else:
+                    flip_scenarios.append(
+                        f"{mod} is exactly tied between "
+                        f"'{predicted_label}' and '{runner_up_label}'."
+                    )
+            else:
+                pct = pm["relative_difficulty"] * 100
+                flip_scenarios.append(
+                    f"{mod}: shift predicted distance by "
+                    f"+{pm['flip_threshold']:.4f} (" 
+                    f"{pct:.0f}% of max threshold) to flip."
+                )
+
+        # --- Phase 6: Summary ---
+        parts = []
+        parts.append(
+            f"Classification '{predicted_label}' over '{runner_up_label}' "
+            f"has overall margin={overall_margin:.4f} ({robustness})."
+        )
+        if easiest_modality:
+            em = per_modality[easiest_modality]
+            if em["flip_threshold"] == 0.0:
+                parts.append(
+                    f"Easiest path: {easiest_modality} already favours "
+                    f"the runner-up."
+                )
+            else:
+                parts.append(
+                    f"Easiest flip path: {easiest_modality} "
+                    f"(threshold={em['flip_threshold']:.4f}, "
+                    f"{em['relative_difficulty']:.0%} of max)."
+                )
+        parts.append(
+            f"Total flip distance: {flip_distance:.4f} "
+            f"(uniform shift across all modalities)."
+        )
+        summary = " ".join(parts)
+
+        return {
+            "predicted_label": predicted_label,
+            "runner_up_label": runner_up_label,
+            "overall_margin": round(overall_margin, 6),
+            "robustness": robustness,
+            "flip_distance": round(flip_distance, 6),
+            "easiest_modality": easiest_modality,
+            "per_modality": per_modality,
+            "modality_difficulty_ranking": modality_difficulty_ranking,
+            "flip_scenarios": flip_scenarios,
+            "summary": summary,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
