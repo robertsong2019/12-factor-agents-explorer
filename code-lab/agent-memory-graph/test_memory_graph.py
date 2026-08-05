@@ -21769,3 +21769,103 @@ class TestMultiHopReason:
             assert "label" in node
             assert "depth" in node
 
+
+class TestEnrichNode:
+    """Tests for MemoryGraph.enrich_node() — A-MEM retroactive enrichment."""
+
+    def test_enrich_adds_new_keys(self):
+        mg = MemoryGraph(":memory:")
+        n = mg.add("topic", "concept", {"existing": 1})
+        result = mg.enrich_node(n.id, {"inferred_topic": "AI", "confidence": 0.9})
+        assert set(result["added_keys"]) == {"inferred_topic", "confidence"}
+        assert result["skipped_keys"] == []
+        node = mg.get_node(n.id)
+        data = node.data if isinstance(node.data, dict) else json.loads(node.data)
+        assert data["inferred_topic"] == "AI"
+        assert data["confidence"] == 0.9
+
+    def test_enrich_skips_existing_keys(self):
+        mg = MemoryGraph(":memory:")
+        n = mg.add("topic", "concept", {"existing": 1})
+        result = mg.enrich_node(n.id, {"existing": 2, "new_key": "val"})
+        assert "existing" in result["skipped_keys"]
+        assert "new_key" in result["added_keys"]
+        node = mg.get_node(n.id)
+        data = node.data if isinstance(node.data, dict) else json.loads(node.data)
+        assert data["existing"] == 1  # NOT overwritten
+
+    def test_enrich_nonexistent_node(self):
+        mg = MemoryGraph(":memory:")
+        result = mg.enrich_node("fake_id", {"key": "val"})
+        assert "error" in result
+        assert result["added_keys"] == []
+
+    def test_enrich_records_provenance(self):
+        mg = MemoryGraph(":memory:")
+        n = mg.add("test", "concept", {})
+        mg.enrich_node(n.id, {"x": 1}, source="agent")
+        mg.enrich_node(n.id, {"y": 2}, source="inferred")
+        node = mg.get_node(n.id)
+        data = node.data if isinstance(node.data, dict) else json.loads(node.data)
+        assert "_enrichments" in data
+        assert len(data["_enrichments"]) == 2
+        assert data["_enrichments"][0]["source"] == "agent"
+        assert data["_enrichments"][1]["source"] == "inferred"
+
+    def test_enrich_default_source(self):
+        mg = MemoryGraph(":memory:")
+        n = mg.add("test", "concept", {})
+        result = mg.enrich_node(n.id, {"key": "val"})
+        assert result["source"] == "inferred"
+
+    def test_enrich_multiple_nodes(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.enrich_node(a.id, {"type": "entity"})
+        mg.enrich_node(b.id, {"type": "event"})
+        da = mg.get_node(a.id).data
+        db = mg.get_node(b.id).data
+        da = da if isinstance(da, dict) else json.loads(da)
+        db = db if isinstance(db, dict) else json.loads(db)
+        assert da.get("type") == "entity"
+        assert db.get("type") == "event"
+
+    def test_enrich_empty_metadata(self):
+        mg = MemoryGraph(":memory:")
+        n = mg.add("test", "concept", {})
+        result = mg.enrich_node(n.id, {})
+        assert result["added_keys"] == []
+        assert result["skipped_keys"] == []
+
+
+class TestStreamingHealth:
+    """Tests for MemoryGraph.streaming_health() and finger_entropy()."""
+
+    def test_streaming_health_structure(self):
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(f"N{i}", "concept") for i in range(5)]
+        for i in range(4):
+            mg.link(nodes[i].id, nodes[i+1].id, "r")
+        hs = mg.streaming_health()
+        assert hs["status"] in ("healthy", "moderate", "degraded")
+        assert "q" in hs
+        assert hs["n"] == 5
+        assert hs["m"] == 4
+
+    def test_finger_entropy_method(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        fe = mg.finger_entropy()
+        assert isinstance(fe, FINGEREntropy)
+        assert fe.n == 2
+        assert fe.m == 1
+
+    def test_streaming_health_empty_graph(self):
+        mg = MemoryGraph(":memory:")
+        hs = mg.streaming_health()
+        assert hs["status"] == "empty"
+        assert hs["q"] == 0.0
+

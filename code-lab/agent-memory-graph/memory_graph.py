@@ -18174,6 +18174,81 @@ class MemoryGraph:
         row = self.conn.execute("SELECT label FROM nodes WHERE id=?", (node_id,)).fetchone()
         return row["label"] if row else node_id
 
+    # ── Retroactive Enrichment (A-MEM pattern) ──────────────
+
+    def enrich_node(self, node_id: str, new_metadata: dict, source: str = "inferred") -> dict:
+        """Retroactive metadata enrichment — A-MEM pattern.
+
+        When new memories arrive, OLD memories get retroactively enriched
+        with new semantic context inferred from the new data. Not just
+        forgetting — enrichment. Makes memory genuinely self-organizing.
+
+        Only ADDS metadata; never overwrites existing keys unless replace=True.
+        Records the enrichment source for provenance tracking.
+
+        Args:
+            node_id: Node to enrich.
+            new_metadata: Key-value pairs to merge into node data.
+            source: Provenance — who/what inferred this ('agent', 'inferred', 'user').
+
+        Returns:
+            {"node_id": str, "added_keys": [...], "skipped_keys": [...], "source": str}
+        """
+        row = self.conn.execute("SELECT data FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if not row:
+            return {"node_id": node_id, "added_keys": [], "skipped_keys": [],
+                    "source": source, "error": "node not found"}
+
+        existing = json.loads(row["data"]) if row["data"] else {}
+        added, skipped = [], []
+        for k, v in new_metadata.items():
+            if k not in existing:
+                existing[k] = v
+                added.append(k)
+            else:
+                skipped.append(k)
+
+        # Add enrichment provenance
+        enrich_log = existing.setdefault("_enrichments", [])
+        enrich_log.append({
+            "source": source,
+            "keys": added,
+            "timestamp": time.time(),
+        })
+
+        self.conn.execute(
+            "UPDATE nodes SET data=? WHERE id=?",
+            (json.dumps(existing), node_id)
+        )
+        self.conn.commit()
+
+        return {
+            "node_id": node_id,
+            "added_keys": added,
+            "skipped_keys": skipped,
+            "source": source,
+        }
+
+    # ── Streaming Entropy Health Monitor ────────────────────
+
+    def finger_entropy(self) -> "FINGEREntropy":
+        """Build a FINGEREntropy snapshot from current graph topology.
+
+        Convenience wrapper around FINGEREntropy.from_graph().
+        Useful for periodic health checks without maintaining a
+        persistent FINGEREntropy instance.
+        """
+        return FINGEREntropy.from_graph(self)
+
+    def streaming_health(self) -> dict:
+        """One-shot streaming graph health report via FINGEREntropy.
+
+        Returns Q value, node/edge counts, average degree, anomaly
+        status, and topology diversity assessment.
+        """
+        fe = self.finger_entropy()
+        return fe.health_summary()
+
 
 
 class FINGEREntropy:
