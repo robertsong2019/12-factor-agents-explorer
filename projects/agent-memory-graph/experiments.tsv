@@ -461,3 +461,10 @@ timestamp	commit	metric	value	status	description
 2026-08-05T01:00:00+08:00	6acec44	test_count	7220→7269	keep	Cycle 357: classification_counterfactual (24th classification API). Counterfactual flip analysis: per-modality flip thresholds, robustness classification, easiest flip path. 49 tests. 277th day.
 2026-08-05T01:00:00+08:00	6acec44	test_pass_rate	100%	keep	All 7269 passing, 99.36s.
 2026-08-05T01:00:00+08:00	6acec44	code_lines	44195→44754	keep	+399 lines source + 467 test
+2026-08-05T19:00:00+08:00	6da4655	test_count	7269→7314	keep	Cycle 358: McNemar pairwise significance in classification_compare(). Cycle 359: path param for add_code_node(). Cycle 360: CODE_NODE_KINDS 6→10, CODE_EDGE_KINDS 7→14. 45 new tests.
+2026-08-05T19:00:00+08:00	6da4655	test_pass_rate	100%	keep	All passing (45 new tests across 3 files)
+2026-08-05T19:00:00+08:00	6da4655	code_node_kinds	6→10	keep	Added interface, method, decorator, type_alias
+2026-08-05T19:00:00+08:00	6da4655	code_edge_kinds	7→14	keep	Added inherits, implements, references, contains, overrides, decorates, type_of
+2026-08-06T01:00:00+08:00	6620400	test_count	7314→7349	keep	Cycle 358 (key-dev-3): classification_confidence_interval() — bootstrap CI (Efron 1979 percentile method). 25th classification API. CI for accuracy/macro-F1/macro-precision/macro-recall/weighted-F1/per-class-F1. n_bootstrap, confidence_level, random_seed params. Per-class F1 intervals. Sample size diagnostics. Research #050. +35 tests. 279th day.
+2026-08-06T01:00:00+08:00	6620400	test_pass_rate	100%	keep	All 7349 passing, 100.27s.
+2026-08-06T01:00:00+08:00	6620400	code_lines	44754→45196	keep	+442 lines source + 546 test
