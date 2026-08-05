@@ -5,7 +5,7 @@ import os
 import tempfile
 import time
 import pytest
-from memory_graph import MemoryGraph, Node, Edge
+from memory_graph import MemoryGraph, Node, Edge, FINGEREntropy
 
 
 @pytest.fixture
@@ -21470,4 +21470,302 @@ class TestTemporalDiff:
         mg.set_validity(n2.id, valid_to=t1 + 50)
         diff = mg.temporal_diff(t1, t2)
         assert diff["change_summary"]["node_turnover_rate"] == 0.5
+
+
+# ── FINGEREntropy Tests ─────────────────────────────────────────
+
+class TestFINGEREntropy:
+    """Tests for FINGEREntropy — streaming incremental von Neumann entropy."""
+
+    def test_empty_state(self):
+        fe = FINGEREntropy()
+        assert fe.n == 0
+        assert fe.m == 0
+        assert fe.q == 0.0
+
+    def test_single_edge(self):
+        fe = FINGEREntropy()
+        fe.add_edge("a", "b")
+        assert fe.n == 2
+        assert fe.m == 1
+        # Two nodes, each degree 1: sum_sq=2, sum_d=2, Q=1-2/4=0.5
+        assert fe.q == pytest.approx(0.5)
+
+    def test_complete_graph_k3(self):
+        """K_3: all degrees=2, sum_sq=12, sum_d=6, Q=1-12/36=2/3."""
+        fe = FINGEREntropy()
+        fe.add_edge("a", "b")
+        fe.add_edge("b", "c")
+        fe.add_edge("a", "c")
+        assert fe.n == 3
+        assert fe.m == 3
+        assert fe.q == pytest.approx(1 - 12.0 / 36.0)
+
+    def test_star_graph(self):
+        """Star with center degree 4: high inequality → low Q."""
+        fe = FINGEREntropy()
+        center = "hub"
+        for i in range(4):
+            fe.add_edge(center, f"leaf{i}")
+        # degrees: [4,1,1,1,1], sum_sq=16+4=20, sum_d=8
+        # Q = 1 - 20/64 = 1 - 0.3125 = 0.6875
+        assert fe.q == pytest.approx(1 - 20.0 / 64.0)
+
+    def test_q_increases_with_balanced_edges(self):
+        """Adding edges to low-degree nodes increases Q (diversity)."""
+        fe = FINGEREntropy()
+        fe.add_edge("a", "b")
+        q1 = fe.q
+        fe.add_edge("c", "d")
+        q2 = fe.q
+        assert q2 > q1  # More balanced → higher Q
+
+    def test_q_decreases_with_hub_monopoly(self):
+        """Adding edges only to one hub decreases Q."""
+        fe = FINGEREntropy()
+        fe.add_edge("a", "b")
+        fe.add_edge("c", "d")
+        q_before = fe.q
+        # Make 'a' a super-hub
+        fe.add_edge("a", "c")
+        fe.add_edge("a", "d")
+        fe.add_edge("a", "e")
+        q_after = fe.q
+        assert q_after < q_before  # Hub monopoly → lower Q
+
+    def test_remove_edge_reverses(self):
+        """Removing an edge should approximately reverse the Q change."""
+        fe = FINGEREntropy()
+        fe.add_edge("a", "b")
+        fe.add_edge("b", "c")
+        fe.add_edge("a", "c")
+        q_before = fe.q
+        fe.remove_edge("a", "c")
+        q_mid = fe.q
+        fe.add_edge("a", "c")
+        q_after = fe.q
+        assert q_after == pytest.approx(q_before)
+
+    def test_snapshot_records_history(self):
+        fe = FINGEREntropy()
+        fe.add_edge("a", "b")
+        s1 = fe.snapshot()
+        fe.add_edge("b", "c")
+        s2 = fe.snapshot()
+        assert len(fe.q_history) == 2
+        assert len(fe.js_history) == 2
+        assert s1["q"] != s2["q"]
+        assert "q_delta" in s2
+
+    def test_js_divergence_zero_for_identical(self):
+        fe = FINGEREntropy()
+        fe.add_edge("a", "b")
+        fe.snapshot()
+        fe.snapshot()  # No change
+        assert fe.js_history[-1] == pytest.approx(0.0, abs=1e-10)
+
+    def test_js_divergence_detects_topology_shift(self):
+        fe = FINGEREntropy()
+        fe.add_edge("a", "b")
+        fe.snapshot()
+        # Add a star (hub + leaves) → degree distribution changes dramatically
+        for i in range(10):
+            fe.add_edge("hub", f"leaf{i}")
+        fe.snapshot()
+        assert fe.js_history[-1] > 0.001
+
+    def test_detect_anomaly_normal(self):
+        fe = FINGEREntropy()
+        for i in range(5):
+            fe.add_edge(f"n{i}", f"n{i+1}")
+            fe.snapshot()
+        result = fe.detect_anomaly()
+        assert not result["is_anomaly"]
+
+    def test_detect_anomaly_triggered(self):
+        fe = FINGEREntropy()
+        fe.add_edge("a", "b")
+        fe.snapshot()
+        # Sudden massive change → anomaly
+        for i in range(20):
+            fe.add_edge("hub", f"leaf{i}")
+        fe.snapshot()
+        result = fe.detect_anomaly(threshold=0.01)
+        assert result["is_anomaly"]
+        assert "message" in result
+
+    def test_health_summary(self):
+        fe = FINGEREntropy()
+        for i in range(6):
+            fe.add_edge(f"n{i}", f"n{i+1}")
+        fe.snapshot()
+        hs = fe.health_summary()
+        assert hs["status"] in ("healthy", "moderate", "degraded")
+        assert "q" in hs
+        assert hs["n"] == 7
+        assert hs["m"] == 6
+        assert "avg_degree" in hs
+        assert "anomaly" in hs
+
+    def test_from_memory_graph(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        c = mg.add("C", "concept")
+        mg.link(a.id, b.id, "related")
+        mg.link(b.id, c.id, "related")
+        mg.link(a.id, c.id, "related")
+        fe = FINGEREntropy.from_graph(mg)
+        assert fe.n == 3
+        assert fe.m == 3
+        assert 0 < fe.q < 1
+
+    def test_duplicate_add_edge(self):
+        """Adding same edge twice should increase degree accordingly."""
+        fe = FINGEREntropy()
+        fe.add_edge("a", "b")
+        fe.add_edge("a", "b")  # duplicate
+        assert fe.m == 2
+        assert fe._degrees["a"] == 2
+        assert fe._degrees["b"] == 2
+
+    def test_q_range_0_to_1(self):
+        """Q should always be in [0, 1)."""
+        fe = FINGEREntropy()
+        for i in range(20):
+            fe.add_edge(f"n{i}", f"n{(i+1) % 20}")
+            assert 0 <= fe.q < 1.0
+
+
+class TestPersonalizedPageRank:
+    """Tests for MemoryGraph.personalized_pagerank()."""
+
+    def test_empty_graph(self):
+        mg = MemoryGraph(":memory:")
+        result = mg.personalized_pagerank(["nonexistent"])
+        assert result == {}
+
+    def test_single_node_no_edges(self):
+        mg = MemoryGraph(":memory:")
+        n = mg.add("solo", "concept")
+        result = mg.personalized_pagerank([n.id])
+        # No edges → only damping contribution stays
+        assert n.id in result
+        assert result[n.id] == pytest.approx(0.85, abs=0.15)
+
+    def test_two_node_propagation(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A", "concept")
+        b = mg.add("B", "concept")
+        mg.link(a.id, b.id, "related")
+        result = mg.personalized_pagerank([a.id])
+        assert result[a.id] > result[b.id]
+        assert result[a.id] + result[b.id] == pytest.approx(1.0, abs=0.15)
+
+    def test_seed_weight_influence(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "r")
+        mg.link(b.id, c.id, "r")
+        mg.link(a.id, c.id, "r")
+        # Weight seed B more
+        result = mg.personalized_pagerank([a.id, b.id], weights={a.id: 0.1, b.id: 0.9})
+        assert result[b.id] > result[a.id]
+
+    def test_hub_gets_higher_score(self):
+        mg = MemoryGraph(":memory:")
+        hub = mg.add("hub")
+        leaves = [mg.add(f"leaf{i}") for i in range(5)]
+        for leaf in leaves:
+            mg.link(hub.id, leaf.id, "r")
+        result = mg.personalized_pagerank([hub.id])
+        assert result[hub.id] == max(result.values())
+
+    def test_uniform_seeds(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        result = mg.personalized_pagerank([a.id, b.id])
+        # Symmetric graph, equal seeds → equal scores
+        assert result[a.id] == pytest.approx(result[b.id], abs=0.05)
+
+
+class TestMultiHopReason:
+    """Tests for MemoryGraph.multi_hop_reason()."""
+
+    def test_empty_graph(self):
+        mg = MemoryGraph(":memory:")
+        result = mg.multi_hop_reason("test", [])
+        assert result["question"] == "test"
+        assert result["activated_nodes"] == []
+        assert result["evidence_paths"] == []
+
+    def test_single_seed_no_edges(self):
+        mg = MemoryGraph(":memory:")
+        n = mg.add("solo", "concept")
+        result = mg.multi_hop_reason("what?", [n.id])
+        assert len(result["activated_nodes"]) >= 1
+        assert result["activated_nodes"][0]["node_id"] == n.id
+
+    def test_chain_traversal(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        d = mg.add("D")
+        mg.link(a.id, b.id, "next", weight=1.0)
+        mg.link(b.id, c.id, "next", weight=1.0)
+        mg.link(c.id, d.id, "next", weight=1.0)
+        result = mg.multi_hop_reason("trace", [a.id], max_depth=3)
+        assert len(result["evidence_paths"]) >= 1
+        path = result["evidence_paths"][0]
+        assert path[0]["node_id"] == a.id
+        # Should have traversed at least 2 hops
+        assert len(path) >= 2
+
+    def test_returns_summary(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        result = mg.multi_hop_reason("test", [a.id])
+        assert isinstance(result["summary"], str)
+        assert "Activated" in result["summary"]
+
+    def test_min_weight_filter(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A")
+        b = mg.add("B")
+        c = mg.add("C")
+        mg.link(a.id, b.id, "strong", weight=1.0)
+        mg.link(b.id, c.id, "weak", weight=0.01)
+        result = mg.multi_hop_reason("test", [a.id], min_weight=0.5, max_depth=3)
+        # Should traverse to B but not C (weak edge)
+        path = result["evidence_paths"][0] if result["evidence_paths"] else []
+        path_ids = [p["node_id"] for p in path]
+        assert b.id in path_ids
+        assert c.id not in path_ids
+
+    def test_top_k_limit(self):
+        mg = MemoryGraph(":memory:")
+        nodes = [mg.add(f"N{i}") for i in range(20)]
+        for i in range(19):
+            mg.link(nodes[i].id, nodes[i+1].id, "r")
+        result = mg.multi_hop_reason("test", [nodes[0].id], top_k=5)
+        assert len(result["activated_nodes"]) <= 5
+
+    def test_activated_nodes_have_scores(self):
+        mg = MemoryGraph(":memory:")
+        a = mg.add("A")
+        b = mg.add("B")
+        mg.link(a.id, b.id, "r")
+        result = mg.multi_hop_reason("test", [a.id])
+        for node in result["activated_nodes"]:
+            assert "score" in node
+            assert node["score"] >= 0
+            assert "label" in node
+            assert "depth" in node
 

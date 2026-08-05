@@ -17987,6 +17987,400 @@ class MemoryGraph:
 
         return recommendation
 
+    # ── Personalized PageRank ─────────────────────────────
+
+    def personalized_pagerank(
+        self,
+        seeds: list[str],
+        weights: dict[str, float] | None = None,
+        damping: float = 0.85,
+        max_iter: int = 100,
+        tol: float = 1e-6,
+    ) -> dict[str, float]:
+        """Personalized PageRank (PPR) — HippoRAG2 pattern.
+
+        Simulates activation spreading from seed nodes. High-weight paths
+        get more activation; noisy paths die out. 10-30× cheaper than
+        iterative LLM retrieval.
+
+        Args:
+            seeds: Starting node IDs for activation.
+            weights: Per-seed initial weights (uniform if None).
+            damping: Teleport probability back to seeds (default 0.85).
+            max_iter: Maximum power iterations.
+            tol: Convergence tolerance.
+
+        Returns:
+            {node_id: ppr_score} sorted by score descending.
+        """
+        node_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        n = len(node_ids)
+        if n == 0:
+            return {}
+        idx = {nid: i for i, nid in enumerate(node_ids)}
+
+        # Build adjacency + out-degree (undirected, weighted by edge weight)
+        adj: dict[int, list[tuple[int, float]]] = defaultdict(list)
+        out_deg = [0.0] * n
+        for e in self.conn.execute("SELECT source, target, weight FROM edges").fetchall():
+            if e["source"] in idx and e["target"] in idx:
+                i, j = idx[e["source"]], idx[e["target"]]
+                w = max(e["weight"], 0.01)
+                adj[i].append((j, w))
+                adj[j].append((i, w))
+                out_deg[i] += w
+                out_deg[j] += w
+
+        # Seed distribution
+        seed_vec = [0.0] * n
+        valid_seeds = [s for s in seeds if s in idx]
+        if not valid_seeds:
+            return {}
+        if weights:
+            total_w = sum(weights.get(s, 1.0) for s in valid_seeds) or 1.0
+            for s in valid_seeds:
+                seed_vec[idx[s]] = weights.get(s, 1.0) / total_w
+        else:
+            for s in valid_seeds:
+                seed_vec[idx[s]] = 1.0 / len(valid_seeds)
+
+        # Power iteration
+        scores = seed_vec[:]
+        for _ in range(max_iter):
+            new_scores = [damping * seed_vec[i] for i in range(n)]
+            for i in range(n):
+                if out_deg[i] == 0:
+                    continue
+                share = (1 - damping) * scores[i] / out_deg[i]
+                for j, w in adj[i]:
+                    new_scores[j] += share * w
+            # Check convergence
+            diff = sum(abs(new_scores[i] - scores[i]) for i in range(n))
+            scores = new_scores
+            if diff < tol:
+                break
+
+        # Return sorted results
+        result = {node_ids[i]: scores[i] for i in range(n) if scores[i] > 1e-10}
+        return dict(sorted(result.items(), key=lambda x: -x[1]))
+
+    # ── Multi-hop Reasoning ────────────────────────────────
+
+    def multi_hop_reason(
+        self,
+        question: str,
+        seeds: list[str],
+        max_depth: int = 3,
+        min_weight: float = 0.1,
+        top_k: int = 10,
+    ) -> dict:
+        """Entropy-guided multi-hop reasoning over the memory graph.
+
+        Wraps personalized_pagerank (broad recall) + filtered traversal
+        (precise evidence paths) + evidence collection into a single API.
+        Inspired by HippoRAG2 / PathRAG / StepChain patterns.
+
+        Args:
+            question: The reasoning question (stored for reference).
+            seeds: Starting node IDs.
+            max_depth: Maximum traversal hops for evidence paths.
+            min_weight: Minimum edge weight to follow.
+            top_k: Max nodes to return in results.
+
+        Returns:
+            {
+                "question": str,
+                "activated_nodes": [{node_id, label, score, depth}],
+                "evidence_paths": [[{node_id, label, relation}...]],
+                "summary": str,
+            }
+        """
+        # Phase 1: PPR for broad activation
+        ppr_scores = self.personalized_pagerank(seeds)
+
+        # Phase 2: Collect evidence paths via BFS with weight pruning
+        evidence_paths: list[list[dict]] = []
+        visited_depth: dict[str, int] = {}
+
+        # BFS from each seed
+        for seed in seeds:
+            if seed not in ppr_scores:
+                continue
+            path = [{
+                "node_id": seed,
+                "label": self._node_label(seed),
+                "relation": "seed",
+            }]
+            current = seed
+            for depth in range(max_depth):
+                edges_out = self.conn.execute(
+                    "SELECT target, relation, weight FROM edges "
+                    "WHERE source=? AND weight >= ? "
+                    "ORDER BY weight DESC LIMIT 5",
+                    (current, min_weight)
+                ).fetchall()
+                if not edges_out:
+                    break
+                # Follow highest-weight edge that leads to a high-PPR node
+                best = None
+                for e in edges_out:
+                    tgt = e["target"]
+                    if tgt in visited_depth and visited_depth[tgt] <= depth:
+                        continue
+                    if tgt in ppr_scores:
+                        best = e
+                        break
+                if not best:
+                    best = edges_out[0]
+                tgt = best["target"]
+                visited_depth[tgt] = depth + 1
+                path.append({
+                    "node_id": tgt,
+                    "label": self._node_label(tgt),
+                    "relation": best["relation"],
+                })
+                current = tgt
+            if len(path) > 1:
+                evidence_paths.append(path)
+
+        # Phase 3: Compile activated nodes
+        activated = []
+        for nid, score in list(ppr_scores.items())[:top_k]:
+            activated.append({
+                "node_id": nid,
+                "label": self._node_label(nid),
+                "score": round(score, 6),
+                "depth": visited_depth.get(nid, -1),
+            })
+
+        # Phase 4: Summary
+        n_paths = len(evidence_paths)
+        n_activated = len(activated)
+        top_nodes = [a["label"] for a in activated[:3]]
+        summary = (
+            f"Activated {n_activated} nodes via PPR from {len(seeds)} seeds. "
+            f"Found {n_paths} evidence paths (max_depth={max_depth}). "
+            f"Top: {', '.join(top_nodes)}"
+        )
+
+        return {
+            "question": question,
+            "activated_nodes": activated,
+            "evidence_paths": evidence_paths,
+            "summary": summary,
+        }
+
+    def _node_label(self, node_id: str) -> str:
+        row = self.conn.execute("SELECT label FROM nodes WHERE id=?", (node_id,)).fetchone()
+        return row["label"] if row else node_id
+
+
+
+class FINGEREntropy:
+    """Streaming incremental von Neumann entropy via quadratic proxy Q.
+
+    Based on FINGER (Chen et al., ICML 2019). Instead of O(n³) full
+    eigendecomposition, uses the quadratic proxy:
+
+        Q = 1 - tr(L²) / tr²(L)
+
+    where tr(L²) = Σ_i d_i² + Σ_i d_i - 2m  (for unweighted graphs).
+    Q updates in O(Δ) per edge add/remove — constant time per change.
+
+    The Q trajectory over time serves as a streaming graph health monitor:
+    - High Q = diverse, well-distributed topology (healthy)
+    - Low Q = dominated by few nodes (unhealthy/fragmented)
+    - Sharp Q drops signal anomalous writes (injection, contradiction burst)
+
+    Optionally maintains a running JS-divergence between consecutive
+    degree-distribution snapshots for streaming anomaly detection.
+    """
+
+    def __init__(self):
+        self._n = 0          # node count
+        self._m = 0          # edge count (undirected)
+        self._sum_sq = 0     # Σ d_i²  (sum of squared degrees)
+        self._sum_d = 0      # Σ d_i   (sum of degrees = 2m)
+        self._degrees: dict[str, int] = {}
+        self._q_history: list[float] = []   # Q trajectory
+        self._js_history: list[float] = []  # JS divergence trajectory
+        self._prev_dist: list[float] | None = None  # previous degree distribution
+
+    @property
+    def n(self) -> int:
+        return self._n
+
+    @property
+    def m(self) -> int:
+        return self._m
+
+    @property
+    def q(self) -> float:
+        """Current quadratic proxy value Q ∈ [0, 1]."""
+        if self._sum_d == 0:
+            return 0.0
+        return 1.0 - self._sum_sq / (self._sum_d ** 2)
+
+    @property
+    def q_history(self) -> list[float]:
+        return list(self._q_history)
+
+    @property
+    def js_history(self) -> list[float]:
+        return list(self._js_history)
+
+    def add_node(self, node_id: str):
+        """Register a new node with degree 0."""
+        if node_id in self._degrees:
+            return
+        self._degrees[node_id] = 0
+        self._n += 1
+
+    def _ensure_node(self, node_id: str):
+        if node_id not in self._degrees:
+            self.add_node(node_id)
+
+    def add_edge(self, u: str, v: str):
+        """Incrementally update Q for a new edge (u, v)."""
+        self._ensure_node(u)
+        self._ensure_node(v)
+        du, dv = self._degrees[u], self._degrees[v]
+        self._sum_sq -= du * du + dv * dv
+        du += 1; dv += 1
+        self._degrees[u] = du
+        self._degrees[v] = dv
+        self._sum_sq += du * du + dv * dv
+        self._sum_d += 2
+        self._m += 1
+
+    def remove_edge(self, u: str, v: str):
+        """Incrementally update Q for edge removal."""
+        if u not in self._degrees or v not in self._degrees:
+            return
+        du, dv = self._degrees[u], self._degrees[v]
+        if du == 0 or dv == 0:
+            return
+        self._sum_sq -= du * du + dv * dv
+        du -= 1; dv -= 1
+        self._degrees[u] = du
+        self._degrees[v] = dv
+        self._sum_sq += du * du + dv * dv
+        self._sum_d -= 2
+        self._m -= 1
+
+    def snapshot(self) -> dict:
+        """Capture current Q and degree distribution, update trajectories."""
+        current_q = self.q
+        self._q_history.append(current_q)
+        dist = self._degree_distribution()
+        if self._prev_dist is not None:
+            js = self._js_divergence(self._prev_dist, dist)
+            self._js_history.append(js)
+        else:
+            self._js_history.append(0.0)
+        self._prev_dist = dist
+        return {
+            "q": current_q,
+            "n": self._n,
+            "m": self._m,
+            "js_divergence": self._js_history[-1],
+            "q_delta": self._q_history[-2] - current_q if len(self._q_history) >= 2 else 0.0,
+        }
+
+    def _degree_distribution(self) -> list[float]:
+        """Normalized degree distribution P(degree=k)."""
+        if self._n == 0:
+            return []
+        max_deg = max(self._degrees.values()) if self._degrees else 0
+        if max_deg == 0:
+            return [1.0]
+        counts = [0] * (max_deg + 1)
+        for d in self._degrees.values():
+            counts[d] += 1
+        return [c / self._n for c in counts]
+
+    @staticmethod
+    def _js_divergence(p: list[float], q: list[float]) -> float:
+        """Jensen-Shannon divergence between two distributions.
+
+        Pads shorter vector with zeros. Returns value in [0, ln(2)].
+        """
+        max_len = max(len(p), len(q))
+        p = p + [0.0] * (max_len - len(p))
+        q = q + [0.0] * (max_len - len(q))
+        m = [(pi + qi) / 2 for pi, qi in zip(p, q)]
+        return 0.5 * FINGEREntropy._kl(p, m) + 0.5 * FINGEREntropy._kl(q, m)
+
+    @staticmethod
+    def _kl(p: list[float], q: list[float]) -> float:
+        """KL divergence D(p||q), skipping zero entries."""
+        val = 0.0
+        for pi, qi in zip(p, q):
+            if pi > 1e-15 and qi > 1e-15:
+                val += pi * math.log(pi / qi)
+        return val
+
+    def detect_anomaly(self, threshold: float = 0.05) -> dict:
+        """Check if latest snapshot shows anomalous Q drop or JS spike.
+
+        Args:
+            threshold: JS divergence threshold for anomaly flag.
+
+        Returns:
+            {"is_anomaly": bool, "q_drop": float, "js": float, "message": str}
+        """
+        if len(self._q_history) < 2:
+            return {"is_anomaly": False, "q_drop": 0.0, "js": 0.0, "message": "insufficient history"}
+        q_drop = self._q_history[-2] - self._q_history[-1]
+        js = self._js_history[-1] if self._js_history else 0.0
+        is_anomaly = js > threshold or abs(q_drop) > threshold
+        if is_anomaly:
+            if q_drop > threshold:
+                msg = f"Q dropped by {q_drop:.4f} — possible fragmentation or hub loss"
+            else:
+                msg = f"JS divergence {js:.4f} exceeds threshold — topology shift detected"
+        else:
+            msg = "normal"
+        return {"is_anomaly": is_anomaly, "q_drop": q_drop, "js": js, "message": msg}
+
+    def health_summary(self) -> dict:
+        """Human-readable streaming health report."""
+        current_q = self.q
+        if self._n == 0:
+            return {"status": "empty", "q": 0.0, "message": "no nodes"}
+        if current_q > 0.6:
+            status = "healthy"
+        elif current_q > 0.3:
+            status = "moderate"
+        else:
+            status = "degraded"
+        anomaly = self.detect_anomaly()
+        return {
+            "status": status,
+            "q": round(current_q, 4),
+            "n": self._n,
+            "m": self._m,
+            "avg_degree": round(self._sum_d / self._n, 2) if self._n else 0.0,
+            "q_trajectory": self._q_history[-10:],
+            "js_trajectory": self._js_history[-10:],
+            "anomaly": anomaly,
+        }
+
+    @classmethod
+    def from_graph(cls, mg: "MemoryGraph") -> "FINGEREntropy":
+        """Build a FINGEREntropy from an existing MemoryGraph's current topology."""
+        fe = cls()
+        node_ids = [r["id"] for r in mg.conn.execute("SELECT id FROM nodes").fetchall()]
+        for nid in node_ids:
+            fe.add_node(nid)
+        seen: set[tuple[str, str]] = set()
+        for e in mg.conn.execute("SELECT source, target FROM edges").fetchall():
+            key = tuple(sorted([e["source"], e["target"]]))
+            if key not in seen:
+                seen.add(key)
+                fe.add_edge(e["source"], e["target"])
+        fe.snapshot()
+        return fe
 
 
 def demo():
