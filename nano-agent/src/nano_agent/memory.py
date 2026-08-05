@@ -1291,3 +1291,104 @@ class Memory:
             "unique_tags": len(tag_counts),
             "total_entries": n,
         }
+
+    # F47: resize — trim memory to max_size using eviction strategies
+    def resize(self, max_size: int, strategy: str = "oldest") -> Dict[str, Any]:
+        """Trim memory to *max_size* entries using the given eviction strategy.
+
+        Strategies:
+          - ``oldest``: remove entries with the earliest timestamps.
+          - ``least_important``: remove entries with the lowest importance scores.
+          - ``random``: randomly remove entries.
+          - ``clustered``: greedily keep cluster centroids (via similarity),
+            removing near-duplicates first.
+
+        Returns a dict with removed_count, remaining_count, and strategy.
+        """
+        import random as _random
+
+        n = len(self._entries)
+        if n <= max_size:
+            return {"removed_count": 0, "remaining_count": n, "strategy": strategy}
+
+        to_remove = n - max_size
+
+        if strategy == "oldest":
+            # Sort by timestamp ascending, remove oldest first
+            indexed = sorted(enumerate(self._entries), key=lambda x: x[1].timestamp)
+            remove_indices = {idx for idx, _ in indexed[:to_remove]}
+        elif strategy == "least_important":
+            # Sort by importance ascending, remove least important first
+            indexed = sorted(enumerate(self._entries), key=lambda x: x[1].importance)
+            remove_indices = {idx for idx, _ in indexed[:to_remove]}
+        elif strategy == "random":
+            remove_indices = set(_random.sample(range(n), to_remove))
+        elif strategy == "clustered":
+            # Greedily mark near-duplicates for removal
+            remove_indices = set()
+            kept_indices = list(range(n))
+            for i in range(n):
+                if i in remove_indices:
+                    continue
+                for j in range(i + 1, n):
+                    if j in remove_indices:
+                        continue
+                    ratio = SequenceMatcher(None, self._entries[i].content,
+                                            self._entries[j].content).ratio()
+                    if ratio >= 0.7:
+                        # Keep the one with higher importance
+                        if self._entries[i].importance >= self._entries[j].importance:
+                            remove_indices.add(j)
+                        else:
+                            remove_indices.add(i)
+                        break
+                if len(remove_indices) >= to_remove:
+                    break
+            # If clustered didn't remove enough, fall back to least_important
+            if len(remove_indices) < to_remove:
+                remaining_candidates = [i for i in range(n) if i not in remove_indices]
+                remaining_candidates.sort(key=lambda i: self._entries[i].importance)
+                still_need = to_remove - len(remove_indices)
+                for idx in remaining_candidates[:still_need]:
+                    remove_indices.add(idx)
+            # If clustered removed too many, keep the extras by importance
+            if len(remove_indices) > to_remove:
+                extras = sorted(remove_indices, key=lambda i: -self._entries[i].importance)
+                for idx in extras[:len(remove_indices) - to_remove]:
+                    remove_indices.discard(idx)
+        else:
+            raise ValueError(f"Unknown strategy: {strategy}. "
+                             "Use 'oldest', 'least_important', 'random', or 'clustered'.")
+
+        # Apply removal in reverse order to preserve indices
+        new_entries = [e for i, e in enumerate(self._entries) if i not in remove_indices]
+        removed = len(self._entries) - len(new_entries)
+        self._entries = new_entries
+
+        return {
+            "removed_count": removed,
+            "remaining_count": len(self._entries),
+            "strategy": strategy,
+        }
+
+    # F48: search_similar — find memories similar to a specific entry
+    def search_similar(self, index: int, limit: int = 5) -> List[MemoryEntry]:
+        """Find memories most similar to the entry at *index*.
+
+        Uses SequenceMatcher ratio on content. Excludes the query entry itself.
+        Returns entries sorted by similarity (descending), up to *limit*.
+        """
+        if index < 0 or index >= len(self._entries):
+            raise IndexError(f"Index {index} out of range (0-{len(self._entries) - 1})")
+
+        query_content = self._entries[index].content
+        scored: List[Tuple[float, MemoryEntry]] = []
+
+        for i, entry in enumerate(self._entries):
+            if i == index:
+                continue
+            ratio = SequenceMatcher(None, query_content, entry.content).ratio()
+            scored.append((ratio, entry))
+
+        scored.sort(key=lambda x: -x[0])
+        return [entry for _, entry in scored[:limit]]
