@@ -18250,6 +18250,164 @@ class MemoryGraph:
         fe = self.finger_entropy()
         return fe.health_summary()
 
+    # ─── Code-Aware APIs (Research #044) ─────────────────────────────
+
+    CODE_NODE_KINDS = {
+        "code_function", "code_module", "code_class",
+        "code_file", "code_variable",
+    }
+
+    CODE_EDGE_KINDS = {
+        "calls", "imports", "defined_in", "depends_on",
+        "decided_by", "fixed_by", "explored", "references",
+    }
+
+    def explain_code(self, node_id: str, max_depth: int = 2) -> dict:
+        """Trace *why* a code node exists and *what* it affects.
+
+        Upstream: episodes/decisions that touched this code
+        (``decided_by``, ``fixed_by``, ``explored`` edges, incoming).
+        Downstream: structural impact via ``calls``, ``imports``,
+        ``defined_in`` edges (outgoing, BFS to *max_depth*).
+
+        Returns a dict with ``code``, ``why``, ``bugs``, ``impact_scope``
+        and ``impact_count``.  Non-code nodes raise ``ValueError``.
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            raise KeyError(f"Node {node_id} not found")
+        if node.kind not in self.CODE_NODE_KINDS:
+            raise ValueError(
+                f"explain_code() requires a code node, got kind={node.kind!r}"
+            )
+
+        BRIDGE = {"decided_by", "fixed_by", "explored"}
+        STRUCT = {"calls", "imports", "defined_in", "depends_on"}
+
+        # Upstream: who decided / fixed / explored this code?
+        decisions: list[dict] = []
+        bugs: list[dict] = []
+        for edge in self.conn.execute(
+            "SELECT source, relation, weight FROM edges WHERE target=?", (node_id,)
+        ).fetchall():
+            if edge["relation"] not in BRIDGE:
+                continue
+            src = self.get_node(edge["source"])
+            if src is None:
+                continue
+            entry = {"node_id": src.id, "label": src.label,
+                     "kind": src.kind, "relation": edge["relation"]}
+            decisions.append(entry)
+            if edge["relation"] == "fixed_by":
+                bugs.append(entry)
+
+        # Downstream: structural impact via BFS on STRUCT edges
+        visited: set[str] = set()
+        layers: dict[int, list[dict]] = {}
+        queue = [(node_id, 0)]
+        while queue:
+            nid, depth = queue.pop(0)
+            if nid in visited or depth > max_depth:
+                continue
+            visited.add(nid)
+            if depth > 0:
+                n = self.get_node(nid)
+                layers.setdefault(depth, []).append(
+                    {"node_id": nid, "label": n.label if n else "?",
+                     "kind": n.kind if n else "?"}
+                )
+            for row in self.conn.execute(
+                "SELECT target, relation FROM edges WHERE source=?", (nid,)
+            ).fetchall():
+                if row["relation"] in STRUCT and row["target"] not in visited:
+                    queue.append((row["target"], depth + 1))
+
+        impact_count = sum(len(v) for v in layers.values())
+        return {
+            "code": {"node_id": node.id, "label": node.label,
+                      "kind": node.kind, "data": node.data},
+            "why": decisions,
+            "bugs": bugs,
+            "impact_scope": layers,
+            "impact_count": impact_count,
+        }
+
+    def impact_analysis(self, node_id: str, max_depth: int = 5) -> dict:
+        """BFS cascade analysis: if *node_id* changes, what breaks?
+
+        Follows outgoing ``calls``, ``imports``, ``depends_on`` edges
+        up to *max_depth* hops.  Flags bottleneck nodes (out-degree
+        much larger than in-degree).
+
+        Returns ``direct``, ``transitive``, ``total_affected``,
+        ``bottleneck_warning`` and ``degree``.
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            raise KeyError(f"Node {node_id} not found")
+
+        STRUCT = {"calls", "imports", "defined_in", "depends_on"}
+        visited: set[str] = {node_id}
+        layers: dict[int, list[dict]] = {}
+        queue = [(node_id, 0)]
+        while queue:
+            nid, depth = queue.pop(0)
+            if depth >= max_depth:
+                continue
+            for row in self.conn.execute(
+                "SELECT target, relation FROM edges WHERE source=?", (nid,)
+            ).fetchall():
+                if row["relation"] not in STRUCT:
+                    continue
+                tgt = row["target"]
+                if tgt in visited:
+                    continue
+                visited.add(tgt)
+                n = self.get_node(tgt)
+                layers.setdefault(depth + 1, []).append(
+                    {"node_id": tgt, "label": n.label if n else "?",
+                     "kind": n.kind if n else "?",
+                     "via": row["relation"]}
+                )
+                queue.append((tgt, depth + 1))
+
+        out_deg = self.degree(node_id, "out")
+        in_deg = self.degree(node_id, "in")
+        total = sum(len(v) for v in layers.values())
+        is_bottleneck = in_deg > 0 and out_deg / max(in_deg, 1) > 1.5
+
+        return {
+            "direct": layers.get(1, []),
+            "transitive": {str(k): v for k, v in layers.items() if k > 1},
+            "total_affected": total,
+            "bottleneck_warning": (
+                f"⚠️ Modifying {node.label} may affect {total} downstream nodes"
+                if is_bottleneck and total > 3
+                else None
+            ),
+            "degree": {"in": in_deg, "out": out_deg},
+        }
+
+    def record_code_decision(self, code_node_ids: list[str], content: str,
+                              confidence: float = 0.8,
+                              tags: list[str] = None) -> str:
+        """Record an Agent decision that touches code nodes.
+
+        Creates an ``episode`` node with *content*, then links it to
+        every node in *code_node_ids* via ``decided_by`` edges.
+        This bridges the Agent-experience world with the code world.
+
+        Returns the new episode node's ID.
+        """
+        ep = self.add(content, kind="episode",
+                      data={"confidence": confidence,
+                            "type": "code_decision"},
+                      tags=tags or ["code_decision"])
+        for cid in code_node_ids:
+            if self.has_node(cid):
+                self.link(ep.id, cid, "decided_by", weight=confidence)
+        return ep.id
+
 
 
 class StreamingGraph(MemoryGraph):

@@ -22401,3 +22401,410 @@ class TestSummaryTreeIntegration:
         ]
         assert len(pottery_evidence) > 0
 
+
+
+# ═══ Code-Aware APIs (Research #044) ═════════════════════════════
+
+
+class TestExplainCode:
+    """Tests for MemoryGraph.explain_code()."""
+
+    def test_explain_code_basic(self):
+        """explain_code returns code node info with empty upstream/downstream."""
+        mg = MemoryGraph()
+        fn = mg.add("validateToken", kind="code_function",
+                     data={"file": "auth.ts", "hash": "abc123"})
+        result = mg.explain_code(fn.id)
+        assert result["code"]["label"] == "validateToken"
+        assert result["code"]["kind"] == "code_function"
+        assert result["code"]["data"]["file"] == "auth.ts"
+        assert result["why"] == []
+        assert result["bugs"] == []
+        assert result["impact_count"] == 0
+
+    def test_explain_code_with_decisions(self):
+        """explain_code traces upstream decisions via decided_by edges."""
+        mg = MemoryGraph()
+        fn = mg.add("parseInput", kind="code_function")
+        ep1 = mg.add("Refactored parseInput to handle UTF-8", kind="episode")
+        mg.link(ep1.id, fn.id, "decided_by")
+        result = mg.explain_code(fn.id)
+        assert len(result["why"]) == 1
+        assert result["why"][0]["label"] == "Refactored parseInput to handle UTF-8"
+        assert result["why"][0]["relation"] == "decided_by"
+
+    def test_explain_code_with_bug_fixes(self):
+        """explain_code separates fixed_by edges into bugs list."""
+        mg = MemoryGraph()
+        fn = mg.add("calculateTotal", kind="code_function")
+        bug_ep = mg.add("Fixed off-by-one in calculateTotal", kind="episode")
+        mg.link(bug_ep.id, fn.id, "fixed_by")
+        result = mg.explain_code(fn.id)
+        assert len(result["bugs"]) == 1
+        assert result["bugs"][0]["relation"] == "fixed_by"
+        assert len(result["why"]) == 1  # also in why
+
+    def test_explain_code_with_explored(self):
+        """explain_code includes explored edges in why."""
+        mg = MemoryGraph()
+        fn = mg.add("queryDB", kind="code_function")
+        ep = mg.add("Investigated queryDB performance", kind="episode")
+        mg.link(ep.id, fn.id, "explored")
+        result = mg.explain_code(fn.id)
+        assert any(d["relation"] == "explored" for d in result["why"])
+
+    def test_explain_code_downstream_impact(self):
+        """explain_code traces downstream calls/imports."""
+        mg = MemoryGraph()
+        fn = mg.add("main", kind="code_function")
+        callee = mg.add("helper", kind="code_function")
+        mg.link(fn.id, callee.id, "calls")
+        result = mg.explain_code(fn.id)
+        assert result["impact_count"] == 1
+        assert result["impact_scope"][1][0]["label"] == "helper"
+
+    def test_explain_code_bfs_depth_limit(self):
+        """explain_code respects max_depth for downstream BFS."""
+        mg = MemoryGraph()
+        a = mg.add("a", kind="code_function")
+        b = mg.add("b", kind="code_function")
+        c = mg.add("c", kind="code_function")
+        mg.link(a.id, b.id, "calls")
+        mg.link(b.id, c.id, "calls")
+        result = mg.explain_code(a.id, max_depth=1)
+        assert result["impact_count"] == 1  # only b, not c
+
+    def test_explain_code_rejects_non_code_node(self):
+        """explain_code raises ValueError for non-code nodes."""
+        mg = MemoryGraph()
+        fact = mg.add("The sky is blue", kind="fact")
+        with pytest.raises(ValueError, match="code node"):
+            mg.explain_code(fact.id)
+
+    def test_explain_code_unknown_node(self):
+        """explain_code raises KeyError for non-existent node."""
+        mg = MemoryGraph()
+        with pytest.raises(KeyError):
+            mg.explain_code("nonexistent")
+
+    def test_explain_code_mixed_edges(self):
+        """explain_code handles mixed incoming edges correctly."""
+        mg = MemoryGraph()
+        fn = mg.add("processData", kind="code_function")
+        ep1 = mg.add("Initial implementation", kind="episode")
+        ep2 = mg.add("Fixed race condition", kind="episode")
+        ep3 = mg.add("Explored optimization options", kind="episode")
+        mg.link(ep1.id, fn.id, "decided_by")
+        mg.link(ep2.id, fn.id, "fixed_by")
+        mg.link(ep3.id, fn.id, "explored")
+        # Non-bridge edge should be ignored
+        other = mg.add("Some other fact", kind="fact")
+        mg.link(other.id, fn.id, "relates_to")
+        result = mg.explain_code(fn.id)
+        assert len(result["why"]) == 3
+        assert len(result["bugs"]) == 1
+
+    def test_explain_code_on_code_class(self):
+        """explain_code works on code_class nodes too."""
+        mg = MemoryGraph()
+        cls = mg.add("AuthService", kind="code_class",
+                      data={"file": "auth.ts"})
+        result = mg.explain_code(cls.id)
+        assert result["code"]["label"] == "AuthService"
+
+    def test_explain_code_on_code_module(self):
+        """explain_code works on code_module nodes."""
+        mg = MemoryGraph()
+        mod = mg.add("auth/module", kind="code_module")
+        result = mg.explain_code(mod.id)
+        assert result["code"]["kind"] == "code_module"
+
+    def test_explain_code_deep_chain(self):
+        """explain_code handles deep call chains."""
+        mg = MemoryGraph()
+        nodes = []
+        for i in range(6):
+            n = mg.add(f"func_{i}", kind="code_function")
+            nodes.append(n)
+            if i > 0:
+                mg.link(nodes[i-1].id, n.id, "calls")
+        result = mg.explain_code(nodes[0].id, max_depth=3)
+        # depth 1: func_1, depth 2: func_2, depth 3: func_3
+        assert result["impact_count"] == 3
+
+
+class TestImpactAnalysis:
+    """Tests for MemoryGraph.impact_analysis()."""
+
+    def test_impact_analysis_basic(self):
+        """impact_analysis on isolated node returns empty impact."""
+        mg = MemoryGraph()
+        fn = mg.add("standalone", kind="code_function")
+        result = mg.impact_analysis(fn.id)
+        assert result["total_affected"] == 0
+        assert result["direct"] == []
+        assert result["bottleneck_warning"] is None
+
+    def test_impact_analysis_direct_dependents(self):
+        """impact_analysis finds direct callers."""
+        mg = MemoryGraph()
+        a = mg.add("funcA", kind="code_function")
+        b = mg.add("funcB", kind="code_function")
+        c = mg.add("funcC", kind="code_function")
+        mg.link(a.id, b.id, "calls")
+        mg.link(a.id, c.id, "calls")
+        result = mg.impact_analysis(a.id)
+        assert result["total_affected"] == 2
+        labels = {d["label"] for d in result["direct"]}
+        assert labels == {"funcB", "funcC"}
+
+    def test_impact_analysis_transitive(self):
+        """impact_analysis follows transitive calls."""
+        mg = MemoryGraph()
+        a = mg.add("a", kind="code_function")
+        b = mg.add("b", kind="code_function")
+        c = mg.add("c", kind="code_function")
+        mg.link(a.id, b.id, "calls")
+        mg.link(b.id, c.id, "calls")
+        result = mg.impact_analysis(a.id, max_depth=5)
+        assert result["total_affected"] == 2
+        assert len(result["direct"]) == 1
+        assert "2" in result["transitive"]
+
+    def test_impact_analysis_depth_limit(self):
+        """impact_analysis respects max_depth."""
+        mg = MemoryGraph()
+        funcs = [mg.add(f"f{i}", kind="code_function") for i in range(5)]
+        for i in range(4):
+            mg.link(funcs[i].id, funcs[i+1].id, "calls")
+        result = mg.impact_analysis(funcs[0].id, max_depth=2)
+        assert result["total_affected"] == 2
+
+    def test_impact_analysis_imports(self):
+        """impact_analysis follows imports edges."""
+        mg = MemoryGraph()
+        mod = mg.add("utils", kind="code_module")
+        fn = mg.add("formatDate", kind="code_function")
+        mg.link(mod.id, fn.id, "imports")
+        result = mg.impact_analysis(mod.id)
+        assert result["total_affected"] == 1
+        assert result["direct"][0]["label"] == "formatDate"
+        assert result["direct"][0]["via"] == "imports"
+
+    def test_impact_analysis_depends_on(self):
+        """impact_analysis follows depends_on edges."""
+        mg = MemoryGraph()
+        a = mg.add("service", kind="code_class")
+        b = mg.add("database", kind="code_class")
+        mg.link(a.id, b.id, "depends_on")
+        result = mg.impact_analysis(a.id)
+        assert result["total_affected"] == 1
+
+    def test_impact_analysis_bottleneck_warning(self):
+        """impact_analysis warns on high-fan-out bottleneck nodes."""
+        mg = MemoryGraph()
+        hub = mg.add("hub", kind="code_function")
+        # hub calls 5 things (high out-degree)
+        for i in range(5):
+            dep = mg.add(f"dep{i}", kind="code_function")
+            mg.link(hub.id, dep.id, "calls")
+        # only 1 incoming
+        caller = mg.add("caller", kind="code_function")
+        mg.link(caller.id, hub.id, "calls")
+        result = mg.impact_analysis(hub.id)
+        assert result["bottleneck_warning"] is not None
+        assert "5" in result["bottleneck_warning"]  # total downstream
+
+    def test_impact_analysis_no_bottleneck_for_balanced(self):
+        """impact_analysis doesn't warn for balanced in/out degree."""
+        mg = MemoryGraph()
+        a = mg.add("a", kind="code_function")
+        b = mg.add("b", kind="code_function")
+        mg.link(a.id, b.id, "calls")
+        mg.link(b.id, a.id, "calls")  # symmetric
+        result = mg.impact_analysis(a.id)
+        assert result["bottleneck_warning"] is None
+
+    def test_impact_analysis_unknown_node(self):
+        """impact_analysis raises KeyError for missing node."""
+        mg = MemoryGraph()
+        with pytest.raises(KeyError):
+            mg.impact_analysis("ghost")
+
+    def test_impact_analysis_ignores_non_structural_edges(self):
+        """impact_analysis only follows structural edges, not memory edges."""
+        mg = MemoryGraph()
+        a = mg.add("a", kind="code_function")
+        b = mg.add("decision: use React", kind="episode")
+        mg.link(a.id, b.id, "relates_to")  # not a structural edge
+        result = mg.impact_analysis(a.id)
+        assert result["total_affected"] == 0
+
+    def test_impact_analysis_via_field(self):
+        """impact_analysis records which edge type led to each node."""
+        mg = MemoryGraph()
+        a = mg.add("a", kind="code_function")
+        b = mg.add("b", kind="code_function")
+        mg.link(a.id, b.id, "calls")
+        result = mg.impact_analysis(a.id)
+        assert result["direct"][0]["via"] == "calls"
+
+    def test_impact_analysis_degree_info(self):
+        """impact_analysis returns in/out degree."""
+        mg = MemoryGraph()
+        a = mg.add("a", kind="code_function")
+        b = mg.add("b", kind="code_function")
+        c = mg.add("c", kind="code_function")
+        mg.link(a.id, b.id, "calls")
+        mg.link(c.id, a.id, "calls")
+        result = mg.impact_analysis(a.id)
+        assert result["degree"]["out"] == 1
+        assert result["degree"]["in"] == 1
+
+
+class TestRecordCodeDecision:
+    """Tests for MemoryGraph.record_code_decision()."""
+
+    def test_record_code_decision_creates_episode(self):
+        """record_code_decision creates an episode node."""
+        mg = MemoryGraph()
+        fn = mg.add("myFunc", kind="code_function")
+        ep_id = mg.record_code_decision([fn.id], "Decided to use async/await")
+        ep = mg.get_node(ep_id)
+        assert ep is not None
+        assert ep.kind == "episode"
+        assert "Decided to use async/await" in ep.label
+        assert ep.data["type"] == "code_decision"
+        assert ep.data["confidence"] == 0.8
+
+    def test_record_code_decision_links_to_code(self):
+        """record_code_decision creates decided_by edges."""
+        mg = MemoryGraph()
+        fn1 = mg.add("func1", kind="code_function")
+        fn2 = mg.add("func2", kind="code_function")
+        ep_id = mg.record_code_decision([fn1.id, fn2.id], "Refactored both")
+        # Verify edges
+        decisions = mg.neighbors_filtered(fn1.id, relation="decided_by", direction="in")
+        assert any(d.id == ep_id for d in decisions)
+        decisions2 = mg.neighbors_filtered(fn2.id, relation="decided_by", direction="in")
+        assert any(d.id == ep_id for d in decisions2)
+
+    def test_record_code_decision_custom_confidence(self):
+        """record_code_decision respects confidence parameter."""
+        mg = MemoryGraph()
+        fn = mg.add("fn", kind="code_function")
+        ep_id = mg.record_code_decision([fn.id], "Low confidence decision",
+                                          confidence=0.3)
+        ep = mg.get_node(ep_id)
+        assert ep.data["confidence"] == 0.3
+
+    def test_record_code_decision_tags(self):
+        """record_code_decision adds tags."""
+        mg = MemoryGraph()
+        fn = mg.add("fn", kind="code_function")
+        ep_id = mg.record_code_decision([fn.id], "Fixed bug", tags=["urgent", "bug"])
+        # Tags are stored in the node (via JSON column, check via query)
+        row = mg.conn.execute("SELECT tags FROM nodes WHERE id=?", (ep_id,)).fetchone()
+        tags = json.loads(row["tags"])
+        assert "urgent" in tags
+        assert "bug" in tags
+
+    def test_record_code_decision_empty_code_list(self):
+        """record_code_decision works with empty code_node_ids."""
+        mg = MemoryGraph()
+        ep_id = mg.record_code_decision([], "General decision")
+        ep = mg.get_node(ep_id)
+        assert ep is not None
+        assert ep.kind == "episode"
+
+    def test_record_code_decision_skips_nonexistent_nodes(self):
+        """record_code_decision silently skips invalid node IDs."""
+        mg = MemoryGraph()
+        fn = mg.add("real", kind="code_function")
+        ep_id = mg.record_code_decision([fn.id, "ghost_id"], "Mixed")
+        # Should link only to real node
+        assert mg.has_node(ep_id)
+        # ghost_id should not exist
+        assert not mg.has_node("ghost_id")
+
+    def test_record_code_decision_roundtrip_with_explain_code(self):
+        """record_code_decision → explain_code roundtrip."""
+        mg = MemoryGraph()
+        fn = mg.add("computeScore", kind="code_function")
+        ep_id = mg.record_code_decision(
+            [fn.id],
+            "Switched from O(n²) to O(n log n) algorithm",
+            confidence=0.9
+        )
+        result = mg.explain_code(fn.id)
+        assert len(result["why"]) == 1
+        assert result["why"][0]["node_id"] == ep_id
+        assert result["why"][0]["relation"] == "decided_by"
+
+    def test_record_code_decision_multiple_decisions(self):
+        """Multiple decisions accumulate on same code node."""
+        mg = MemoryGraph()
+        fn = mg.add("criticalFunc", kind="code_function")
+        mg.record_code_decision([fn.id], "Decision 1")
+        mg.record_code_decision([fn.id], "Bug fix", tags=["bug"])
+        mg.record_code_decision([fn.id], "Decision 3")
+        result = mg.explain_code(fn.id)
+        assert len(result["why"]) == 3
+
+    def test_record_code_decision_default_confidence(self):
+        """Default confidence is 0.8."""
+        mg = MemoryGraph()
+        fn = mg.add("fn", kind="code_function")
+        ep_id = mg.record_code_decision([fn.id], "Test")
+        ep = mg.get_node(ep_id)
+        assert ep.data["confidence"] == 0.8
+
+
+class TestCodeAwareIntegration:
+    """Integration tests for code-aware API workflows."""
+
+    def test_full_code_aware_workflow(self):
+        """Full workflow: add code → record decisions → explain → impact."""
+        mg = MemoryGraph()
+        # 1. Build a small code graph
+        main = mg.add("main", kind="code_function")
+        auth = mg.add("authenticate", kind="code_function")
+        db = mg.add("queryDB", kind="code_function")
+        mg.link(main.id, auth.id, "calls")
+        mg.link(auth.id, db.id, "calls")
+
+        # 2. Record decisions
+        mg.record_code_decision([auth.id], "Added JWT support to authenticate")
+        mg.record_code_decision([db.id], "Fixed SQL injection in queryDB",
+                                tags=["security", "bug"])
+
+        # 3. Explain the code
+        result = mg.explain_code(auth.id)
+        assert len(result["why"]) == 1
+        assert result["impact_count"] == 1  # queryDB
+
+        # 4. Impact analysis from main
+        impact = mg.impact_analysis(main.id)
+        assert impact["total_affected"] == 2  # auth + db
+
+    def test_code_aware_with_non_code_neighbors(self):
+        """Code nodes coexist with regular memory nodes."""
+        mg = MemoryGraph()
+        fn = mg.add("processPayment", kind="code_function")
+        pref = mg.add("User prefers Stripe", kind="preference")
+        fact = mg.add("Stripe API v2024", kind="fact")
+        mg.link(pref.id, fn.id, "relates_to")
+        mg.link(fact.id, fn.id, "relates_to")
+        mg.record_code_decision([fn.id], "Integrated Stripe")
+        result = mg.explain_code(fn.id)
+        # Only decided_by should appear in why, not relates_to
+        assert len(result["why"]) == 1
+
+    def test_code_node_kind_constants(self):
+        """CODE_NODE_KINDS and CODE_EDGE_KINDS are accessible."""
+        assert "code_function" in MemoryGraph.CODE_NODE_KINDS
+        assert "code_module" in MemoryGraph.CODE_NODE_KINDS
+        assert "code_class" in MemoryGraph.CODE_NODE_KINDS
+        assert "calls" in MemoryGraph.CODE_EDGE_KINDS
+        assert "decided_by" in MemoryGraph.CODE_EDGE_KINDS
+        assert "fixed_by" in MemoryGraph.CODE_EDGE_KINDS
