@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~46,000 | ⭐ 知识图谱记忆引擎：1000+ API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询 |
+| [agent-memory-graph](agent-memory-graph/) | ~48,000 | ⭐ 知识图谱记忆引擎：1000+ API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活 |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 46,000+ 行的完整图记忆引擎，包含 1000+ 公开 API 和 7,269+ 测试用例，横跨 137 个测试文件。
+该项目已从 300 行的教学示例演化为 48,000+ 行的完整图记忆引擎，包含 1000+ 公开 API 和 7,500+ 测试用例。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -61,7 +61,10 @@
 | **统计验证** | 3 | `classification_loocv`, `classification_calibrate`, `optimize_reference_set` — 留一交叉验证 + 温度校准(ECE) + 参考集优化(ENN/CCCD) |
 | **分类元策略** | 2 | `classification_compare_methods`, `classification_consensus` — 跨方法对比 + 多数投票元分类器 |
 | **分类可解释性** | 2 | `classification_confusion_explain`, `classification_counterfactual` — 逐模态贡献分解 + 反事实翻转分析 |
-| **分类优化** | 1 | `classification_learned_weights` — 网格搜索最优模态权重 |
+| **分类优化** | 2 | `classification_learned_weights` — 网格搜索最优模态权重；`classification_noise_adaptive` — 噪声水平自适应选择 |
+| **认知检索** | 3 | `spreading_activation` — ACT-R 认知扩散激活；`personalized_pagerank` — 个性化 PageRank；`multi_hop_reason` — 多跳推理链 |
+| **流式健康** | 4 | `StreamingGraph` 类、`FINGEREntropy` 类、`enrich_node`、`streaming_health` — 实时 FINGER 熵追踪 + 异常检测 |
+| **层级记忆** | 1 | `SummaryTree` 类 — segment→session→day→week→profile 时序层级 consolidation（TiMem/ProGraph 启发）|
 | **代码感知** | 8 | `add_code_node`, `explain_code`, `impact_analysis`, `code_subgraph`, `record_code_decision`, `code_nodes_by_kind`, `code_graph_summary` |
 | **双时序** | 2 | `query_believed_as_of`, `temporal_delta_query` — 真·双时序查询（valid time + transaction time）|
 | **变更追踪** | 1 | `what_changed_since` — 时间戳以来的图变更报告 |
@@ -69,9 +72,9 @@
 | **条件遍历** | 3 | `conditioned_traverse`, `project_graph`, `multi_perspective_analysis` |
 | **序列化** | 24 | `export_json`, `to_markdown`, `serialize_dot`, `serialize_graphml` |
 
-### 📐 信息论进化史（Cycles 306–316 + 326–357）
+### 📐 信息论进化史（Cycles 306–316 + 326–366）
 
-最新里程碑：24-API 分类套件完成 — 从单一匹配到集成融合、元策略、统计验证、直到可解释性。完整的 single-match → ensemble → meta → evaluation → optimization → **explainability** 流水线。
+最新里程碑：**认知检索 + 流式健康 + 层级记忆** — 从图分类全流水线扩展到认知科学启发的记忆架构（ACT-R 扩散激活、FINGER 流式熵、TiMem 层级 consolidation）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -94,6 +97,12 @@
 | 分类元策略 | 353–354 | `classification_compare_methods`, `classification_consensus` | 跨方法对比报告 + 多数投票元分类器 |
 | 噪声自适应 | 355 | `classification_noise_adaptive` | 检测查询噪声水平，自动选择最鲁棒分类方法 |
 | 可解释性 | 356–357 | `classification_confusion_explain`, `classification_counterfactual` | 逐模态贡献分解(为何选这个) + 反事实翻转分析(怎样会改变结果) |
+| 认知检索 | 358–361 | `classification_confidence_interval`, `personalized_pagerank`, `multi_hop_reason`, McNemar 显著性检验 | Bootstrap 置信区间 + 统计显著性 + PPR + 多跳推理链 |
+| 流式健康监控 | 362–363 | `FINGEREntropy`, `StreamingGraph`, `enrich_node`, `streaming_health` | O(Δ) 增量熵追踪 + 实时异常检测（注入攻击/矛盾爆发/主题漂移）|
+| 向量检索扩展 | F47–F48 | `resize`, `search_similar` | 4 种淘汰策略（LRU/LFU/TTL/entropy）+ 相似度搜索 |
+| 层级记忆 | 364 | `SummaryTree` | segment→session→day→week→profile 时序层级 consolidation（TiMem + ProGraph 启发）|
+| 代码感知增强 | 365 | `explain_code`, `impact_analysis`, `record_code_decision` (扩展) | 路径参数 + 扩展 CODE_NODE_KINDS/EDGE_KINDS |
+| 认知扩散激活 | 366 | `spreading_activation` | ACT-R 语义启动 + 阈值门控 firing + 衰减扩散（vs PPR 的 teleport 模型）|
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---
