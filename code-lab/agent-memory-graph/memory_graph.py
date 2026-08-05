@@ -18251,6 +18251,78 @@ class MemoryGraph:
 
 
 
+class StreamingGraph(MemoryGraph):
+    """MemoryGraph with real-time FINGEREntropy tracking on every write.
+
+    Wraps add/link/delete to maintain a persistent FINGEREntropy instance.
+    After each write, takes a snapshot and runs anomaly detection.
+    Provides streaming health monitoring without O(n³) recomputation.
+
+    Use this when you need real-time graph health alerts (e.g., detecting
+    injection attacks, contradiction bursts, or topic shifts as they happen).
+    """
+
+    def __init__(self, db_path: str = ":memory:", anomaly_threshold: float = 0.05):
+        super().__init__(db_path)
+        self._finger = FINGEREntropy()
+        self._anomaly_threshold = anomaly_threshold
+        self._anomalies: list[dict] = []
+
+    @property
+    def finger(self) -> "FINGEREntropy":
+        return self._finger
+
+    @property
+    def anomalies(self) -> list[dict]:
+        """Log of detected anomalies."""
+        return list(self._anomalies)
+
+    def add(self, label: str, kind: str = "fact", data: dict = None,
+            tags: list[str] = None) -> Node:
+        node = super().add(label, kind, data, tags)
+        self._finger.add_node(node.id)
+        self._check_after_write(f"add:{label}")
+        return node
+
+    def link(self, source_id: str, target_id: str, relation: str,
+             weight: float = 1.0):
+        result = super().link(source_id, target_id, relation, weight)
+        # Track in FINGER (dedup check via internal set)
+        self._finger.add_edge(source_id, target_id)
+        self._check_after_write(f"link:{relation}")
+        return result
+
+    def delete_node(self, node_id: str) -> bool:
+        # Get edges before deletion to update FINGER
+        edges = self.conn.execute(
+            "SELECT source, target FROM edges WHERE source=? OR target=?",
+            (node_id, node_id)
+        ).fetchall()
+        result = super().delete_node(node_id)
+        if result:
+            for e in edges:
+                self._finger.remove_edge(e["source"], e["target"])
+            self._check_after_write(f"delete:{node_id}")
+        return result
+
+    def _check_after_write(self, operation: str):
+        """Snapshot + anomaly detection after each write."""
+        snap = self._finger.snapshot()
+        anomaly = self._finger.detect_anomaly(self._anomaly_threshold)
+        if anomaly["is_anomaly"]:
+            anomaly["operation"] = operation
+            anomaly["timestamp"] = time.time()
+            self._anomalies.append(anomaly)
+
+    def streaming_report(self) -> dict:
+        """Full streaming health report with anomaly history."""
+        hs = self._finger.health_summary()
+        hs["total_anomalies"] = len(self._anomalies)
+        hs["recent_anomalies"] = self._anomalies[-5:]
+        return hs
+
+
+
 class FINGEREntropy:
     """Streaming incremental von Neumann entropy via quadratic proxy Q.
 

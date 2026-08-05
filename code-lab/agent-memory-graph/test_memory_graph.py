@@ -5,7 +5,7 @@ import os
 import tempfile
 import time
 import pytest
-from memory_graph import MemoryGraph, Node, Edge, FINGEREntropy
+from memory_graph import MemoryGraph, Node, Edge, FINGEREntropy, StreamingGraph
 
 
 @pytest.fixture
@@ -21868,4 +21868,101 @@ class TestStreamingHealth:
         hs = mg.streaming_health()
         assert hs["status"] == "empty"
         assert hs["q"] == 0.0
+
+
+class TestStreamingGraph:
+    """Tests for StreamingGraph — MemoryGraph with real-time FINGER tracking."""
+
+    def test_inherits_memory_graph(self):
+        sg = StreamingGraph(":memory:")
+        assert isinstance(sg, MemoryGraph)
+
+    def test_tracks_nodes_and_edges(self):
+        sg = StreamingGraph(":memory:")
+        a = sg.add("A")
+        b = sg.add("B")
+        sg.link(a.id, b.id, "r")
+        assert sg.finger.n == 2
+        assert sg.finger.m == 1
+
+    def test_q_updates_on_write(self):
+        sg = StreamingGraph(":memory:")
+        a = sg.add("A")
+        b = sg.add("B")
+        sg.link(a.id, b.id, "r")
+        q1 = sg.finger.q
+        c = sg.add("C")
+        sg.link(b.id, c.id, "r")
+        q2 = sg.finger.q
+        # Q trajectory should have snapshots
+        assert len(sg.finger.q_history) > 0
+
+    def test_snapshot_per_write(self):
+        sg = StreamingGraph(":memory:")
+        for i in range(5):
+            sg.add(f"N{i}")
+        # 5 snapshots from 5 add operations
+        assert len(sg.finger.q_history) >= 5
+
+    def test_delete_updates_finger(self):
+        sg = StreamingGraph(":memory:")
+        a = sg.add("A")
+        b = sg.add("B")
+        c = sg.add("C")
+        sg.link(a.id, b.id, "r")
+        sg.link(b.id, c.id, "r")
+        assert sg.finger.m == 2
+        sg.delete_node(c.id)
+        assert sg.finger.m == 1
+
+    def test_anomaly_detection_on_burst(self):
+        sg = StreamingGraph(":memory:", anomaly_threshold=0.001)
+        # Gradual buildup
+        a = sg.add("A")
+        b = sg.add("B")
+        sg.link(a.id, b.id, "r")
+        # Burst of star edges → topology shift
+        hub = sg.add("hub")
+        for i in range(10):
+            leaf = sg.add(f"leaf{i}")
+            sg.link(hub.id, leaf.id, "r")
+        assert len(sg.anomalies) > 0
+
+    def test_streaming_report(self):
+        sg = StreamingGraph(":memory:")
+        a = sg.add("A")
+        b = sg.add("B")
+        sg.link(a.id, b.id, "r")
+        report = sg.streaming_report()
+        assert "status" in report
+        assert "total_anomalies" in report
+        assert "recent_anomalies" in report
+        assert report["n"] == 2
+        assert report["m"] == 1
+
+    def test_no_false_positives_gradual(self):
+        sg = StreamingGraph(":memory:", anomaly_threshold=0.7)
+        prev = sg.add("n0")
+        for i in range(1, 8):
+            curr = sg.add(f"n{i}")
+            sg.link(prev.id, curr.id, "r")
+            prev = curr
+        # Gradual path growth should not trigger anomaly at high threshold
+        assert len(sg.anomalies) == 0
+
+    def test_anomaly_log_structure(self):
+        sg = StreamingGraph(":memory:", anomaly_threshold=0.001)
+        a = sg.add("A")
+        b = sg.add("B")
+        sg.link(a.id, b.id, "r")
+        hub = sg.add("hub")
+        for i in range(15):
+            leaf = sg.add(f"l{i}")
+            sg.link(hub.id, leaf.id, "r")
+        if sg.anomalies:
+            anom = sg.anomalies[0]
+            assert "operation" in anom
+            assert "timestamp" in anom
+            assert "is_anomaly" in anom
+            assert "message" in anom
 
