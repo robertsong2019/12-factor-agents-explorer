@@ -18408,6 +18408,196 @@ class MemoryGraph:
                 self.link(ep.id, cid, "decided_by", weight=confidence)
         return ep.id
 
+    # ─── Spreading Activation (Research #049) ──────────────────────────
+
+    def spreading_activation(
+        self,
+        seeds: dict[str, float],
+        *,
+        decay: float = 0.85,
+        threshold: float = 0.01,
+        max_iter: int = 20,
+        edge_weight_factor: float = 1.0,
+        directed: bool = False,
+        relation_filter: list[str] | None = None,
+        include_seed_details: bool = False,
+    ) -> list[dict]:
+        """Cognitive spreading-activation retrieval (Anderson 1983; Collins & Loftus 1975).
+
+        Unlike :meth:`diffusion_retrieve` (Personalized PageRank), which uses
+        teleport/reset to ensure global convergence, spreading activation models
+        *semantic priming*: activation flows from seed nodes along edges, decaying
+        at each step.  Nodes exceeding ``threshold`` "fire" and propagate further.
+
+        Key differences from PPR / diffusion_retrieve:
+
+        - **No teleport/reset** — activation only spreads forward, naturally
+          decaying to zero.
+        - **Threshold-gated firing** — low-activation nodes don't propagate,
+          modelling cognitive "subliminal" activation.
+        - **Asymmetric** — directed edges carry activation preferentially.
+        - **Iterative, non-convergent** — stops at ``max_iter`` or when no
+          node fires above threshold.
+
+        Typical use cases:
+
+        - **Semantic priming:** "What concepts are related to X?"
+        - **Associative recall:** Find memories reachable from a concept.
+        - **Context expansion:** Enrich a seed set with graph neighbours.
+        - **Bias detection:** See which nodes get co-activated.
+
+        Args:
+            seeds: Mapping of ``{node_id: initial_activation}``.  Values
+                are typically 1.0 for full activation; fractional values
+                model partial confidence.
+            decay: Edge-traversal decay factor (0–1).  0.85 means each
+                hop retains 85 % of the incoming activation.  Higher =
+                spreads further; lower = stays local.
+            threshold: Minimum activation for a node to "fire" and
+                propagate further.  0.01 is permissive; 0.1 is strict.
+            max_iter: Maximum spreading iterations.
+            edge_weight_factor: Exponent on edge weights.  1.0 = linear,
+                0.5 = square root (dampens strong edges), 2.0 = amplifies.
+            directed: If True, only follow edges in their source→target
+                direction.  If False (default), treat edges as undirected.
+            relation_filter: If given, only follow edges whose relation is
+                in this list (e.g. ``["related_to", "depends_on"]``).
+            include_seed_details: If True, include ``label`` and ``kind``
+                for each result node.
+
+        Returns:
+            List of dicts sorted by activation (descending)::
+
+                [{node_id, activation, fired, hop_distance,
+                  sources, [label, kind]}, ...]
+
+            ``fired`` is True when activation ≥ threshold.
+            ``hop_distance`` is the shortest path length from the nearest seed.
+            ``sources`` lists node IDs that contributed activation.
+
+        Raises:
+            ValueError: If ``seeds`` is empty or ``decay`` not in (0, 1].
+        """
+        if not seeds:
+            raise ValueError("seeds must not be empty")
+        if not (0 < decay <= 1.0):
+            raise ValueError("decay must be in (0, 1]")
+
+        # ── 1. Initialise activation ────────────────────────────────
+        activation: dict[str, float] = {}
+        hop_dist: dict[str, int] = {}
+        sources: dict[str, set] = {}
+
+        for sid, act in seeds.items():
+            if not self.has_node(sid):
+                continue
+            activation[sid] = act
+            hop_dist[sid] = 0
+            sources[sid] = set()
+
+        if not activation:
+            return []
+
+        # Nodes that have already spread their activation (fire-once model)
+        already_fired = set(activation.keys())
+
+        # ── 2. Spread activation (BFS-like, fire-once) ────────────
+        for iteration in range(max_iter):
+            # Nodes that fire in this iteration
+            if iteration == 0:
+                current_wave = list(activation.keys())
+            else:
+                current_wave = [
+                    nid for nid, act in activation.items()
+                    if act >= threshold and nid not in already_fired
+                ]
+
+            if not current_wave:
+                break
+
+            next_act: dict[str, float] = {}
+            next_sources: dict[str, set] = {}
+
+            for node_id in current_wave:
+                already_fired.add(node_id)
+                act = activation[node_id]
+
+                # Gather outgoing (and optionally incoming) edges
+                if directed:
+                    rows = self.conn.execute(
+                        "SELECT target, relation, weight FROM edges WHERE source=?",
+                        (node_id,)
+                    ).fetchall()
+                else:
+                    rows = self.conn.execute(
+                        "SELECT target AS nbr, relation, weight FROM edges WHERE source=? "
+                        "UNION "
+                        "SELECT source AS nbr, relation, weight FROM edges WHERE target=?",
+                        (node_id, node_id)
+                    ).fetchall()
+
+                for row in rows:
+                    nbr = row["nbr"] if isinstance(row, dict) else row[0]
+                    rel = row["relation"] if isinstance(row, dict) else row[1]
+                    w = row["weight"] if isinstance(row, dict) else row[2]
+
+                    if relation_filter and rel not in relation_filter:
+                        continue
+
+                    # Skip nodes that already fired (no back-flow)
+                    if nbr in already_fired:
+                        continue
+
+                    eff_w = max(abs(w), 1e-9) ** edge_weight_factor
+                    propagated = act * decay * eff_w
+
+                    if propagated < threshold:
+                        continue
+
+                    if nbr not in next_act:
+                        next_act[nbr] = 0.0
+                        next_sources[nbr] = set()
+
+                    next_act[nbr] += propagated
+                    next_sources[nbr].add(node_id)
+
+            # Apply new activations
+            any_new = False
+            for nid, act in next_act.items():
+                is_new = nid not in activation
+                if is_new:
+                    hop_dist[nid] = min(
+                        (hop_dist[s] + 1 for s in next_sources[nid] if s in hop_dist),
+                        default=999,
+                    )
+                    any_new = True
+                elif act > activation[nid]:
+                    any_new = True
+                activation[nid] = max(activation.get(nid, 0), act)
+                sources[nid] = sources.get(nid, set()) | next_sources[nid]
+
+            if not any_new:
+                break
+
+        # ── 3. Build result ─────────────────────────────────────────
+        results = []
+        for nid, act in sorted(activation.items(), key=lambda x: -x[1]):
+            entry: dict = {
+                "node_id": nid,
+                "activation": round(act, 6),
+                "fired": act >= threshold,
+                "hop_distance": hop_dist.get(nid, -1),
+                "sources": sorted(sources.get(nid, set())),
+            }
+            if include_seed_details:
+                node = self.get_node(nid)
+                if node:
+                    entry["label"] = node.label
+                    entry["kind"] = node.kind
+            results.append(entry)
+
+        return results
+
 
 
 class StreamingGraph(MemoryGraph):

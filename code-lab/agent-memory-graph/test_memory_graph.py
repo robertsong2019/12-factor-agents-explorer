@@ -22808,3 +22808,389 @@ class TestCodeAwareIntegration:
         assert "calls" in MemoryGraph.CODE_EDGE_KINDS
         assert "decided_by" in MemoryGraph.CODE_EDGE_KINDS
         assert "fixed_by" in MemoryGraph.CODE_EDGE_KINDS
+
+
+# ─── Spreading Activation Tests (Cycle 366, Research #049) ────────────
+
+@pytest.fixture
+def sa_graph(mg):
+    """Build a star + chain graph for spreading activation tests.
+
+    Layout:
+        center ── connects to ──> a, b, c
+        a ──> a1 (chain)
+        c ──> c1 ──> c2 (longer chain)
+        isolated (no edges)
+    """
+    center = mg.add("center", "hub")
+    a = mg.add("A", "leaf")
+    b = mg.add("B", "leaf")
+    c = mg.add("C", "leaf")
+    a1 = mg.add("A1", "leaf")
+    c1 = mg.add("C1", "leaf")
+    c2 = mg.add("C2", "leaf")
+    iso = mg.add("isolated", "isolated")
+    mg.link(center.id, a.id, "connects_to", 1.0)
+    mg.link(center.id, b.id, "connects_to", 1.0)
+    mg.link(center.id, c.id, "connects_to", 1.0)
+    mg.link(a.id, a1.id, "connects_to", 1.0)
+    mg.link(c.id, c1.id, "connects_to", 1.0)
+    mg.link(c1.id, c2.id, "connects_to", 1.0)
+    return mg, center, a, b, c, a1, c1, c2, iso
+
+
+class TestSpreadingActivationStructure:
+    """Tests for return value structure and validation."""
+
+    def test_returns_list_of_dicts(self, sa_graph):
+        mg, center, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0})
+        assert isinstance(results, list)
+        assert all(isinstance(r, dict) for r in results)
+
+    def test_required_keys_present(self, sa_graph):
+        mg, center, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0})
+        for r in results:
+            assert "node_id" in r
+            assert "activation" in r
+            assert "fired" in r
+            assert "hop_distance" in r
+            assert "sources" in r
+
+    def test_seed_appears_first(self, sa_graph):
+        mg, center, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0})
+        assert results[0]["node_id"] == center.id
+        assert results[0]["activation"] == 1.0
+
+    def test_sorted_by_activation_descending(self, sa_graph):
+        mg, center, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0})
+        acts = [r["activation"] for r in results]
+        assert acts == sorted(acts, reverse=True)
+
+    def test_activation_types(self, sa_graph):
+        mg, center, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0})
+        for r in results:
+            assert isinstance(r["activation"], float)
+            assert isinstance(r["fired"], bool)
+            assert isinstance(r["hop_distance"], int)
+            assert isinstance(r["sources"], list)
+
+
+class TestSpreadingActivationCorrectness:
+    """Tests for activation propagation correctness."""
+
+    def test_seed_activation_preserved(self, sa_graph):
+        mg, center, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 0.8})
+        seed = next(r for r in results if r["node_id"] == center.id)
+        assert seed["activation"] == 0.8
+
+    def test_hop1_neighbors_activated(self, sa_graph):
+        mg, center, a, b, c, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0})
+        ids = {r["node_id"] for r in results}
+        assert a.id in ids
+        assert b.id in ids
+        assert c.id in ids
+
+    def test_hop2_nodes_activated(self, sa_graph):
+        mg, center, a, b, c, a1, c1, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0}, decay=0.9)
+        ids = {r["node_id"] for r in results}
+        assert a1.id in ids
+        assert c1.id in ids
+
+    def test_hop3_reachable_with_high_decay(self, sa_graph):
+        mg, center, *_, c2, _ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0}, decay=0.95, max_iter=10)
+        ids = {r["node_id"] for r in results}
+        assert c2.id in ids
+
+    def test_activation_decreases_with_distance(self, sa_graph):
+        mg, center, a, b, c, a1, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0}, decay=0.85)
+        act_map = {r["node_id"]: r["activation"] for r in results}
+        assert act_map[center.id] > act_map[a.id]
+        assert act_map[a.id] > act_map.get(a1.id, 0)
+
+    def test_hop_distance_correct(self, sa_graph):
+        mg, center, a, b, c, a1, c1, c2, _ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0}, decay=0.95, max_iter=10)
+        hops = {r["node_id"]: r["hop_distance"] for r in results}
+        assert hops[center.id] == 0
+        assert hops[a.id] == 1
+        assert hops[a1.id] == 2
+        assert hops[c1.id] == 2
+        assert hops[c2.id] == 3
+
+    def test_sources_populated(self, sa_graph):
+        mg, center, a, b, c, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0})
+        a_result = next(r for r in results if r["node_id"] == a.id)
+        assert center.id in a_result["sources"]
+
+    def test_seed_sources_empty(self, sa_graph):
+        mg, center, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0})
+        seed = next(r for r in results if r["node_id"] == center.id)
+        assert seed["sources"] == []
+
+    def test_fired_flag_correct(self, sa_graph):
+        mg, center, a, b, c, *_ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0}, threshold=0.5)
+        for r in results:
+            if r["activation"] >= 0.5:
+                assert r["fired"] is True
+            else:
+                assert r["fired"] is False
+
+
+class TestSpreadingActivationParameters:
+    """Tests for parameter behaviour."""
+
+    def test_high_threshold_limits_spread(self, sa_graph):
+        mg, center, a, b, c, a1, *_ = sa_graph
+        # With very high threshold, only seeds fire
+        results = mg.spreading_activation({center.id: 1.0}, threshold=0.9)
+        fired = [r for r in results if r["fired"]]
+        assert len(fired) == 1  # only the seed
+
+    def test_low_threshold_spreads_far(self, sa_graph):
+        mg, center, *_, c2, _ = sa_graph
+        results = mg.spreading_activation({center.id: 1.0}, decay=0.9, threshold=0.01)
+        ids = {r["node_id"] for r in results}
+        assert c2.id in ids  # 3 hops away
+
+    def test_decay_controls_spread_distance(self, sa_graph):
+        mg, center, *_, c2, _ = sa_graph
+        # Low decay + moderate threshold: activation doesn't reach c2 (3 hops)
+        low = mg.spreading_activation({center.id: 1.0}, decay=0.3, threshold=0.05, max_iter=10)
+        low_ids = {r["node_id"] for r in low}
+        # High decay: activation reaches c2
+        high = mg.spreading_activation({center.id: 1.0}, decay=0.95, max_iter=10)
+        high_ids = {r["node_id"] for r in high}
+        assert c2.id not in low_ids
+        assert c2.id in high_ids
+
+    def test_max_iter_limits_spread(self, sa_graph):
+        mg, center, *_, c2, _ = sa_graph
+        # c2 is 3 hops away; max_iter=1 should not reach it
+        results = mg.spreading_activation({center.id: 1.0}, decay=0.95, max_iter=1)
+        ids = {r["node_id"] for r in results}
+        assert c2.id not in ids
+
+    def test_edge_weight_factor_amplifies(self, mg):
+        n1 = mg.add("N1", "test")
+        n2 = mg.add("N2", "test")
+        mg.link(n1.id, n2.id, "r", weight=2.0)
+        normal = mg.spreading_activation({n1.id: 1.0}, decay=0.85)
+        amplified = mg.spreading_activation({n1.id: 1.0}, decay=0.85, edge_weight_factor=2.0)
+        n2_normal = next(r for r in normal if r["node_id"] == n2.id)
+        n2_amp = next(r for r in amplified if r["node_id"] == n2.id)
+        assert n2_amp["activation"] > n2_normal["activation"]
+
+    def test_directed_mode(self, mg):
+        # In directed mode, activation only flows source → target
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "points_to", 1.0)
+        # Seed at B, directed: should NOT reach A
+        results = mg.spreading_activation({b.id: 1.0}, directed=True)
+        ids = {r["node_id"] for r in results}
+        assert a.id not in ids
+        # Seed at A, directed: SHOULD reach B
+        results2 = mg.spreading_activation({a.id: 1.0}, directed=True)
+        ids2 = {r["node_id"] for r in results2}
+        assert b.id in ids2
+
+    def test_relation_filter(self, mg):
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "strong", 1.0)
+        mg.link(a.id, c.id, "weak", 1.0)
+        results = mg.spreading_activation(
+            {a.id: 1.0}, relation_filter=["strong"]
+        )
+        ids = {r["node_id"] for r in results}
+        assert b.id in ids
+        assert c.id not in ids
+
+    def test_include_seed_details(self, sa_graph):
+        mg, center, *_ = sa_graph
+        results = mg.spreading_activation(
+            {center.id: 1.0}, include_seed_details=True
+        )
+        for r in results:
+            assert "label" in r
+            assert "kind" in r
+
+
+class TestSpreadingActivationEdgeCases:
+    """Tests for edge cases and robustness."""
+
+    def test_empty_seeds_raises(self, mg):
+        with pytest.raises(ValueError):
+            mg.spreading_activation({})
+
+    def test_invalid_decay_zero(self, mg):
+        n = mg.add("n", "test")
+        with pytest.raises(ValueError):
+            mg.spreading_activation({n.id: 1.0}, decay=0.0)
+
+    def test_invalid_decay_negative(self, mg):
+        n = mg.add("n", "test")
+        with pytest.raises(ValueError):
+            mg.spreading_activation({n.id: 1.0}, decay=-0.5)
+
+    def test_nonexistent_seed_ignored(self, sa_graph):
+        mg, center, *_ = sa_graph
+        results = mg.spreading_activation({"nonexistent": 1.0, center.id: 0.5})
+        ids = {r["node_id"] for r in results}
+        assert "nonexistent" not in ids
+        assert center.id in ids
+
+    def test_all_nonexistent_seeds_returns_empty(self, mg):
+        results = mg.spreading_activation({"fake1": 1.0, "fake2": 0.5})
+        assert results == []
+
+    def test_isolated_node_not_activated(self, sa_graph):
+        mg, center, *_, iso = sa_graph
+        results = mg.spreading_activation({center.id: 1.0}, decay=0.95)
+        ids = {r["node_id"] for r in results}
+        assert iso.id not in ids
+
+    def test_single_node_graph(self, mg):
+        n = mg.add("only", "test")
+        results = mg.spreading_activation({n.id: 1.0})
+        assert len(results) == 1
+        assert results[0]["node_id"] == n.id
+
+    def test_multiple_seeds(self, sa_graph):
+        mg, center, a, b, c, *_ = sa_graph
+        results = mg.spreading_activation({a.id: 1.0, c.id: 1.0}, decay=0.9)
+        ids = {r["node_id"] for r in results}
+        # Both seeds present
+        assert a.id in ids
+        assert c.id in ids
+        # center should be reachable from both
+        assert center.id in ids
+
+    def test_multiple_seeds_sum_activation(self, sa_graph):
+        mg, center, a, b, c, *_ = sa_graph
+        # Both A and C connect to center; center should get summed activation
+        results = mg.spreading_activation({a.id: 0.5, c.id: 0.5}, decay=0.9)
+        center_r = next(r for r in results if r["node_id"] == center.id)
+        # center receives activation from both a and c
+        assert center_r["activation"] > 0.5 * 0.9  # more than single path
+        assert len(center_r["sources"]) >= 2
+
+
+class TestSpreadingActivationNonMutating:
+    """Tests that spreading activation doesn't modify the graph."""
+
+    def test_graph_unchanged(self, sa_graph):
+        mg, center, *_ = sa_graph
+        before = mg.export_json()
+        mg.spreading_activation({center.id: 1.0})
+        after = mg.export_json()
+        assert before == after
+
+    def test_no_new_edges(self, sa_graph):
+        mg, center, *_ = sa_graph
+        edges_before = mg.edge_count()
+        mg.spreading_activation({center.id: 1.0})
+        edges_after = mg.edge_count()
+        assert edges_before == edges_after
+
+    def test_no_new_nodes(self, sa_graph):
+        mg, center, *_ = sa_graph
+        nodes_before = mg.stats()["nodes"]
+        mg.spreading_activation({center.id: 1.0})
+        nodes_after = mg.stats()["nodes"]
+        assert nodes_before == nodes_after
+
+
+class TestSpreadingActivationDeterminism:
+    """Tests for reproducibility."""
+
+    def test_same_input_same_output(self, sa_graph):
+        mg, center, *_ = sa_graph
+        r1 = mg.spreading_activation({center.id: 1.0}, decay=0.85)
+        r2 = mg.spreading_activation({center.id: 1.0}, decay=0.85)
+        assert r1 == r2
+
+    def test_activation_stable_across_calls(self, sa_graph):
+        mg, center, a, *_ = sa_graph
+        r1 = mg.spreading_activation({center.id: 1.0})
+        r2 = mg.spreading_activation({center.id: 1.0})
+        a1 = next(r for r in r1 if r["node_id"] == a.id)
+        a2 = next(r for r in r2 if r["node_id"] == a.id)
+        assert a1["activation"] == a2["activation"]
+
+
+class TestSpreadingActivationIntegration:
+    """Integration tests with other graph features."""
+
+    def test_works_with_recall(self, sa_graph):
+        mg, center, *_ = sa_graph
+        # Use recall to find seeds, then spread
+        recall_results = mg.recall("center")
+        if recall_results:
+            seeds = {recall_results[0].id: 1.0}
+            sa_results = mg.spreading_activation(seeds)
+            assert len(sa_results) > 0
+
+    def test_works_after_node_modification(self, mg):
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        mg.link(a.id, b.id, "r", 1.0)
+        # Modify: add more connections
+        c = mg.add("C", "test")
+        mg.link(b.id, c.id, "r", 1.0)
+        results = mg.spreading_activation({a.id: 1.0}, decay=0.9)
+        ids = {r["node_id"] for r in results}
+        assert c.id in ids
+
+    def test_works_with_weighted_edges(self, mg):
+        a = mg.add("A", "test")
+        b = mg.add("B", "test")
+        c = mg.add("C", "test")
+        mg.link(a.id, b.id, "strong", weight=2.0)
+        mg.link(a.id, c.id, "weak", weight=0.1)
+        results = mg.spreading_activation({a.id: 1.0}, decay=0.9)
+        b_r = next(r for r in results if r["node_id"] == b.id)
+        c_r = next(r for r in results if r["node_id"] == c.id)
+        assert b_r["activation"] > c_r["activation"]
+
+    def test_partial_activation_seed(self, sa_graph):
+        mg, center, a, *_ = sa_graph
+        full = mg.spreading_activation({center.id: 1.0}, decay=0.85)
+        partial = mg.spreading_activation({center.id: 0.5}, decay=0.85)
+        full_a = next(r for r in full if r["node_id"] == a.id)
+        partial_a = next(r for r in partial if r["node_id"] == a.id)
+        assert partial_a["activation"] < full_a["activation"]
+
+    def test_chain_vs_star_spread_pattern(self, mg):
+        """Star topology spreads more activation than chain at same depth."""
+        # Star: center -> 3 leaves
+        star_center = mg.add("star_c", "test")
+        for i in range(3):
+            leaf = mg.add(f"star_{i}", "test")
+            mg.link(star_center.id, leaf.id, "r", 1.0)
+        # Chain: n1 -> n2 -> n3 -> n4
+        chain_nodes = [mg.add(f"chain_{i}", "test") for i in range(4)]
+        for i in range(3):
+            mg.link(chain_nodes[i].id, chain_nodes[i+1].id, "r", 1.0)
+
+        star_results = mg.spreading_activation({star_center.id: 1.0}, decay=0.85)
+        chain_results = mg.spreading_activation({chain_nodes[0].id: 1.0}, decay=0.85)
+
+        star_activated = len(star_results)
+        chain_activated = len(chain_results)
+        # Star activates more nodes (center + 3 leaves) vs chain (4 nodes but decaying)
+        assert star_activated >= chain_activated
