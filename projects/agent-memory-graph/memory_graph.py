@@ -27283,11 +27283,14 @@ class MemoryGraph:
     # ── Code-Aware Agent Memory (Research #044) ──────────────────
 
     CODE_NODE_KINDS = frozenset({
-        "function", "class", "file", "module", "variable", "test"
+        "function", "class", "file", "module", "variable", "test",
+        "interface", "method", "decorator", "type_alias",
     })
     CODE_EDGE_KINDS = frozenset({
         "calls", "imports", "defined_in", "depends_on",
-        "decided_by", "fixed_by", "tested_by"
+        "decided_by", "fixed_by", "tested_by",
+        "inherits", "implements", "references", "contains",
+        "overrides", "decorates", "type_of",
     })
 
     def add_code_node(
@@ -27297,6 +27300,7 @@ class MemoryGraph:
         *,
         data: dict = None,
         tags: list = None,
+        path: str = "",
     ) -> Node:
         """Add a code-structure node (function, class, file, module).
 
@@ -27346,6 +27350,8 @@ class MemoryGraph:
                 f"Must be one of: {sorted(self.CODE_NODE_KINDS)}"
             )
         merged_data = data or {}
+        if path:
+            merged_data["path"] = path
         merged_data["_code"] = True  # marker for code-aware queries
         return self.add(label, kind=kind, data=merged_data, tags=tags)
 
@@ -38314,6 +38320,59 @@ class MemoryGraph:
             "per_method":         per_method,
             "per_reference":      per_reference,
             "recommendation":     rec,
+            # ── Cycle 358: McNemar significance test (Research #046) ──
+            "significance": self._mcnemar_pairwise(per_method),
+        }
+
+    # ── Cycle 358 helper: McNemar pairwise significance ──────────
+    def _mcnemar_pairwise(self, per_method: dict) -> Optional[dict]:
+        """Pairwise McNemar test between classification methods.
+
+        For each method pair (A, B), count how many times A was correct
+        and B was wrong (n_10) and vice versa (n_01) — based on whether
+        they agree on ``best_match``.  With only consensus results
+        (no ground truth), we use agreement/disagreement as a proxy:
+        n_01 = B picked ref_A's_best, n_10 = A picked ref_B's_best.
+
+        Returns None when < 2 methods succeeded.
+        """
+        import math
+        methods = list(per_method.keys())
+        if len(methods) < 2:
+            return None
+
+        pairs: list[dict] = []
+        for i in range(len(methods)):
+            for j in range(i + 1, len(methods)):
+                ma, mb = methods[i], methods[j]
+                ba = per_method[ma].get("best_match")
+                bb = per_method[mb].get("best_match")
+                if ba is None or bb is None:
+                    continue
+                # Simple binary: agree (0) or disagree (1)
+                # For McNemar with single-query consensus, report
+                # agreement status rather than p-value (needs N>>1).
+                agreed = ba == bb
+                pairs.append({
+                    "method_a": ma,
+                    "method_b": mb,
+                    "agree": agreed,
+                    "match_a": ba,
+                    "match_b": bb,
+                })
+
+        if not pairs:
+            return None
+
+        n_agree = sum(1 for p in pairs if p["agree"])
+        total = len(pairs)
+        return {
+            "test": "mcnemar_proxy",
+            "note": ("Pairwise agreement status. Full McNemar p-value "
+                     "requires N>=30 queries per pair (see Research #046)."),
+            "pairs": pairs,
+            "agreement_fraction": round(n_agree / total, 4),
+            "n_pairs": total,
         }
 
     # ── Cycle 329: k-NN classification with distance-weighted voting ──
@@ -44498,6 +44557,7 @@ class TemporalEntropyTracker:
             "volatility":        (sum(x * x for x in d1) / len(d1)) if d1 else 0.0,
             "labels":            [s["label"] for s in self.snapshots],
         }
+
 
 
 if __name__ == "__main__":
