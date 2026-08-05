@@ -22,3 +22,4 @@ timestamp	commit	metric	value	status	description
 2026-07-20T23:05+08:00	1813a46	test_count	709→732/+23	keep	F45 subtract(other) set difference (complement to union, content-based removal) + F46 to_prompt(include_metadata, include_tags, max_entries) structured LLM prompt formatter (importance-sorted, numbered, with tags/metadata/timestamp)
 2026-07-31T03:00	65e6164	test_count	746→753/+7	keep	OpenAIBackend.complete tested with mocked client: no-tools response, tool format conversion, tool_calls parsing, kwargs forwarding, model passing, multiple tool calls, null content handling.
 2026-07-31T03:00	65e6164	test_pass_rate	100%	keep	All 753 tests pass, 0 regressions
+2026-08-05T22:15+08:00	02336e4	test_count	775→791/+16	keep	F47 resize(max_size, strategy) 4 eviction strategies (oldest/least_important/random/clustered) + F48 search_similar(index, limit) content similarity search

@@ -71,6 +71,8 @@
 
 - [x] **F45**: `Memory.subtract(other)` — Set difference returning new Memory (complement to union, content-based removal) ✅ 2026-07-20
 - [x] **F46**: `Memory.to_prompt(include_metadata, include_tags, max_entries)` — Structured LLM prompt formatter (importance-sorted, numbered entries with tags/metadata/timestamp) ✅ 2026-07-20
+- [x] **F47**: `Memory.resize(max_size, strategy)` — Trim memory with 4 eviction strategies: oldest, least_important, random, clustered (near-dup removal) ✅ 2026-08-05
+- [x] **F48**: `Memory.search_similar(index, limit)` — Find most similar memories to a given entry by content similarity ratio ✅ 2026-08-05
 
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
