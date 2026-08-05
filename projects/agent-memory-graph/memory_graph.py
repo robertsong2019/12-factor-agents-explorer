@@ -44368,6 +44368,448 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ----------------------------------------------------------------
+    # Cycle 358: classification_confidence_interval — bootstrap CI.
+    # Research #050 ✅.
+    # ----------------------------------------------------------------
+
+    def classification_confidence_interval(
+        self,
+        references: list["MemoryGraph"],
+        queries: list["MemoryGraph"],
+        expected_labels: list[str],
+        *,
+        method: str = "graph",
+        n_bootstrap: int = 1000,
+        confidence_level: float = 0.95,
+        degree_index: str = "sombor",
+        spectral_measure: str = "jsd",
+        bins: int = 20,
+        normalise: str = "minmax",
+        include_quarantined: bool = False,
+        random_seed: int | None = 42,
+    ) -> dict:
+        """Bootstrap-based confidence intervals for classification metrics.
+
+        Given a reference set, a list of query graphs, and their
+        expected labels, this method uses **bootstrap resampling**
+        (Efron 1979) to compute confidence intervals for accuracy,
+        macro-F1, macro-precision, macro-recall, weighted-F1, and
+        per-class F1.
+
+        **Motivation** (Research #050):
+
+        - ``classification_report`` reports point estimates only —
+          accuracy of 0.85 could mean 0.80–0.90 or 0.84–0.86.
+        - ``classification_benchmark`` reports macro-averages on
+          canonical data without uncertainty.
+        - ``classification_loocv`` gives LOO estimates but no CI.
+        - In agent memory systems, knowing the uncertainty bounds
+          of classification accuracy is critical for deciding when
+          to trust the classifier vs when to seek more data.
+
+        **Algorithm (percentile bootstrap):**
+
+        1. Classify all queries once (point estimate).
+        2. For each of ``n_bootstrap`` iterations:
+           a. Resample queries **with replacement** (same size).
+           b. Classify the resampled set.
+           c. Compute accuracy, macro-F1, etc.
+        3. Sort each metric's bootstrap distribution.
+        4. Extract percentile CI at ``confidence_level``.
+
+        Args:
+            references: Reference MemoryGraph objects.
+            queries: Query MemoryGraph objects to classify.
+            expected_labels: Ground-truth label per query.
+            method: Classification method (``"graph"``,
+                ``"spectral"``, ``"hybrid"``, ``"rrf"``,
+                ``"bayesian"``, ``"knn"``, ``"weighted_average"``).
+            n_bootstrap: Number of bootstrap iterations (default
+                1000; minimum 50).
+            confidence_level: CI level (e.g. 0.95 for 95% CI).
+            degree_index: Degree index for graph classification.
+            spectral_measure: Spectral divergence measure.
+            bins: Histogram bins for spectral fingerprint.
+            normalise: Score normalisation method.
+            include_quarantined: Include quarantined references.
+            random_seed: Seed for reproducibility. ``None`` for
+                non-deterministic results.
+
+        Returns:
+            Dict with:
+
+            - ``method`` — classification method used.
+            - ``n_queries`` — number of query samples.
+            - ``n_bootstrap`` — bootstrap iterations run.
+            - ``confidence_level`` — e.g. 0.95.
+            - ``point_estimate`` — dict of metric → value (full
+              dataset classification).
+            - "intervals" — dict of metric → {mean, std, median,
+              lower, upper, width}.
+            - ``per_class_intervals`` — dict of label →
+              {f1: {mean, lower, upper}}.
+            - "sample_sizes" — min/max/mean bootstrap sample sizes
+              (for diagnostics).
+            - ``summary`` — human-readable CI summary.
+        """
+        import random
+
+        if not queries or not expected_labels:
+            return {
+                "method": method,
+                "n_queries": 0,
+                "n_bootstrap": n_bootstrap,
+                "confidence_level": confidence_level,
+                "point_estimate": {},
+                "intervals": {},
+                "per_class_intervals": {},
+                "sample_sizes": {},
+                "summary": "No queries provided.",
+            }
+
+        if len(queries) != len(expected_labels):
+            raise ValueError(
+                f"queries ({len(queries)}) and expected_labels "
+                f"({len(expected_labels)}) must have the same length"
+            )
+
+        if n_bootstrap < 50:
+            raise ValueError(
+                f"n_bootstrap must be >= 50, got {n_bootstrap}"
+            )
+
+        if not (0.5 < confidence_level < 1.0):
+            raise ValueError(
+                f"confidence_level must be in (0.5, 1.0), "
+                f"got {confidence_level}"
+            )
+
+        rng = random.Random(random_seed)
+        n = len(queries)
+        alpha = 1.0 - confidence_level
+        lower_pct = alpha / 2.0
+        upper_pct = 1.0 - alpha / 2.0
+
+        # --- Derive reference labels ---
+        ref_labels = []
+        for ref in references:
+            meta = getattr(ref, "graph_meta", None)
+            label = (meta or {}).get(
+                "label", (meta or {}).get("topology", "unknown")
+            )
+            ref_labels.append(label)
+        all_labels = sorted(
+            set(expected_labels) | set(ref_labels)
+        )
+
+        # --- Helper: classify a single query ---
+        def _classify_one(query):
+            """Return predicted label for a single query."""
+            try:
+                if method == "graph":
+                    r = query.graph_classification(references)
+                elif method == "spectral":
+                    r = query.spectral_classification(
+                        references,
+                        measure=spectral_measure,
+                        bins=bins,
+                        include_quarantined=include_quarantined,
+                    )
+                elif method == "hybrid":
+                    r = query.hybrid_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                elif method == "rrf":
+                    r = query.rrf_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                elif method == "bayesian":
+                    r = query.bayesian_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                elif method == "knn":
+                    r = query.knn_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                elif method == "weighted_average":
+                    r = query.weighted_average_classification(
+                        references,
+                        include_quarantined=include_quarantined,
+                    )
+                else:
+                    return None
+            except Exception:
+                return None
+
+            if r is None:
+                return None
+
+            idx = r.get(
+                "best_match",
+                r.get("best_ref", r.get("consensus_best")),
+            )
+            if idx is None:
+                return None
+            if isinstance(idx, dict):
+                idx = idx.get("index", 0)
+            if isinstance(idx, str):
+                try:
+                    idx = int(idx)
+                except (ValueError, TypeError):
+                    idx = 0
+            idx = min(int(idx), len(ref_labels) - 1)
+            return ref_labels[idx]
+
+        # --- Helper: compute metrics from predictions ---
+        def _compute_metrics(preds, labels):
+            """Compute accuracy + macro/weighted metrics."""
+            correct = sum(1 for p, e in zip(preds, labels) if p == e)
+            total = len(labels)
+            accuracy = correct / total if total > 0 else 0.0
+
+            per_class_f1 = {}
+            f1_values = []
+            for lbl in sorted(set(labels)):
+                tp = sum(
+                    1
+                    for p, e in zip(preds, labels)
+                    if p == lbl and e == lbl
+                )
+                fp = sum(
+                    1
+                    for p, e in zip(preds, labels)
+                    if p == lbl and e != lbl
+                )
+                fn = sum(
+                    1
+                    for p, e in zip(preds, labels)
+                    if p != lbl and e == lbl
+                )
+                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1 = (
+                    2 * prec * rec / (prec + rec)
+                    if (prec + rec) > 0
+                    else 0.0
+                )
+                per_class_f1[lbl] = f1
+                if any(e == lbl for e in labels):
+                    f1_values.append(f1)
+
+            macro_f1 = (
+                sum(f1_values) / len(f1_values)
+                if f1_values
+                else 0.0
+            )
+
+            # Macro precision/recall
+            prec_values = []
+            rec_values = []
+            for lbl in sorted(set(labels)):
+                tp = sum(
+                    1
+                    for p, e in zip(preds, labels)
+                    if p == lbl and e == lbl
+                )
+                fp = sum(
+                    1
+                    for p, e in zip(preds, labels)
+                    if p == lbl and e != lbl
+                )
+                fn = sum(
+                    1
+                    for p, e in zip(preds, labels)
+                    if p != lbl and e == lbl
+                )
+                prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                if any(e == lbl for e in labels):
+                    prec_values.append(prec)
+                    rec_values.append(rec)
+
+            macro_prec = (
+                sum(prec_values) / len(prec_values)
+                if prec_values
+                else 0.0
+            )
+            macro_rec = (
+                sum(rec_values) / len(rec_values)
+                if rec_values
+                else 0.0
+            )
+
+            # Weighted F1 (by support)
+            supports = {
+                lbl: sum(1 for e in labels if e == lbl)
+                for lbl in set(labels)
+            }
+            total_support = sum(supports.values())
+            if total_support > 0:
+                weighted_f1 = sum(
+                    per_class_f1.get(lbl, 0.0) * sup
+                    for lbl, sup in supports.items()
+                ) / total_support
+            else:
+                weighted_f1 = 0.0
+
+            return {
+                "accuracy": accuracy,
+                "macro_precision": macro_prec,
+                "macro_recall": macro_rec,
+                "macro_f1": macro_f1,
+                "weighted_f1": weighted_f1,
+                "per_class_f1": per_class_f1,
+            }
+
+        # --- Phase 1: Point estimate (classify all queries) ---
+        point_preds = [_classify_one(q) for q in queries]
+        point_metrics = _compute_metrics(point_preds, expected_labels)
+
+        # --- Phase 2: Bootstrap resampling ---
+        # Pre-compute predictions for each query (deterministic —
+        # classification results don't change between bootstraps).
+        all_preds = point_preds  # reuse — classification is deterministic
+
+        boot_acc = []
+        boot_macro_f1 = []
+        boot_macro_prec = []
+        boot_macro_rec = []
+        boot_weighted_f1 = []
+        boot_per_class_f1 = {lbl: [] for lbl in all_labels}
+        sample_sizes = []
+
+        for _ in range(n_bootstrap):
+            indices = [rng.randrange(n) for _ in range(n)]
+            sample_sizes.append(len(set(indices)))
+            boot_preds = [all_preds[i] for i in indices]
+            boot_labels = [expected_labels[i] for i in indices]
+            m = _compute_metrics(boot_preds, boot_labels)
+            boot_acc.append(m["accuracy"])
+            boot_macro_f1.append(m["macro_f1"])
+            boot_macro_prec.append(m["macro_precision"])
+            boot_macro_rec.append(m["macro_recall"])
+            boot_weighted_f1.append(m["weighted_f1"])
+            for lbl in all_labels:
+                if lbl in m["per_class_f1"]:
+                    boot_per_class_f1[lbl].append(
+                        m["per_class_f1"][lbl]
+                    )
+
+        # --- Phase 3: Compute percentile CIs ---
+        def _ci(boot_values):
+            """Compute mean, std, median, and percentile CI."""
+            if not boot_values:
+                return {
+                    "mean": 0.0,
+                    "std": 0.0,
+                    "median": 0.0,
+                    "lower": 0.0,
+                    "upper": 0.0,
+                    "width": 0.0,
+                }
+            sv = sorted(boot_values)
+            k = len(sv)
+            lo_idx = int(k * lower_pct)
+            hi_idx = int(k * upper_pct) - 1
+            lo_idx = max(0, min(lo_idx, k - 1))
+            hi_idx = max(0, min(hi_idx, k - 1))
+            mean = sum(sv) / k
+            var = sum((v - mean) ** 2 for v in sv) / k
+            std = var ** 0.5
+            lower = sv[lo_idx]
+            upper = sv[hi_idx]
+            return {
+                "mean": round(mean, 6),
+                "std": round(std, 6),
+                "median": round(sv[k // 2], 6),
+                "lower": round(lower, 6),
+                "upper": round(upper, ),
+                "width": round(upper - lower, 6),
+            }
+
+        metric_names = [
+            "accuracy",
+            "macro_precision",
+            "macro_recall",
+            "macro_f1",
+            "weighted_f1",
+        ]
+        boot_data = {
+            "accuracy": boot_acc,
+            "macro_precision": boot_macro_prec,
+            "macro_recall": boot_macro_rec,
+            "macro_f1": boot_macro_f1,
+            "weighted_f1": boot_weighted_f1,
+        }
+
+        intervals = {}
+        for mname in metric_names:
+            ci = _ci(boot_data[mname])
+            ci["point_estimate"] = round(point_metrics[mname], 6)
+            intervals[mname] = ci
+
+        per_class_intervals = {}
+        for lbl in all_labels:
+            boots = boot_per_class_f1.get(lbl, [])
+            if boots:
+                ci = _ci(boots)
+                ci["point_estimate"] = round(
+                    point_metrics["per_class_f1"].get(lbl, 0.0), 6
+                )
+                per_class_intervals[lbl] = ci
+
+        # --- Sample size diagnostics ---
+        sample_size_info = {
+            "min": min(sample_sizes),
+            "max": max(sample_sizes),
+            "mean": round(sum(sample_sizes) / len(sample_sizes), 1),
+        }
+
+        # --- Summary ---
+        acc_ci = intervals["accuracy"]
+        parts = [
+            f"Method: {method}, n={n} queries,",
+            f"{n_bootstrap} bootstrap iterations.",
+            f"Accuracy: {point_metrics['accuracy']:.1%} "
+            f"[{acc_ci['lower']:.1%}, {acc_ci['upper']:.1%}] "
+            f"({confidence_level:.0%} CI).",
+        ]
+        f1_ci = intervals["macro_f1"]
+        parts.append(
+            f"Macro-F1: {point_metrics['macro_f1']:.1%} "
+            f"[{f1_ci['lower']:.1%}, {f1_ci['upper']:.1%}]."
+        )
+        ci_width = acc_ci["width"]
+        if ci_width < 0.1:
+            parts.append("Narrow CI — high confidence in estimates.")
+        elif ci_width < 0.2:
+            parts.append("Moderate CI — some uncertainty.")
+        else:
+            parts.append("Wide CI — high uncertainty; consider more data.")
+
+        summary = " ".join(parts)
+
+        return {
+            "method": method,
+            "n_queries": n,
+            "n_bootstrap": n_bootstrap,
+            "confidence_level": confidence_level,
+            "point_estimate": {
+                k: round(v, 6) if isinstance(v, float) else v
+                for k, v in point_metrics.items()
+                if k != "per_class_f1"
+            },
+            "intervals": intervals,
+            "per_class_intervals": per_class_intervals,
+            "sample_sizes": sample_size_info,
+            "summary": summary,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
