@@ -20,6 +20,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 from collections import defaultdict
+import re
 
 # ── 数据模型 ──────────────────────────────────────────────
 
@@ -18528,6 +18529,350 @@ class FINGEREntropy:
                 fe.add_edge(e["source"], e["target"])
         fe.snapshot()
         return fe
+
+
+class SummaryTree:
+    """Temporal-hierarchical memory consolidation tree.
+
+    Inspired by TiMem (arXiv:2601.02845), HiMem (arXiv:2601.06377),
+    ProGraph (arXiv:2607.19359), EverMemOS (arXiv:2601.02163).
+
+    Levels: segment → session → day → week → profile
+    Each node stores: summary (narrative) + residuals (atomic facts).
+    Retrieval: best-effort (top-down descent on insufficient evidence).
+
+    Research #045: Memory compaction & hierarchical abstraction.
+    """
+
+    LEVELS = ['segment', 'session', 'day', 'week', 'profile']
+
+    def __init__(self):
+        self._nodes: dict[str, dict] = {}
+        self._root_id = self._make_id('profile')
+        self._nodes[self._root_id] = {
+            'id': self._root_id,
+            'level': 'profile',
+            'timestamp': time.time(),
+            'summary': '',
+            'residuals': [],
+            'child_ids': [],
+            'parent_id': None,
+            'access_count': 0,
+            'last_accessed': time.time(),
+        }
+
+    # ─── Write Path ───
+
+    def add_segment(self, content: str, summary: str, residuals: list[str],
+                    timestamp: float = None) -> str:
+        """Add a raw interaction segment with co-extracted summary + residuals.
+
+        Auto-creates day/week/session parents as needed (TiMem temporal hierarchy).
+        ProGraph co-extraction: summary (narrative) + residuals (atomic facts).
+        """
+        if timestamp is None:
+            timestamp = time.time()
+        ts_dt = datetime.fromtimestamp(timestamp)
+        day_key = f"{ts_dt.year}-{ts_dt.month}-{ts_dt.day}"
+        week_key = self._get_week_key(ts_dt)
+        session_key = f"{day_key}-s{ts_dt.hour // 4}"  # 4-hour sessions
+
+        week_id = self._ensure_node(week_key, 'week', self._root_id, timestamp)
+        day_id = self._ensure_node(day_key, 'day', week_id, timestamp)
+        session_id = self._ensure_node(session_key, 'session', day_id, timestamp)
+
+        seg_id = self._make_id('segment')
+        self._nodes[seg_id] = {
+            'id': seg_id,
+            'level': 'segment',
+            'timestamp': timestamp,
+            'summary': summary,
+            'residuals': list(residuals),
+            'child_ids': [],
+            'parent_id': session_id,
+            'access_count': 0,
+            'last_accessed': timestamp,
+        }
+        self._nodes[session_id]['child_ids'].append(seg_id)
+        return seg_id
+
+    def consolidate(self, parent_id: str, consolidated_summary: str,
+                    residuals: list[str]) -> None:
+        """Consolidate children into parent summary.
+
+        Called periodically (end of session, end of day).
+        Merges residuals with deduplication.
+        """
+        parent = self._nodes.get(parent_id)
+        if parent is None:
+            raise KeyError(f"Node {parent_id} not found")
+        parent['summary'] = consolidated_summary
+        existing = set(parent['residuals'])
+        for r in residuals:
+            if r not in existing:
+                parent['residuals'].append(r)
+                existing.add(r)
+
+    # ─── Read Path: Best-Effort Retrieval (HiMem pattern) ───
+
+    def recall(self, query: str, max_level: str = None,
+               top_k: int = 5,
+               on_insufficient=None) -> dict:
+        """Recall with complexity-aware level selection.
+
+        Simple queries start at profile/week level.
+        Complex queries descend to session/segment level.
+        Returns evidence + whether descent was needed.
+        """
+        if max_level is None:
+            max_level = 'segment'
+        start_level = self._infer_query_complexity(query)
+        descent_order = self._get_descent_order(start_level, max_level)
+
+        levels_used = []
+        evidence = []
+
+        for level in descent_order:
+            levels_used.append(level)
+            candidates = [
+                n for n in self._get_by_level(level)
+                if n['summary'] or n['residuals']
+            ]
+            scored = sorted(
+                (
+                    {'node': n, 'score': self._simple_match(query, n['summary'], n['residuals'])}
+                    for n in candidates
+                ),
+                key=lambda x: x['score'],
+                reverse=True
+            )
+            # Only include actual matches (score > 0)
+            scored = [x for x in scored if x['score'] > 0][:top_k]
+            evidence_new = [x['node'] for x in scored]
+            for node in evidence_new:
+                evidence.append(node)
+                node['access_count'] += 1
+                node['last_accessed'] = time.time()
+
+            if on_insufficient is not None:
+                sufficient = not on_insufficient(list(evidence))
+            else:
+                sufficient = self._default_sufficiency(query, evidence)
+
+            if sufficient and evidence:
+                return {
+                    'found': True,
+                    'evidence': evidence,
+                    'levels_used': levels_used,
+                    'descended_from': start_level,
+                }
+
+        return {
+            'found': bool(evidence),
+            'evidence': evidence,
+            'levels_used': levels_used,
+            'descended_from': start_level,
+        }
+
+    def reconsolidate(self, query: str, new_summary: str,
+                      new_residuals: list[str],
+                      target_level: str = 'session') -> str:
+        """Memory Reconsolidation (HiMem pattern).
+
+        When retrieval finds insufficient evidence at higher levels
+        but segments provide info, extract and promote to parent.
+        Performs conflict detection: ADD/UPDATE/DELETE semantics.
+        """
+        now = time.time()
+        ts_dt = datetime.fromtimestamp(now)
+        day_key = f"{ts_dt.year}-{ts_dt.month}-{ts_dt.day}"
+        day_id = self._ensure_node(day_key, 'day', self._root_id)
+        target_id = self._ensure_node(f"{day_key}-recon", target_level, day_id)
+        target = self._nodes[target_id]
+
+        conflicts = self._detect_conflicts(new_residuals, target['residuals'])
+        if conflicts:
+            target['residuals'] = [
+                r for r in target['residuals'] if r not in conflicts
+            ]
+
+        if target['summary']:
+            target['summary'] = f"{target['summary']}\n{new_summary}"
+        else:
+            target['summary'] = new_summary
+
+        for r in new_residuals:
+            if r not in target['residuals']:
+                target['residuals'].append(r)
+
+        return target_id
+
+    # ─── Adaptive Forgetting ───
+
+    def prune_stale(self, threshold: float = 30 * 24 * 60 * 60) -> int:
+        """Prune low-access nodes at higher levels.
+
+        Segments and profile are never pruned — they're ground truth.
+        Returns count of pruned nodes.
+        """
+        now = time.time()
+        pruned = 0
+
+        to_delete = []
+        for node_id, node in self._nodes.items():
+            if node['level'] in ('segment', 'profile'):
+                continue
+            if node['access_count'] == 0 and (now - node['last_accessed']) > threshold:
+                parent = self._nodes.get(node.get('parent_id', ''))
+                if parent:
+                    parent['child_ids'] = [
+                        cid for cid in parent['child_ids'] if cid != node_id
+                    ]
+                to_delete.append(node_id)
+
+        for nid in to_delete:
+            del self._nodes[nid]
+            pruned += 1
+
+        return pruned
+
+    # ─── Stats ───
+
+    def stats(self) -> dict:
+        """Tree statistics for observability."""
+        by_level = {lv: 0 for lv in self.LEVELS}
+        total_residuals = 0
+
+        for node in self._nodes.values():
+            by_level[node['level']] = by_level.get(node['level'], 0) + 1
+            total_residuals += len(node['residuals'])
+
+        n = len(self._nodes)
+        return {
+            'total_nodes': n,
+            'by_level': by_level,
+            'avg_residuals_per_node': round(total_residuals / n, 2) if n else 0,
+            'total_residuals': total_residuals,
+        }
+
+    # ─── Introspection ───
+
+    def get_node(self, node_id: str) -> dict | None:
+        return self._nodes.get(node_id)
+
+    def get_children(self, node_id: str) -> list[dict]:
+        node = self._nodes.get(node_id)
+        if not node:
+            return []
+        return [self._nodes[cid] for cid in node['child_ids']
+                if cid in self._nodes]
+
+    @property
+    def root_id(self) -> str:
+        return self._root_id
+
+    # ─── Private Helpers ───
+
+    def _make_id(self, prefix: str) -> str:
+        return f"{prefix}-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
+
+    def _get_week_key(self, dt: datetime) -> str:
+        year = dt.year
+        onejan = datetime(year, 1, 1)
+        week = ((dt.timestamp() - onejan.timestamp()) / 86400
+                + onejan.weekday() + 1) / 7
+        return f"{year}-w{int(math.ceil(week))}"
+
+    def _ensure_node(self, key: str, level: str, parent_id: str,
+                     timestamp: float = None) -> str:
+        node_id = f"{level}-{key}"
+        if node_id not in self._nodes:
+            if timestamp is None:
+                timestamp = time.time()
+            self._nodes[node_id] = {
+                'id': node_id,
+                'level': level,
+                'timestamp': timestamp,
+                'summary': '',
+                'residuals': [],
+                'child_ids': [],
+                'parent_id': parent_id,
+                'access_count': 0,
+                'last_accessed': timestamp,
+            }
+            parent = self._nodes.get(parent_id)
+            if parent:
+                parent['child_ids'].append(node_id)
+        return node_id
+
+    def _get_by_level(self, level: str) -> list[dict]:
+        return [n for n in self._nodes.values() if n['level'] == level]
+
+    def _infer_query_complexity(self, query: str) -> str:
+        words = query.split()
+        has_temporal = bool(re.search(
+            r'\b(yesterday|last week|when|what time|how long ago)\b',
+            query, re.I
+        ))
+        has_multihop = bool(re.search(
+            r'\b(because|therefore|so that|which led to|as a result)\b',
+            query, re.I
+        ))
+        if has_multihop or len(words) > 15:
+            return 'segment'
+        if has_temporal or len(words) > 8:
+            return 'session'
+        return 'week'
+
+    def _get_descent_order(self, start: str, max_lvl: str) -> list[str]:
+        start_idx = self.LEVELS.index(start)
+        max_idx = self.LEVELS.index(max_lvl)
+        if start_idx <= max_idx:
+            return self.LEVELS[start_idx:max_idx + 1]
+        # Descending from coarse to fine
+        return [self.LEVELS[i] for i in range(start_idx, max_idx - 1, -1)]
+
+    def _simple_match(self, query: str, summary: str, residuals: list[str]) -> float:
+        query_lower = query.lower()
+        score = 0.0
+        summary_lower = summary.lower()
+        for word in query_lower.split():
+            if len(word) < 3:
+                continue
+            if word in summary_lower:
+                score += 1.0
+            for r in residuals:
+                if word in r.lower():
+                    score += 2.0  # Residuals weighted higher
+        return score
+
+    def _default_sufficiency(self, query: str, evidence: list[dict]) -> bool:
+        if not evidence:
+            return False
+        total_residuals = sum(len(n['residuals']) for n in evidence)
+        return total_residuals >= 2 or any(
+            len(n['summary']) > 50 for n in evidence
+        )
+
+    def _detect_conflicts(self, new_residuals: list[str],
+                          existing: list[str]) -> list[str]:
+        conflicts = []
+        for ex_r in existing:
+            for new_r in new_residuals:
+                if self._is_contradiction(ex_r, new_r):
+                    conflicts.append(ex_r)
+                    break
+        return conflicts
+
+    def _is_contradiction(self, a: str, b: str) -> bool:
+        date_match = r'\b\d{4}-\d{1,2}-\d{1,2}\b'
+        da = re.search(date_match, a)
+        db = re.search(date_match, b)
+        if da and db and da.group(0) == db.group(0) and a != b:
+            return True
+        return False
+
+
 
 
 def demo():

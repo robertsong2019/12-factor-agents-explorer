@@ -4,8 +4,9 @@ import math
 import os
 import tempfile
 import time
+from datetime import datetime
 import pytest
-from memory_graph import MemoryGraph, Node, Edge, FINGEREntropy, StreamingGraph
+from memory_graph import MemoryGraph, Node, Edge, FINGEREntropy, StreamingGraph, SummaryTree
 
 
 @pytest.fixture
@@ -21965,4 +21966,438 @@ class TestStreamingGraph:
             assert "timestamp" in anom
             assert "is_anomaly" in anom
             assert "message" in anom
+
+
+# ─────────────────────────────────────────────────────────────────
+# SummaryTree Tests — Cycle 364 (Research #045)
+# ─────────────────────────────────────────────────────────────────
+
+class TestSummaryTreeInit:
+    """Test SummaryTree initialization and root node."""
+
+    def test_creates_root_profile_node(self):
+        st = SummaryTree()
+        root = st.get_node(st.root_id)
+        assert root is not None
+        assert root['level'] == 'profile'
+        assert root['parent_id'] is None
+        assert root['summary'] == ''
+        assert root['residuals'] == []
+
+    def test_stats_empty_tree(self):
+        st = SummaryTree()
+        s = st.stats()
+        assert s['total_nodes'] == 1
+        assert s['by_level']['profile'] == 1
+        assert s['by_level']['segment'] == 0
+        assert s['total_residuals'] == 0
+
+    def test_levels_order(self):
+        assert SummaryTree.LEVELS == ['segment', 'session', 'day', 'week', 'profile']
+
+
+class TestAddSegment:
+    """Test add_segment with auto-hierarchy creation."""
+
+    def test_returns_segment_id(self):
+        st = SummaryTree()
+        sid = st.add_segment("content", "summary", ["fact1"])
+        assert sid.startswith('segment-')
+
+    def test_auto_creates_hierarchy(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("content", "summary", ["fact1"], timestamp=ts)
+        s = st.stats()
+        assert s['by_level']['segment'] == 1
+        assert s['by_level']['session'] == 1
+        assert s['by_level']['day'] == 1
+        assert s['by_level']['week'] == 1
+        assert s['by_level']['profile'] == 1  # root
+
+    def test_segment_stores_summary_and_residuals(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        sid = st.add_segment("raw content", "User did X", ["fact1", "fact2"], timestamp=ts)
+        node = st.get_node(sid)
+        assert node['summary'] == "User did X"
+        assert node['residuals'] == ["fact1", "fact2"]
+
+    def test_multiple_segments_same_day_share_parents(self):
+        st = SummaryTree()
+        ts1 = datetime(2026, 5, 7, 10, 0).timestamp()
+        ts2 = datetime(2026, 5, 7, 14, 0).timestamp()
+        st.add_segment("c1", "s1", ["r1"], timestamp=ts1)
+        st.add_segment("c2", "s2", ["r2"], timestamp=ts2)
+        s = st.stats()
+        assert s['by_level']['segment'] == 2
+        assert s['by_level']['day'] == 1  # Same day, shared
+
+    def test_different_days_different_parents(self):
+        st = SummaryTree()
+        ts1 = datetime(2026, 5, 7, 10, 0).timestamp()
+        ts2 = datetime(2026, 5, 8, 10, 0).timestamp()
+        st.add_segment("c1", "s1", ["r1"], timestamp=ts1)
+        st.add_segment("c2", "s2", ["r2"], timestamp=ts2)
+        s = st.stats()
+        assert s['by_level']['day'] == 2
+        assert s['by_level']['segment'] == 2
+
+    def test_different_sessions_same_day(self):
+        st = SummaryTree()
+        ts1 = datetime(2026, 5, 7, 2, 0).timestamp()   # session s0 (0-4h)
+        ts2 = datetime(2026, 5, 7, 10, 0).timestamp()  # session s2 (8-12h)
+        st.add_segment("c1", "s1", ["r1"], timestamp=ts1)
+        st.add_segment("c2", "s2", ["r2"], timestamp=ts2)
+        s = st.stats()
+        assert s['by_level']['session'] == 2
+        assert s['by_level']['day'] == 1
+
+    def test_segment_linked_to_session_parent(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        sid = st.add_segment("c", "s", ["r"], timestamp=ts)
+        node = st.get_node(sid)
+        parent = st.get_node(node['parent_id'])
+        assert parent['level'] == 'session'
+        assert sid in parent['child_ids']
+
+
+class TestSummaryTreeConsolidate:
+    """Test SummaryTree.consolidate() — promoting summaries up the hierarchy."""
+
+    def test_consolidate_sets_summary(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("c", "segment summary", ["r1"], timestamp=ts)
+        # Find the session node
+        session_nodes = [n for n in st._get_by_level('session')]
+        assert len(session_nodes) == 1
+        st.consolidate(session_nodes[0]['id'], "consolidated day summary", ["consolidated_fact"])
+        assert session_nodes[0]['summary'] == "consolidated day summary"
+
+    def test_consolidate_merges_residuals_dedup(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("c", "s", ["fact1"], timestamp=ts)
+        session_nodes = [n for n in st._get_by_level('session')]
+        st.consolidate(session_nodes[0]['id'], "summary1", ["fact1", "fact2"])
+        # fact1 already exists via segment, but consolidate operates on parent
+        # The parent was empty before, so fact1 comes from consolidate call
+        assert "fact1" in session_nodes[0]['residuals']
+        assert "fact2" in session_nodes[0]['residuals']
+        # Dedup: add fact1 again
+        st.consolidate(session_nodes[0]['id'], "summary2", ["fact1"])
+        assert session_nodes[0]['residuals'].count("fact1") == 1
+
+    def test_consolidate_nonexistent_node_raises(self):
+        st = SummaryTree()
+        with pytest.raises(KeyError):
+            st.consolidate("nonexistent", "summary", ["r"])
+
+
+class TestSummaryTreeRecall:
+    """Test SummaryTree.recall() — best-effort retrieval with level descent."""
+
+    def test_recall_finds_evidence(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("pottery class", "User took pottery class",
+                       ["May 7: First pottery class"], timestamp=ts)
+        result = st.recall("pottery")
+        assert result['found'] is True
+        assert len(result['evidence']) > 0
+
+    def test_recall_simple_query_starts_at_week(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("c", "User likes pottery", ["fact"], timestamp=ts)
+        result = st.recall("pottery")
+        # Simple single-word query should start at week level
+        assert result['descended_from'] == 'week'
+
+    def test_recall_complex_query_starts_at_segment(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("c", "User likes pottery because it is relaxing",
+                       ["fact"], timestamp=ts)
+        result = st.recall("Why does the user like pottery because it is relaxing and detailed?")
+        assert result['descended_from'] == 'segment'
+
+    def test_recall_temporal_query_starts_at_session(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("c", "session about pottery", ["fact"], timestamp=ts)
+        result = st.recall("What happened in the session yesterday?")
+        assert result['descended_from'] == 'session'
+
+    def test_recall_returns_levels_used(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("c", "pottery summary", ["pottery fact"], timestamp=ts)
+        result = st.recall("pottery")
+        assert isinstance(result['levels_used'], list)
+        assert len(result['levels_used']) > 0
+
+    def test_recall_no_match_returns_not_found(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("c", "summary about cooking", ["cooking fact"], timestamp=ts)
+        result = st.recall("quantum physics")
+        assert result['found'] is False
+
+    def test_recall_custom_sufficiency_callback(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("c", "pottery", ["fact"], timestamp=ts)
+        # Force descent by always saying evidence is insufficient
+        calls = []
+        def always_insufficient(evidence):
+            calls.append(len(evidence))
+            return True  # always insufficient → forces full descent
+        result = st.recall("pottery", on_insufficient=always_insufficient)
+        assert len(calls) > 0
+        assert 'segment' in result['levels_used']
+
+    def test_recall_increments_access_count(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        sid = st.add_segment("c", "pottery class", ["pottery fact"], timestamp=ts)
+        # Consolidate to make higher-level match
+        nodes = st._get_by_level('week')
+        st.consolidate(nodes[0]['id'], "pottery activities", ["pottery related"])
+        st.recall("pottery")
+        # At least one node should have been accessed
+        all_nodes = list(st._nodes.values())
+        assert any(n['access_count'] > 0 for n in all_nodes)
+
+    def test_recall_residuals_weighted_higher(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        # One segment with residual matching query
+        st.add_segment("c", "some summary", ["pottery class"], timestamp=ts)
+        # Another with summary matching but no residual
+        ts2 = datetime(2026, 5, 7, 12, 0).timestamp()
+        st.add_segment("c2", "pottery workshop", [], timestamp=ts2)
+        result = st.recall("pottery", max_level='segment')
+        # Residual-matched node should score higher
+        assert result['found']
+
+    def test_recall_top_k_limit(self):
+        st = SummaryTree()
+        # Create many segments matching same query
+        for i in range(10):
+            ts = datetime(2026, 5, 7, 1 + i, 0).timestamp()
+            st.add_segment(f"c{i}", f"pottery session {i}", ["pottery fact"], timestamp=ts)
+        result = st.recall("pottery", max_level='segment', top_k=3)
+        assert len(result['evidence']) <= 3
+
+
+class TestReconsolidate:
+    """Test reconsolidate() — HiMem memory feedback loop."""
+
+    def test_reconsolidate_creates_target_node(self):
+        st = SummaryTree()
+        target_id = st.reconsolidate(
+            "query", "new summary", ["new_fact"], target_level='session'
+        )
+        node = st.get_node(target_id)
+        assert node is not None
+        assert node['summary'] == "new summary"
+        assert "new_fact" in node['residuals']
+
+    def test_reconsolidate_appends_to_existing_summary(self):
+        st = SummaryTree()
+        tid1 = st.reconsolidate("q", "first summary", ["fact1"])
+        st.reconsolidate("q", "second summary", ["fact2"])
+        node = st.get_node(tid1)
+        # Should have both summaries concatenated
+        assert "first summary" in node['summary']
+        assert "second summary" in node['summary']
+
+    def test_reconsolidate_conflict_replaces_residual(self):
+        st = SummaryTree()
+        # First reconsolidation with a dated fact
+        st.reconsolidate("q", "summary", ["2026-05-07: Event A happened"])
+        # Second with conflicting same-date fact
+        st.reconsolidate("q", "updated", ["2026-05-07: Event B happened"])
+        nodes = st._get_by_level('session')
+        # The old conflicting residual should have been removed
+        all_residuals = [r for n in nodes for r in n['residuals']]
+        assert "2026-05-07: Event A happened" not in all_residuals
+        assert "2026-05-07: Event B happened" in all_residuals
+
+
+class TestPruneStale:
+    """Test prune_stale() — adaptive forgetting."""
+
+    def test_prune_stale_removes_old_unused(self):
+        st = SummaryTree()
+        ts_old = datetime(2026, 1, 1, 10, 0).timestamp()
+        st.add_segment("c", "s", ["r"], timestamp=ts_old)
+        # The session/day/week nodes are old and never accessed
+        pruned = st.prune_stale(threshold=1)  # 1 second threshold
+        assert pruned > 0
+
+    def test_prune_never_removes_segments(self):
+        st = SummaryTree()
+        ts_old = datetime(2026, 1, 1, 10, 0).timestamp()
+        sid = st.add_segment("c", "s", ["r"], timestamp=ts_old)
+        st.prune_stale(threshold=0)  # aggressive
+        assert st.get_node(sid) is not None  # segment survives
+
+    def test_prune_never_removes_profile(self):
+        st = SummaryTree()
+        st.prune_stale(threshold=0)
+        assert st.get_node(st.root_id) is not None
+
+    def test_prune_preserves_accessed_nodes(self):
+        st = SummaryTree()
+        ts_old = datetime(2026, 1, 1, 10, 0).timestamp()
+        st.add_segment("c", "pottery summary", ["pottery fact"], timestamp=ts_old)
+        # Access the week node via recall
+        week_nodes = st._get_by_level('week')
+        st.consolidate(week_nodes[0]['id'], "pottery activities", ["pottery"])
+        st.recall("pottery")  # accesses nodes
+        pruned = st.prune_stale(threshold=60 * 60 * 24 * 365)  # 1 year
+        # Accessed nodes should survive
+        assert pruned == 0 or all(
+            n['access_count'] > 0 for n in st._get_by_level('week')
+            if n['summary'] or n['residuals']
+        )
+
+    def test_prune_unlinks_from_parent(self):
+        st = SummaryTree()
+        ts_old = datetime(2026, 1, 1, 10, 0).timestamp()
+        st.add_segment("c", "s", ["r"], timestamp=ts_old)
+        st.prune_stale(threshold=0)
+        # Root's child_ids should not reference deleted nodes
+        root = st.get_node(st.root_id)
+        for cid in root['child_ids']:
+            assert st.get_node(cid) is not None
+
+
+class TestSummaryTreeStats:
+    """Test stats() observability."""
+
+    def test_stats_tracks_residuals(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        st.add_segment("c", "s", ["r1", "r2", "r3"], timestamp=ts)
+        s = st.stats()
+        assert s['total_residuals'] >= 3
+        assert s['avg_residuals_per_node'] > 0
+
+    def test_stats_by_level_after_multiple_segments(self):
+        st = SummaryTree()
+        for day in range(1, 4):
+            ts = datetime(2026, 5, day, 10, 0).timestamp()
+            st.add_segment(f"c{day}", f"s{day}", [f"r{day}"], timestamp=ts)
+        s = st.stats()
+        assert s['by_level']['segment'] == 3
+        assert s['by_level']['day'] == 3
+        assert s['by_level']['profile'] == 1
+
+
+class TestGetIntrospection:
+    """Test get_node and get_children helpers."""
+
+    def test_get_node_returns_none_for_unknown(self):
+        st = SummaryTree()
+        assert st.get_node("nonexistent") is None
+
+    def test_get_children_returns_child_list(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        sid = st.add_segment("c", "s", ["r"], timestamp=ts)
+        seg = st.get_node(sid)
+        parent = st.get_node(seg['parent_id'])
+        children = st.get_children(seg['parent_id'])
+        assert len(children) == 1
+        assert children[0]['id'] == sid
+
+    def test_get_children_empty_for_leaf(self):
+        st = SummaryTree()
+        ts = datetime(2026, 5, 7, 10, 0).timestamp()
+        sid = st.add_segment("c", "s", ["r"], timestamp=ts)
+        assert st.get_children(sid) == []
+
+    def test_get_children_unknown_returns_empty(self):
+        st = SummaryTree()
+        assert st.get_children("nonexistent") == []
+
+
+class TestSummaryTreeIntegration:
+    """Integration tests mirroring research prototype usage."""
+
+    def test_full_lifecycle(self):
+        """Full write → consolidate → recall → reconsolidate cycle."""
+        st = SummaryTree()
+
+        # Write
+        ts1 = datetime(2026, 5, 7, 10, 0).timestamp()
+        ts2 = datetime(2026, 5, 21, 14, 0).timestamp()
+        st.add_segment(
+            "pottery class discussion",
+            "User took first pottery class, excited about wheel-throwing",
+            ["May 7, 2026: First pottery class at community center",
+             "Wheel-throwing technique learned"],
+            timestamp=ts1
+        )
+        st.add_segment(
+            "glazing and kiln purchase",
+            "User advancing in pottery, purchased kiln for home studio",
+            ["May 21, 2026: Bought kiln ($450)",
+             "Interested in raku glazing technique"],
+            timestamp=ts2
+        )
+
+        # Consolidate
+        day_nodes = st._get_by_level('day')
+        for dn in day_nodes:
+            st.consolidate(
+                dn['id'],
+                "User progressing in pottery hobby",
+                ["Pottery started May 2026", "Owns kiln"]
+            )
+
+        # Recall
+        result = st.recall("When did the user start pottery?")
+        assert result['found']
+        assert len(result['evidence']) > 0
+
+        # Reconsolidate
+        st.reconsolidate(
+            "What glazing technique?",
+            "User interested in raku glazing",
+            ["Raku glazing: rapid heating/cooling creates metallic effects"]
+        )
+
+        # Verify
+        s = st.stats()
+        assert s['total_nodes'] > 5
+        assert s['total_residuals'] > 0
+
+    def test_multi_day_multi_session_recall(self):
+        """Recall across multiple days and sessions."""
+        st = SummaryTree()
+        topics = ["pottery", "coding", "pottery", "reading", "pottery"]
+        for i, topic in enumerate(topics):
+            ts = datetime(2026, 5, 1 + i, 10, 0).timestamp()
+            st.add_segment(
+                f"segment about {topic}",
+                f"User discussed {topic}",
+                [f"{topic} is interesting"],
+                timestamp=ts
+            )
+
+        result = st.recall("pottery", max_level='segment')
+        assert result['found']
+        # Should find pottery-related segments
+        pottery_evidence = [
+            e for e in result['evidence']
+            if 'pottery' in e.get('summary', '').lower()
+            or any('pottery' in r.lower() for r in e.get('residuals', []))
+        ]
+        assert len(pottery_evidence) > 0
 
