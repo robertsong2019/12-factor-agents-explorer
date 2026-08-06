@@ -11836,6 +11836,295 @@ class MemoryGraph:
         self.conn.commit()
         return quarantined_ids
 
+    # ── OWASP ASI06: Memory Security Suite (Research #052) ────────────────
+
+    def trust_score(self, node_id: str) -> Optional[dict]:
+        """Composite trust score for a memory node (OWASP ASI06 L3).
+
+        Combines four signals into a single trust assessment:
+        - Source trust: declared trust_level (default 1.0)
+        - Age decay: older unverified memories lose trust
+        - Verification: has this node been accessed/confirmed?
+        - Anomaly history: quarantine count from evolution_log
+
+        Returns {score, level, factors, recommendation} or None.
+        """
+        row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if not row:
+            return None
+        n = dict(row)
+        # Factor 1: declared trust level
+        source_trust = n.get("trust_level", 1.0) or 1.0
+        # Factor 2: age decay (half-life 30 days)
+        age = time.time() - (n.get("created", time.time()) or time.time())
+        age_factor = max(0.3, 1.0 - age / (30 * 86400 * 3.32))  # ~100 day half-life
+        # Factor 3: verification (accessed meaningfully after creation)
+        accessed = n.get("accessed", 0) or 0
+        created = n.get("created", 0) or 0
+        verified = 1.0 if accessed > created + 1.0 else 0.5  # 1s epsilon
+        # Factor 4: anomaly history
+        anomaly_count = self.conn.execute(
+            "SELECT COUNT(*) FROM evolution_log WHERE node_id = ? "
+            "AND old_label LIKE '%quarantine%'", (node_id,)
+        ).fetchone()[0]
+        anomaly_factor = max(0.2, 1.0 - anomaly_count * 0.3)
+        # Composite
+        score = source_trust * 0.4 + age_factor * 0.2 + verified * 0.2 + anomaly_factor * 0.2
+        if score >= 0.8:
+            level, recommendation = "trusted", "safe for retrieval and derivation"
+        elif score >= 0.5:
+            level, recommendation = "moderate", "usable but flag for review"
+        elif score >= 0.3:
+            level, recommendation = "low", "quarantine recommended"
+        else:
+            level, recommendation = "untrusted", "quarantine immediately"
+        return {
+            "node_id": node_id,
+            "score": round(score, 4),
+            "level": level,
+            "factors": {
+                "source_trust": round(source_trust, 4),
+                "age_decay": round(age_factor, 4),
+                "verification": round(verified, 4),
+                "anomaly_history": round(anomaly_factor, 4),
+            },
+            "recommendation": recommendation,
+        }
+
+    def memory_quarantine(self, entries: list[dict],
+                          reason: str = "unverified") -> list[str]:
+        """Batch quarantine multiple memory entries (OWASP ASI06 L1+L2).
+
+        Shadow-memory pattern (A-MemGuard ICML 2026): writes are staged
+        in quarantine until reviewed.  Accepts a list of partial node
+        dicts (label, kind, data, source, trust_level).  Returns the
+        list of created (quarantined) node IDs.
+
+        Entries are NOT visible to recall/search/neighbors until
+        individually released via node_unquarantine().
+        """
+        quarantined_ids = []
+        for entry in entries:
+            label = entry.get("label", "")
+            kind = entry.get("kind", "fact")
+            data = entry.get("data", {})
+            source = entry.get("source", "unknown")
+            trust_level = entry.get("trust_level", 0.3)
+            # Create node directly in quarantined state
+            node_id = str(uuid.uuid4())
+            now = time.time()
+            self.conn.execute(
+                "INSERT INTO nodes (id, label, kind, data, created, accessed, "
+                "weight, source, trust_level, quarantined, quarantine_reason, txn_time) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                (node_id, label, kind, json.dumps(data), now, now,
+                 1.0, source, trust_level, reason, now)
+            )
+            quarantined_ids.append(node_id)
+        self.conn.commit()
+        return quarantined_ids
+
+    def selective_repair(self, poisoned_node_ids: list[str],
+                         mode: str = "quarantine") -> dict:
+        """Surgical removal of poisoned memory (OWASP ASI06 L5).
+
+        Wraps propagate_correction + trace_derivation_impact for
+        dependency-aware memory surgery.  For each poisoned node:
+        1. Trace downstream impact (what depends on it)
+        2. Apply mode: 'quarantine' (reversible) or 'delete' (permanent)
+        3. Report affected nodes
+
+        Returns {repaired, affected, cascade_depth, details}.
+        """
+        repaired = []
+        all_affected = []
+        details = []
+        for nid in poisoned_node_ids:
+            row = self.conn.execute("SELECT id FROM nodes WHERE id=?", (nid,)).fetchone()
+            if not row:
+                details.append({"node_id": nid, "status": "not_found"})
+                continue
+            # Find downstream dependents via edges
+            dependents = []
+            queue = [nid]
+            visited = set()
+            depth = 0
+            while queue:
+                next_queue = []
+                for current in queue:
+                    if current in visited:
+                        continue
+                    visited.add(current)
+                    # Find nodes that depend on current
+                    rows = self.conn.execute(
+                        "SELECT target FROM edges WHERE source = ? AND relation = 'depends_on'",
+                        (current,)
+                    ).fetchall()
+                    for r in rows:
+                        if r["target"] not in visited:
+                            dependents.append(r["target"])
+                            next_queue.append(r["target"])
+                queue = next_queue
+                depth += 1
+            # Apply mode
+            target_ids = [nid] + dependents
+            if mode == "delete":
+                for tid in target_ids:
+                    self.conn.execute("DELETE FROM nodes WHERE id = ?", (tid,))
+                    self.conn.execute("DELETE FROM edges WHERE source = ? OR target = ?", (tid, tid))
+            else:  # quarantine (default)
+                for tid in target_ids:
+                    self.conn.execute(
+                        "UPDATE nodes SET quarantined = 1, quarantine_reason = ? WHERE id = ?",
+                        (f"selective_repair: cascade from {nid}", tid)
+                    )
+            repaired.append(nid)
+            all_affected.extend(dependents)
+            details.append({
+                "node_id": nid,
+                "status": "repaired",
+                "mode": mode,
+                "dependents": dependents,
+                "cascade_depth": depth,
+            })
+        self.conn.commit()
+        return {
+            "repaired": repaired,
+            "affected": list(set(all_affected)),
+            "cascade_depth": max((d["cascade_depth"] for d in details if d["status"] == "repaired"), default=0),
+            "details": details,
+        }
+
+    def memory_audit_report(self, start_time: float = None,
+                            end_time: float = None) -> dict:
+        """Forensic audit of memory writes (OWASP ASI06 L5).
+
+        Provides a complete provenance chain + trust assessment for all
+        nodes created in the time window.  Includes:
+        - Total nodes and quarantined count
+        - Trust distribution (trusted/moderate/low/untrusted)
+        - Sources ranked by volume
+        - Flagged nodes requiring review
+
+        Returns {summary, trust_distribution, sources, flagged}.
+        """
+        end = end_time or time.time()
+        start = start_time or (end - 86400)  # default: last 24h
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE created >= ? AND created <= ?",
+            (start, end)
+        ).fetchall()
+        nodes = [dict(r) for r in rows]
+        total = len(nodes)
+        quarantined = sum(1 for n in nodes if n.get("quarantined"))
+        # Trust distribution
+        dist = {"trusted": 0, "moderate": 0, "low": 0, "untrusted": 0}
+        flagged = []
+        for n in nodes:
+            ts = self.trust_score(n["id"])
+            if ts:
+                dist[ts["level"]] = dist.get(ts["level"], 0) + 1
+                if ts["score"] < 0.5 or ts["factors"]["source_trust"] < 0.2:
+                    flagged.append({
+                        "node_id": n["id"],
+                        "label": n["label"],
+                        "score": ts["score"],
+                        "level": ts["level"],
+                        "source": n.get("source"),
+                        "quarantined": bool(n.get("quarantined")),
+                    })
+        # Sources ranked by volume
+        source_counts = defaultdict(int)
+        for n in nodes:
+            src = n.get("source") or "unknown"
+            source_counts[src] += 1
+        sources = sorted(source_counts.items(), key=lambda x: -x[1])
+        return {
+            "window": {"start": start, "end": end},
+            "summary": {
+                "total_nodes": total,
+                "quarantined": quarantined,
+                "active": total - quarantined,
+                "flagged_for_review": len(flagged),
+            },
+            "trust_distribution": dist,
+            "sources": [{"source": s, "count": c} for s, c in sources],
+            "flagged": flagged,
+        }
+
+    def detect_provenance_laundering(self, node_id: str,
+                                     toxicity_keywords: list[str] = None) -> dict:
+        """Detect if a memory's harmful origin was laundered through transforms.
+
+        Provenance laundering (EMNLP 2026): compression/summarization reduces
+        detectable toxicity from 0.6 to 0.0852 while harmful semantics survive.
+        This function traces the transformation chain and checks whether the
+        current content appears sanitized relative to its source.
+
+        Returns {risk_level, chain_length, flags, recommendation}.
+        """
+        row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
+        if not row:
+            return {"risk_level": "unknown", "flags": [], "recommendation": "node not found"}
+        n = dict(row)
+        flags = []
+        # Check 1: low trust source but high weight (suspicious)
+        trust = n.get("trust_level", 1.0) or 1.0
+        weight = n.get("weight", 1.0) or 1.0
+        if trust < 0.3 and weight > 0.8:
+            flags.append("low_trust_high_weight: source distrust but node weight preserved")
+        # Check 2: source mismatch — source claims to be from A but parents point to B
+        source = n.get("source")
+        parents = json.loads(n.get("parents", "[]") or "[]")
+        if source and parents:
+            parent_rows = [self.conn.execute("SELECT source FROM nodes WHERE id=?", (p,)).fetchone() for p in parents]
+            parent_sources = {r["source"] for r in parent_rows if r and r["source"]}
+            if source not in parent_sources and parent_sources:
+                flags.append(f"source_mismatch: claims '{source}' but parents from {parent_sources}")
+        # Check 3: keyword scan on current label/data
+        if toxicity_keywords:
+            content = (n.get("label", "") + " " + json.dumps(n.get("data", {}))).lower()
+            found = [kw for kw in toxicity_keywords if kw.lower() in content]
+            if found:
+                flags.append(f"toxicity_match: found keywords {found}")
+        # Check 4: transformation depth — deep chains are more suspicious
+        chain_length = 0
+        if parents:
+            visited = set()
+            queue = list(parents)
+            while queue:
+                next_q = []
+                for p in queue:
+                    if p in visited:
+                        continue
+                    visited.add(p)
+                    chain_length += 1
+                    pn_row = self.conn.execute("SELECT parents FROM nodes WHERE id=?", (p,)).fetchone()
+                    if pn_row:
+                        grand_parents = json.loads(pn_row["parents"] or "[]")
+                        next_q.extend(grand_parents)
+                queue = next_q
+                if chain_length > 50:  # depth limit
+                    break
+        if chain_length > 5:
+            flags.append(f"deep_transformation_chain: {chain_length} ancestors (laundering risk)")
+        # Risk assessment
+        if len(flags) >= 3:
+            risk_level, recommendation = "critical", "immediate quarantine + manual review"
+        elif len(flags) >= 2:
+            risk_level, recommendation = "high", "quarantine and investigate source chain"
+        elif len(flags) >= 1:
+            risk_level, recommendation = "moderate", "flag for review"
+        else:
+            risk_level, recommendation = "low", "no laundering indicators detected"
+        return {
+            "node_id": node_id,
+            "risk_level": risk_level,
+            "chain_length": chain_length,
+            "flags": flags,
+            "recommendation": recommendation,
+        }
+
     # ── Graph Reasoning APIs (HopRAG / GR-Agent / GNN-RAG inspired) ────────
 
     def reasoning_path(self, seed_id: str, target_id: str,

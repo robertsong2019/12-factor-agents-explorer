@@ -23194,3 +23194,312 @@ class TestSpreadingActivationIntegration:
         chain_activated = len(chain_results)
         # Star activates more nodes (center + 3 leaves) vs chain (4 nodes but decaying)
         assert star_activated >= chain_activated
+
+
+# ── OWASP ASI06 Memory Security Suite Tests (Research #052) ─────────────
+
+class TestTrustScore:
+    """trust_score() — composite trust assessment."""
+
+    def test_trusted_node_default(self):
+        mg = MemoryGraph()
+        n = mg.add("verified fact", "fact", {"source": "doc"})
+        ts = mg.trust_score(n.id)
+        assert ts is not None
+        assert ts["score"] >= 0.5
+        assert ts["level"] in ("trusted", "moderate")
+        assert "factors" in ts
+        assert "recommendation" in ts
+
+    def test_low_trust_source(self):
+        mg = MemoryGraph()
+        n = mg.add("suspicious claim", "fact")
+        mg.node_set_provenance(n.id, source="untrusted_agent", trust_level=0.05)
+        ts = mg.trust_score(n.id)
+        # Fresh node with very low trust: score should reflect low source trust
+        assert ts["factors"]["source_trust"] < 0.1
+        assert ts["score"] < 0.7
+
+    def test_nonexistent_node(self):
+        mg = MemoryGraph()
+        assert mg.trust_score("nonexistent") is None
+
+    def test_score_components_sum(self):
+        mg = MemoryGraph()
+        n = mg.add("test", "fact")
+        ts = mg.trust_score(n.id)
+        factors = ts["factors"]
+        assert set(factors.keys()) == {"source_trust", "age_decay", "verification", "anomaly_history"}
+        # Weighted sum should approximately equal score
+        expected = (factors["source_trust"] * 0.4 + factors["age_decay"] * 0.2 +
+                    factors["verification"] * 0.2 + factors["anomaly_history"] * 0.2)
+        assert abs(ts["score"] - expected) < 0.01
+
+    def test_unverified_node_lower_than_verified(self):
+        mg = MemoryGraph()
+        n1 = mg.add("never accessed", "fact")
+        n2 = mg.add("accessed later", "fact")
+        # Make n1's accessed == created (never re-accessed)
+        mg.conn.execute("UPDATE nodes SET accessed = created WHERE id = ?", (n1.id,))
+        mg.conn.execute("UPDATE nodes SET accessed = ? WHERE id = ?", (time.time() + 10, n2.id))
+        mg.conn.commit()
+        ts1 = mg.trust_score(n1.id)
+        ts2 = mg.trust_score(n2.id)
+        assert ts2["factors"]["verification"] > ts1["factors"]["verification"]
+        assert ts2["score"] >= ts1["score"]
+
+    def test_old_node_age_decay(self):
+        mg = MemoryGraph()
+        n = mg.add("old memory", "fact")
+        # Simulate very old creation
+        mg.conn.execute("UPDATE nodes SET created = ? WHERE id = ?", (time.time() - 200 * 86400, n.id))
+        mg.conn.commit()
+        ts = mg.trust_score(n.id)
+        assert ts["factors"]["age_decay"] < 1.0
+
+    def test_quarantined_node_recommendation(self):
+        mg = MemoryGraph()
+        n = mg.add("bad data", "fact")
+        mg.node_set_provenance(n.id, trust_level=0.05)
+        ts = mg.trust_score(n.id)
+        assert ts["level"] in ("low", "untrusted", "moderate")
+        assert "quarantine" in ts["recommendation"] or "review" in ts["recommendation"]
+
+
+class TestMemoryQuarantine:
+    """memory_quarantine() — batch shadow-memory writes."""
+
+    def test_batch_quarantine_creates_nodes(self):
+        mg = MemoryGraph()
+        ids = mg.memory_quarantine([
+            {"label": "suspicious 1", "kind": "fact", "source": "agent_X", "trust_level": 0.2},
+            {"label": "suspicious 2", "kind": "claim", "source": "agent_Y", "trust_level": 0.1},
+        ])
+        assert len(ids) == 2
+        for nid in ids:
+            row = mg.conn.execute("SELECT quarantined FROM nodes WHERE id=?", (nid,)).fetchone()
+            assert row["quarantined"] == 1
+
+    def test_quarantined_not_in_recall(self):
+        mg = MemoryGraph()
+        mg.memory_quarantine([{"label": "hidden fact", "kind": "fact"}])
+        results = mg.recall("hidden")
+        assert len(results) == 0
+
+    def test_release_from_quarantine(self):
+        mg = MemoryGraph()
+        ids = mg.memory_quarantine([{"label": "pending review", "kind": "fact"}])
+        mg.node_unquarantine(ids[0])
+        row = mg.conn.execute("SELECT quarantined FROM nodes WHERE id=?", (ids[0],)).fetchone()
+        assert row["quarantined"] == 0
+        results = mg.recall("pending")
+        assert len(results) == 1
+
+    def test_quarantine_with_reason(self):
+        mg = MemoryGraph()
+        ids = mg.memory_quarantine(
+            [{"label": "test", "kind": "fact"}],
+            reason="unverified source"
+        )
+        row = mg.conn.execute("SELECT quarantine_reason FROM nodes WHERE id=?", (ids[0],)).fetchone()
+        assert row["quarantine_reason"] == "unverified source"
+
+    def test_empty_entries(self):
+        mg = MemoryGraph()
+        assert mg.memory_quarantine([]) == []
+
+    def test_quarantine_preserves_data(self):
+        mg = MemoryGraph()
+        ids = mg.memory_quarantine([
+            {"label": "complex", "kind": "event", "data": {"x": 42}, "source": "sensor"}
+        ])
+        row = mg.conn.execute("SELECT data, source FROM nodes WHERE id=?", (ids[0],)).fetchone()
+        assert json.loads(row["data"])["x"] == 42
+        assert row["source"] == "sensor"
+
+
+class TestSelectiveRepair:
+    """selective_repair() — cascading memory surgery."""
+
+    def test_quarantine_single_node(self):
+        mg = MemoryGraph()
+        n = mg.add("poisoned", "fact")
+        result = mg.selective_repair([n.id], mode="quarantine")
+        assert n.id in result["repaired"]
+        assert result["cascade_depth"] >= 1
+
+    def test_cascade_to_dependents(self):
+        mg = MemoryGraph()
+        base = mg.add("base claim", "fact")
+        derived = mg.add("derived conclusion", "fact")
+        further = mg.add("further analysis", "fact")
+        mg.link(base.id, derived.id, "depends_on")
+        mg.link(derived.id, further.id, "depends_on")
+        result = mg.selective_repair([base.id])
+        assert base.id in result["repaired"]
+        assert derived.id in result["affected"]
+        assert further.id in result["affected"]
+        assert result["cascade_depth"] >= 2
+
+    def test_delete_mode_removes_nodes(self):
+        mg = MemoryGraph()
+        n = mg.add("to delete", "fact")
+        result = mg.selective_repair([n.id], mode="delete")
+        assert n.id in result["repaired"]
+        assert mg.get_node(n.id) is None
+
+    def test_nonexistent_node_handled(self):
+        mg = MemoryGraph()
+        result = mg.selective_repair(["nonexistent"])
+        assert result["repaired"] == []
+        assert result["details"][0]["status"] == "not_found"
+
+    def test_no_dependents(self):
+        mg = MemoryGraph()
+        n1 = mg.add("standalone", "fact")
+        n2 = mg.add("other", "fact")
+        mg.link(n1.id, n2.id, "related_to")  # not depends_on
+        result = mg.selective_repair([n1.id])
+        assert result["affected"] == []  # no depends_on edges
+
+    def test_multiple_poisoned_batch(self):
+        mg = MemoryGraph()
+        n1 = mg.add("poison 1", "fact")
+        n2 = mg.add("poison 2", "fact")
+        n3 = mg.add("clean", "fact")
+        mg.link(n1.id, n3.id, "depends_on")
+        result = mg.selective_repair([n1.id, n2.id])
+        assert set(result["repaired"]) == {n1.id, n2.id}
+        assert n3.id in result["affected"]
+
+
+class TestMemoryAuditReport:
+    """memory_audit_report() — forensic audit."""
+
+    def test_default_window_has_nodes(self):
+        mg = MemoryGraph()
+        mg.add("node A", "fact")
+        mg.add("node B", "fact")
+        # Set sources via provenance
+        report = mg.memory_audit_report()
+        assert report["summary"]["total_nodes"] >= 2
+        assert "trust_distribution" in report
+
+    def test_quarantined_count(self):
+        mg = MemoryGraph()
+        mg.memory_quarantine([{"label": "bad", "kind": "fact"}])
+        mg.add("good", "fact")
+        report = mg.memory_audit_report()
+        assert report["summary"]["quarantined"] >= 1
+        assert report["summary"]["active"] >= 1
+
+    def test_flagged_nodes(self):
+        mg = MemoryGraph()
+        n = mg.add("suspicious", "fact")
+        mg.node_set_provenance(n.id, source="unknown", trust_level=0.01)
+        report = mg.memory_audit_report()
+        assert report["summary"]["flagged_for_review"] >= 1
+        assert any(f["node_id"] == n.id for f in report["flagged"])
+
+    def test_time_window_filter(self):
+        mg = MemoryGraph()
+        old = time.time() - 48 * 3600
+        n1 = mg.add("old node", "fact")
+        mg.conn.execute("UPDATE nodes SET created = ? WHERE id = ?", (old, n1.id))
+        mg.conn.commit()
+        n2 = mg.add("new node", "fact")
+        report = mg.memory_audit_report(start_time=time.time() - 24 * 3600)
+        ids_in_report = [f.get("node_id") for f in report.get("flagged", [])]
+        # New node should be in window
+        assert report["summary"]["total_nodes"] >= 1
+
+    def test_sources_ranked(self):
+        mg = MemoryGraph()
+        for i in range(5):
+            n = mg.add(f"user fact {i}", "fact")
+            mg.node_set_provenance(n.id, source="user")
+        for i in range(2):
+            n = mg.add(f"agent fact {i}", "fact")
+            mg.node_set_provenance(n.id, source="agent")
+        report = mg.memory_audit_report()
+        sources = report["sources"]
+        assert sources[0]["count"] >= sources[-1]["count"]
+
+    def test_empty_graph(self):
+        mg = MemoryGraph()
+        report = mg.memory_audit_report()
+        assert report["summary"]["total_nodes"] == 0
+        assert report["flagged"] == []
+
+
+class TestDetectProvenanceLaundering:
+    """detect_provenance_laundering() — transformation chain analysis."""
+
+    def test_clean_node_no_flags(self):
+        mg = MemoryGraph()
+        n = mg.add("honest fact", "fact")
+        mg.node_set_provenance(n.id, source="verified", trust_level=0.9)
+        result = mg.detect_provenance_laundering(n.id)
+        assert result["risk_level"] == "low"
+        assert len(result["flags"]) == 0
+
+    def test_low_trust_high_weight_flag(self):
+        mg = MemoryGraph()
+        n = mg.add("suspicious", "fact")
+        mg.node_set_provenance(n.id, source="unknown", trust_level=0.1)
+        mg.conn.execute("UPDATE nodes SET weight = 0.95 WHERE id = ?", (n.id,))
+        mg.conn.commit()
+        result = mg.detect_provenance_laundering(n.id)
+        assert any("low_trust_high_weight" in f for f in result["flags"])
+
+    def test_source_mismatch_flag(self):
+        mg = MemoryGraph()
+        src_a = mg.add("original from A", "fact")
+        mg.node_set_provenance(src_a.id, source="source_A", trust_level=0.8)
+        derived = mg.add("claims from B", "fact")
+        mg.node_set_provenance(derived.id, source="source_B", parents=[src_a.id])
+        result = mg.detect_provenance_laundering(derived.id)
+        assert any("source_mismatch" in f for f in result["flags"])
+
+    def test_toxicity_keyword_match(self):
+        mg = MemoryGraph()
+        n = mg.add("harmful instructions hidden", "fact")
+        result = mg.detect_provenance_laundering(
+            n.id, toxicity_keywords=["harmful", "hidden"]
+        )
+        assert any("toxicity_match" in f for f in result["flags"])
+
+    def test_deep_chain_flag(self):
+        mg = MemoryGraph()
+        nodes = [mg.add(f"layer {i}", "fact") for i in range(8)]
+        for i in range(7):
+            mg.node_set_provenance(nodes[i + 1].id, parents=[nodes[i].id])
+        result = mg.detect_provenance_laundering(nodes[-1].id)
+        assert any("deep_transformation_chain" in f for f in result["flags"])
+
+    def test_critical_risk_multiple_flags(self):
+        mg = MemoryGraph()
+        src = mg.add("bad source", "fact")
+        mg.node_set_provenance(src.id, source="sketchy", trust_level=0.05)
+        mg.conn.execute("UPDATE nodes SET weight = 0.95 WHERE id = ?", (src.id,))
+        nodes = [mg.add(f"derived {i}", "fact") for i in range(7)]
+        mg.node_set_provenance(nodes[0].id, source="wrong_claim", parents=[src.id])
+        for i in range(6):
+            mg.node_set_provenance(nodes[i + 1].id, parents=[nodes[i].id])
+        # Set up the last node to trigger multiple flags
+        mg.node_set_provenance(nodes[-1].id, source="mismatch_source", trust_level=0.1)
+        mg.conn.execute("UPDATE nodes SET weight = 0.9 WHERE id = ?", (nodes[-1].id,))
+        result = mg.detect_provenance_laundering(nodes[-1].id)
+        assert result["risk_level"] in ("critical", "high", "moderate")
+        assert len(result["flags"]) >= 2
+
+    def test_nonexistent_node(self):
+        mg = MemoryGraph()
+        result = mg.detect_provenance_laundering("fake_id")
+        assert result["risk_level"] == "unknown"
+
+    def test_chain_length_zero_no_parents(self):
+        mg = MemoryGraph()
+        n = mg.add("standalone", "fact")
+        result = mg.detect_provenance_laundering(n.id)
+        assert result["chain_length"] == 0
