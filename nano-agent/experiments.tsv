@@ -25,3 +25,5 @@ timestamp	commit	metric	value	status	description
 2026-08-05T22:15+08:00	02336e4	test_count	775→791/+16	keep	F47 resize(max_size, strategy) 4 eviction strategies (oldest/least_important/random/clustered) + F48 search_similar(index, limit) content similarity search
 2026-08-06T19:01	-	test_total	832	pass	F49 anomaly_detection(): burst/important/tag anomalies — +22 tests
 2026-08-06T19:01	-	test_total	832	pass	F50 conversation_summary(): structured report with themes/activity — +19 tests
+2026-08-06T22:10	e4720a2	test_pass_rate	850/850	keep	F49 archive + F50 forget_older_than — +18 tests
+2026-08-06T22:20	d5e90ee	test_pass_rate	859/859	keep	F51 export_conversation — +9 tests

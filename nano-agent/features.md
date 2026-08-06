@@ -74,6 +74,10 @@
 - [x] **F47**: `Memory.resize(max_size, strategy)` — Trim memory with 4 eviction strategies: oldest, least_important, random, clustered (near-dup removal) ✅ 2026-08-05
 - [x] **F48**: `Memory.search_similar(index, limit)` — Find most similar memories to a given entry by content similarity ratio ✅ 2026-08-05
 
+- [x] **F49**: `Memory.archive(index)` / `Memory.unarchive(index)` / `Memory.archived()` — Soft-archive system: move entries to archived, restore them, list archived ✅ 2026-08-06
+- [x] **F50**: `Memory.forget_older_than(days)` — Time-based cleanup: remove entries older than N days, return count ✅ 2026-08-06
+- [x] **F51**: `Agent.export_conversation(format)` — Export full conversation as markdown or JSON ✅ 2026-08-06
+
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
