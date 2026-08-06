@@ -18955,6 +18955,327 @@ class MemoryGraph:
 
         return results
 
+    # ------------------------------------------------------------------
+    # Activation trace — explainable spreading activation
+    # ------------------------------------------------------------------
+
+    def activation_trace(
+        self,
+        seeds: dict[str, float],
+        *,
+        decay: float = 0.85,
+        threshold: float = 0.01,
+        max_iter: int = 20,
+        edge_weight_factor: float = 1.0,
+        directed: bool = False,
+        relation_filter: list[str] | None = None,
+    ) -> dict:
+        """Explainable spreading-activation trace (Anderson 1983; Collins & Loftus 1975).
+
+        A superset of :meth:`spreading_activation` that records the **step-by-step
+        firing log**, producing a human-readable trace of how activation spread
+        through the graph.  Every wave of activation is captured with the edges
+        traversed, activation values, and propagation paths.
+
+        Use this when you need **explainability** — answering *"why was node X
+        activated?"* or *"which path did activation take from A to B?"*
+
+        Args:
+            seeds: Mapping of ``{node_id: initial_activation}``.
+            decay: Edge-traversal decay factor (0–1).
+            threshold: Minimum activation for a node to fire.
+            max_iter: Maximum spreading iterations.
+            edge_weight_factor: Exponent on edge weights.
+            directed: If True, only follow source→target edges.
+            relation_filter: If given, only follow edges whose relation is
+                in this list.
+
+        Returns:
+            Dict with the following keys::
+
+                {
+                  "results": [...],      # same as spreading_activation
+                  "waves": [              # per-iteration firing log
+                    {
+                      "iteration": 0,
+                      "fired": ["node_a", "node_b"],
+                      "newly_activated": [
+                        {
+                          "node_id": "node_c",
+                          "activation": 0.722,
+                          "fired_by": ["node_a"],
+                          "edge_relations": ["related_to"],
+                          "edge_weights": [1.0],
+                          "path": ["node_a", "node_c"],
+                        }, ...
+                      ],
+                      "total_active": 5,
+                    }, ...
+                  ],
+                  "paths": {              # shortest activation path from nearest seed
+                    "node_c": {"seed": "node_a", "path": ["node_a", "node_c"], "length": 1},
+                    ...
+                  },
+                  "seed_to_node": {       # for each seed, which nodes it reached
+                    "node_a": ["node_c", "node_d", ...],
+                    ...
+                  },
+                  "propagation_tree": {   # adjacency-like trace of firing relations
+                    "node_a": ["node_c", "node_d"],
+                    "node_c": ["node_e"],
+                    ...
+                  },
+                  "summary": {
+                    "total_nodes_activated": 7,
+                    "total_waves": 3,
+                    "max_reach": 3,       # furthest hop distance
+                    "seeds_used": ["node_a"],
+                    "dead_ends": [...],   # fired nodes with no further propagation
+                    "bottlenecks": [...], # nodes that gated the most downstream activation
+                  },
+                }
+
+        Raises:
+            ValueError: If ``seeds`` is empty or ``decay`` not in (0, 1].
+        """
+        if not seeds:
+            raise ValueError("seeds must not be empty")
+        if not (0 < decay <= 1.0):
+            raise ValueError("decay must be in (0, 1]")
+
+        # ── 1. Initialise activation ────────────────────────────────
+        activation: dict[str, float] = {}
+        hop_dist: dict[str, int] = {}
+        sources: dict[str, set] = {}
+        # Trace-specific structures
+        propagation_tree: dict[str, list[str]] = {}  # node -> nodes it activated
+        edge_trace: dict[str, list[tuple]] = {}      # node -> [(source, relation, weight)]
+        paths_from_seed: dict[str, str] = {}         # node -> nearest seed
+
+        for sid, act in seeds.items():
+            if not self.has_node(sid):
+                continue
+            activation[sid] = act
+            hop_dist[sid] = 0
+            sources[sid] = set()
+            paths_from_seed[sid] = sid
+            propagation_tree[sid] = []
+
+        if not activation:
+            return {
+                "results": [], "waves": [], "paths": {},
+                "seed_to_node": {}, "propagation_tree": {},
+                "summary": {
+                    "total_nodes_activated": 0, "total_waves": 0,
+                    "max_reach": 0, "seeds_used": [],
+                    "dead_ends": [], "bottlenecks": [],
+                },
+            }
+
+        already_fired = set(activation.keys())
+        waves_log: list[dict] = []
+
+        # ── 2. Spread activation with full trace recording ─────────
+        for iteration in range(max_iter):
+            if iteration == 0:
+                current_wave = list(activation.keys())
+            else:
+                current_wave = [
+                    nid for nid, act in activation.items()
+                    if act >= threshold and nid not in already_fired
+                ]
+
+            if not current_wave:
+                break
+
+            # Record this wave
+            wave_entry: dict = {
+                "iteration": iteration,
+                "fired": sorted(current_wave),
+                "newly_activated": [],
+                "total_active": 0,
+            }
+
+            next_act: dict[str, float] = {}
+            next_sources: dict[str, set] = {}
+            next_edge_info: dict[str, list[tuple]] = {}  # node -> [(source, rel, w)]
+
+            for node_id in current_wave:
+                already_fired.add(node_id)
+                act = activation[node_id]
+
+                if directed:
+                    rows = self.conn.execute(
+                        "SELECT target, relation, weight FROM edges WHERE source=?",
+                        (node_id,)
+                    ).fetchall()
+                else:
+                    rows = self.conn.execute(
+                        "SELECT target AS nbr, relation, weight FROM edges WHERE source=? "
+                        "UNION "
+                        "SELECT source AS nbr, relation, weight FROM edges WHERE target=?",
+                        (node_id, node_id)
+                    ).fetchall()
+
+                for row in rows:
+                    nbr = row["nbr"] if isinstance(row, dict) else row[0]
+                    rel = row["relation"] if isinstance(row, dict) else row[1]
+                    w = row["weight"] if isinstance(row, dict) else row[2]
+
+                    if relation_filter and rel not in relation_filter:
+                        continue
+                    if nbr in already_fired:
+                        continue
+
+                    eff_w = max(abs(w), 1e-9) ** edge_weight_factor
+                    propagated = act * decay * eff_w
+
+                    if propagated < threshold:
+                        continue
+
+                    if nbr not in next_act:
+                        next_act[nbr] = 0.0
+                        next_sources[nbr] = set()
+                        next_edge_info[nbr] = []
+
+                    next_act[nbr] += propagated
+                    next_sources[nbr].add(node_id)
+                    next_edge_info[nbr].append((node_id, rel, w))
+
+                    # Record propagation tree
+                    if node_id not in propagation_tree:
+                        propagation_tree[node_id] = []
+                    if nbr not in propagation_tree[node_id]:
+                        propagation_tree[node_id].append(nbr)
+
+                    # Track nearest seed via source
+                    if nbr not in paths_from_seed:
+                        paths_from_seed[nbr] = paths_from_seed.get(node_id, node_id)
+
+            # Build newly_activated entries for the wave log
+            for nid, act_val in sorted(next_act.items(), key=lambda x: -x[1]):
+                edge_info = next_edge_info.get(nid, [])
+                wave_entry["newly_activated"].append({
+                    "node_id": nid,
+                    "activation": round(act_val, 6),
+                    "fired_by": sorted(next_sources.get(nid, set())),
+                    "edge_relations": [ei[1] for ei in edge_info],
+                    "edge_weights": [round(ei[2], 6) for ei in edge_info],
+                    "path": self._trace_path(nid, paths_from_seed, propagation_tree),
+                })
+
+            wave_entry["total_active"] = len(activation) + len(next_act)
+            waves_log.append(wave_entry)
+
+            # Apply new activations
+            any_new = False
+            for nid, act_val in next_act.items():
+                is_new = nid not in activation
+                if is_new:
+                    hop_dist[nid] = min(
+                        (hop_dist[s] + 1 for s in next_sources[nid] if s in hop_dist),
+                        default=999,
+                    )
+                    any_new = True
+                elif act_val > activation[nid]:
+                    any_new = True
+                activation[nid] = max(activation.get(nid, 0), act_val)
+                sources[nid] = sources.get(nid, set()) | next_sources[nid]
+                edge_trace[nid] = edge_trace.get(nid, []) + next_edge_info.get(nid, [])
+
+            if not any_new:
+                break
+
+        # ── 3. Build paths dict ─────────────────────────────────────
+        paths: dict[str, dict] = {}
+        for nid in activation:
+            if nid in seeds and self.has_node(nid):
+                paths[nid] = {"seed": nid, "path": [nid], "length": 0}
+            elif nid in paths_from_seed:
+                trace = self._trace_path(nid, paths_from_seed, propagation_tree)
+                paths[nid] = {
+                    "seed": paths_from_seed[nid],
+                    "path": trace,
+                    "length": len(trace) - 1 if trace else 0,
+                }
+
+        # ── 4. Build seed_to_node mapping ───────────────────────────
+        seed_to_node: dict[str, list[str]] = {}
+        for sid in seeds:
+            if not self.has_node(sid):
+                continue
+            seed_to_node[sid] = [nid for nid, sd in paths_from_seed.items() if sd == sid]
+
+        # ── 5. Build results (same as spreading_activation) ─────────
+        results = []
+        for nid, act in sorted(activation.items(), key=lambda x: -x[1]):
+            entry: dict = {
+                "node_id": nid,
+                "activation": round(act, 6),
+                "fired": act >= threshold,
+                "hop_distance": hop_dist.get(nid, -1),
+                "sources": sorted(sources.get(nid, set())),
+            }
+            results.append(entry)
+
+        # ── 6. Build summary ────────────────────────────────────────
+        all_fired = {nid for nid, act in activation.items() if act >= threshold}
+        dead_ends = sorted(
+            nid for nid in all_fired
+            if nid not in propagation_tree or not propagation_tree[nid]
+        )
+        # Bottlenecks: nodes whose propagation reached the most downstream nodes
+        downstream_count: dict[str, int] = {}
+        for src, targets in propagation_tree.items():
+            downstream_count[src] = downstream_count.get(src, 0) + len(targets)
+        bottlenecks = sorted(
+            downstream_count, key=lambda k: -downstream_count[k]
+        )[:5]
+
+        max_reach = max(hop_dist.values()) if hop_dist else 0
+
+        summary = {
+            "total_nodes_activated": len(activation),
+            "total_waves": len(waves_log),
+            "max_reach": max_reach,
+            "seeds_used": sorted(s for s in seeds if self.has_node(s)),
+            "dead_ends": dead_ends,
+            "bottlenecks": bottlenecks,
+        }
+
+        return {
+            "results": results,
+            "waves": waves_log,
+            "paths": paths,
+            "seed_to_node": seed_to_node,
+            "propagation_tree": propagation_tree,
+            "summary": summary,
+        }
+
+    def _trace_path(
+        self, target: str, paths_from_seed: dict[str, str],
+        propagation_tree: dict[str, list[str]]
+    ) -> list[str]:
+        """Reconstruct the shortest activation path from seed to target."""
+        seed = paths_from_seed.get(target)
+        if seed is None or seed == target:
+            return [target] if target else []
+
+        # BFS through propagation_tree from seed to target
+        queue = [[seed]]
+        visited = {seed}
+        while queue:
+            path = queue.pop(0)
+            current = path[-1]
+            if current == target:
+                return path
+            for child in propagation_tree.get(current, []):
+                if child not in visited:
+                    visited.add(child)
+                    queue.append(path + [child])
+        # Fallback: direct path if BFS didn't find (shouldn't happen)
+        return [seed, target]
+
 
 
 class StreamingGraph(MemoryGraph):
