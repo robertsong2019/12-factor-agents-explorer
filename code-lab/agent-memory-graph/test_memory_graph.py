@@ -23559,3 +23559,42 @@ class TestSecurityDashboard:
         result = mg.security_dashboard()
         assert "3 nodes" in result["summary"]
         assert "Threat:" in result["summary"]
+
+    def test_memory_audit_includes_quarantine_count(self):
+        """memory_audit should surface quarantined nodes."""
+        mg = MemoryGraph()
+        mg.add("clean", "fact")
+        mg.memory_quarantine([{"label": "suspicious", "kind": "fact"}])
+        audit = mg.memory_audit()
+        assert audit["quarantined_nodes"] >= 1
+        assert any("quarantined" in s.lower() for s in audit["suggestions"])
+
+    def test_memory_audit_clean_no_quarantine_warning(self):
+        """Clean graph should not have quarantine warning."""
+        mg = MemoryGraph()
+        mg.add("clean", "fact")
+        audit = mg.memory_audit()
+        assert audit["quarantined_nodes"] == 0
+        assert not any("quarantined" in s.lower() for s in audit["suggestions"])
+
+    def test_security_pipeline_quarantine_then_repair(self):
+        """Integration: quarantine → dashboard → selective_repair → verify."""
+        mg = MemoryGraph()
+        # Create memory graph
+        base = mg.add("base claim", "fact")
+        derived = mg.add("derived", "fact")
+        mg.link(base.id, derived.id, "depends_on")
+        # Quarantine via batch
+        ids = mg.memory_quarantine([{"label": "suspicious new", "kind": "fact"}], reason="test")
+        # Dashboard should show elevated
+        dash = mg.security_dashboard()
+        assert dash["threat_level"] == "elevated"
+        # Selective repair on base
+        repair = mg.selective_repair([base.id], mode="quarantine")
+        assert base.id in repair["repaired"]
+        assert derived.id in repair["affected"]
+        # Verify both quarantined
+        q_list = mg.quarantine_list()
+        q_ids = {q["id"] for q in q_list}
+        assert base.id in q_ids
+        assert derived.id in q_ids

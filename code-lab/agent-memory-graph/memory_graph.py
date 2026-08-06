@@ -8470,6 +8470,13 @@ class MemoryGraph:
         if not suggestions:
             suggestions.append("Graph is healthy.")
 
+        # Security overlay
+        q_count = self.conn.execute(
+            "SELECT COUNT(*) as c FROM nodes WHERE quarantined = 1"
+        ).fetchone()["c"]
+        if q_count > 0:
+            suggestions.insert(0, f"⚠️ {q_count} quarantined nodes. Run security_dashboard() for details.")
+
         return {
             "health_score": health,
             "total_nodes": total,
@@ -8477,6 +8484,7 @@ class MemoryGraph:
             "stale_nodes": stale_nodes,
             "avg_importance": round(avg_w, 3),
             "noop_ratio": round(noop_ratio, 3),
+            "quarantined_nodes": q_count,
             "suggestions": suggestions,
         }
 
