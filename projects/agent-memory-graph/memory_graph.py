@@ -44811,6 +44811,231 @@ class MemoryGraph:
         }
 
 
+    def classification_mcnemar(
+        self,
+        references: list["MemoryGraph"],
+        queries: list["MemoryGraph"],
+        expected_labels: list[str],
+        *,
+        method_a: str = "graph",
+        method_b: str = "spectral",
+        degree_index: str = "sombor",
+        spectral_measure: str = "jsd",
+        bins: int = 20,
+        normalise: str = "minmax",
+        include_quarantined: bool = False,
+        alpha: float = 0.05,
+    ) -> dict:
+        """McNemar significance test between two classification methods.
+
+        Given two classification methods, this runs both on every
+        query and builds a 2×2 contingency table of paired outcomes:
+
+        ============ ===== =====
+                     B OK  B BAD
+        ============ ===== =====
+        A OK           n11  n10
+        A BAD          n01  n00
+        ============ ===== =====
+
+        Under the null hypothesis (methods equivalent), the
+        discordant pair counts n01 and n10 should be roughly equal.
+        McNemar's test (with continuity correction)::
+
+            χ² = (|n01 − n10| − 1)² / (n01 + n10)
+
+        follows χ²₁ under H₀.
+
+        **Motivation** (Research #046, Insight #199):
+
+        - ``classification_compare_methods`` runs *all* pairwise
+          method comparisons, which is expensive when you only
+          need to compare two specific methods.
+        - ``classification_compare`` (single query, multiple refs)
+          includes a lightweight ``mcnemar_proxy`` but not a
+          proper χ² test with p-value.
+        - This standalone method provides a focused, lightweight
+          significance test for exactly two methods, returning
+          the full contingency table and p-value.
+
+        Args:
+            references: Reference MemoryGraph objects.
+            queries: Query MemoryGraph objects to classify.
+            expected_labels: Ground-truth label per query.
+            method_a: First method name (``"graph"``, ``"spectral"``,
+                ``"hybrid"``, ``"rrf"``, ``"bayesian"``, ``"knn"``,
+                ``"weighted_average"``, ``"max_confidence"``).
+            method_b: Second method name.
+            degree_index: Degree index for graph-based methods.
+            spectral_measure: Spectral divergence measure.
+            bins: Histogram bins for spectral fingerprint.
+            normalise: Score normalisation method.
+            include_quarantined: Include quarantined references.
+            alpha: Significance level (default 0.05).
+
+        Returns:
+            Dict with:
+
+            - ``method_a`` / ``method_b`` — method names.
+            - ``n11`` — both correct.
+            - ``n00`` — both wrong.
+            - ``n01`` — A wrong, B correct.
+            - ``n10`` — A correct, B wrong.
+            - ``n_agree`` — n11 + n00 (same prediction).
+            - ``chi_squared`` — McNemar χ² statistic (continuity
+              corrected). 0.0 when n01 = n10 = 0.
+            - ``p_value`` — two-sided p-value from χ²₁.
+            - ``significant`` — ``True`` if p_value < alpha.
+            - ``accuracy_a`` / ``accuracy_b`` — per-method accuracy.
+            - ``better`` — name of the better method or ``"tie"``.
+            - ``alpha`` — significance level used.
+            - ``n_queries`` — number of queries tested.
+            - ``summary`` — human-readable result.
+        """
+        import math as _math
+
+        if not queries:
+            raise ValueError("Need at least one query.")
+        if len(expected_labels) != len(queries):
+            raise ValueError(
+                f"expected_labels length {len(expected_labels)} != "
+                f"queries length {len(queries)}"
+            )
+        if method_a == method_b:
+            raise ValueError(
+                f"method_a and method_b must differ "
+                f"(both {method_a!r})"
+            )
+
+        # Dispatch helper.
+        def _run(method_name: str, query: "MemoryGraph"):
+            if method_name == "graph":
+                return query.graph_classification(
+                    references, index=degree_index,
+                )
+            elif method_name == "spectral":
+                return query.spectral_classification(
+                    references,
+                    measure=spectral_measure,
+                    bins=bins,
+                    include_quarantined=include_quarantined,
+                )
+            elif method_name == "hybrid":
+                return query.hybrid_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            elif method_name == "rrf":
+                return query.rrf_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            elif method_name == "weighted_average":
+                return query.weighted_average_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            elif method_name == "bayesian":
+                return query.bayesian_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            elif method_name == "knn":
+                return query.knn_classification(references)
+            elif method_name == "max_confidence":
+                return query.max_confidence_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined,
+                )
+            else:
+                raise ValueError(f"Unknown method: {method_name!r}")
+
+        # Derive reference labels.
+        ref_labels = [
+            getattr(r, "graph_meta", {}).get("label", f"ref_{i}")
+            if isinstance(getattr(r, "graph_meta", None), dict)
+            else f"ref_{i}"
+            for i, r in enumerate(references)
+        ]
+
+        # Run both methods on each query.
+        correct_a: list[bool] = []
+        correct_b: list[bool] = []
+        for qi, query in enumerate(queries):
+            ra = _run(method_a, query)
+            rb = _run(method_b, query)
+
+            for r, lst in ((ra, correct_a), (rb, correct_b)):
+                if r is None:
+                    lst.append(False)
+                    continue
+                idx = r.get("best_match")
+                if idx is None:
+                    idx = r.get("best_ref", 0)
+                predicted = (
+                    ref_labels[idx]
+                    if isinstance(idx, int) and idx < len(ref_labels)
+                    else str(idx)
+                )
+                lst.append(predicted == expected_labels[qi])
+
+        # Build contingency table.
+        n11 = sum(1 for a, b in zip(correct_a, correct_b) if a and b)
+        n00 = sum(1 for a, b in zip(correct_a, correct_b) if not a and not b)
+        n01 = sum(1 for a, b in zip(correct_a, correct_b) if not a and b)
+        n10 = sum(1 for a, b in zip(correct_a, correct_b) if a and not b)
+        n_agree = n11 + n00
+        n_disc = n01 + n10
+
+        # McNemar's χ² with continuity correction.
+        if n_disc == 0:
+            chi2 = 0.0
+            p_value = 1.0
+        else:
+            chi2 = (abs(n01 - n10) - 1) ** 2 / n_disc
+            # Survival function of χ²₁: p = erfc(√(χ²/2)).
+            p_value = _math.erfc(_math.sqrt(chi2 / 2))
+
+        acc_a = sum(correct_a) / len(correct_a)
+        acc_b = sum(correct_b) / len(correct_b)
+        if n10 > n01:
+            better = method_a
+        elif n01 > n10:
+            better = method_b
+        else:
+            better = "tie"
+
+        sig = p_value < alpha
+
+        summary = (
+            f"McNemar test: {method_a} vs {method_b} "
+            f"(n={len(queries)}, χ²={chi2:.4f}, p={p_value:.4f}). "
+        )
+        if sig:
+            summary += f"Significant at α={alpha} — {better} is better."
+        else:
+            summary += f"Not significant at α={alpha}."
+
+        return {
+            "method_a": method_a,
+            "method_b": method_b,
+            "n11": n11,
+            "n00": n00,
+            "n01": n01,
+            "n10": n10,
+            "n_agree": n_agree,
+            "chi_squared": round(chi2, 6),
+            "p_value": round(p_value, 6),
+            "significant": sig,
+            "accuracy_a": round(acc_a, 6),
+            "accuracy_b": round(acc_b, 6),
+            "better": better,
+            "alpha": alpha,
+            "n_queries": len(queries),
+            "summary": summary,
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
