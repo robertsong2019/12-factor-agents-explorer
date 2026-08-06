@@ -12125,6 +12125,66 @@ class MemoryGraph:
             "recommendation": recommendation,
         }
 
+    def security_dashboard(self) -> dict:
+        """One-call security overview (OWASP ASI06 all layers).
+
+        Aggregates: quarantine status, trust distribution, flagged nodes,
+        laundering risks, and selective repair readiness.
+
+        Returns {threat_level, quarantine, trust, laundering, summary}.
+        """
+        # Quarantine summary
+        q_list = self.quarantine_list()
+        q_count = len(q_list)
+        # Trust distribution across ALL nodes
+        all_ids = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        trust_levels = {"trusted": 0, "moderate": 0, "low": 0, "untrusted": 0}
+        flagged = []
+        for nid in all_ids:
+            ts = self.trust_score(nid)
+            if ts:
+                trust_levels[ts["level"]] = trust_levels.get(ts["level"], 0) + 1
+                if ts["score"] < 0.5 or ts["factors"]["source_trust"] < 0.2:
+                    flagged.append({"node_id": nid, "score": ts["score"], "level": ts["level"]})
+        # Laundering sweep (sample up to 100 nodes)
+        sample_ids = all_ids[:100] if len(all_ids) > 100 else all_ids
+        laundering_risks = []
+        for nid in sample_ids:
+            dl = self.detect_provenance_laundering(nid)
+            if dl["risk_level"] in ("high", "critical"):
+                laundering_risks.append({"node_id": nid, "risk": dl["risk_level"], "flags": dl["flags"]})
+        # Threat level
+        total = len(all_ids)
+        critical_count = trust_levels.get("untrusted", 0) + len(laundering_risks)
+        if q_count > 0 or critical_count > 5:
+            threat_level = "elevated"
+        elif critical_count > 0:
+            threat_level = "moderate"
+        else:
+            threat_level = "normal"
+        return {
+            "threat_level": threat_level,
+            "total_nodes": total,
+            "quarantine": {
+                "count": q_count,
+                "items": q_list[:10],  # cap for readability
+            },
+            "trust": trust_levels,
+            "flagged": flagged[:20],  # cap
+            "flagged_count": len(flagged),
+            "laundering": {
+                "scanned": len(sample_ids),
+                "high_risk": len(laundering_risks),
+                "items": laundering_risks[:10],
+            },
+            "summary": (
+                f"{total} nodes: {trust_levels['trusted']} trusted, "
+                f"{trust_levels['moderate']} moderate, {q_count} quarantined, "
+                f"{len(flagged)} flagged, {len(laundering_risks)} laundering risks. "
+                f"Threat: {threat_level}."
+            ),
+        }
+
     # ── Graph Reasoning APIs (HopRAG / GR-Agent / GNN-RAG inspired) ────────
 
     def reasoning_path(self, seed_id: str, target_id: str,

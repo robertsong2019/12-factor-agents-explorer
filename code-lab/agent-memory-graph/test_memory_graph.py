@@ -23503,3 +23503,59 @@ class TestDetectProvenanceLaundering:
         n = mg.add("standalone", "fact")
         result = mg.detect_provenance_laundering(n.id)
         assert result["chain_length"] == 0
+
+
+class TestSecurityDashboard:
+    """security_dashboard() — one-call security overview."""
+
+    def test_empty_graph_normal(self):
+        mg = MemoryGraph()
+        result = mg.security_dashboard()
+        assert result["threat_level"] == "normal"
+        assert result["total_nodes"] == 0
+
+    def test_clean_graph_normal(self):
+        mg = MemoryGraph()
+        for i in range(5):
+            n = mg.add(f"clean fact {i}", "fact")
+            mg.node_set_provenance(n.id, source="verified", trust_level=0.9)
+        result = mg.security_dashboard()
+        assert result["threat_level"] in ("normal", "moderate")
+        assert result["trust"]["trusted"] >= 3
+
+    def test_quarantined_elevates_threat(self):
+        mg = MemoryGraph()
+        mg.add("clean", "fact")
+        mg.memory_quarantine([{"label": "bad", "kind": "fact"}])
+        result = mg.security_dashboard()
+        assert result["threat_level"] == "elevated"
+        assert result["quarantine"]["count"] >= 1
+
+    def test_low_trust_flagged(self):
+        mg = MemoryGraph()
+        n = mg.add("sketchy", "fact")
+        mg.node_set_provenance(n.id, source="unknown", trust_level=0.05)
+        result = mg.security_dashboard()
+        assert result["flagged_count"] >= 1
+        assert any(f["node_id"] == n.id for f in result["flagged"])
+
+    def test_laundering_detection_in_dashboard(self):
+        mg = MemoryGraph()
+        src = mg.add("bad source", "fact")
+        mg.node_set_provenance(src.id, source="sketchy", trust_level=0.05)
+        mg.conn.execute("UPDATE nodes SET weight = 0.95 WHERE id = ?", (src.id,))
+        nodes = [mg.add(f"derived {i}", "fact") for i in range(7)]
+        mg.node_set_provenance(nodes[0].id, source="wrong", parents=[src.id])
+        for i in range(6):
+            mg.node_set_provenance(nodes[i + 1].id, source="also_wrong", trust_level=0.1, parents=[nodes[i].id])
+            mg.conn.execute("UPDATE nodes SET weight = 0.9 WHERE id = ?", (nodes[i + 1].id,))
+        result = mg.security_dashboard()
+        assert result["laundering"]["scanned"] > 0
+
+    def test_summary_string_contains_key_info(self):
+        mg = MemoryGraph()
+        for i in range(3):
+            mg.add(f"fact {i}", "fact")
+        result = mg.security_dashboard()
+        assert "3 nodes" in result["summary"]
+        assert "Threat:" in result["summary"]
