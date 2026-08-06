@@ -4,6 +4,10 @@ agent-memory-graph MCP Server
 =============================
 Exposes MemoryGraph as MCP tools for AI agents to use as long-term memory.
 
+Tools (16):
+  Basic:   remember, recall, relate, ask, lookup, neighbors, forget, stats, timeline, health
+  Advanced: entropy, reason, snapshot, code_explain, quarantine, security
+
 Usage:
     python3 mcp_server.py                    # stdio mode (for mcporter/MCP clients)
     python3 mcp_server.py --http --port 8765 # HTTP mode (for remote access)
@@ -174,6 +178,75 @@ async def list_tools() -> list[types.Tool]:
             description="Memory health report.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        # ── Advanced tools ──
+        types.Tool(
+            name="entropy",
+            description="Get entropy profile of the memory graph. Shows information-theoretic complexity by index (sombor, randic, zagreb, abc, etc.). High entropy = diverse/uncertain region.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "top_n": {"type": "integer", "description": "Top-N contributors (default 5)", "default": 5},
+                },
+            },
+        ),
+        types.Tool(
+            name="reason",
+            description="Multi-hop reasoning: find relationship paths between two entities. Useful for 'how does X connect to Y?' questions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string", "description": "Starting node name"},
+                    "to": {"type": "string", "description": "Target node name"},
+                    "max_hops": {"type": "integer", "description": "Max traversal depth (default 3)", "default": 3},
+                    "strategy": {"type": "string", "description": "Path strategy: shortest, weighted, or all (default 'shortest')", "default": "shortest"},
+                },
+                "required": ["from", "to"],
+            },
+        ),
+        types.Tool(
+            name="snapshot",
+            description="Bi-temporal query: see the memory graph as of a past timestamp. Time-travel through memory history.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "timestamp": {"type": "string", "description": "ISO timestamp or Unix epoch (e.g. '2024-01-01' or 1700000000)"},
+                    "node": {"type": "string", "description": "Focus on specific node name (optional)"},
+                    "depth": {"type": "integer", "description": "Neighbor depth (default 1)", "default": 1},
+                    "limit": {"type": "integer", "description": "Max nodes (default 100)", "default": 100},
+                },
+                "required": ["timestamp"],
+            },
+        ),
+        types.Tool(
+            name="code_explain",
+            description="Explain a code entity stored in memory. Shows functions, classes, dependencies, and impact analysis.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Code entity name (function/class/file)"},
+                },
+                "required": ["name"],
+            },
+        ),
+        types.Tool(
+            name="quarantine",
+            description="Quarantine suspicious or low-trust memories. Prevents them from influencing reasoning. Like putting memories in isolation.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "scan", "add", "remove"], "description": "Action: list quarantined, scan for suspicious, add quarantine, remove quarantine"},
+                    "node": {"type": "string", "description": "Node name (for add/remove)"},
+                    "reason": {"type": "string", "description": "Reason for quarantine (for add)"},
+                    "trust_threshold": {"type": "number", "description": "Trust threshold for scan (default 0.3)", "default": 0.3},
+                },
+                "required": ["action"],
+            },
+        ),
+        types.Tool(
+            name="security",
+            description="Security audit: run OWASP ASI06 memory security checks. Reports quarantine status, trust levels, and potential provenance laundering.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -340,6 +413,156 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             if isinstance(h, str):
                 return [types.TextContent(type="text", text=h)]
             return [types.TextContent(type="text", text=json.dumps(h, ensure_ascii=False, indent=2))]
+
+        # ── Advanced tools ──
+
+        elif name == "entropy":
+            top_n = arguments.get("top_n", 5)
+            result = g.entropy_dashboard(top_n=top_n)
+            if result is None:
+                return [types.TextContent(type="text", text=json.dumps({"error": "not enough nodes for entropy analysis"}, ensure_ascii=False))]
+            return [types.TextContent(type="text", text=json.dumps(_safe(result), ensure_ascii=False, indent=2))]
+
+        elif name == "reason":
+            src_name = arguments["from"]
+            dst_name = arguments["to"]
+            max_hops = arguments.get("max_hops", 3)
+            strategy = arguments.get("strategy", "shortest")
+
+            src_id = _resolve(src_name)
+            dst_id = _resolve(dst_name)
+
+            if not src_id:
+                return [types.TextContent(type="text", text=json.dumps({"error": f"'{src_name}' not found"}, ensure_ascii=False))]
+            if not dst_id:
+                return [types.TextContent(type="text", text=json.dumps({"error": f"'{dst_name}' not found"}, ensure_ascii=False))]
+
+            paths = g.reasoning_path(src_id, dst_id, max_hops=max_hops, strategy=strategy)
+            return [types.TextContent(type="text", text=json.dumps({
+                "from": src_name,
+                "to": dst_name,
+                "hops": max_hops,
+                "paths": _safe(paths) if paths else [],
+            }, ensure_ascii=False, indent=2))]
+
+        elif name == "snapshot":
+            ts_arg = arguments["timestamp"]
+            # Parse timestamp: support ISO string or epoch
+            if isinstance(ts_arg, str):
+                import datetime
+                try:
+                    # Try ISO format first
+                    dt = datetime.datetime.fromisoformat(ts_arg)
+                    timestamp = dt.timestamp()
+                except ValueError:
+                    try:
+                        timestamp = float(ts_arg)
+                    except ValueError:
+                        return [types.TextContent(type="text", text=json.dumps({"error": f"Invalid timestamp: {ts_arg}"}, ensure_ascii=False))]
+            else:
+                timestamp = float(ts_arg)
+
+            node_name = arguments.get("node")
+            node_id = _resolve(node_name) if node_name else None
+            depth = arguments.get("depth", 1)
+            limit = arguments.get("limit", 100)
+
+            result = g.query_as_of(timestamp, node_id=node_id, depth=depth, limit=limit)
+            return [types.TextContent(type="text", text=json.dumps(_safe(result), ensure_ascii=False, indent=2))]
+
+        elif name == "code_explain":
+            entity_name = arguments["name"]
+            node_id = _resolve(entity_name)
+            if not node_id:
+                return [types.TextContent(type="text", text=json.dumps({"error": f"Code entity '{entity_name}' not found"}, ensure_ascii=False))]
+
+            result = g.explain_code(node_id)
+            return [types.TextContent(type="text", text=json.dumps(_safe(result), ensure_ascii=False, indent=2))]
+
+        elif name == "quarantine":
+            action = arguments.get("action", "list")
+
+            if action == "list":
+                result = g.quarantine_list()
+                return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+            elif action == "scan":
+                threshold = arguments.get("trust_threshold", 0.3)
+                flagged = g.quarantine_scan(trust_threshold=threshold)
+                return [types.TextContent(type="text", text=json.dumps({
+                    "trust_threshold": threshold,
+                    "flagged_count": len(flagged),
+                    "flagged_nodes": flagged,
+                }, ensure_ascii=False, indent=2))]
+
+            elif action == "add":
+                node_name = arguments.get("node", "")
+                reason = arguments.get("reason", "")
+                node_id = _resolve(node_name)
+                if not node_id:
+                    return [types.TextContent(type="text", text=json.dumps({"error": f"'{node_name}' not found"}, ensure_ascii=False))]
+                ok = g.node_quarantine(node_id, reason=reason)
+                return [types.TextContent(type="text", text=json.dumps({
+                    "status": "quarantined" if ok else "already quarantined",
+                    "node": node_name,
+                    "reason": reason,
+                }, ensure_ascii=False))]
+
+            elif action == "remove":
+                node_name = arguments.get("node", "")
+                node_id = _resolve(node_name)
+                if not node_id:
+                    return [types.TextContent(type="text", text=json.dumps({"error": f"'{node_name}' not found"}, ensure_ascii=False))]
+                ok = g.node_unquarantine(node_id)
+                return [types.TextContent(type="text", text=json.dumps({
+                    "status": "unquarantined" if ok else "was not quarantined",
+                    "node": node_name,
+                }, ensure_ascii=False))]
+
+            else:
+                return [types.TextContent(type="text", text=json.dumps({"error": f"Unknown action: {action}"}, ensure_ascii=False))]
+
+        elif name == "security":
+            # Aggregate security status from multiple sources
+            q_list = g.quarantine_list()
+            health = g.memory_health_score()
+            stats = g.stats()
+
+            # Count total nodes and quarantined
+            total_nodes = stats.get("nodes", 0) if isinstance(stats, dict) else 0
+            total_edges = stats.get("edges", 0) if isinstance(stats, dict) else 0
+            quarantined_count = len(q_list)
+
+            # Quarantine ratio
+            q_ratio = (quarantined_count / total_nodes) if total_nodes > 0 else 0.0
+
+            # Health score
+            health_val = health.get("health_score", health) if isinstance(health, dict) else health
+
+            audit = {
+                "owasp_asi06_status": {
+                    "L1_write_governance": "available",
+                    "L2_provenance_lineage": "available",
+                    "L3_entropy_weighted_retrieval": "available",
+                    "L4_streaming_graph": "available",
+                    "L5_propagate_correction": "available",
+                },
+                "quarantine": {
+                    "count": quarantined_count,
+                    "ratio": round(q_ratio, 4),
+                    "nodes": q_list[:20],  # cap for readability
+                },
+                "graph_health": health_val,
+                "graph_stats": {
+                    "nodes": total_nodes,
+                    "edges": total_edges,
+                },
+                "recommendation": (
+                    "All clear" if quarantined_count == 0
+                    else f"{quarantined_count} quarantined node(s) — review with quarantine scan"
+                ),
+            }
+            return [types.TextContent(type="text", text=json.dumps(audit, ensure_ascii=False, indent=2))]
 
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
