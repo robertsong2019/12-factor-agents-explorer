@@ -1,85 +1,77 @@
-# HEARTBEAT.md - August 1, 2026 (Saturday) — AM update
+# HEARTBEAT.md - August 6, 2026 (Thursday) — 02:11 AM update
 
 ## 待办任务
 
 ### 🔴 最高优先级（本周）
-- [ ] **agent-memory-graph: README + npm publish** — **6272 tests**, 911+ APIs, 八十合一, 11-API classification suite
-- [ ] **agent-context-store: README + npm publish** — **2898 tests**, 600+ APIs, 二十六层
+- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 2294 Python tests**, 1000+ APIs, 40+ entropy APIs, 25-API classification suite + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + SummaryTree + code-aware APIs ✅
+- [ ] **agent-context-store: README + npm publish** — **2898 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
-- [ ] **agent-task-cli: README + npm publish** — **1354 tests**, F217
+- [ ] **agent-task-cli: README + npm publish** — **1485 tests**, F226
 
 ### 中优先级（本月）
-- [ ] amg-bench: Benchmark harness — TypeScript MemoryBackend interface + AMGBackend adapter. Research #037 ✅
+- [ ] amg-bench: Benchmark harness — Research #037 ✅, ready to implement
 - [ ] amg: query_as_of(timestamp) — expose bi-temporal as first-class API (#033)
-- [ ] amg: entropy_scan() — multi-scale Rényi/Tsallis sweep for graph fingerprinting
-- [ ] amg: depends_on edge + propagate_invalidation() (#040) — cascading correction
-- [ ] amg: OpenClaw plugin (~200 lines) — fastest-growing distribution channel
+- [ ] amg MCP server (stateless, 2026-07-28 compatible) — Research #043 ✅, ~300 lines
+- [ ] amg OpenClaw plugin (~200 lines) — fastest-growing distribution channel. ⚠️ TencentDB 已有 team-level asset sharing
+- [ ] amg: OTel GenAI instrumentation — Research #034 ✅, ~50 lines telemetry module
 - [ ] amg PyPI publish (Python-first strategy)
 - [ ] context-forge: 继续 F80+ code analysis features
-- [ ] lab/agent-observability: OTel GenAI alignment — Research #034 complete, 5 action items queued
+- [ ] lab/agent-observability: OTel GenAI alignment — Research #034 complete
 - [ ] openclaw-langgraph-bridge: Gateway 集成测试 (261 tests)
-- [ ] lab/a2a-trust-prototype: TrustEngineV2 (7算法)
-- [ ] prompt-mgr: 继续 template management features (102 tests)
+- [ ] prompt-mgr: 继续 template management features (175 tests)
 
-### 已完成 ✅ (08-01)
-- [x] amg cycle 337: trace_derivation() — provenance tracking via derived_from/computed_from edges. 2 new causal relation types. BFS backward, returns roots+chains+all_sources. +25 tests (6497→6522). **273rd day**. 14df46a.
-- [x] amg cycle 336: propagate_correction() — cascading correction propagation. Companion to invalidate_cascade(). _correction metadata (needs_review). +23 tests (6474→6497). **273rd day**. 2d1a629.
-- [x] amg cycle 335: max_confidence_classification() — conviction-based meta-classifier. 3 confidence metrics (margin/confidence/z_score). Dynamic best-method-per-query selection. +49 tests (6223→6272). **273rd day**. 6bc34dc.
-- [x] amg cycle 334: classification_benchmark() — standardized evaluation suite. 6 topology types, all 8 methods, accuracy/precision/recall/F1 + confusion matrix. +62 tests (6161→6223). **273rd day**. 2e14366.
+### 已完成 ✅ (08-06 PM Dev)
+- [x] Cycle 370: **amg-bench** — Performance benchmark harness (BenchHarness + BenchmarkResult + run_bench). Add/link throughput + search/recall/multi_hop latency at scale tiers. Markdown/JSON/text output. Research #037 Python impl. +24 tests.
 
-### 已完成 ✅ (07-31)
-- [x] amg cycles 331-333: conditioned_traverse() + project_graph() + multi_perspective_analysis() — Research #040 HAGE-inspired. +59 tests (6102→6161).
-- [x] amg cycle 330: weighted_average_classification() — explicit user weights over 3 modalities. +52 tests (6050→6102).
-- [x] amg cycle 329: knn_classification() — k-nearest distance-weighted voting with label pooling. +56 tests (5994→6050).
-- [x] Research #038 FULLY IMPLEMENTED: All 4 ensemble strategies complete (RRF + Bayesian + Weighted Average + k-NN). Now 11 classification APIs (added benchmark + max_confidence on 08-01).
-- [x] Research #040: Graph-Native Agent Memory — HAGE/HyphaeDB/GRADE/GNN deference. 5 insights (#156-159). 3 new APIs implemented.
-- [x] prompt-mgr: clone_template + get_stats + tag_summary. +27 tests (75→102).
-- [x] 2 essays published (ensemble fusion + test blind spots)
-- [x] 4 blog posts published (Shakespeare GPT, TinyStories GPT, Verus, AI-native IoT)
+### 已完成 ✅ (08-06 AM)
+- [x] Cycle 365: **Code-aware APIs** — function/class/file/module node types + explainCode() + recordCodeDecision() + impactAnalysis(). Research #044. +36 Python tests.
+- [x] Cycle 366: **spreading_activation()** — ACT-R cognitive model (Anderson 1983). Fire-once BFS, threshold-gated. 5th retrieval paradigm. Research #049. +41 Python tests.
+- [x] Cycle 358 TS: **classification_confidence_interval()** — Bootstrap CI (Efron 1979). 25th classification API. Per-class F1 intervals. Research #050. +35 TS tests.
+
+### 已完成 ✅ (08-05 PM)
+- [x] Research #047: **Streaming & Incremental Graph Entropy** — FINGER O(Δ) incremental. FINGEREntropy class ~200 lines. 5 insights (#201-205).
+- [x] Research #048: **GraphRAG 2.0: Retrieval to Reasoning** — HippoRAG2 PPR, GFM-RAG, A-MEM, PathRAG. 2 code examples. 5 insights (#206-210).
+- [x] amg cycle 361: **FINGEREntropy + personalized_pagerank() + multi_hop_reason()** — Streaming entropy + HippoRAG2 PPR + first reasoning API. +29 Python tests.
+- [x] amg cycle 362: **enrich_node() + streaming_health()** — A-MEM retroactive enrichment. +10 tests.
+- [x] amg cycle 363: **StreamingGraph** — Real-time FINGER tracking + anomaly detection. +9 tests.
+- [x] amg cycle 364: **SummaryTree** — TiMem 5-level hierarchy + ProGraph residuals + HiMem reconsolidation. +39 tests. Research #045.
+- [x] nano-agent F47: **Memory.resize** — 4 eviction strategies.
+- [x] nano-agent F48: **Memory.search_similar** — SequenceMatcher similarity search.
+- [x] AI×Neuroscience newsletter #8: World Models & Cognitive Maps.
+- [x] AI×Neuroscience newsletter #19: Neural Manifold Geometry.
 
 ## 系统状态
-- **agent-memory-graph**: **6522 tests** — 913+ APIs。八十合一: **entropy framework** ✅ (30+ APIs) + **11-API classification suite** ✅ (graph + spectral + hybrid + rrf + bayesian + compare + knn + weighted_average + rejection + **benchmark** + **max_confidence**) + **adaptive forgetting suite** ✅ (6 APIs) + **EntityResolver** ✅ (8 APIs) + **entropy-weighted retrieval** ✅ + **entropy-guided query routing** ✅ + **TemporalEntropyTracker** ✅ + **triple-loop quality** ✅ + MCP Day 1-5 ✅ + **conditioned_traverse + project_graph + multi_perspective_analysis** ✅ (Research #040) + **invalidate_cascade + propagate_correction** ✅ (cascading correction) + **trace_derivation + derived_from/computed_from** ✅ (provenance tracking)
-- **agent-context-store**: **2898 tests** — 600+ APIs。二十六层 pipeline COMPLETE ✅
+- **agent-memory-graph**: **2294 Python tests** + **7349 TS tests** — 1000+ APIs。entropy framework (40+) ✅ + **25-API classification suite** ✅ + FINGEREntropy + StreamingGraph ✅ + PPR + multi_hop_reason ✅ + **spreading_activation** ✅ + **code-aware APIs** ✅ + SummaryTree ✅ + enrich_node ✅ + 4-API provenance/lineage ✅ + 4-API entropy scan ✅ + topology stats ✅ + adaptive forgetting ✅ + EntityResolver ✅ + MCP Day 1-5 ✅
+- **agent-context-store**: **2898 tests** — 600+ APIs
 - **structured-output-toolkit**: **571 tests**
-- **agent-task-cli**: **1354 tests** — F217
-- **context-forge**: **1346 tests** (F79, 11000+ lines, 21 analysis dimensions)
-- **nano-agent**: **732 tests** (F46)
-- **amg-mcp**: **122 tests** — Phase 1 Day 5 complete ✅
-- **prompt-weaver**: **223 tests**
-- **agent-mesh-network**: **158 tests**
-- **prompt-mgr**: **102 tests**
-- **四项目总计**: 11085 tests ✅
-- **全项目总计**: 15578 tests
-- **零回滚率**: amg 273天 🏆 / acs 200天 🏆
+- **agent-task-cli**: **1485 tests** — F226
+- **context-forge**: **1458 tests** (F79, 21 dimensions)
+- **nano-agent**: **791 tests** (F48 search_similar)
+- **edge-agent-runtime**: **345 tests**
+- **prompt-mgr**: **175 tests**
+- **四项目总计**: 12303 tests ✅
+- **全项目总计**: ~17100 tests
+- **零回滚率**: amg **279天** 🏆 / acs 200天 🏆
 
-## 近期活动 (08-01)
-- **Cycle 337** ✅ (23:00): trace_derivation() + derived_from/computed_from — provenance tracking, 2 new causal edge types. BFS backward. +25 tests (6497→6522). **273rd day**. 14df46a.
-- **Cycle 336** ✅ (22:02): propagate_correction() — cascading correction propagation. _correction metadata. +23 tests (6474→6497). **273rd day**. 2d1a629.
-- **Cycle 335** ✅ (01:00): max_confidence_classification() — conviction-based meta-classifier. z_score scale-invariant innovation. +49 tests (6223→6272). **273rd day**. 6bc34dc.
-- **Cycle 334** ✅ (00:00): classification_benchmark() — standardized evaluation suite. 6 topology types, confusion matrix. +62 tests (6161→6223). **273rd day**. 2e14366.
-
-## 近期活动 (07-31)
-- **Cycles 331-333** ✅: conditioned_traverse + project_graph + multi_perspective_analysis. +59 tests (6102→6161).
-- **Cycle 330** ✅: weighted_average_classification(). +52 tests (6050→6102).
-- **Cycle 329** ✅: knn_classification(). +56 tests (5994→6050).
-- **prompt-mgr** ✅: clone_template + get_stats + tag_summary. +27 tests.
-- **Essay** ✅: ensemble fusion + test blind spots (2 posts).
-- **Blog** ✅: 4 posts (Shakespeare/TinyStories/Verus/IoT).
-- **Research #040** ✅: Graph-Native Agent Memory.
+## 近期活动 (08-06 AM)
+- **Cycle 365**: Code-aware APIs — first code+experience unified memory. Node types + explainCode + recordCodeDecision + impactAnalysis. Research #044 implemented. +36 Python tests.
+- **Cycle 366**: spreading_activation() — ACT-R cognitive science model. Fire-once BFS, threshold-gated propagation, decay per hop. Fundamentally different from PPR. Research #049. +41 Python tests.
+- **Cycle 358 TS**: classification_confidence_interval() — Bootstrap percentile CI. 25th classification API. First uncertainty quantification tool. Research #050. +35 TS tests.
+- **Competitive alert**: TencentDB-Agent-Memory (14.6K★, +3.6K/week) — 4-layer team memory with CodeGraph. amg's code-aware APIs now match this capability, plus entropy + classification + streaming remain unique differentiators.
 
 ## 本周关键路径
-1. ✅ ~~amg c319-333: classification suite + Research #040 APIs~~ DONE
-2. ✅ ~~amg c334-335: benchmark + max_confidence~~ DONE
-3. ⬜ README(agent-memory-graph) → npm publish — **BLOCKED on human action**
-4. ⬜ README(agent-context-store) → npm publish — **BLOCKED on human action**
-5. ⬜ amg-bench: Benchmark harness — Research #037 ✅, ready to implement
-6. ⬜ amg: depends_on edge + propagate_invalidation() (#040) — propagate_correction() ✅ done, invalidate_cascade ✅ already existed. **trace_derivation() ✅ done (derived_from/computed_from provenance)**. Next: expand to more causal edge types or deeper lineage analysis
+1. ✅ ~~Cycles 350-357: classification completion~~ DONE
+2. ✅ ~~Research #047 + #048~~ DONE
+3. ✅ ~~Cycles 361-364: FINGEREntropy + PPR + multi_hop_reason + SummaryTree~~ DONE
+4. ✅ ~~Cycles 365-366 + 358 TS: code-aware + spreading_activation + confidence_interval~~ DONE
+5. ⬜ README(agent-memory-graph) → npm publish — **BLOCKED on human action**
+6. ⬜ Next dev targets: amg-bench / MCP server / OpenClaw plugin / PyPI publish
 
 ## 上次检查
-- **Knowledge org: 2026-08-01 02:02** — Verification run. Previous org (02:00) already captured all 08-01 changes. No new commits since. MEMORY.md 388 lines (under 400 threshold). All counts stable. experiments.tsv phantom at 19th occurrence (unresolved).
+- **Knowledge org: 2026-08-06 02:11** — Added 08-06 AM dev section to MEMORY.md (cycles 365-366 Python + cycle 358 TS). Updated test counts (amg TS 7349, Python 2294, total ~17100). Marked code-aware + confidence_interval TODOs as done. Updated classification suite to 25 APIs. Day counter 279. HEARTBEAT refreshed.
 
 ## ⚠️ 已知问题
-- **experiments.tsv phantom (19th occurrence)**: Cycles 321-325 still not individually logged in experiments.tsv. Only cron-triggered key-dev tasks reliably append. Rule escalation at 15th occurrence = monitoring effectiveness. **Still not resolved.**
-- **MEMORY.md 体积**: ~380 行。Threshold 400 行。✅ **UNDER THRESHOLD** — after 07-31 archiving.
-- **SOT 测试运行器**: `node --test` 无法直接运行 TS 测试。必须用 `npx tsx` 逐文件运行。
-- **npm publish blocked**: All 4 projects are test-ready but README writing needs human review/decision on positioning.
+- **MEMORY.md size**: ~460 lines. Over 400 soft limit but content is active reference material (research tables, TODO lists, insights). Further archiving would reduce visibility of actionable items.
+- **npm publish blocked**: All 4 projects test-ready (12303 tests). README writing needs human review.
+- **Competitive pressure**: TencentDB-Agent-Memory growing fast (14.6K★, +3.6K/week). Has CodeGraph layer but amg now has code-aware APIs too. Entropy framework + 25-API classification + streaming + provenance remain differentiated.
+- **experiments.tsv phantom (20th+ occurrence)**: Monitoring only per rule.
