@@ -1392,3 +1392,271 @@ class Memory:
 
         scored.sort(key=lambda x: -x[0])
         return [entry for _, entry in scored[:limit]]
+
+    # ---- F49: Anomaly detection ----
+
+    def anomaly_detection(self, window_minutes: int = 60) -> Dict[str, Any]:
+        """Detect temporal anomalies in memory entries.
+
+        Three anomaly types are detected:
+
+        1. **Burst activity** — time windows where entry rate exceeds 3× the
+           average rate (entries per ``window_minutes``).
+        2. **Importance outliers** — entries whose importance is more than
+           2 standard deviations from the mean.
+        3. **Tag concentration** — when a single tag accounts for more than
+           50% of all tag occurrences.
+
+        Args:
+            window_minutes: Size of the sliding window for burst detection.
+
+        Returns:
+            Dict with keys:
+            - ``anomalies``: list of anomaly description dicts.
+            - ``burst_windows``: list of ``{start, end, count}`` dicts.
+            - ``importance_stats``: ``{mean, std, outliers}``.
+            - ``tag_concentration``: ``{max_tag, max_share, total_tags}``.
+        """
+        import math
+
+        n = len(self._entries)
+        anomalies: List[Dict[str, Any]] = []
+
+        # ── Burst detection ──
+        burst_windows: List[Dict[str, Any]] = []
+        if n >= 2:
+            timestamps = sorted(e.timestamp for e in self._entries)
+            total_span_seconds = (timestamps[-1] - timestamps[0]).total_seconds()
+            if total_span_seconds > 0:
+                window_seconds = window_minutes * 60
+                # Number of windows that fit in the span (at least 1)
+                num_windows = max(total_span_seconds / window_seconds, 1.0)
+                # Average entries per window
+                avg_rate = n / num_windows
+                # Burst threshold: 3x average, minimum 3 entries
+                threshold = max(3 * avg_rate, 3.0)
+
+                # Sliding window
+                left = 0
+                for right in range(n):
+                    while (timestamps[right] - timestamps[left]).total_seconds() > window_seconds:
+                        left += 1
+                    count = right - left + 1
+                    if count >= threshold:
+                        burst_windows.append({
+                            "start": timestamps[left].isoformat(),
+                            "end": timestamps[right].isoformat(),
+                            "count": count,
+                        })
+
+                # Merge overlapping windows
+                merged: List[Dict[str, Any]] = []
+                for bw in burst_windows:
+                    if merged and bw["start"] <= merged[-1]["end"]:
+                        merged[-1]["end"] = bw["end"]
+                        merged[-1]["count"] = max(merged[-1]["count"], bw["count"])
+                    else:
+                        merged.append(dict(bw))
+                burst_windows = merged
+
+                for bw in burst_windows:
+                    anomalies.append({
+                        "type": "burst",
+                        "detail": f"{bw['count']} entries in window starting {bw['start']}",
+                        "data": bw,
+                    })
+
+        # ── Importance outliers ──
+        importance_outliers: List[MemoryEntry] = []
+        if n >= 2:
+            importances = [e.importance for e in self._entries]
+            mean_imp = sum(importances) / n
+            variance = sum((x - mean_imp) ** 2 for x in importances) / n
+            std_imp = math.sqrt(variance)
+            if std_imp > 0:
+                for entry in self._entries:
+                    if abs(entry.importance - mean_imp) > 2 * std_imp:
+                        importance_outliers.append(entry)
+                for entry in importance_outliers:
+                    anomalies.append({
+                        "type": "importance_outlier",
+                        "detail": f"Importance {entry.importance:.4f} deviates >2σ from mean {mean_imp:.4f}",
+                        "data": {"content": entry.content, "importance": entry.importance},
+                    })
+        else:
+            std_imp = 0.0
+            mean_imp = self._entries[0].importance if n == 1 else 0.0
+
+        importance_stats = {
+            "mean": round(mean_imp, 4),
+            "std": round(std_imp, 4),
+            "outliers": [
+                {"content": e.content, "importance": e.importance}
+                for e in importance_outliers
+            ],
+        }
+
+        # ── Tag concentration ──
+        tag_counts: Dict[str, int] = {}
+        for e in self._entries:
+            for t in e.tags:
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+        total_tag_occurrences = sum(tag_counts.values())
+
+        max_tag = None
+        max_share = 0.0
+        if total_tag_occurrences > 0:
+            max_tag = max(tag_counts, key=tag_counts.get)
+            max_share = tag_counts[max_tag] / total_tag_occurrences
+            if max_share > 0.5:
+                anomalies.append({
+                    "type": "tag_concentration",
+                    "detail": f"Tag '{max_tag}' dominates with {max_share:.1%} of all tags",
+                    "data": {"tag": max_tag, "share": round(max_share, 4)},
+                })
+
+        tag_concentration = {
+            "max_tag": max_tag,
+            "max_share": round(max_share, 4),
+            "total_tags": total_tag_occurrences,
+        }
+
+        return {
+            "anomalies": anomalies,
+            "burst_windows": burst_windows,
+            "importance_stats": importance_stats,
+            "tag_concentration": tag_concentration,
+        }
+
+    # ---- F50: Conversation summary ----
+
+    def conversation_summary(self, recent_n: int = 0) -> Dict[str, Any]:
+        """Summarize recent memory as a structured report.
+
+        Produces a comprehensive overview including entry count, time span,
+        top tags, importance distribution, content themes (word frequency),
+        and recent activity pattern.
+
+        Args:
+            recent_n: If > 0, only summarize the most recent *recent_n* entries.
+                      If 0 or negative, summarize all entries.
+
+        Returns:
+            Dict with keys:
+            - ``entry_count``
+            - ``time_span``: ``{earliest, latest, duration_seconds}``
+            - ``top_tags``: list of ``{tag, count}`` sorted by count desc
+            - ``importance_distribution``: ``{mean, min, max, buckets}``
+            - ``content_themes``: dict of word -> count (top 20, lowercased)
+            - ``activity_pattern``: ``{rate_per_hour, burst_detected, gap_seconds}``
+        """
+        import math
+        import re as _re
+
+        if recent_n and recent_n > 0:
+            entries = self._entries[-recent_n:]
+        else:
+            entries = self._entries
+
+        n = len(entries)
+        if n == 0:
+            return {
+                "entry_count": 0,
+                "time_span": None,
+                "top_tags": [],
+                "importance_distribution": None,
+                "content_themes": {},
+                "activity_pattern": None,
+            }
+
+        # ── Time span ──
+        timestamps = [e.timestamp for e in entries]
+        earliest = min(timestamps)
+        latest = max(timestamps)
+        duration_seconds = (latest - earliest).total_seconds()
+
+        # ── Top tags ──
+        tag_counts: Dict[str, int] = {}
+        for e in entries:
+            for t in e.tags:
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+        top_tags = [
+            {"tag": t, "count": c}
+            for t, c in sorted(tag_counts.items(), key=lambda x: (-x[1], x[0]))
+        ]
+
+        # ── Importance distribution ──
+        importances = [e.importance for e in entries]
+        mean_imp = sum(importances) / n
+        # Buckets: low (<0.33), medium (0.33-0.66), high (>0.66)
+        low = sum(1 for v in importances if v < 0.33)
+        medium = sum(1 for v in importances if 0.33 <= v <= 0.66)
+        high = sum(1 for v in importances if v > 0.66)
+
+        importance_distribution = {
+            "mean": round(mean_imp, 4),
+            "min": min(importances),
+            "max": max(importances),
+            "buckets": {"low": low, "medium": medium, "high": high},
+        }
+
+        # ── Content themes (word frequency) ──
+        word_freq: Dict[str, int] = {}
+        stop_words = {
+            "the", "a", "an", "is", "are", "was", "were", "be", "been",
+            "to", "of", "in", "on", "at", "by", "for", "with", "from",
+            "and", "or", "not", "but", "if", "then", "else", "so", "no",
+            "it", "this", "that", "these", "those", "i", "you", "he",
+            "she", "we", "they", "my", "your", "his", "her", "our",
+            "do", "does", "did", "have", "has", "had", "will", "would",
+            "can", "could", "should", "shall", "may", "might", "must",
+        }
+        for e in entries:
+            words = _re.findall(r"[a-zA-Z]\w*", e.content.lower())
+            for w in words:
+                if w not in stop_words and len(w) > 2:
+                    word_freq[w] = word_freq.get(w, 0) + 1
+
+        # Top 20 themes
+        content_themes = dict(
+            sorted(word_freq.items(), key=lambda x: (-x[1], x[0]))[:20]
+        )
+
+        # ── Activity pattern ──
+        rate_per_hour = 0.0
+        burst_detected = False
+        gap_seconds = 0.0
+
+        if n >= 2 and duration_seconds > 0:
+            rate_per_hour = n / (duration_seconds / 3600)
+
+            # Detect burst: any window where rate > 3x average
+            anomaly = self.anomaly_detection(window_minutes=60)
+            burst_detected = len(anomaly["burst_windows"]) > 0
+
+            # Max gap between consecutive entries
+            sorted_ts = sorted(timestamps)
+            gaps = [
+                (sorted_ts[i + 1] - sorted_ts[i]).total_seconds()
+                for i in range(len(sorted_ts) - 1)
+            ]
+            gap_seconds = max(gaps) if gaps else 0.0
+
+        activity_pattern = {
+            "rate_per_hour": round(rate_per_hour, 4),
+            "burst_detected": burst_detected,
+            "gap_seconds": round(gap_seconds, 2),
+        }
+
+        return {
+            "entry_count": n,
+            "time_span": {
+                "earliest": earliest.isoformat(),
+                "latest": latest.isoformat(),
+                "duration_seconds": round(duration_seconds, 2),
+            },
+            "top_tags": top_tags,
+            "importance_distribution": importance_distribution,
+            "content_themes": content_themes,
+            "activity_pattern": activity_pattern,
+        }
