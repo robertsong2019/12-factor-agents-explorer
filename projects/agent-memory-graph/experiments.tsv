@@ -469,3 +469,6 @@ timestamp	commit	metric	value	status	description
 2026-08-06T01:00:00+08:00	6620400	test_pass_rate	100%	keep	All 7349 passing, 100.27s.
 2026-08-06T01:00:00+08:00	6620400	code_lines	44754→45196	keep	+442 lines source + 546 test
 2026-08-06T19:01:00+08:00	ee78f62	test_count	7349→7378	keep	Cycle 359: classification_mcnemar() — McNemar significance test. χ² with continuity correction, p-value via erfc. Full contingency table (n00/n01/n10/n11), accuracy_a/b, better, significant. 8 methods supported. +29 tests.
+2026-08-06T15:06:30+08:00	610e73d	test_count	7378→7400	keep	Cycle 371: MCP server 10→16 tools — entropy, reason, snapshot, code_explain, quarantine, security. +22 tests. 280th day.
+2026-08-06T15:06:30+08:00	610e73d	test_pass_rate	100%	keep	All 7400 passing, 104.32s.
+2026-08-06T15:06:30+08:00	610e73d	mcp_tools	10→16	keep	+6 advanced: entropy, reason, snapshot, code_explain, quarantine, security
