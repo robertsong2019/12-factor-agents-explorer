@@ -8,7 +8,7 @@ import copy
 from difflib import SequenceMatcher
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -45,6 +45,7 @@ class Memory:
         self.max_entries = max_entries
         self.persistence_path = Path(persistence_path) if persistence_path else None
         self._entries: List[MemoryEntry] = []
+        self._archived: List[MemoryEntry] = []
         self._load()
 
     def add(self, content: str, metadata: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, importance: float = 0.5) -> None:
@@ -109,6 +110,7 @@ class Memory:
     def clear(self) -> None:
         """清除所有记忆"""
         self._entries.clear()
+        self._archived.clear()
         self._save()
 
     def _save(self) -> None:
@@ -1660,3 +1662,39 @@ class Memory:
             "content_themes": content_themes,
             "activity_pattern": activity_pattern,
         }
+
+    # ── F49: Archive System ──────────────────────────────────────────
+
+    def archive(self, index: int) -> bool:
+        """Soft-delete: move entry from active to archived. Returns success."""
+        if 0 <= index < len(self._entries):
+            self._archived.append(self._entries.pop(index))
+            self._save()
+            return True
+        return False
+
+    def unarchive(self, index: int) -> bool:
+        """Restore entry from archive back to active. Returns success."""
+        if 0 <= index < len(self._archived):
+            self._entries.append(self._archived.pop(index))
+            if len(self._entries) > self.max_entries:
+                self._entries = self._entries[-self.max_entries:]
+            self._save()
+            return True
+        return False
+
+    def archived(self) -> List[MemoryEntry]:
+        """List archived entries."""
+        return self._archived.copy()
+
+    # ── F50: Time-based Forgetting ───────────────────────────────────
+
+    def forget_older_than(self, days: int) -> int:
+        """Remove entries older than N days. Returns count removed."""
+        cutoff = datetime.now() - timedelta(days=days)
+        before = len(self._entries)
+        self._entries = [e for e in self._entries if e.timestamp >= cutoff]
+        removed = before - len(self._entries)
+        if removed > 0:
+            self._save()
+        return removed
