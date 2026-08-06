@@ -290,3 +290,24 @@ class Agent:
             "tool_calls": tool_calls,
             "est_tokens": total_chars // 4,  # rough estimate
         }
+
+    def export_conversation(self, format: str = "markdown") -> str:
+        """Export full conversation history.
+
+        Args:
+            format: "markdown" or "json"
+
+        Returns:
+            Serialized conversation string.
+        """
+        if format == "json":
+            return json.dumps(self._conversation_history, ensure_ascii=False, indent=2)
+
+        # markdown format
+        lines = [f"# Conversation: {self.name}\n"]
+        for msg in self._conversation_history:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            label = {"user": "🧑 User", "assistant": "🤖 Assistant", "system": "⚙️ System"}.get(role, role)
+            lines.append(f"### {label}\n\n{content}\n")
+        return "\n".join(lines)
