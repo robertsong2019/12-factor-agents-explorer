@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~48,000 | ⭐ 知识图谱记忆引擎：1000+ API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活 |
+| [agent-memory-graph](agent-memory-graph/) | ~50,500 | ⭐ 知识图谱记忆引擎：484 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活 |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 48,000+ 行的完整图记忆引擎，包含 1000+ 公开 API 和 7,500+ 测试用例。
+该项目已从 300 行的教学示例演化为 50,500+ 行的完整图记忆引擎，包含 484 公开 API 和 2,800+ 测试用例。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -62,7 +62,9 @@
 | **分类元策略** | 2 | `classification_compare_methods`, `classification_consensus` — 跨方法对比 + 多数投票元分类器 |
 | **分类可解释性** | 2 | `classification_confusion_explain`, `classification_counterfactual` — 逐模态贡献分解 + 反事实翻转分析 |
 | **分类优化** | 2 | `classification_learned_weights` — 网格搜索最优模态权重；`classification_noise_adaptive` — 噪声水平自适应选择 |
-| **认知检索** | 3 | `spreading_activation` — ACT-R 认知扩散激活；`personalized_pagerank` — 个性化 PageRank；`multi_hop_reason` — 多跳推理链 |
+| **认知检索** | 5 | `spreading_activation` — ACT-R 认知扩散激活；`personalized_pagerank` — 个性化 PageRank；`multi_hop_reason` — 多跳推理链；`activation_trace` — 可解释扩散激活路径；`competitive_spreading` — 多种子竞争扩散（干扰/增强）|
+| **安全防护（OWASP ASI06）** | 6 | `trust_score` — 4 因子信任评分；`memory_quarantine` — 批量隔离；`selective_repair` — 级联修复；`memory_audit_report` — 取证审计；`detect_provenance_laundering` — 来源洗钱检测；`security_dashboard` — 一键安全概览 |
+| **性能基准** | 3 | `BenchHarness` — 多规模基准；`BenchmarkResult` — 结果数据类；`run_bench` — 便捷函数 |
 | **流式健康** | 4 | `StreamingGraph` 类、`FINGEREntropy` 类、`enrich_node`、`streaming_health` — 实时 FINGER 熵追踪 + 异常检测 |
 | **层级记忆** | 1 | `SummaryTree` 类 — segment→session→day→week→profile 时序层级 consolidation（TiMem/ProGraph 启发）|
 | **代码感知** | 8 | `add_code_node`, `explain_code`, `impact_analysis`, `code_subgraph`, `record_code_decision`, `code_nodes_by_kind`, `code_graph_summary` |
@@ -72,9 +74,9 @@
 | **条件遍历** | 3 | `conditioned_traverse`, `project_graph`, `multi_perspective_analysis` |
 | **序列化** | 24 | `export_json`, `to_markdown`, `serialize_dot`, `serialize_graphml` |
 
-### 📐 信息论进化史（Cycles 306–316 + 326–366）
+### 📐 信息论进化史（Cycles 306–316 + 326–373）
 
-最新里程碑：**认知检索 + 流式健康 + 层级记忆** — 从图分类全流水线扩展到认知科学启发的记忆架构（ACT-R 扩散激活、FINGER 流式熵、TiMem 层级 consolidation）。
+最新里程碑：**安全防护 + 性能基准 + 竞争扩散** — 从认知记忆架构扩展到 OWASP ASI06 安全体系、性能基准工具链、可解释与竞争扩散激活（Cycles 367-373）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -103,6 +105,11 @@
 | 层级记忆 | 364 | `SummaryTree` | segment→session→day→week→profile 时序层级 consolidation（TiMem + ProGraph 启发）|
 | 代码感知增强 | 365 | `explain_code`, `impact_analysis`, `record_code_decision` (扩展) | 路径参数 + 扩展 CODE_NODE_KINDS/EDGE_KINDS |
 | 认知扩散激活 | 366 | `spreading_activation` | ACT-R 语义启动 + 阈值门控 firing + 衰减扩散（vs PPR 的 teleport 模型）|
+| OWASP 安全防护 | 367–369 | `trust_score`, `memory_quarantine`, `selective_repair`, `memory_audit_report`, `detect_provenance_laundering`, `security_dashboard` | 4 因子信任评分 + 双记忆隔离(A-MemGuard) + 级联修复 + 取证审计 + 来源洗钱检测 + OWASP ASI06 全景 |
+| 性能基准 | 370 | `BenchHarness`, `BenchmarkResult`, `run_bench` | 多规模吞吐量/延迟基准（add/link per second + search/recall/multi_hop latency）|
+| MCP 工具扩展 | 371 | `entropy`, `reason`, `snapshot`, `code_explain`, `quarantine`, `security` | MCP server 10→16 工具（熵仪表盘、多跳推理、双时序快照、代码分析、隔离 CRUD、安全审计）|
+| 可解释扩散激活 | 372 | `activation_trace` | spreading_activation 超集：逐步 firing 日志 + 瓶颈节点识别 + 传播树 + 种子→目标最短路径 |
+| 竞争扩散激活 | 373 | `competitive_spreading` | 多种子竞争：Anderson & Reder fan-effect 干扰 + Biedberman 冗余增益 + 领地划分 + 胜者通吃 |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---
