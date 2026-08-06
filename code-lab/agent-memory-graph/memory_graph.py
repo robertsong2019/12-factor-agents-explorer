@@ -19276,6 +19276,333 @@ class MemoryGraph:
         # Fallback: direct path if BFS didn't find (shouldn't happen)
         return [seed, target]
 
+    # ------------------------------------------------------------------
+    # Competitive spreading activation — lateral inhibition & reinforcement
+    # ------------------------------------------------------------------
+
+    def competitive_spreading(
+        self,
+        seeds: dict[str, float],
+        *,
+        decay: float = 0.85,
+        threshold: float = 0.01,
+        max_iter: int = 20,
+        edge_weight_factor: float = 1.0,
+        directed: bool = False,
+        relation_filter: list[str] | None = None,
+        inhibition_strength: float = 0.5,
+        reinforcement_strength: float = 0.3,
+    ) -> dict:
+        """Competitive spreading activation with lateral inhibition / reinforcement.
+
+        Extends :meth:`spreading_activation` by modelling what happens when
+        activation from **multiple seeds** meets at shared nodes.  In standard
+        spreading activation, overlapping activations simply take the ``max()``.
+        In competitive spreading, the overlap zone becomes a **contest**:
+
+        - **Interference** (inhibition): When two seeds reach a node via
+          *different* relations or *contradictory* paths, the node's
+          activation is *reduced* — modelling cognitive interference
+          (Anderson & Reder 1999; Anderson 1974, fan effect).
+
+        - **Reinforcement**: When two seeds reach a node via the *same*
+          relation or *compatible* paths, the node's activation is *boosted*
+          — modelling redundancy gain (Biederman & Checkoski 1970).
+
+        Use cases:
+
+        - **Contradiction detection**: Two memories that compete for the
+          same node likely represent conflicting information.
+        - **Consensus finding**: Nodes reinforced by multiple seeds are
+          high-confidence "common ground".
+        - **Territory mapping**: Which seed "owns" each node reveals
+          cluster boundaries and influence zones.
+
+        Args:
+            seeds: Mapping of ``{node_id: initial_activation}``.
+                Must contain ≥ 2 seeds for meaningful competition.
+            decay: Edge-traversal decay factor (0–1).
+            threshold: Minimum activation for a node to fire.
+            max_iter: Maximum spreading iterations.
+            edge_weight_factor: Exponent on edge weights.
+            directed: If True, only follow source→target edges.
+            relation_filter: If given, only follow edges whose relation
+                is in this list.
+            inhibition_strength: Fraction of activation *subtracted* at
+                contested nodes when seeds disagree (0–1).  0.5 means
+                the contested node loses half its activation.
+            reinforcement_strength: Fraction of activation *added* at
+                contested nodes when seeds agree (0–1).  0.3 means
+                a 30 % boost.
+
+        Returns:
+            Dict with the following keys::
+
+                {
+                  "results": [...],      # nodes with adjusted activation
+                  "territories": {...},  # seed → [nodes it dominates]
+                  "contested": [...],    # nodes where seeds competed
+                  "interference": {...}, # per-contested-node interference details
+                  "winners": {...},      # node → seed that won it
+                  "summary": {
+                    "total_nodes": 7,
+                    "total_contested": 2,
+                    "total_interference": 1,
+                    "total_reinforcement": 1,
+                    "territory_balance": 0.45,  # Gini-like balance
+                    "dominant_seed": "seed_a",
+                  },
+                }
+
+        Raises:
+            ValueError: If ``seeds`` has fewer than 2 entries, or
+                ``inhibition_strength`` / ``reinforcement_strength``
+                not in [0, 1].
+        """
+        if len(seeds) < 2:
+            raise ValueError(
+                "competitive_spreading requires ≥ 2 seeds for meaningful "
+                f"competition, got {len(seeds)}"
+            )
+        if not (0 <= inhibition_strength <= 1):
+            raise ValueError(
+                f"inhibition_strength must be in [0, 1], got {inhibition_strength}"
+            )
+        if not (0 <= reinforcement_strength <= 1):
+            raise ValueError(
+                f"reinforcement_strength must be in [0, 1], got {reinforcement_strength}"
+            )
+
+        # ── 1. Run independent spreading activation per seed ────────
+        per_seed_results: dict[str, list[dict]] = {}
+        per_seed_activation: dict[str, dict[str, float]] = {}
+        per_seed_relations: dict[str, dict[str, list[str]]] = {}
+
+        for sid, sact in seeds.items():
+            if not self.has_node(sid):
+                continue
+            # Use spreading_activation to get per-seed activation + sources
+            results = self.spreading_activation(
+                {sid: sact},
+                decay=decay,
+                threshold=threshold,
+                max_iter=max_iter,
+                edge_weight_factor=edge_weight_factor,
+                directed=directed,
+                relation_filter=relation_filter,
+            )
+            per_seed_results[sid] = results
+            per_seed_activation[sid] = {
+                r["node_id"]: r["activation"] for r in results
+            }
+
+            # Track which relations each node was activated through
+            node_rels: dict[str, list[str]] = {}
+            for r in results:
+                # We need to infer relations from sources — trace edges
+                srcs = r.get("sources", [])
+                rels = []
+                for src in srcs:
+                    rows = self.conn.execute(
+                        "SELECT relation FROM edges WHERE source=? AND target=? "
+                        "UNION SELECT relation FROM edges WHERE target=? AND source=?",
+                        (src, r["node_id"], src, r["node_id"]),
+                    ).fetchall()
+                    rels.extend(
+                        row["relation"] if isinstance(row, dict) else row[0]
+                        for row in rows
+                    )
+                node_rels[r["node_id"]] = sorted(set(rels))
+            per_seed_relations[sid] = node_rels
+
+        if len(per_seed_activation) < 2:
+            # One or more seeds didn't exist; fall back to simple merge
+            all_act: dict[str, float] = {}
+            for acts in per_seed_activation.values():
+                for nid, act in acts.items():
+                    all_act[nid] = max(all_act.get(nid, 0), act)
+            results_merged = [
+                {"node_id": nid, "activation": round(act, 6),
+                 "fired": act >= threshold}
+                for nid, act in sorted(all_act.items(), key=lambda x: -x[1])
+            ]
+            return {
+                "results": results_merged,
+                "territories": {},
+                "contested": [],
+                "interference": {},
+                "winners": {},
+                "summary": {
+                    "total_nodes": len(all_act),
+                    "total_contested": 0,
+                    "total_interference": 0,
+                    "total_reinforcement": 0,
+                    "territory_balance": 1.0,
+                    "dominant_seed": next(iter(per_seed_activation), None),
+                },
+            }
+
+        # ── 2. Identify contested nodes (activated by ≥ 2 seeds) ────
+        seed_ids = list(per_seed_activation.keys())
+        all_nodes = set()
+        for acts in per_seed_activation.values():
+            all_nodes.update(acts.keys())
+
+        # Seed nodes are never contested — they belong to themselves
+        valid_seed_set = set(per_seed_activation.keys())
+
+        contested: list[str] = []
+        uncontested: dict[str, str] = {}  # node → owning seed
+
+        for nid in all_nodes:
+            # Seed nodes are never contested — they belong to themselves
+            if nid in valid_seed_set:
+                uncontested[nid] = nid
+                continue
+            owners = [sid for sid in seed_ids if nid in per_seed_activation[sid]]
+            if len(owners) >= 2:
+                contested.append(nid)
+            elif len(owners) == 1:
+                uncontested[nid] = owners[0]
+
+        # ── 3. Resolve competition at each contested node ──────────
+        adjusted_activation: dict[str, float] = {}
+        interference_log: dict[str, dict] = {}
+        winners: dict[str, str] = {}
+
+        for nid in all_nodes:
+            # Start with max activation across seeds
+            act_values = {
+                sid: per_seed_activation[sid].get(nid, 0)
+                for sid in seed_ids
+                if nid in per_seed_activation[sid]
+            }
+            base_act = max(act_values.values()) if act_values else 0
+            adjusted_activation[nid] = base_act
+
+            if nid not in contested:
+                # Uncontested or seed node — assign to owner (self for seeds)
+                if nid in valid_seed_set:
+                    winners[nid] = nid
+                else:
+                    owner = next(iter(act_values))
+                    winners[nid] = owner
+                continue
+
+            # Determine if seeds agree or disagree
+            seed_owners = list(act_values.keys())
+            # Check relation overlap
+            all_rel_sets = []
+            for sid in seed_owners:
+                rels = per_seed_relations.get(sid, {}).get(nid, [])
+                all_rel_sets.append(set(rels))
+
+            # Two seeds "agree" if they share at least one relation
+            agree = False
+            for i in range(len(all_rel_sets)):
+                for j in range(i + 1, len(all_rel_sets)):
+                    if all_rel_sets[i] & all_rel_sets[j]:
+                        agree = True
+                        break
+                if agree:
+                    break
+
+            # Apply interference or reinforcement
+            if agree:
+                # Reinforcement — boost activation
+                boost = base_act * reinforcement_strength
+                adjusted_activation[nid] = base_act + boost
+                interference_log[nid] = {
+                    "mode": "reinforcement",
+                    "seeds": seed_owners,
+                    "base_activation": round(base_act, 6),
+                    "adjusted_activation": round(base_act + boost, 6),
+                    "delta": round(boost, 6),
+                    "shared_relations": sorted(
+                        all_rel_sets[0].intersection(*all_rel_sets[1:])
+                        if len(all_rel_sets) >= 2 and all(all_rel_sets)
+                        else set()
+                    ),
+                }
+            else:
+                # Interference — reduce activation
+                penalty = base_act * inhibition_strength
+                adjusted_activation[nid] = max(0, base_act - penalty)
+                interference_log[nid] = {
+                    "mode": "interference",
+                    "seeds": seed_owners,
+                    "base_activation": round(base_act, 6),
+                    "adjusted_activation": round(max(0, base_act - penalty), 6),
+                    "delta": round(-penalty, 6),
+                    "disjoint_relations": {
+                        sid: sorted(per_seed_relations.get(sid, {}).get(nid, []))
+                        for sid in seed_owners
+                    },
+                }
+
+            # Winner = seed with highest activation at this node
+            winner = max(act_values, key=lambda s: act_values[s])
+            winners[nid] = winner
+
+        # ── 4. Build territories ────────────────────────────────────
+        territories: dict[str, list[str]] = {sid: [] for sid in seed_ids}
+        for nid, seed in winners.items():
+            territories.setdefault(seed, []).append(nid)
+        # Sort territory nodes for determinism
+        for sid in territories:
+            territories[sid] = sorted(territories[sid])
+
+        # ── 5. Build results list ───────────────────────────────────
+        results_list = []
+        for nid, act in sorted(adjusted_activation.items(), key=lambda x: -x[1]):
+            results_list.append({
+                "node_id": nid,
+                "activation": round(act, 6),
+                "fired": act >= threshold,
+                "contested": nid in contested,
+                "dominant_seed": winners.get(nid),
+            })
+
+        # ── 6. Build summary ────────────────────────────────────────
+        interference_count = sum(
+            1 for info in interference_log.values()
+            if info["mode"] == "interference"
+        )
+        reinforcement_count = sum(
+            1 for info in interference_log.values()
+            if info["mode"] == "reinforcement"
+        )
+
+        # Territory balance: ratio of smallest to largest territory
+        territory_sizes = [len(t) for t in territories.values() if t]
+        if len(territory_sizes) >= 2 and max(territory_sizes) > 0:
+            territory_balance = min(territory_sizes) / max(territory_sizes)
+        else:
+            territory_balance = 1.0
+
+        dominant_seed = max(
+            territories, key=lambda s: len(territories[s]),
+            default=None,
+        )
+
+        summary = {
+            "total_nodes": len(adjusted_activation),
+            "total_contested": len(contested),
+            "total_interference": interference_count,
+            "total_reinforcement": reinforcement_count,
+            "territory_balance": round(territory_balance, 4),
+            "dominant_seed": dominant_seed,
+        }
+
+        return {
+            "results": results_list,
+            "territories": territories,
+            "contested": sorted(contested),
+            "interference": interference_log,
+            "winners": winners,
+            "summary": summary,
+        }
+
 
 
 class StreamingGraph(MemoryGraph):
