@@ -19851,6 +19851,293 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ─── Temporal Spreading Activation (Research #051) ──────────────
+
+    def temporal_spreading(
+        self,
+        seeds: dict[str, float],
+        *,
+        decay: float = 0.85,
+        threshold: float = 0.01,
+        max_iter: int = 20,
+        edge_weight_factor: float = 1.0,
+        directed: bool = False,
+        relation_filter: list[str] | None = None,
+        base_stability: float = 24.0,
+        weight_boost: float = 1.0,
+        temporal_mode: str = "multiply",
+    ) -> dict:
+        """Time-aware spreading activation with Ebbinghaus temporal decay.
+
+        Extends :meth:`spreading_activation` by modulating the activation
+        each node *receives* based on its memory retention.  Fresh memories
+        (recently accessed) receive full activation, while stale memories
+        (long dormant) receive reduced activation — modelling how old memory
+        traces are harder to reactivate (Ebbinghaus 1885; Anderson & Schooler
+        1991).
+
+        The retention factor is computed via the same forgetting curve as
+        :meth:`forgetting_curve`::
+
+            R(t) = e^(-t / S)
+
+        where *t* is hours since last access and *S* is stability based on
+        node weight.  The received activation is then adjusted:
+
+        - ``temporal_mode="multiply"``  (default): ``effective = received × R(t)``
+        - ``temporal_mode="additive"``: ``effective = received × (1 − (1−R) × 0.5)``
+        - ``temporal_mode="threshold"``: nodes with ``R < threshold`` are skipped entirely
+
+        Use cases:
+
+        - **Time-sensitive retrieval**: "What's relevant *right now*?"
+          — recent memories get a natural boost in the activation competition.
+        - **Stale-trace suppression**: Identify nodes that *would* be activated
+          but have very low retention — candidates for refresh or forgetting.
+        - **Chronobiological modelling**: Simulate circadian memory dynamics
+          by varying ``base_stability`` across time-of-day.
+
+        Args:
+            seeds: Mapping of ``{node_id: initial_activation}``.
+            decay: Edge-traversal decay factor (0–1).
+            threshold: Minimum *effective* activation to include in results.
+            max_iter: Maximum spreading iterations.
+            edge_weight_factor: Exponent on edge weights.
+            directed: If True, only follow source→target edges.
+            relation_filter: If given, only follow edges whose relation
+                is in this list.
+            base_stability: Base stability in **hours** for the forgetting
+                curve (default 24h).
+            weight_boost: Multiplier for how much node weight increases
+                stability.
+            temporal_mode: How retention adjusts received activation:
+                ``"multiply"``, ``"additive"``, or ``"threshold"``.
+
+        Returns:
+            Dict with the following keys::
+
+                {
+                  "results": [             # same format as activation_trace results
+                    {"node_id": str, "activation": float,
+                     "retention": float, "effective_activation": float,
+                     "hop_distance": int, "source_seeds": [str]}, ...
+                  ],
+                  "stale_skipped": [...],  # nodes skipped in threshold mode
+                  "retention_stats": {
+                    "mean_retention": float,
+                    "min_retention": float,
+                    "max_retention": float,
+                    "stale_count": int,      # R < 0.3
+                    "fresh_count": int,     # R > 0.7
+                  },
+                  "fresh_nodes": [...],    # retained > 0.7
+                  "stale_nodes": [...],    # retained < 0.3
+                  "summary": {
+                    "total_activated": int,
+                    "total_stale_skipped": int,
+                    "mean_effective_activation": float,
+                    "temporal_decay_impact": float,  # 1 − mean_effective/mean_raw
+                  },
+                }
+
+        Raises:
+            ValueError: If *seeds* is empty, *decay* not in (0, 1],
+                *temporal_mode* is invalid, or *base_stability* ≤ 0.
+        """
+        if not seeds:
+            raise ValueError("seeds must not be empty")
+        if not (0 < decay <= 1):
+            raise ValueError(f"decay must be in (0, 1], got {decay}")
+        if threshold < 0:
+            raise ValueError(f"threshold must be ≥ 0, got {threshold}")
+        if max_iter < 1:
+            raise ValueError(f"max_iter must be ≥ 1, got {max_iter}")
+        if base_stability <= 0:
+            raise ValueError(f"base_stability must be > 0, got {base_stability}")
+        if temporal_mode not in ("multiply", "additive", "threshold"):
+            raise ValueError(
+                f"temporal_mode must be 'multiply', 'additive', or 'threshold', got {temporal_mode!r}"
+            )
+
+        # ── Validate seeds exist ────────────────────────────────────
+        for sid in seeds:
+            if not self.has_node(sid):
+                raise KeyError(f"Seed node not found: {sid}")
+
+        # ── Helper: compute retention for a node ────────────────────
+        def _retention_of(nid: str) -> float:
+            node = self.get_node(nid)
+            if node is None:
+                return 0.0
+            now = time.time()
+            last_access = node.accessed or node.created or now
+            hours_since = max((now - last_access) / 3600.0, 0.0)
+            w = max(getattr(node, "weight", 0.0) or 0.0, 0.0)
+            stability = base_stability * (1.0 + w * weight_boost)
+            return math.exp(-hours_since / max(stability, 0.001))
+
+        # ── Helper: adjust activation by retention ──────────────────
+        def _adjust(raw_act: float, ret: float) -> float:
+            if temporal_mode == "multiply":
+                return raw_act * ret
+            elif temporal_mode == "additive":
+                # gentler decay: average of raw and retained
+                return raw_act * (1.0 - (1.0 - ret) * 0.5)
+            else:  # threshold
+                return raw_act if ret >= threshold else 0.0
+
+        # ── BFS-based temporal spreading ────────────────────────────
+        raw_activation: dict[str, float] = {}    # before temporal adjustment
+        effective_activation: dict[str, float] = {}  # after temporal adjustment
+        retention_cache: dict[str, float] = {}
+        hop_distance: dict[str, int] = {}
+        source_seeds: dict[str, set] = {}
+        stale_skipped: list[str] = []
+
+        for sid, act in seeds.items():
+            raw_activation[sid] = act
+            ret = _retention_of(sid)
+            retention_cache[sid] = ret
+            effective_activation[sid] = _adjust(act, ret)
+            hop_distance[sid] = 0
+            source_seeds[sid] = {sid}
+
+        frontier = list(seeds.keys())
+        visited = set(seeds.keys())
+
+        for iteration in range(max_iter):
+            if not frontier:
+                break
+            next_frontier: list[str] = []
+            next_raw: dict[str, float] = {}
+            next_sources: dict[str, set] = {}
+
+            for nid in frontier:
+                current_eff = effective_activation.get(nid, 0.0)
+                if current_eff < threshold:
+                    continue
+
+                # Get neighbours
+                if directed:
+                    rows = self.conn.execute(
+                        "SELECT target AS nbr, weight, relation FROM edges WHERE source=?",
+                        (nid,),
+                    ).fetchall()
+                else:
+                    rows = self.conn.execute(
+                        """
+                        SELECT target AS nbr, weight, relation FROM edges WHERE source=?
+                        UNION
+                        SELECT source AS nbr, weight, relation FROM edges WHERE target=?
+                        """,
+                        (nid, nid),
+                    ).fetchall()
+
+                for r in rows:
+                    nbr_id = r["nbr"]
+                    edge_w = (r["weight"] or 1.0) ** edge_weight_factor
+                    rel = r["relation"] if "relation" in r.keys() else None
+
+                    if relation_filter and rel not in relation_filter:
+                        continue
+
+                    propagated = current_eff * decay * edge_w
+                    if propagated < threshold:
+                        continue
+
+                    _EPS = 1e-9
+                    if nbr_id not in next_raw or propagated > next_raw[nbr_id] + _EPS:
+                        next_raw[nbr_id] = propagated
+                        next_sources[nbr_id] = {nid}
+                    elif propagated >= next_raw.get(nbr_id, 0) - _EPS:
+                        next_sources[nbr_id] = next_sources.get(nbr_id, set()) | {nid}
+
+            # Apply temporal adjustment to newly propagated activations
+            for nbr_id, raw_val in next_raw.items():
+                # Compute retention for this node
+                if nbr_id not in retention_cache:
+                    retention_cache[nbr_id] = _retention_of(nbr_id)
+                ret = retention_cache[nbr_id]
+
+                eff_val = _adjust(raw_val, ret)
+
+                if temporal_mode == "threshold" and ret < threshold:
+                    if nbr_id not in stale_skipped:
+                        stale_skipped.append(nbr_id)
+                    continue
+
+                if eff_val < threshold:
+                    continue
+
+                is_new = nbr_id not in effective_activation
+                if is_new or eff_val > effective_activation.get(nbr_id, 0):
+                    raw_activation[nbr_id] = max(raw_activation.get(nbr_id, 0), raw_val)
+                    effective_activation[nbr_id] = eff_val
+                    hop_distance[nbr_id] = min(
+                        (hop_distance[s] + 1 for s in next_sources.get(nbr_id, set()) if s in hop_distance),
+                        default=999,
+                    )
+                    source_seeds[nbr_id] = set()
+                    for s in next_sources.get(nbr_id, set()):
+                        source_seeds[nbr_id] |= source_seeds.get(s, {s})
+                    if nbr_id not in visited:
+                        visited.add(nbr_id)
+                        next_frontier.append(nbr_id)
+
+            frontier = next_frontier
+
+        # ── Build results ───────────────────────────────────────────
+        results = []
+        for nid in sorted(effective_activation, key=lambda n: -effective_activation[n]):
+            results.append({
+                "node_id": nid,
+                "activation": round(raw_activation.get(nid, 0.0), 6),
+                "retention": round(retention_cache.get(nid, 0.0), 6),
+                "effective_activation": round(effective_activation[nid], 6),
+                "hop_distance": hop_distance.get(nid, 0),
+                "source_seeds": sorted(source_seeds.get(nid, set())),
+            })
+
+        # ── Retention stats ────────────────────────────────────────
+        all_retentions = [retention_cache.get(nid, 0.0) for nid in effective_activation]
+        fresh_nodes = [nid for nid, r in retention_cache.items()
+                        if nid in effective_activation and r > 0.7]
+        stale_nodes = [nid for nid, r in retention_cache.items()
+                        if nid in effective_activation and r < 0.3]
+
+        if all_retentions:
+            mean_ret = sum(all_retentions) / len(all_retentions)
+            min_ret = min(all_retentions)
+            max_ret = max(all_retentions)
+        else:
+            mean_ret = min_ret = max_ret = 0.0
+
+        mean_raw = (sum(raw_activation[n] for n in effective_activation) /
+                     max(len(effective_activation), 1))
+        mean_eff = (sum(effective_activation[n] for n in effective_activation) /
+                     max(len(effective_activation), 1))
+        temporal_decay_impact = 1.0 - (mean_eff / mean_raw) if mean_raw > 0 else 0.0
+
+        return {
+            "results": results,
+            "stale_skipped": sorted(stale_skipped),
+            "retention_stats": {
+                "mean_retention": round(mean_ret, 4),
+                "min_retention": round(min_ret, 4),
+                "max_retention": round(max_ret, 4),
+                "stale_count": len(stale_nodes),
+                "fresh_count": len(fresh_nodes),
+            },
+            "fresh_nodes": sorted(fresh_nodes),
+            "stale_nodes": sorted(stale_nodes),
+            "summary": {
+                "total_activated": len(effective_activation),
+                "total_stale_skipped": len(stale_skipped),
+                "mean_effective_activation": round(mean_eff, 6),
+                "temporal_decay_impact": round(temporal_decay_impact, 4),
+            },
+        }
+
     # ─── Temporal Evolution Report ──────────────────────────────────
 
     def temporal_evolution_report(self, start_time: float, end_time: float,
