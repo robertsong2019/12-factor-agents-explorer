@@ -2743,6 +2743,75 @@ class MemoryGraph:
                             triangles += 1
         return triangles / triplets if triplets > 0 else 0.0
 
+    def graph_topology_stats(self) -> dict:
+        """Unified topology statistics report. Returns density, clustering, connectivity,
+        components, degree stats, and structural summary in one call.
+        """
+        import collections
+        node_rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        node_count = len(node_rows)
+        edge_rows = self.conn.execute("SELECT source, target FROM edges").fetchall()
+        directed_edges = len(edge_rows)
+        # Undirected adjacency
+        adj = collections.defaultdict(set)
+        for r in edge_rows:
+            s, t = str(r["source"]), str(r["target"])
+            adj[s].add(t)
+            adj[t].add(s)
+        all_nodes = {str(r["id"]) for r in node_rows}
+        # Components via BFS
+        visited = set()
+        components = []
+        for start in all_nodes:
+            if start in visited:
+                continue
+            comp = set()
+            queue = [start]
+            while queue:
+                n = queue.pop()
+                if n in visited:
+                    continue
+                visited.add(n)
+                comp.add(n)
+                queue.extend(adj[n] - visited)
+            components.append(comp)
+        # Degree stats
+        degrees = {n: len(adj.get(n, set())) for n in all_nodes}
+        deg_vals = list(degrees.values()) if degrees else [0]
+        stats = {
+            "node_count": node_count,
+            "edge_count": directed_edges,
+            "undirected_pairs": sum(len(v) for v in adj.values()) // 2,
+            "density": self.graph_density(),
+            "global_clustering": self.global_clustering_coefficient(),
+            "component_count": len(components),
+            "largest_component_size": max(len(c) for c in components) if components else 0,
+            "is_connected": len(components) <= 1,
+            "avg_degree": sum(deg_vals) / len(deg_vals) if deg_vals else 0,
+            "max_degree": max(deg_vals) if deg_vals else 0,
+            "min_degree": min(deg_vals) if deg_vals else 0,
+            "degree_histogram": dict(collections.Counter(deg_vals)),
+            "components": [{"size": len(c), "nodes": list(c)[:10]} for c in sorted(components, key=len, reverse=True)],
+        }
+        if node_count > 1 and adj:
+            # Eccentricity via BFS from multiple hubs (top 3 highest-degree)
+            sorted_nodes = sorted(all_nodes, key=lambda n: len(adj.get(n, set())), reverse=True)
+            max_dist = 0
+            for start in sorted_nodes[:3]:
+                dist = {start: 0}
+                q = [start]
+                while q:
+                    n = q.pop(0)
+                    for nb in adj.get(n, set()):
+                        if nb not in dist:
+                            dist[nb] = dist[n] + 1
+                            q.append(nb)
+                if dist:
+                    max_dist = max(max_dist, max(dist.values()))
+            stats["approx_diameter"] = max_dist
+            stats["diameter_sampled_from"] = [str(n) for n in sorted_nodes[:3]]
+        return stats
+
     def _modularity_simple(self, communities: dict[str, int]) -> float:
         """模块度 Q: 衡量社区划分质量。communities = {node_id: community_id}。"""
         rows = self.conn.execute("SELECT source, target FROM edges").fetchall()

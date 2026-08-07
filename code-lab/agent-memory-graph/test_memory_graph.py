@@ -23598,3 +23598,107 @@ class TestSecurityDashboard:
         q_ids = {q["id"] for q in q_list}
         assert base.id in q_ids
         assert derived.id in q_ids
+
+
+class TestGraphTopologyStats:
+    """Tests for unified graph_topology_stats()."""
+
+    def test_empty_graph_stats(self):
+        mg = MemoryGraph()
+        stats = mg.graph_topology_stats()
+        assert stats["node_count"] == 0
+        assert stats["edge_count"] == 0
+        assert stats["density"] == 0.0
+        assert stats["component_count"] == 0
+        assert stats["is_connected"] is True  # vacuously connected (no nodes)
+        assert stats["avg_degree"] == 0
+
+    def test_single_node_stats(self):
+        mg = MemoryGraph()
+        mg.add("a")
+        stats = mg.graph_topology_stats()
+        assert stats["node_count"] == 1
+        assert stats["edge_count"] == 0
+        assert stats["density"] == 0.0
+        assert stats["component_count"] == 1
+
+    def test_connected_graph_stats(self):
+        mg = MemoryGraph()
+        a = mg.add("a"); b = mg.add("b"); c = mg.add("c")
+        mg.link(a.id, b.id, "rel"); mg.link(b.id, c.id, "rel")
+        stats = mg.graph_topology_stats()
+        assert stats["node_count"] == 3
+        assert stats["edge_count"] == 2
+        assert stats["is_connected"] is True
+        assert stats["component_count"] == 1
+        assert stats["approx_diameter"] == 2
+        assert stats["degree_histogram"] == {1: 2, 2: 1}
+        assert stats["max_degree"] == 2
+
+    def test_disconnected_components(self):
+        mg = MemoryGraph()
+        a = mg.add("a"); b = mg.add("b"); mg.link(a.id, b.id, "rel")
+        c = mg.add("c"); d = mg.add("d"); mg.link(c.id, d.id, "rel")
+        mg.add("e")  # isolated
+        stats = mg.graph_topology_stats()
+        assert stats["is_connected"] is False
+        assert stats["component_count"] == 3
+        assert stats["largest_component_size"] == 2
+
+    def test_complete_graph_clustering(self):
+        mg = MemoryGraph()
+        nodes = [mg.add(str(i)) for i in range(5)]
+        for i in range(5):
+            for j in range(5):
+                if i != j:
+                    mg.link(nodes[i].id, nodes[j].id, "rel")
+        stats = mg.graph_topology_stats()
+        assert stats["global_clustering"] == 1.0  # fully clustered
+        assert stats["density"] == 1.0
+        assert stats["approx_diameter"] == 1
+        assert stats["avg_degree"] == 4.0
+
+    def test_star_graph_stats(self):
+        mg = MemoryGraph()
+        hub = mg.add("hub")
+        for i in range(4):
+            n = mg.add(str(i))
+            mg.link(hub.id, n.id, "rel")
+        stats = mg.graph_topology_stats()
+        assert stats["max_degree"] == 4
+        assert stats["min_degree"] == 1
+        assert stats["approx_diameter"] == 2
+        # Components list shows top components
+        assert len(stats["components"]) == 1
+        assert stats["components"][0]["size"] == 5
+
+    def test_large_component_truncation(self):
+        """Components with >10 nodes truncate node list in report."""
+        mg = MemoryGraph()
+        hub = mg.add("hub")
+        for i in range(20):
+            n = mg.add(str(i))
+            mg.link(hub.id, n.id, "rel")
+        stats = mg.graph_topology_stats()
+        assert stats["component_count"] == 1
+        assert stats["largest_component_size"] == 21
+        # nodes list is truncated to first 10
+        assert len(stats["components"][0]["nodes"]) <= 10
+
+    def test_self_loop_ignored_in_stats(self):
+        mg = MemoryGraph()
+        a = mg.add("a"); b = mg.add("b")
+        mg.link(a.id, b.id, "rel")
+        # Add self-loop (shouldn't break anything)
+        mg.link(a.id, a.id, "rel")
+        stats = mg.graph_topology_stats()
+        assert stats["node_count"] == 2
+        assert stats["is_connected"] is True
+
+    def test_stats_consistency_with_individual_methods(self):
+        mg = MemoryGraph()
+        a = mg.add("a"); b = mg.add("b"); c = mg.add("c")
+        mg.link(a.id, b.id, "rel"); mg.link(b.id, c.id, "rel"); mg.link(a.id, c.id, "rel")
+        stats = mg.graph_topology_stats()
+        assert stats["density"] == mg.graph_density()
+        assert abs(stats["global_clustering"] - mg.global_clustering_coefficient()) < 1e-9
