@@ -19965,6 +19965,92 @@ class MemoryGraph:
             "top_kinds": top_kinds,
         }
 
+    # ─── Memory Age Statistics ──────────────────────────────────────
+
+    def memory_age_stats(self, *, kind: str = None) -> dict:
+        """Age distribution statistics for nodes in the graph.
+
+        Computes the age (time since creation) of every node and returns
+        descriptive statistics.  Useful for memory health monitoring and
+        deciding when consolidation or forgetting should run.
+
+        Args:
+            kind: Optional kind filter.  When omitted, all nodes are used.
+
+        Returns:
+            dict with keys:
+            - count: number of nodes
+            - mean_age_hours / median_age_hours / std_age_hours
+            - min_age_hours / max_age_hours
+            - p25_age_hours / p50_age_hours / p75_age_hours / p90_age_hours
+            - by_kind: {kind: {count, mean_age_hours, median_age_hours}}
+            - fresh_nodes: count of nodes < 1 hour old
+            - stale_nodes: count of nodes > 7 days old
+        """
+        import statistics as stats_mod
+        now = time.time()
+        sql = "SELECT id, kind, created FROM nodes"
+        params: list = []
+        if kind is not None:
+            sql += " WHERE kind=?"
+            params.append(kind)
+        rows = self.conn.execute(sql, params).fetchall()
+        if not rows:
+            return {"count": 0, "mean_age_hours": 0, "median_age_hours": 0,
+                    "std_age_hours": 0, "min_age_hours": 0, "max_age_hours": 0,
+                    "p25_age_hours": 0, "p50_age_hours": 0, "p75_age_hours": 0,
+                    "p90_age_hours": 0, "by_kind": {}, "fresh_nodes": 0,
+                    "stale_nodes": 0}
+
+        # Compute ages
+        ages_sec = []
+        by_kind_data: dict[str, list[float]] = {}
+        for r in rows:
+            age_s = now - (r["created"] or now)
+            ages_sec.append(age_s)
+            k = r["kind"] or "unknown"
+            by_kind_data.setdefault(k, []).append(age_s)
+
+        ages_hours = [a / 3600 for a in ages_sec]
+
+        def _pct(sorted_list, p):
+            if not sorted_list:
+                return 0.0
+            idx = int(len(sorted_list) * p / 100)
+            idx = min(idx, len(sorted_list) - 1)
+            return sorted_list[idx]
+
+        sorted_h = sorted(ages_hours)
+
+        # Per-kind summary
+        by_kind: dict[str, dict] = {}
+        for k, ages in by_kind_data.items():
+            ages_h = [a / 3600 for a in ages]
+            by_kind[k] = {
+                "count": len(ages_h),
+                "mean_age_hours": round(stats_mod.mean(ages_h), 2),
+                "median_age_hours": round(stats_mod.median(ages_h), 2),
+            }
+
+        fresh = sum(1 for h in ages_hours if h < 1.0)
+        stale = sum(1 for h in ages_hours if h > 168.0)  # 7 days
+
+        return {
+            "count": len(ages_hours),
+            "mean_age_hours": round(stats_mod.mean(ages_hours), 2),
+            "median_age_hours": round(stats_mod.median(ages_hours), 2),
+            "std_age_hours": round(stats_mod.stdev(ages_hours), 2) if len(ages_hours) > 1 else 0,
+            "min_age_hours": round(min(ages_hours), 4),
+            "max_age_hours": round(max(ages_hours), 2),
+            "p25_age_hours": round(_pct(sorted_h, 25), 2),
+            "p50_age_hours": round(_pct(sorted_h, 50), 2),
+            "p75_age_hours": round(_pct(sorted_h, 75), 2),
+            "p90_age_hours": round(_pct(sorted_h, 90), 2),
+            "by_kind": by_kind,
+            "fresh_nodes": fresh,
+            "stale_nodes": stale,
+        }
+
 
 
 class StreamingGraph(MemoryGraph):
