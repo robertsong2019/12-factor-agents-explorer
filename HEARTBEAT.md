@@ -3,7 +3,7 @@
 ## 待办任务
 
 ### 🔴 最高优先级（本周）
-- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 2459 Python tests**, 1000+ APIs, 40+ entropy APIs, 25-API classification suite + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + activation_trace + competitive_spreading + SummaryTree + code-aware APIs + OWASP security suite (6) + amg-bench ✅
+- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 2576 Python tests**, 1000+ APIs, 40+ entropy APIs, 25-API classification suite + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + activation_trace + competitive_spreading + SummaryTree + code-aware APIs + OWASP security suite (6) + amg-bench + OTel telemetry ✅
 - [ ] **agent-context-store: README + npm publish** — **2898 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
 - [ ] **agent-task-cli: README + npm publish** — **1485 tests**, F226
@@ -13,13 +13,14 @@
 - [ ] amg: query_as_of(timestamp) — expose bi-temporal as first-class API (#033)
 - [ ] amg MCP server (stateless, 2026-07-28 compatible) — Research #043 ✅, Python MCP now 16 tools
 - [ ] amg OpenClaw plugin (~200 lines) — fastest-growing distribution channel
-- [ ] amg: OTel GenAI instrumentation — Research #034 ✅, ~50 lines telemetry module
+- [x] amg: OTel GenAI instrumentation — Research #034 ✅, Research #053 ✅, **telemetry.py implemented Cycle 374** ✅
 - [ ] amg PyPI publish (Python-first strategy)
 - [ ] lab/agent-observability: OTel GenAI alignment
 - [ ] openclaw-langgraph-bridge: Gateway 集成测试 (261 tests)
 - [ ] prompt-mgr: 继续 template management features (196 tests)
 
-### 已完成 ✅ (08-07)
+### 已完成 ✅ (08-07 PM)
+- [x] Cycle 374: **OTel GenAI telemetry module** — 5 context managers (store/search/retrieve/update/delete) with `gen_ai.memory.*` spans. Zero-dep inert mode. Research #053 implemented. +20 tests.
 - [x] Cycle 372: **activation_trace()** — Explainable spreading activation. Wave log + path reconstruction + bottleneck detection + dead-end identification. 6 return structures. +54 Python tests.
 - [x] Cycle 373: **competitive_spreading()** — Lateral inhibition (Anderson & Reder 1999 fan effect) & reinforcement (Biederman 1970). Territory mapping + contested nodes + influence balance. +45 Python tests.
 
@@ -39,7 +40,7 @@
 
 ## 系统状态
 - **agent-memory-graph (TS)**: **7349 tests** — 1000+ APIs。entropy framework (40+) + 25-API classification ✅ + FINGEREntropy + StreamingGraph ✅ + PPR + multi_hop_reason ✅ + spreading_activation ✅ + code-aware ✅ + SummaryTree ✅ + enrich_node ✅ + provenance (4) ✅ + entropy scan (4) ✅ + adaptive forgetting ✅ + EntityResolver ✅ + MCP Day 1-5 ✅
-- **agent-memory-graph (Python)**: **2459 tests** — 500+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + **activation_trace** ✅ + **competitive_spreading** ✅ + SummaryTree + code-aware + provenance (4) + **OWASP security suite (6)** ✅ + **amg-bench** ✅ + **MCP 16 tools** ✅
+- **agent-memory-graph (Python)**: **2576 tests** — 500+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + **activation_trace** ✅ + **competitive_spreading** ✅ + SummaryTree + code-aware + provenance (4) + **OWASP security suite (6)** ✅ + **amg-bench** ✅ + **MCP 16 tools** ✅ + **OTel telemetry** ✅
 - **agent-context-store**: **2898 tests**
 - **structured-output-toolkit**: **571 tests**
 - **agent-task-cli**: **1485 tests** — F226
@@ -52,14 +53,15 @@
 - **零回滚率**: amg **281天** 🏆 / acs 200天 🏆
 
 ## 近期活动 (08-07)
+- **Cycle 374**: telemetry.py — OTel GenAI semantic conventions for agent memory. 5 context managers (trace_memory_store/search/retrieve/update/delete). Inert no-op without opentelemetry. Error handling with ERROR status + exception recording. +20 tests. 282nd day.
 - **Cycle 372**: activation_trace() — explainable spreading activation with wave-by-wave firing log, path reconstruction (seed→target BFS), propagation tree, bottleneck detection (gateway nodes gating downstream activation), dead-end identification. 6 return structures (results, waves, paths, seed_to_node, propagation_tree, summary). +54 tests. 281st day.
 - **Cycle 373**: competitive_spreading() — two-phase architecture: independent spreading per seed → competition resolution. Interference (fan effect) reduces activation at contested nodes. Reinforcement (redundancy gain) boosts co-corroborated nodes. Territory mapping + influence balance metric. +45 tests. 281st day.
 - **08-06 PM**: Research #052 → implementation → integration in ~4 hours. 5 security APIs + dashboard + audit integration + amg-bench harness + MCP 16 tools. 7 cycles total in one day.
 
 ## 本周关键路径
-1. ✅ ~~Cycles 367-373: security suite + bench + MCP + activation_trace + competitive_spreading~~ DONE
+1. ✅ ~~Cycles 367-374: security suite + bench + MCP + activation_trace + competitive_spreading + OTel telemetry~~ DONE
 2. ⬜ README(agent-memory-graph) → npm publish — **BLOCKED on human action**
-3. ⬜ Next dev targets: activation_trace TS port / competitive_spreading TS port / MCP registry publish / OpenClaw plugin
+3. ⬜ Next dev targets: activation_trace TS port / competitive_spreading TS port / MCP registry publish / OpenClaw plugin / instrument MCP server with OTel
 
 ## 上次检查
 - **Knowledge org: 2026-08-07 02:02** — Verified test counts against actual suites (amg Python 2459 ✅, prompt-mgr 196 ✅). Fixed prompt-mgr count in MEMORY.md (134→196) and HEARTBEAT (175→196). Updated 全项目总计 to ~20000. All cycle docs (367-373) and Research #052 already current from earlier cron.
