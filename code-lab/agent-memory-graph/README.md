@@ -1,8 +1,10 @@
 # Agent Memory Graph 🧠
 
-> A graph-native memory engine for AI agents — 18,000+ lines, 460+ API methods, zero dependencies.
+> A graph-native memory engine for AI agents — 27,000+ lines, 600+ API methods, 2,728 tests, zero dependencies.
+>
+> **281 consecutive days of iteration** 🏆
 
-**Zero dependencies** — pure Python stdlib + sqlite3.
+**Zero dependencies** — pure Python stdlib + sqlite3. `sqlite-vec` optional for vector search.
 
 ## Why?
 
@@ -12,7 +14,12 @@ Agents wake up fresh each session. Files work, but they're flat. A memory graph 
 - **Query** by label, kind, tag, semantic similarity, or graph traversal
 - **Decay & consolidate** memories automatically using cognitive science models
 - **Track evolution** — bi-temporal versioning, snapshots, rollback
-- **Analyze structure** — 57 graph metrics + spectral/information-theoretic tools
+- **Analyze structure** — 57+ graph metrics + 40+ entropy/spectral tools
+- **Classify graphs** — 25-API classification suite (single-match → ensemble → meta → evaluation → optimization → explainability)
+- **Reason over memory** — multi-hop reasoning, PPR, spreading activation (5-member family)
+- **Secure memory** — OWASP ASI06 security suite (6 APIs: trust score, quarantine, selective repair, audit, laundering detection, dashboard)
+- **Observe operations** — OTel GenAI telemetry with 5 context managers
+- **Serve via MCP** — 16-tool MCP server for any MCP client
 
 ---
 
@@ -57,15 +64,24 @@ print(mg.to_markdown())               # human-readable summary
 |--------|---------|------------|
 | **CRUD** | 12 | `add`, `update_node`, `link`, `delete_node`, `touch`, `clone_node` |
 | **Search** | 33 | `recall`, `search_unified`, `search_bm25`, `search_hybrid`, `search_graphrag`, `grep` |
-| **Graph Metrics** | 57 | `pagerank`, `betweenness_centrality`, `community_detect`, `clustering_coefficient`, `modularity` |
-| **Spectral / Information Theory** | 22 | `von_neumann_entropy`, `spectral_entropy_profile`, `spectral_entropy_contribution`, `entropy_stability_spectral`, `entropy_anomaly_detect`, `ego_entropy_profile`, `entropy_fingerprint`, `semantic_divergence`, `divergence_scan` |
-| **Memory Lifecycle** | 24 | `forgetting_curve`, `fifa_forget`, `consolidate_memory`, `sleep_consolidate`, `strategic_forget` |
+| **Graph Metrics** | 57+ | `pagerank`, `betweenness_centrality`, `community_detect`, `clustering_coefficient`, `modularity` |
+| **Spectral / Entropy** | 40+ | `von_neumann_entropy`, `FINGEREntropy`, `spectral_entropy_profile`, `entropy_fingerprint`, `semantic_divergence`, `divergence_scan`, `entropy_scan`, `entropy_explain` |
+| **Graph Classification** | 25 | 3 base methods (degree/spectral/fingerprint) × ensemble (RRF/Bayesian/weighted/k-NN) + rejection + consensus + LOOCV + calibration + optimization + confusion_explain + counterfactual + confidence_interval |
+| **Spreading Activation** | 5 | `spreading_activation` (ACT-R base), `activation_trace` (explainable), `competitive_spreading` (multi-seed), `temporal_spreading` (Ebbinghaus decay), `activation_diff` (comparative) |
+| **Reasoning** | 3 | `multi_hop_reason` (PPR + BFS evidence), `personalized_pagerank`, `enrich_node` (A-MEM retroactive) |
+| **Temporal Hierarchy** | 1 | `SummaryTree` — 5-level (segment→session→day→week→profile) |
+| **Security (OWASP ASI06)** | 6 | `trust_score`, `memory_quarantine`, `selective_repair`, `memory_audit_report`, `detect_provenance_laundering`, `security_dashboard` |
+| **Code-Aware** | 3 | `explainCode`, `recordCodeDecision`, `impactAnalysis` |
+| **Provenance / Lineage** | 4 | `propagate_correction`, `trace_derivation`, `trace_derivation_impact`, `derivation_lineage_report` |
+| **Memory Lifecycle** | 24+ | `forgetting_curve`, `fifa_forget`, `consolidate_memory`, `sleep_consolidate`, `strategic_forget` + adaptive forgetting (6 APIs) |
 | **Workflow / Patterns** | 14 | `add_workflow`, `retrieve_workflows`, `workflow_success_patterns`, `workflow_compose` |
 | **Temporal / Versioning** | 31 | `evolve`, `temporal_snapshot`, `query_as_of`, `temporal_diff`, `supersede`, `immutable_retrieve`, `revert_evolution` |
 | **Embedding / Vector** | 19 | `add_embedding`, `search_similar`, `train_kge`, `kge_score` |
-| **Classification** | 6 | `rrf_classification`, `bayesian_classification`, `knn_classification`, `weighted_average_classification`, `classification_compare` |
-| **Diagnostics** | 3 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` |
+| **Entity Resolution** | 8 | `EntityResolver` — alias detection, merge, split, cluster dedup |
+| **Diagnostics** | 5+ | `graph_health_score`, `entropy_dashboard`, `get_operation_history`, `streaming_health`, `graph_digest` |
 | **Serialization** | 24 | `export_json`, `to_markdown`, `serialize_dot`, `serialize_graphml`, `serialize_cytoscape` |
+| **Telemetry** | 5 | `enable_telemetry()` auto-instrumentation + 5 OTel context managers |
+| **MCP Server** | 16 | remember/recall/relate/ask/lookup/neighbors/forget/stats/timeline/health + entropy/reason/snapshot/code_explain/quarantine/security |
 
 ---
 
@@ -363,14 +379,148 @@ The graph's spectral toolkit evolved through three phases:
 
 ---
 
+## Advanced API Families
+
+### Spreading Activation Family (5 APIs)
+
+Cognitive-model-inspired retrieval based on Anderson's ACT-R. Fire-once BFS, threshold-gated, decay per hop.
+
+```python
+# Base: spreading activation from seed nodes
+results = mg.spreading_activation(seed_ids=[alice.id], threshold=0.1, decay=0.5, max_hops=3)
+
+# Explainable: wave-by-wave firing log + path reconstruction
+trace = mg.activation_trace(seed_ids=[alice.id], threshold=0.1)
+# trace.wave_log, trace.propagation_tree, trace.bottlenecks, trace.dead_ends
+
+# Competitive: multi-seed lateral inhibition (Anderson & Reder 1999)
+comp = mg.competitive_spreading(seed_sets={'team_a': [alice.id], 'team_b': [bob.id]})
+# comp.territory_map, comp.contested_nodes, comp.influence_balance
+
+# Temporal: Ebbinghaus time-decay spreading
+temp = mg.temporal_spreading(seed_ids=[alice.id], decay_mode='multiply')
+# temp.fresh_nodes, temp.stale_nodes, temp.temporal_decay_impact
+
+# Comparative: delta analysis between any two activation runs
+diff = mg.activation_diff(results, trace, activation_key='fired_nodes')
+# diff.node_deltas, diff.rank_changes, diff.spearman_rho, diff.jaccard_overlap, diff.biggest_mover
+```
+
+### Graph Classification Suite (25 APIs)
+
+Identify graph topology without training data — powered by entropy fingerprints.
+
+```python
+# Single-method classification
+result = mg.graph_classification(candidate, references)
+result = mg.spectral_classification(candidate, references)
+result = mg.fingerprint_classification(candidate, references)
+
+# Ensemble fusion
+result = mg.rrf_classification(candidate, references)           # parameter-free
+result = mg.bayesian_classification(candidate, references)      # adaptive
+result = mg.weighted_average_classification(candidate, refs, weights={...})
+result = mg.knn_classification(candidate, references, k=3)       # voting
+
+# Meta-classification
+report = mg.classification_compare(candidate, references)       # multi-method
+result = mg.max_confidence_classification(candidate, references) # conviction
+
+# Statistical validation
+loocv = mg.classification_loocv(references)                      # leave-one-out CV
+cal = mg.classification_calibrate(references, method='degree')   # temperature scaling
+opt = mg.optimize_reference_set(references)                     # ENN + CCCD
+bench = mg.classification_benchmark(references, queries)         # standardized eval
+conf = mg.classification_confusion_explain(query, references)    # per-modality
+cf = mg.classification_counterfactual(query, references)         # flip analysis
+ci = mg.classification_confidence_interval(query, references)    # bootstrap CI
+
+# Rejection + noise robustness
+result = mg.classify_with_rejection(candidate, references, threshold=0.3)
+result = mg.classification_noise_adaptive(candidate, references) # auto-method
+result = mg.classification_consensus(candidate, references)      # majority vote
+report = mg.classification_report(references, queries, labels)   # full report
+```
+
+### OWASP ASI06 Security Suite (6 APIs)
+
+First agent memory library with infrastructure for all 5 OWASP ASI06 defense layers.
+
+```python
+# Trust scoring (L3) — composite from source + age + verification + anomaly
+score = mg.trust_score(node_id)
+
+# Quarantine (L1+L2) — shadow memory for low-trust writes
+mg.memory_quarantine(entry, reason="unverified source")
+
+# Selective repair (L5) — surgical removal via dependency edges
+mg.selective_repair([poisoned_node_id])
+
+# Audit report (L5) — forensic timeline
+report = mg.memory_audit_report(start_time, end_time)
+
+# Laundering detection (L2) — compression pipeline toxicity check
+mg.detect_provenance_laundering(transform, known_patterns)
+
+# Dashboard — one-call OWASP ASI06 overview
+dash = mg.security_dashboard()
+```
+
+### Streaming & Incremental Entropy
+
+Real-time entropy tracking without full eigendecomposition.
+
+```python
+from memory_graph import StreamingGraph, FINGEREntropy
+
+# StreamingGraph: real-time FINGER tracking on every add/link/delete
+sg = StreamingGraph()
+sg.add(1, "Alice", kind="person")
+sg.add(2, "Bob", kind="person")
+sg.link(1, 2, "knows")
+# sg.current_Q  — quadratic proxy (O(1) health signal)
+# sg.anomaly_log — unusual structural changes
+
+report = sg.streaming_report()
+```
+
+### MCP Server (16 Tools)
+
+Built-in MCP server for any MCP client (Claude Desktop, mcporter, OpenClaw).
+
+```python
+from mcp_server import create_mcp_server
+
+mcp = create_mcp_server(mg)
+# Tools: remember, recall, relate, ask, lookup, neighbors, forget, stats,
+#        timeline, health, entropy, reason, snapshot, code_explain,
+#        quarantine, security
+```
+
+### OTel Telemetry
+
+OpenTelemetry GenAI-compatible observability — first agent memory library with native OTel.
+
+```python
+from telemetry import enable_telemetry
+
+# Auto-instruments 8 CRUD methods with gen_ai.memory.* spans
+enable_telemetry(mg, exporter_endpoint="http://localhost:4317")
+```
+
+---
+
 ## Testing
 
 ```bash
 cd agent-memory-graph
-python3 -m pytest test_memory_graph.py -q
+python3 -m pytest -q  # all 2,728 tests
+python3 -m pytest test_memory_graph.py -q  # core only
+python3 -m pytest -k "classification" -q  # classification suite
+python3 -m pytest -k "activation" -q  # spreading activation family
 ```
 
-**2,130+ test cases** covering all API methods.
+**2,728 test cases** across 40+ test files. **281st consecutive day** 🏆.
 
 ---
 
@@ -384,4 +534,4 @@ python3 -m pytest test_memory_graph.py -q
 
 ---
 
-*Part of [Code Lab](../) · 280 days of iteration · Cycle 330+*
+*Part of [Code Lab](../) · 281 days of iteration · Cycle 383+*
