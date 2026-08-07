@@ -78,6 +78,10 @@
 - [x] **F50**: `Memory.forget_older_than(days)` — Time-based cleanup: remove entries older than N days, return count ✅ 2026-08-06
 - [x] **F51**: `Agent.export_conversation(format)` — Export full conversation as markdown or JSON ✅ 2026-08-06
 
+### Metadata & Dedup (Round 15 — 2026-08-07)
+- [x] **F52**: `Memory.merge_metadata(index, metadata)` — Merge metadata fields into existing entry without replacing dict ✅ 2026-08-07
+- [x] **F53**: `Memory.find_duplicates(threshold)` — Find all near-duplicate entry pairs sorted by descending similarity ✅ 2026-08-07
+
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
