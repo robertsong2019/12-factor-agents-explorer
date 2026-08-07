@@ -20138,6 +20138,240 @@ class MemoryGraph:
             },
         }
 
+    # ─── Activation Diff ──────────────────────────────────────────
+
+    def activation_diff(
+        self,
+        baseline: list[dict],
+        comparison: list[dict],
+        *,
+        activation_key: str = "activation",
+        node_key: str = "node_id",
+        min_delta: float = 0.0,
+    ) -> dict:
+        """Compare two spreading-activation result sets.
+
+        Given the ``results`` lists (or the top-level lists) returned by
+        :meth:`spreading_activation`, :meth:`activation_trace`,
+        :meth:`competitive_spreading`, :meth:`temporal_spreading`, or even
+        :meth:`diffusion_retrieve`, compute the node-level differences in
+        activation between the two runs.
+
+        This is the analytical companion to the activation family:
+
+        - **What changed?** Which nodes gained or lost activation when
+          seeds / parameters / graph structure changed.
+        - **Rank shifts** How did nodes reorder?
+        - **New / lost nodes** Which nodes entered or dropped below
+          threshold?
+        - **Correlation** How similar are the two activation landscapes
+          (Spearman rank correlation)?
+
+        Use cases:
+
+        - **Parameter sensitivity**: Compare ``decay=0.7`` vs ``decay=0.9``
+          to see how much the activation pattern shifts.
+        - **Seed ablation**: Compare activation with/without a seed node
+          to measure its influence on the final pattern.
+        - **Temporal drift**: Compare ``spreading_activation`` (no time
+          decay) vs ``temporal_spreading`` to see which memories got
+          suppressed by staleness.
+        - **Model comparison**: Compare ``spreading_activation`` vs
+          ``diffusion_retrieve`` on the same seeds.
+
+        Args:
+            baseline: The reference result list (``[{node_id, activation, ...}]``).
+            comparison: The comparison result list.
+            activation_key: Key for the activation value in each result
+                dict (default ``"activation"``).  Works with
+                ``effective_activation`` (temporal_spreading) and
+                ``score`` (diffusion_retrieve).
+            node_key: Key for the node identifier (default ``"node_id"``).
+            min_delta: Minimum absolute activation delta to include in
+                the ``gains`` and ``losses`` lists.  Default 0.0 includes
+                all changes.
+
+        Returns:
+            Dict with keys:
+
+            - ``baseline_nodes`` / ``comparison_nodes``: sorted node lists.
+            - ``common_nodes``: nodes present in both runs.
+            - ``new_nodes``: activated only in comparison.
+            - ``lost_nodes``: activated only in baseline.
+            - ``gains``: list of ``{node_id, delta, baseline_act, comparison_act}``
+              sorted by delta descending (biggest gains first).
+            - ``losses``: list of ``{node_id, delta, baseline_act, comparison_act}``
+              sorted by delta ascending (biggest losses first).
+            - ``rank_changes``: list of ``{node_id, baseline_rank, comparison_rank, change}``
+              where positive change means the node improved its rank.
+            - ``spearman_rho``: Spearman rank correlation coefficient
+              (``-1`` to ``1``). ``1`` = identical ordering, ``0`` = no
+              correlation, ``-1`` = reversed ordering.
+            - ``mean_absolute_delta``: Mean |Δactivation| across common nodes.
+            - ``activation_overlap``: Jaccard similarity of the two node sets.
+            - ``summary``: Human-readable one-line description.
+            - ``summary_metrics``: Structured metrics dict.
+        """
+        # ── 1. Parse activation values ────────────────────────────
+        def _to_map(results: list[dict]) -> dict[str, float]:
+            out: dict[str, float] = {}
+            for entry in results:
+                nid = entry.get(node_key)
+                if nid is None:
+                    continue
+                act = entry.get(activation_key, 0.0)
+                try:
+                    out[nid] = float(act)
+                except (TypeError, ValueError):
+                    out[nid] = 0.0
+            return out
+
+        base_map = _to_map(baseline)
+        comp_map = _to_map(comparison)
+
+        base_nodes = set(base_map.keys())
+        comp_nodes = set(comp_map.keys())
+        common = base_nodes & comp_nodes
+        new_nodes = comp_nodes - base_nodes
+        lost_nodes = base_nodes - comp_nodes
+
+        # ── 2. Compute deltas ─────────────────────────────────────
+        deltas = {
+            nid: comp_map[nid] - base_map[nid]
+            for nid in common
+        }
+
+        gains = sorted(
+            [
+                {
+                    "node_id": nid,
+                    "delta": round(d, 6),
+                    "baseline_act": round(base_map[nid], 6),
+                    "comparison_act": round(comp_map[nid], 6),
+                }
+                for nid, d in deltas.items()
+                if d > min_delta
+            ],
+            key=lambda x: -x["delta"],
+        )
+
+        losses = sorted(
+            [
+                {
+                    "node_id": nid,
+                    "delta": round(d, 6),
+                    "baseline_act": round(base_map[nid], 6),
+                    "comparison_act": round(comp_map[nid], 6),
+                }
+                for nid, d in deltas.items()
+                if d < -min_delta
+            ],
+            key=lambda x: x["delta"],
+        )
+
+        # ── 3. Rank changes ───────────────────────────────────────
+        base_rank = {
+            nid: i
+            for i, nid in enumerate(
+                sorted(base_map, key=lambda n: -base_map[n])
+            )
+        }
+        comp_rank = {
+            nid: i
+            for i, nid in enumerate(
+                sorted(comp_map, key=lambda n: -comp_map[n])
+            )
+        }
+
+        rank_changes = sorted(
+            [
+                {
+                    "node_id": nid,
+                    "baseline_rank": base_rank[nid],
+                    "comparison_rank": comp_rank[nid],
+                    "change": base_rank[nid] - comp_rank[nid],
+                }
+                for nid in common
+            ],
+            key=lambda x: -abs(x["change"]),
+        )
+
+        # ── 4. Spearman rank correlation ──────────────────────────
+        if len(common) >= 2:
+            # Manual Spearman: convert ranks to correlation
+            n = len(common)
+            common_sorted = sorted(common)
+            r1 = [base_rank[nid] for nid in common_sorted]
+            r2 = [comp_rank[nid] for nid in common_sorted]
+
+            d_sq_sum = sum((r1[i] - r2[i]) ** 2 for i in range(n))
+            spearman_rho = 1.0 - (6.0 * d_sq_sum) / (n * (n * n - 1))
+            # Clamp to [-1, 1] for numerical edge cases
+            spearman_rho = max(-1.0, min(1.0, spearman_rho))
+        else:
+            spearman_rho = 1.0 if len(common) <= 1 else 0.0
+
+        # ── 5. Summary metrics ────────────────────────────────────
+        abs_deltas = [abs(d) for d in deltas.values()]
+        mean_abs_delta = (
+            sum(abs_deltas) / len(abs_deltas) if abs_deltas else 0.0
+        )
+
+        union = base_nodes | comp_nodes
+        jaccard = len(common) / len(union) if union else 1.0
+
+        biggest_mover = (
+            max(deltas, key=lambda k: abs(deltas[k]), default=None)
+            if deltas else None
+        )
+
+        # ── 6. Human-readable summary ─────────────────────────────
+        parts: list[str] = []
+        parts.append(f"baseline={len(base_nodes)} nodes, comparison={len(comp_nodes)} nodes")
+        if new_nodes:
+            parts.append(f"+{len(new_nodes)} new")
+        if lost_nodes:
+            parts.append(f"-{len(lost_nodes)} lost")
+        parts.append(f"overlap={jaccard:.2f}")
+        parts.append(f"ρ={spearman_rho:.3f}")
+        if biggest_mover:
+            mv = deltas[biggest_mover]
+            parts.append(
+                f"biggest mover: {biggest_mover} ({'+' if mv >= 0 else ''}{mv:.4f})"
+            )
+        summary_text = " | ".join(parts)
+
+        return {
+            "baseline_nodes": sorted(base_nodes),
+            "comparison_nodes": sorted(comp_nodes),
+            "common_nodes": sorted(common),
+            "new_nodes": sorted(new_nodes),
+            "lost_nodes": sorted(lost_nodes),
+            "gains": gains,
+            "losses": losses,
+            "rank_changes": rank_changes,
+            "spearman_rho": round(spearman_rho, 6),
+            "mean_absolute_delta": round(mean_abs_delta, 6),
+            "activation_overlap": round(jaccard, 6),
+            "summary": summary_text,
+            "summary_metrics": {
+                "baseline_count": len(base_nodes),
+                "comparison_count": len(comp_nodes),
+                "common_count": len(common),
+                "new_count": len(new_nodes),
+                "lost_count": len(lost_nodes),
+                "gain_count": len(gains),
+                "loss_count": len(losses),
+                "spearman_rho": round(spearman_rho, 6),
+                "mean_absolute_delta": round(mean_abs_delta, 6),
+                "activation_overlap": round(jaccard, 6),
+                "biggest_mover": biggest_mover,
+                "biggest_mover_delta": (
+                    round(deltas[biggest_mover], 6) if biggest_mover else None
+                ),
+            },
+        }
+
     # ─── Temporal Evolution Report ──────────────────────────────────
 
     def temporal_evolution_report(self, start_time: float, end_time: float,
