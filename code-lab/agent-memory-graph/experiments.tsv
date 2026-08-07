@@ -406,3 +406,6 @@ timestamp	commit	metric	value	status	description
 2026-08-07T21:25:00+08:00	fe4b18a	test_count	2541→2556	keep	Cycle 380: graph_health_check() — 6 traffic-light checks, composite score. +15 tests.
 2026-08-07T21:25:00+08:00	fe4b18a	test_pass_rate	100%	keep	All 2556 passing, 17.68s.
 2026-08-07T15:06:22+08:00	05901de	test_count	2576→2611	keep	Cycle 381: enable_telemetry() auto-instrumentation — wraps 8 CRUD methods (add/link/get_node/neighbors/recall/search_unified/multi_hop_reason/delete_node) with OTel gen_ai.memory.* spans. Idempotent wrap, disable_telemetry() restore, telemetry_status() reporting. Inert mode when opentelemetry not installed. StreamingGraph inherits. +35 tests. 283rd day.
+2026-08-08T00:00:00+08:00	aa849f7	test_count	2611→2657	keep	Cycle 382: temporal_spreading() — time-aware spreading activation with Ebbinghaus temporal decay. 3 modes: multiply (raw×R), additive (gentler), threshold (skip stale). Returns per-node retention/effective_activation, fresh/stale classification, retention_stats, temporal_decay_impact. Builds on Cycle 372 + forgetting_curve. +46 tests. 281st day.
+2026-08-08T00:00:00+08:00	aa849f7	test_pass_rate	100%	keep	All 2657 passing, 18.78s.
+2026-08-08T00:00:00+08:00	aa849f7	code_lines	+826	keep	~290 source/method + ~536 test/docstring
