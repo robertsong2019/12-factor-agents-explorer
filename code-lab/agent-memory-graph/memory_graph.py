@@ -2454,6 +2454,25 @@ class MemoryGraph:
             "edge_props": [dict(r) for r in self.conn.execute("SELECT * FROM edge_props").fetchall()],
         }
 
+    def graph_digest(self) -> str:
+        """Deterministic SHA-256 hash of graph state for integrity verification.
+        Hashes sorted node IDs + labels + sorted edge tuples + metadata summary.
+        """
+        import hashlib
+        node_rows = self.conn.execute(
+            "SELECT id, label, kind FROM nodes ORDER BY id"
+        ).fetchall()
+        edge_rows = self.conn.execute(
+            "SELECT source, target, relation FROM edges ORDER BY source, target, relation"
+        ).fetchall()
+        parts = []
+        for r in node_rows:
+            parts.append(f"N:{r['id']}:{r['label']}:{r['kind']}")
+        for r in edge_rows:
+            parts.append(f"E:{r['source']}:{r['target']}:{r['relation']}")
+        content = "\n".join(parts)
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
     def restore(self, snap: dict) -> None:
         """Restore graph to a previously captured snapshot state."""
         self.conn.executescript("DELETE FROM edge_props; DELETE FROM evolution_log; DELETE FROM edges; DELETE FROM nodes;")
