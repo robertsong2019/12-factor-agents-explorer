@@ -20051,6 +20051,145 @@ class MemoryGraph:
             "stale_nodes": stale,
         }
 
+    # ─── Graph Health Check ─────────────────────────────────────────
+
+    def graph_health_check(self) -> dict:
+        """Unified graph health diagnostic combining multiple metrics.
+
+        Returns a traffic-light-style report across structural, temporal,
+        and content dimensions.  Designed for quick "is the graph healthy?"
+        checks in production monitoring.
+
+        Returns:
+            dict with keys:
+            - overall_status: "healthy" / "warning" / "critical"
+            - score: 0-100 composite health score
+            - checks: list of {name, status, value, threshold, detail}
+            - summary: human-readable one-line summary
+        """
+        checks = []
+        stats = self.stats()
+        n_nodes = stats.get("nodes", 0)
+        n_edges = stats.get("edges", 0)
+
+        # 1. Node count check
+        node_ok = n_nodes > 0
+        checks.append({
+            "name": "has_nodes",
+            "status": "pass" if node_ok else "fail",
+            "value": n_nodes,
+            "threshold": 1,
+            "detail": f"{n_nodes} nodes in graph",
+        })
+
+        # 2. Edge density check (not too sparse, not too dense)
+        max_edges = n_nodes * (n_nodes - 1) / 2 if n_nodes > 1 else 1
+        density = n_edges / max_edges if max_edges > 0 else 0
+        if density < 0.01:
+            dens_status = "warning"
+        elif density > 0.8:
+            dens_status = "warning"
+        else:
+            dens_status = "pass"
+        checks.append({
+            "name": "edge_density",
+            "status": dens_status,
+            "value": round(density, 4),
+            "threshold": "0.01 - 0.8",
+            "detail": f"{n_edges} edges, density {density:.4f}",
+        })
+
+        # 3. Connectivity check
+        try:
+            connected = self.is_connected()
+        except Exception:
+            connected = n_nodes <= 1
+        checks.append({
+            "name": "connectivity",
+            "status": "pass" if connected else "warning",
+            "value": connected,
+            "threshold": True,
+            "detail": "connected" if connected else "disconnected",
+        })
+
+        # 4. Kind diversity
+        kind_counts = self.count_by_kind()
+        n_kinds = len(kind_counts)
+        kind_ok = n_kinds >= 1
+        checks.append({
+            "name": "kind_diversity",
+            "status": "pass" if kind_ok else "warning",
+            "value": n_kinds,
+            "threshold": 1,
+            "detail": f"{n_kinds} kinds: {dict(list(kind_counts.items())[:5])}",
+        })
+
+        # 5. Average weight (should not be near zero = all decayed)
+        try:
+            weight_rows = self.conn.execute("SELECT weight FROM nodes").fetchall()
+            weights = [r["weight"] for r in weight_rows] if weight_rows else [0]
+            avg_weight = sum(weights) / len(weights) if weights else 0
+        except Exception:
+            avg_weight = 0
+        if avg_weight < 0.1:
+            w_status = "critical"
+        elif avg_weight < 0.3:
+            w_status = "warning"
+        else:
+            w_status = "pass"
+        checks.append({
+            "name": "avg_weight",
+            "status": w_status,
+            "value": round(avg_weight, 4),
+            "threshold": 0.3,
+            "detail": f"average node weight {avg_weight:.4f}",
+        })
+
+        # 6. Isolated nodes ratio
+        isolated = sum(1 for r in self.conn.execute(
+            "SELECT id FROM nodes WHERE id NOT IN "
+            "(SELECT source FROM edges UNION SELECT target FROM edges)"
+        ).fetchall())
+        iso_ratio = isolated / n_nodes if n_nodes > 0 else 0
+        if iso_ratio > 0.5:
+            iso_status = "warning"
+        else:
+            iso_status = "pass"
+        checks.append({
+            "name": "isolation_ratio",
+            "status": iso_status,
+            "value": round(iso_ratio, 4),
+            "threshold": 0.5,
+            "detail": f"{isolated}/{n_nodes} isolated nodes",
+        })
+
+        # Compute overall score (pass=100, warning=50, critical=0, fail=0)
+        status_scores = {"pass": 100, "warning": 50, "critical": 0, "fail": 0}
+        total_score = sum(status_scores[c["status"]] for c in checks) / len(checks) if checks else 0
+        total_score = round(total_score)
+
+        if any(c["status"] == "critical" for c in checks):
+            overall = "critical"
+        elif any(c["status"] in ("warning", "fail") for c in checks):
+            overall = "warning"
+        else:
+            overall = "healthy"
+
+        # Summary line
+        failed = [c for c in checks if c["status"] != "pass"]
+        if not failed:
+            summary = f"All {len(checks)} checks passed. Score {total_score}/100."
+        else:
+            names = [c["name"] for c in failed]
+            summary = f"{len(failed)}/{len(checks)} checks need attention: {', '.join(names)}. Score {total_score}/100."
+
+        return {
+            "overall_status": overall,
+            "score": total_score,
+            "checks": checks,
+            "summary": summary,
+        }
+
 
 
 class StreamingGraph(MemoryGraph):
