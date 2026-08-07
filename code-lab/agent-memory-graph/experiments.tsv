@@ -394,3 +394,15 @@ timestamp	commit	metric	value	status	description
 2026-08-06T21:20	83e1b38	test_count	2327→2333	keep	Cycle 368: security_dashboard() — one-call OWASP ASI06 overview. Aggregates quarantine + trust + laundering into single call. threat_level + summary string. +6 tests. 279th day.
 2026-08-06T21:30	d52d2cb	test_count	2333→2336	keep	Cycle 369: security-audit integration. memory_audit includes quarantine count + warning. Pipeline integration test (quarantine→dashboard→repair→verify). +3 tests. 279th day.
 2026-08-07T00:00:00+08:00	711f460	test_count	2360→2414	keep	Cycle 372: activation_trace() — explainable spreading activation trace. Superset of spreading_activation with step-by-step wave log, path reconstruction, propagation tree, seed_to_node partition, bottleneck/dead_end detection. 6 return keys (results/waves/paths/seed_to_node/propagation_tree/summary). _trace_path BFS helper. Builds on Cycle 366. +54 tests. 280th day.
+2026-08-07T01:00:00+08:00	abbaba8	test_count	2414→2459	keep	Cycle 373: competitive_spreading() — lateral inhibition & reinforcement. Models interference/reinforcement when multiple seeds' activations overlap. Interference: disjoint relations → activation reduced (Anderson fan effect). Reinforcement: shared relations → activation boosted (redundancy gain). Territory mapping + winner selection + interference log. 6 return structures. Builds on Cycles 366+372. +45 tests. 281st day.
+2026-08-07T19:00	34645a9	test_count	2486	keep	Cycle 374-376: graph_topology_stats (9) + graph_digest (9) + graph_similarity_report (9)
+2026-08-07T21:05:00+08:00	3b0b2d8	test_count	2486→2506	keep	Cycle 377: centrality_report() — unified degree/betweenness/eigenvector/pagerank. Consensus ranking. +20 tests. 282nd day.
+2026-08-07T21:05:00+08:00	3b0b2d8	test_pass_rate	1002026-08-07T21:05:00+08:00	3b0b2d8	test_count	2486→2506	keep	Cycle 377: centrality_report() — unified degree/betweenness/eigenvector/pagerank. Consensus ranking. +20 tests. 282nd day.
+2026-08-07T21:05:00+08:00	3b0b2d8	test_pass_rate	100%	keep	All 2506 passing, 17.56s.
+2026-08-07T21:12:00+08:00	c97693a	test_count	2506→2525	keep	Cycle 378: temporal_evolution_report() — growth/kind/bucket/lifespan stats. +19 tests.
+2026-08-07T21:12:00+08:00	c97693a	test_pass_rate	100%	keep	All 2525 passing, 17.12s.
+2026-08-07T21:18:00+08:00	6ae29cf	test_count	2525→2541	keep	Cycle 379: memory_age_stats() — mean/median/std/percentiles/fresh/stale. +16 tests.
+2026-08-07T21:18:00+08:00	6ae29cf	test_pass_rate	100%	keep	All 2541 passing, 17.21s.
+2026-08-07T21:25:00+08:00	fe4b18a	test_count	2541→2556	keep	Cycle 380: graph_health_check() — 6 traffic-light checks, composite score. +15 tests.
+2026-08-07T21:25:00+08:00	fe4b18a	test_pass_rate	100%	keep	All 2556 passing, 17.68s.
+2026-08-07T15:06:22+08:00	05901de	test_count	2576→2611	keep	Cycle 381: enable_telemetry() auto-instrumentation — wraps 8 CRUD methods (add/link/get_node/neighbors/recall/search_unified/multi_hop_reason/delete_node) with OTel gen_ai.memory.* spans. Idempotent wrap, disable_telemetry() restore, telemetry_status() reporting. Inert mode when opentelemetry not installed. StreamingGraph inherits. +35 tests. 283rd day.
