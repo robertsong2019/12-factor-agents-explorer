@@ -19851,6 +19851,120 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ─── Temporal Evolution Report ──────────────────────────────────
+
+    def temporal_evolution_report(self, start_time: float, end_time: float,
+                                  *, bucket_count: int = 10) -> dict:
+        """Aggregated graph evolution statistics over a time window.
+
+        Unlike :meth:`temporal_diff` (a raw snapshot diff), this report
+        provides analytical statistics: growth rate, kind distribution
+        shifts, lifespan estimates, and activity buckets.
+
+        Args:
+            start_time: Unix timestamp for the start of the analysis window.
+            end_time:   Unix timestamp for the end (must be > *start_time*).
+            bucket_count: Number of equal-width time buckets (default 10).
+
+        Returns:
+            dict with keys:
+            - window: {start, end, duration_seconds}
+            - totals: {nodes_in_window, edges_in_window, kinds}
+            - growth: {node_rate_per_hour, edge_rate_per_hour}
+            - kind_distribution: {kind: count} at the end of the window
+            - kind_shift: {kind: delta} change in counts from start→end
+            - buckets: [{bucket_start, bucket_end, nodes_added, edges_added}]
+            - lifespan_stats: {mean, median, min, max} in seconds (for
+              invalidated nodes within the window)
+            - top_kinds: top 5 kinds by count at end_time
+        """
+        import statistics
+        duration = end_time - start_time
+        if duration <= 0:
+            raise ValueError("end_time must be > start_time")
+        bucket_size = duration / bucket_count
+
+        # Nodes created within the window
+        node_rows = self.conn.execute(
+            "SELECT id, kind, created, valid_from, valid_to FROM nodes "
+            "WHERE created >= ? AND created < ?",
+            (start_time, end_time)
+        ).fetchall()
+
+        # Growth rate
+        hours = duration / 3600.0
+        node_rate = len(node_rows) / hours if hours > 0 else 0
+
+        # Kind distribution at end_time (nodes valid at end_time)
+        end_nodes = self.query_valid_at(end_time)
+        kind_dist: dict[str, int] = {}
+        for n in end_nodes:
+            kind_dist[n.kind] = kind_dist.get(n.kind, 0) + 1
+
+        # Kind distribution at start_time
+        start_nodes = self.query_valid_at(start_time)
+        kind_dist_start: dict[str, int] = {}
+        for n in start_nodes:
+            kind_dist_start[n.kind] = kind_dist_start.get(n.kind, 0) + 1
+
+        # Kind shift
+        all_kinds = set(kind_dist) | set(kind_dist_start)
+        kind_shift = {k: kind_dist.get(k, 0) - kind_dist_start.get(k, 0)
+                      for k in all_kinds}
+
+        # Buckets
+        buckets = []
+        for i in range(bucket_count):
+            b_start = start_time + i * bucket_size
+            b_end = b_start + bucket_size
+            b_nodes = sum(1 for r in node_rows
+                          if b_start <= r["created"] < b_end)
+            buckets.append({
+                "bucket_start": b_start,
+                "bucket_end": b_end,
+                "nodes_added": b_nodes,
+            })
+
+        # Lifespan stats for nodes invalidated within the window
+        lifespans = []
+        for r in node_rows:
+            if r["valid_to"] is not None and r["valid_from"] is not None:
+                lifespan = r["valid_to"] - r["valid_from"]
+                if lifespan > 0:
+                    lifespans.append(lifespan)
+
+        lifespan_stats = {"mean": 0, "median": 0, "min": 0, "max": 0, "count": 0}
+        if lifespans:
+            lifespan_stats = {
+                "mean": statistics.mean(lifespans),
+                "median": statistics.median(lifespans),
+                "min": min(lifespans),
+                "max": max(lifespans),
+                "count": len(lifespans),
+            }
+
+        # Top kinds
+        top_kinds = sorted(kind_dist.items(), key=lambda x: -x[1])[:5]
+
+        return {
+            "window": {"start": start_time, "end": end_time,
+                       "duration_seconds": duration},
+            "totals": {
+                "nodes_created_in_window": len(node_rows),
+                "nodes_valid_at_end": len(end_nodes),
+                "kinds": len(kind_dist),
+            },
+            "growth": {
+                "node_rate_per_hour": round(node_rate, 2),
+                "duration_hours": round(hours, 2),
+            },
+            "kind_distribution": kind_dist,
+            "kind_shift": kind_shift,
+            "buckets": buckets,
+            "lifespan_stats": lifespan_stats,
+            "top_kinds": top_kinds,
+        }
+
 
 
 class StreamingGraph(MemoryGraph):
