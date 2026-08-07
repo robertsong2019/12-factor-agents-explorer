@@ -81,6 +81,7 @@
 ### Metadata & Dedup (Round 15 — 2026-08-07)
 - [x] **F52**: `Memory.merge_metadata(index, metadata)` — Merge metadata fields into existing entry without replacing dict ✅ 2026-08-07
 - [x] **F53**: `Memory.find_duplicates(threshold)` — Find all near-duplicate entry pairs sorted by descending similarity ✅ 2026-08-07
+- [x] **F54**: `Memory.tag_stats()` — Tag frequency distribution + co-occurrence matrix ✅ 2026-08-07
 
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅

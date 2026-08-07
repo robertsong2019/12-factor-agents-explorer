@@ -1741,3 +1741,40 @@ class Memory:
                     })
         pairs.sort(key=lambda p: p["similarity"], reverse=True)
         return pairs
+
+    # ── F54: Tag Statistics ───────────────────────────────────────────
+
+    def tag_stats(self) -> Dict[str, Any]:
+        """Return tag frequency distribution and co-occurrence matrix.
+
+        Returns dict with:
+        - frequency: {tag: count} sorted by count desc
+        - total_tags: unique tag count
+        - tagged_entries: entries with ≥1 tag
+        - untagged_entries: entries with 0 tags
+        - co_occurrence: {tag_a: {tag_b: count}} — how often tags appear together
+        """
+        from collections import Counter, defaultdict
+        freq = Counter()
+        co_occ: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        tagged = 0
+
+        for entry in self._entries:
+            if entry.tags:
+                tagged += 1
+            for t in set(entry.tags):
+                freq[t] += 1
+            # co-occurrence
+            tags = sorted(set(entry.tags))
+            for i, a in enumerate(tags):
+                for b in tags[i + 1:]:
+                    co_occ[a][b] += 1
+                    co_occ[b][a] += 1
+
+        return {
+            "frequency": dict(freq.most_common()),
+            "total_tags": len(freq),
+            "tagged_entries": tagged,
+            "untagged_entries": len(self._entries) - tagged,
+            "co_occurrence": {k: dict(v) for k, v in sorted(co_occ.items())},
+        }

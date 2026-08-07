@@ -28,3 +28,4 @@ timestamp	commit	metric	value	status	description
 2026-08-06T22:10	e4720a2	test_pass_rate	850/850	keep	F49 archive + F50 forget_older_than — +18 tests
 2026-08-06T22:20	d5e90ee	test_pass_rate	859/859	keep	F51 export_conversation — +9 tests
 2026-08-07T22:10+08:00	9ded4e9	test_pass_rate	877/877 (+18)	keep	F52 merge_metadata(index, metadata) + F53 find_duplicates(threshold) — 18 new tests, all passing
+2026-08-07T22:20+08:00	-	test_pass_rate	885/885 (+8)	keep	F54 tag_stats() — frequency distribution + co-occurrence matrix, 8 tests
