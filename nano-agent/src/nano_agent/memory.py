@@ -1698,3 +1698,46 @@ class Memory:
         if removed > 0:
             self._save()
         return removed
+
+    # ── F52: Merge Metadata ──────────────────────────────────────────
+
+    def merge_metadata(self, index: int, metadata: Dict[str, Any]) -> bool:
+        """Merge metadata fields into an existing entry without replacing the dict.
+
+        Returns True if the entry was found and updated.
+        """
+        if not (0 <= index < len(self._entries)):
+            return False
+        self._entries[index].metadata.update(metadata)
+        self._save()
+        return True
+
+    # ── F53: Find Duplicate Pairs ────────────────────────────────────
+
+    def find_duplicates(self, threshold: float = 0.85) -> List[Dict[str, Any]]:
+        """Find all near-duplicate entry pairs above *threshold* similarity.
+
+        Returns a list of dicts: {"i": idx_a, "j": idx_b, "similarity": float,
+        "content_i": str, "content_j": str} sorted by descending similarity.
+        """
+        n = len(self._entries)
+        if n < 2:
+            return []
+        pairs: List[Dict[str, Any]] = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = SequenceMatcher(
+                    None,
+                    self._entries[i].content.lower(),
+                    self._entries[j].content.lower(),
+                ).ratio()
+                if sim >= threshold:
+                    pairs.append({
+                        "i": i,
+                        "j": j,
+                        "similarity": round(sim, 4),
+                        "content_i": self._entries[i].content,
+                        "content_j": self._entries[j].content,
+                    })
+        pairs.sort(key=lambda p: p["similarity"], reverse=True)
+        return pairs
