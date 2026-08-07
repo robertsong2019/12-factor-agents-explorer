@@ -20,6 +20,7 @@
 - [ ] prompt-mgr: 继续 template management features (196 tests)
 
 ### 已完成 ✅ (08-07 PM)
+- [x] Cycle 381: **enable_telemetry() auto-instrumentation** — wraps 8 CRUD methods (add/link/get_node/neighbors/recall/search_unified/multi_hop_reason/delete_node) with OTel gen_ai.memory.* spans. disable_telemetry() + telemetry_status(). Inert mode. +35 tests.
 - [x] Cycle 374: **OTel GenAI telemetry module** — 5 context managers (store/search/retrieve/update/delete) with `gen_ai.memory.*` spans. Zero-dep inert mode. Research #053 implemented. +20 tests.
 - [x] Cycle 372: **activation_trace()** — Explainable spreading activation. Wave log + path reconstruction + bottleneck detection + dead-end identification. 6 return structures. +54 Python tests.
 - [x] Cycle 373: **competitive_spreading()** — Lateral inhibition (Anderson & Reder 1999 fan effect) & reinforcement (Biederman 1970). Territory mapping + contested nodes + influence balance. +45 Python tests.
@@ -40,7 +41,7 @@
 
 ## 系统状态
 - **agent-memory-graph (TS)**: **7349 tests** — 1000+ APIs。entropy framework (40+) + 25-API classification ✅ + FINGEREntropy + StreamingGraph ✅ + PPR + multi_hop_reason ✅ + spreading_activation ✅ + code-aware ✅ + SummaryTree ✅ + enrich_node ✅ + provenance (4) ✅ + entropy scan (4) ✅ + adaptive forgetting ✅ + EntityResolver ✅ + MCP Day 1-5 ✅
-- **agent-memory-graph (Python)**: **2576 tests** — 500+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + **activation_trace** ✅ + **competitive_spreading** ✅ + SummaryTree + code-aware + provenance (4) + **OWASP security suite (6)** ✅ + **amg-bench** ✅ + **MCP 16 tools** ✅ + **OTel telemetry** ✅
+- **agent-memory-graph (Python)**: **2611 tests** — 500+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + **activation_trace** ✅ + **competitive_spreading** ✅ + SummaryTree + code-aware + provenance (4) + **OWASP security suite (6)** ✅ + **amg-bench** ✅ + **MCP 16 tools** ✅ + **OTel telemetry** ✅ + **enable_telemetry() auto-instrumentation** ✅
 - **agent-context-store**: **2898 tests**
 - **structured-output-toolkit**: **571 tests**
 - **agent-task-cli**: **1485 tests** — F226
