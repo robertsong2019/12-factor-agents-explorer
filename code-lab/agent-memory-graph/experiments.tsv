@@ -409,3 +409,6 @@ timestamp	commit	metric	value	status	description
 2026-08-08T00:00:00+08:00	aa849f7	test_count	2611→2657	keep	Cycle 382: temporal_spreading() — time-aware spreading activation with Ebbinghaus temporal decay. 3 modes: multiply (raw×R), additive (gentler), threshold (skip stale). Returns per-node retention/effective_activation, fresh/stale classification, retention_stats, temporal_decay_impact. Builds on Cycle 372 + forgetting_curve. +46 tests. 281st day.
 2026-08-08T00:00:00+08:00	aa849f7	test_pass_rate	100%	keep	All 2657 passing, 18.78s.
 2026-08-08T00:00:00+08:00	aa849f7	code_lines	+826	keep	~290 source/method + ~536 test/docstring
+2026-08-08T01:00:00+08:00	7a53273	test_count	2657→2728	keep	Cycle 383: activation_diff() — compare two activation result sets. Node set diff (new/lost/common), activation deltas (gains/losses), rank changes, Spearman rank correlation, Jaccard overlap, biggest mover. Custom keys for cross-API comparison. +71 tests. 281st day.
+2026-08-08T01:00:00+08:00	7a53273	test_pass_rate	100%	keep	All 2728 passing, 17.60s.
+2026-08-08T01:00:00+08:00	7a53273	code_lines	+985	keep	~210 source/method + ~775 test/docstring
