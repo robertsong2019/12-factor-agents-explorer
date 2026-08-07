@@ -20190,6 +20190,155 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ── Telemetry / Observability ──────────────────────────────────────
+
+    def enable_telemetry(
+        self,
+        *,
+        store: str = "agent_memory_graph",
+        wrap: list[str] | None = None,
+    ) -> dict[str, str]:
+        """Auto-instrument core CRUD methods with OTel ``gen_ai.memory.*`` spans.
+
+        Wraps the following methods (all optional via *wrap*):
+        ``add``, ``get_node``, ``remove``, ``search_unified``,
+        ``multi_hop_reason``, ``recall``, ``neighbors``, ``link``.
+
+        Calling ``enable_telemetry()`` is **idempotent** — repeated calls
+        will not double-wrap.  Use :meth:`disable_telemetry` to undo.
+
+        Args:
+            store: value for the ``gen_ai.memory.store`` attribute.
+            wrap: subset of method names to wrap (default: all eight).
+
+        Returns:
+            dict mapping wrapped method names to their status
+            (``"instrumented"`` or ``"skipped"``).
+        """
+        try:
+            from telemetry import (
+                trace_memory_store,
+                trace_memory_search,
+                trace_memory_retrieve,
+                trace_memory_update,
+                trace_memory_delete,
+                is_available,
+            )
+        except ImportError:
+            return {"status": "telemetry module not found"}
+
+        all_methods = {
+            "add": ("store", trace_memory_store),
+            "link": ("store", trace_memory_store),
+            "get_node": ("retrieve", trace_memory_retrieve),
+            "neighbors": ("retrieve", trace_memory_retrieve),
+            "recall": ("search", trace_memory_search),
+            "search_unified": ("search", trace_memory_search),
+            "multi_hop_reason": ("search", trace_memory_search),
+            "delete_node": ("delete", trace_memory_delete),
+        }
+        if wrap is not None:
+            selected = wrap
+        else:
+            selected = list(all_methods.keys())
+        results: dict[str, str] = {}
+
+        for name in selected:
+            if name not in all_methods:
+                results[name] = "skipped (unknown method)"
+                continue
+
+            original = getattr(self, name, None)
+            if original is None:
+                results[name] = "skipped (method not found)"
+                continue
+
+            # Guard: don't double-wrap
+            if getattr(original, "_amg_telemetry_wrapped", False):
+                results[name] = "skipped (already instrumented)"
+                continue
+
+            op_type, ctx_factory = all_methods[name]
+
+            def _make_wrapper(orig, method_name, ctx_fn, op_kind):
+                @functools.wraps(orig)
+                def wrapper(*args, **kwargs):
+                    # Build context kwargs based on operation type
+                    ctx_kwargs = {"store": store}
+                    if op_kind == "search":
+                        ctx_kwargs["query"] = kwargs.get("query", args[0] if args else None)
+                        ctx_kwargs["top_k"] = kwargs.get("limit", 10)
+                    elif op_kind == "store":
+                        ctx_kwargs["items"] = 1
+                    elif op_kind == "retrieve":
+                        pass  # items_retrieved set after call
+                    elif op_kind == "delete":
+                        ctx_kwargs["items_deleted"] = 1
+
+                    with ctx_fn(**ctx_kwargs):
+                        result = orig(*args, **kwargs)
+                        return result
+                wrapper._amg_telemetry_wrapped = True
+                wrapper._amg_telemetry_original = orig
+                return wrapper
+
+            import functools
+            setattr(self, name, _make_wrapper(original, name, ctx_factory, op_type))
+            results[name] = "instrumented"
+
+        self._telemetry_store = store
+        return results
+
+    def disable_telemetry(self) -> dict[str, str]:
+        """Remove OTel instrumentation added by :meth:`enable_telemetry`.
+
+        Restores original un-wrapped methods.
+
+        Returns:
+            dict mapping method names to their status.
+        """
+        results: dict[str, str] = {}
+        candidates = [
+            "add", "link", "get_node", "neighbors",
+            "recall", "search_unified", "multi_hop_reason", "delete_node",
+        ]
+        for name in candidates:
+            method = getattr(self, name, None)
+            if method is None:
+                continue
+            if getattr(method, "_amg_telemetry_wrapped", False):
+                original = method._amg_telemetry_original
+                setattr(self, name, original)
+                results[name] = "restored"
+            else:
+                results[name] = "skipped (not instrumented)"
+        return results
+
+    def telemetry_status(self) -> dict:
+        """Report which methods are currently instrumented with OTel spans."""
+        candidates = [
+            "add", "link", "get_node", "neighbors",
+            "recall", "search_unified", "multi_hop_reason", "delete_node",
+        ]
+        instrumented = []
+        not_instrumented = []
+        for name in candidates:
+            method = getattr(self, name, None)
+            if method is not None and getattr(method, "_amg_telemetry_wrapped", False):
+                instrumented.append(name)
+            else:
+                not_instrumented.append(name)
+        try:
+            from telemetry import is_available
+            otel_active = is_available()
+        except ImportError:
+            otel_active = False
+        return {
+            "otel_available": otel_active,
+            "instrumented": instrumented,
+            "not_instrumented": not_instrumented,
+            "store": getattr(self, "_telemetry_store", None),
+        }
 
 
 class StreamingGraph(MemoryGraph):
