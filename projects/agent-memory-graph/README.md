@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-6692-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-7400-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -64,6 +64,15 @@
 - **拓扑快捷统计** — hub_nodes/peripheral_nodes/mean_degree 一键获取关键结构指标 (Cycle 339)
 - **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 + 噪声鲁棒性测试 (Cycles 326-341)
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
+- **传播激活家族 (5 API)** — ACT-R 认知模型: spreading_activation (基础) → activation_trace (可解释) → competitive_spreading (多种子竞争) → temporal_spreading (时间衰减) → activation_diff (对比分析) (Cycles 366-383)
+- **流式熵追踪** — FINGEREntropy O(Δ) 增量 von Neumann 熵 + StreamingGraph 实时异常检测 (Cycle 361)
+- **图推理** — multi_hop_reason (PPR + BFS 证据路径) + personalized_pagerank (HippoRAG2 模式) + enrich_node (A-MEM 回溯完喬) (Cycle 361-362)
+- **时序层次** — SummaryTree 5 层 (segment→session→day→week→profile) 渐进汇总 (Cycle 364)
+- **代码感知 API** — explainCode / recordCodeDecision / impactAnalysis 连接代码结构与 Agent 经验 (Cycle 365)
+- **OTel 遥测** — enable_telemetry() 自动写仪 8 个 CRUD 方法 + 5 个 OTel context manager (Cycles 374-381)
+- **OWASP ASI06 安全套件 (6 API)** — trust_score + memory_quarantine + selective_repair + memory_audit_report + detect_provenance_laundering + security_dashboard (Cycle 367-368)
+- **性能基准** — amg-bench: BenchHarness + BenchmarkResult + run_bench() 吞吐量/延迟/搜索/多跳评估 (Cycle 370)
+- **MCP Server 16 工具** — 增加 entropy/reason/snapshot/code_explain/quarantine/security 6 个高级工具 (Cycle 371)
 
 ## Why agent-memory-graph?
 
@@ -96,7 +105,7 @@ agent-memory-graph 的定位：**beyond recall — agency-grade graph memory —
 | **memorywire** | ✅ 5ops×4types | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **零依赖** | ✅ 仅 Python 标准库 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **LoCoMo Score** | 未测 | 49.0% | N/A | N/A | **92.21%** | 90.2% |
-| **Tests** | **6622** | ~500 | ~300 | ~800 | N/A | N/A |
+| **Tests** | **7400** | ~500 | ~300 | ~800 | N/A | N/A |
 
 ### 独特价值
 
