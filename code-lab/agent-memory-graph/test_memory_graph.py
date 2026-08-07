@@ -23791,3 +23791,97 @@ class TestGraphDigest:
         int(d, 16)
         assert d.startswith(("0", "1", "2", "3", "4", "5", "6", "7",
                              "8", "9", "a", "b", "c", "d", "e", "f"))
+
+
+class TestGraphSimilarityReport:
+    """Tests for graph_similarity_report()."""
+
+    def test_identical_graphs(self):
+        mg = MemoryGraph()
+        a = mg.add("a"); b = mg.add("b")
+        mg.link(a.id, b.id, "rel")
+        # Compare with self
+        report = mg.graph_similarity_report(mg)
+        assert report["node_jaccard"] == 1.0
+        assert report["edge_jaccard"] == 1.0
+        assert report["label_overlap"] == 1.0
+        assert report["shared_node_count"] == 2
+        assert report["shared_edge_count"] == 1
+
+    def test_disjoint_graphs(self):
+        mg1 = MemoryGraph()
+        mg1.add("a")
+        mg2 = MemoryGraph()
+        mg2.add("b")
+        report = mg1.graph_similarity_report(mg2)
+        assert report["node_jaccard"] == 0.0
+        assert report["edge_jaccard"] == 0.0
+        assert report["shared_node_count"] == 0
+
+    def test_partial_overlap(self):
+        mg1 = MemoryGraph()
+        a = mg1.add("shared"); b = mg1.add("only1")
+        mg1.link(a.id, b.id, "x")
+
+        mg2 = MemoryGraph()
+        c = mg2.add("shared"); d = mg2.add("only2")
+        mg2.link(c.id, d.id, "x")
+
+        report = mg1.graph_similarity_report(mg2)
+        # 0 shared nodes (different UUIDs), but label overlap exists
+        assert report["label_overlap"] > 0
+        assert report["edge_jaccard"] == 0.0  # different node IDs
+
+    def test_empty_vs_populated(self):
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        mg2.add("x")
+        report = mg1.graph_similarity_report(mg2)
+        assert report["node_jaccard"] == 0.0
+        assert report["edge_jaccard"] == 0.0
+        assert report["node_count"] == {"self": 0, "other": 1}
+
+    def test_both_empty(self):
+        mg1 = MemoryGraph()
+        mg2 = MemoryGraph()
+        report = mg1.graph_similarity_report(mg2)
+        assert report["node_jaccard"] == 0.0
+        assert report["edge_jaccard"] == 0.0
+
+    def test_degree_correlation_identical(self):
+        mg = MemoryGraph()
+        a = mg.add("a"); b = mg.add("b"); c = mg.add("c")
+        mg.link(a.id, b.id, "r"); mg.link(b.id, c.id, "r")
+        report = mg.graph_similarity_report(mg)
+        assert report["degree_correlation"] == 1.0
+
+    def test_degree_correlation_different(self):
+        mg1 = MemoryGraph()
+        a = mg1.add("a"); b = mg1.add("b"); c = mg1.add("c"); d = mg1.add("d")
+        mg1.link(a.id, b.id, "r"); mg1.link(a.id, c.id, "r"); mg1.link(a.id, d.id, "r")
+
+        mg2 = MemoryGraph()
+        e = mg2.add("e"); f = mg2.add("f")
+        mg2.link(e.id, f.id, "r")
+
+        report = mg1.graph_similarity_report(mg2)
+        # Different degree distributions → correlation < 1
+        assert report["degree_correlation"] < 1.0
+
+    def test_same_labels_different_ids(self):
+        mg1 = MemoryGraph()
+        mg1.add("hello", kind="greeting")
+        mg2 = MemoryGraph()
+        mg2.add("hello", kind="greeting")
+        report = mg1.graph_similarity_report(mg2)
+        assert report["label_overlap"] == 1.0
+        assert report["node_jaccard"] == 0.0  # different UUIDs
+
+    def test_report_structure(self):
+        mg1 = MemoryGraph(); mg1.add("x")
+        mg2 = MemoryGraph(); mg2.add("y")
+        report = mg1.graph_similarity_report(mg2)
+        expected_keys = {"node_count", "edge_count", "node_jaccard", "label_overlap",
+                          "edge_jaccard", "degree_correlation", "shared_node_count",
+                          "shared_edge_count"}
+        assert set(report.keys()) == expected_keys

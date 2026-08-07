@@ -16644,6 +16644,70 @@ class MemoryGraph:
 
         return "\n".join(lines)
 
+    def graph_similarity_report(self, other: 'MemoryGraph') -> dict:
+        """Multi-metric similarity report between two graphs.
+
+        Returns node overlap, edge Jaccard, degree distribution correlation,
+        and label overlap metrics.
+        """
+        import math
+        # Node overlap
+        self_ids = {str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()}
+        other_ids = {str(r["id"]) for r in other.conn.execute("SELECT id FROM nodes").fetchall()}
+        node_intersection = self_ids & other_ids
+        node_union = self_ids | other_ids
+        node_jaccard = len(node_intersection) / len(node_union) if node_union else 0.0
+
+        # Label overlap (by content, not ID)
+        self_labels = {str(r["label"]).lower() for r in self.conn.execute("SELECT label FROM nodes").fetchall()}
+        other_labels = {str(r["label"]).lower() for r in other.conn.execute("SELECT label FROM nodes").fetchall()}
+        label_overlap = len(self_labels & other_labels) / len(self_labels | other_labels) if (self_labels | other_labels) else 0.0
+
+        # Edge Jaccard
+        self_edges = {(str(r["source"]), str(r["target"]), str(r["relation"]))
+                       for r in self.conn.execute("SELECT source, target, relation FROM edges").fetchall()}
+        other_edges = {(str(r["source"]), str(r["target"]), str(r["relation"]))
+                        for r in other.conn.execute("SELECT source, target, relation FROM edges").fetchall()}
+        edge_intersection = self_edges & other_edges
+        edge_union = self_edges | other_edges
+        edge_jaccard = len(edge_intersection) / len(edge_union) if edge_union else 0.0
+
+        # Degree distribution correlation (Pearson)
+        def _degree_map(mg):
+            rows = mg.conn.execute("SELECT source, target FROM edges").fetchall()
+            deg = {}
+            for r in rows:
+                s, t = str(r["source"]), str(r["target"])
+                deg[s] = deg.get(s, 0) + 1
+                deg[t] = deg.get(t, 0) + 1
+            return deg
+        self_deg = _degree_map(self)
+        other_deg = _degree_map(other)
+        all_deg_nodes = set(self_deg) | set(other_deg)
+        if len(all_deg_nodes) >= 2:
+            vals_self = [self_deg.get(n, 0) for n in all_deg_nodes]
+            vals_other = [other_deg.get(n, 0) for n in all_deg_nodes]
+            n_pts = len(all_deg_nodes)
+            mean_s = sum(vals_self) / n_pts
+            mean_o = sum(vals_other) / n_pts
+            cov = sum((vals_self[i] - mean_s) * (vals_other[i] - mean_o) for i in range(n_pts))
+            var_s = math.sqrt(sum((v - mean_s) ** 2 for v in vals_self))
+            var_o = math.sqrt(sum((v - mean_o) ** 2 for v in vals_other))
+            degree_correlation = cov / (var_s * var_o) if var_s > 0 and var_o > 0 else 0.0
+        else:
+            degree_correlation = 0.0
+
+        return {
+            "node_count": {"self": len(self_ids), "other": len(other_ids)},
+            "edge_count": {"self": len(self_edges), "other": len(other_edges)},
+            "node_jaccard": node_jaccard,
+            "label_overlap": label_overlap,
+            "edge_jaccard": edge_jaccard,
+            "degree_correlation": degree_correlation,
+            "shared_node_count": len(node_intersection),
+            "shared_edge_count": len(edge_intersection),
+        }
+
     # ─── Batch Operations ───────────────────────────────────────────
 
     def batch_create_nodes(self, nodes_data: list[dict]) -> dict:
