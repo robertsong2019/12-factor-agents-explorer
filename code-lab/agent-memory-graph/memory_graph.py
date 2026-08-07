@@ -16708,6 +16708,102 @@ class MemoryGraph:
             "shared_edge_count": len(edge_intersection),
         }
 
+    # ─── Centrality Report ─────────────────────────────────────────
+
+    def centrality_report(self, node_id: str = None, *, top_k: int = 10) -> dict:
+        """Unified centrality overview combining all centrality measures.
+
+        Computes degree, betweenness, eigenvector, and PageRank centralities
+        in a single call and returns a ranked report.  When *node_id* is
+        provided, the report focuses on that node; otherwise it returns the
+        top-k nodes across all measures.
+
+        Args:
+            node_id: Optional node to focus the report on.
+            top_k: Number of top nodes per measure (default 10).
+
+        Returns:
+            dict with keys:
+            - focused_node: node_id or None
+            - degree: {node_id: score} top-k (or single node)
+            - betweenness: same
+            - eigenvector: same
+            - pagerank: same
+            - consensus_rank: combined ranking [{node_id, rank_score, measures_in_top}]
+            - top_node: node with highest consensus
+        """
+        all_nodes = [r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if not all_nodes:
+            return {"focused_node": node_id, "degree": {}, "betweenness": {},
+                    "eigenvector": {}, "pagerank": {}, "consensus_rank": [],
+                    "top_node": None}
+
+        # Compute all centralities
+        deg_scores = {nid: self.degree_centrality(nid) for nid in all_nodes}
+        try:
+            ev_scores = self.eigenvector_centrality(max_iter=100)
+        except Exception:
+            ev_scores = {nid: 0.0 for nid in all_nodes}
+        pr_scores = self.pagerank(max_iter=100)
+
+        # Betweenness: sample for large graphs, full for small
+        betw_scores = {}
+        for nid in all_nodes:
+            betw_scores[nid] = self.betweenness_centrality(nid, samples=min(50, len(all_nodes)))
+
+        # Normalize each to [0, 1]
+        def _norm(d):
+            mx = max(d.values()) if d else 1
+            return {k: v / mx for k, v in d.items()} if mx > 0 else d
+
+        deg_n = _norm(deg_scores)
+        ev_n = _norm(ev_scores)
+        pr_n = _norm(pr_scores)
+        betw_n = _norm(betw_scores)
+
+        if node_id:
+            nid = node_id
+            return {
+                "focused_node": nid,
+                "degree": {nid: deg_n.get(nid, 0)},
+                "betweenness": {nid: betw_n.get(nid, 0)},
+                "eigenvector": {nid: ev_n.get(nid, 0)},
+                "pagerank": {nid: pr_n.get(nid, 0)},
+                "consensus_rank": [{"node_id": nid, "rank_score": 0, "measures_in_top": 0}],
+                "top_node": nid,
+            }
+
+        # Top-k per measure
+        def _top(d, k):
+            return dict(sorted(d.items(), key=lambda x: -x[1])[:k])
+
+        top_deg = _top(deg_n, top_k)
+        top_betw = _top(betw_n, top_k)
+        top_ev = _top(ev_n, top_k)
+        top_pr = _top(pr_n, top_k)
+
+        # Consensus: how many measures each node appears in top-k
+        top_sets = [set(top_deg), set(top_betw), set(top_ev), set(top_pr)]
+        all_top = set().union(*top_sets)
+        consensus = []
+        for nid in all_top:
+            count = sum(1 for s in top_sets if nid in s)
+            avg_score = (deg_n.get(nid, 0) + betw_n.get(nid, 0) +
+                         ev_n.get(nid, 0) + pr_n.get(nid, 0)) / 4
+            consensus.append({"node_id": nid, "rank_score": round(avg_score, 4),
+                              "measures_in_top": count})
+        consensus.sort(key=lambda x: (-x["measures_in_top"], -x["rank_score"]))
+
+        return {
+            "focused_node": None,
+            "degree": top_deg,
+            "betweenness": top_betw,
+            "eigenvector": top_ev,
+            "pagerank": top_pr,
+            "consensus_rank": consensus[:top_k],
+            "top_node": consensus[0]["node_id"] if consensus else None,
+        }
+
     # ─── Batch Operations ───────────────────────────────────────────
 
     def batch_create_nodes(self, nodes_data: list[dict]) -> dict:
