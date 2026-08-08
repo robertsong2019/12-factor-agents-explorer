@@ -46297,6 +46297,235 @@ class MemoryGraph:
                     "moderate")}}
 
 
+
+
+
+    # ──────────────────────────────────────────────────────────────
+    # Cycle 391: temporal_entropy_centrality
+    # ──────────────────────────────────────────────────────────────
+
+    def temporal_entropy_centrality(
+        self,
+        *,
+        index: str = "sombor",
+        entropy_weight: float = 0.4,
+        temporal_weight: float = 0.3,
+        connectivity_weight: float = 0.3,
+        now: float = None,
+        limit: int = 0,
+    ) -> Optional[dict]:
+        """Combined structural-temporal importance ranking.
+
+        Identifies nodes that are simultaneously **structurally critical**
+        (high entropy contribution) and **temporally stale** (long time
+        since access), producing a unified priority score for memory
+        maintenance.
+
+        This answers the agent question: *"Which memories should I
+        review, consolidate, or archive right now?"*
+
+        Combines three signals per node:
+
+        1. **Entropy score** (default 40%): leave-one-out ΔH from
+           ``entropy_contribution`` — how much structural information
+           the node carries.
+        2. **Staleness score** (default 30%): from ``staleness_score`` —
+           how degraded the memory is based on age, access recency,
+           and validity.
+        3. **Connectivity score** (default 30%): normalised degree —
+           how many other memories depend on this one.
+
+        The final ``priority`` score ranges from 0 to 1, where higher
+        means "more urgent to attend to".  Nodes with high entropy
+        contribution *and* high staleness get the highest priority.
+
+        Maintenance recommendations:
+
+        * ``refresh`` — high entropy + high staleness: re-access or
+          re-validate this memory; it's important but fading.
+        * ``protect`` — high entropy + low staleness: no action needed,
+          but monitor.
+        * ``consolidate`` — medium entropy + high staleness + high
+          connectivity: merge with related memories before decay.
+        * ``archive`` — low entropy + high staleness: safe to forget
+          or compress.
+        * ``review`` — low entropy + low staleness: new and
+          unimportant; revisit later.
+
+        Args:
+            index: Entropy index for the structural component
+                (``sombor``, ``randic``, ``zagreb_m1``, ``abc``, ``ga``).
+            entropy_weight: Weight for entropy component [0, 1].
+            temporal_weight: Weight for staleness component [0, 1].
+            connectivity_weight: Weight for connectivity component [0, 1].
+                Weights are normalised to sum to 1.
+            now: Override current timestamp.
+            limit: If > 0, only return top-*limit* nodes by priority.
+
+        Returns:
+            Dict with keys:
+
+            * ``nodes``: list of per-node dicts sorted by priority desc.
+              Each contains ``node_id``, ``label``, ``priority``, ``entropy_score``,
+              ``staleness_score``, ``connectivity_score``, ``degree``, ``recommendation``,
+              ``category``.
+            * ``summary``: ``total_nodes``, ``mean_priority``, ``urgent_count``,
+              ``fresh_important_count``, ``stale_critical_count``, ``archivable_count``.
+            * ``category_counts``: dict of category → count.
+            * ``recommendation_counts``: dict of recommendation → count.
+            * ``weights``: normalised weights used.
+            * ``index``: entropy index used.
+
+            Returns ``None`` if graph has fewer than 3 nodes or 1 edge.
+        """
+        stats = self.stats()
+        node_count = stats.get("nodes", 0)
+        edge_count = stats.get("edges", 0)
+        if node_count < 3 or edge_count < 1:
+            return None
+
+        # Normalise weights
+        w_sum = entropy_weight + temporal_weight + connectivity_weight
+        if w_sum <= 0:
+            return None
+        ew = entropy_weight / w_sum
+        tw = temporal_weight / w_sum
+        cw = connectivity_weight / w_sum
+
+        if now is None:
+            now = time.time()
+
+        # ── 1. Entropy contribution ──
+        ec = self.entropy_contribution(index=index)
+        if ec is None:
+            return None
+
+        contributions = ec.get("contributions", {})
+        max_entropy = ec.get("max_delta", 0.0)
+        # Normalise entropy scores to [0, 1]
+        entropy_norm = {}
+        for nid, delta in contributions.items():
+            entropy_norm[nid] = (abs(delta) / max_entropy) if max_entropy > 1e-12 else 0.0
+
+        # ── 2. Staleness ──
+        staleness = {}
+        for nid in contributions:
+            staleness[nid] = self.staleness_score(nid)
+
+        # ── 3. Connectivity (normalised degree) ──
+        # Edges store labels, so join through nodes table
+        degree_map = {}
+        rows = self.conn.execute(
+            """
+            SELECT n.id, COUNT(e.label) as deg
+            FROM nodes n
+            LEFT JOIN (
+                SELECT source AS label FROM edges
+                UNION ALL
+                SELECT target AS label FROM edges
+            ) e ON n.label = e.label
+            GROUP BY n.id
+            """
+        ).fetchall()
+        for r in rows:
+            degree_map[r["id"]] = r["deg"]
+        max_degree = max(degree_map.values()) if degree_map else 1
+        if max_degree == 0:
+            max_degree = 1
+
+        # ── 4. Combine and classify ──
+        nodes_result = []
+        HIGH = 0.6
+        LOW = 0.3
+
+        for nid in contributions:
+            e_score = entropy_norm.get(nid, 0.0)
+            s_score = staleness.get(nid, 0.0)
+            d_score = degree_map.get(nid, 0) / max_degree
+
+            priority = round(e_score * ew + s_score * tw + d_score * cw, 4)
+
+            # Determine recommendation
+            if e_score >= HIGH and s_score >= HIGH:
+                recommendation = "refresh"
+            elif e_score >= HIGH and s_score < LOW:
+                recommendation = "protect"
+            elif e_score < LOW and s_score >= HIGH:
+                recommendation = "archive"
+            elif e_score < LOW and s_score < LOW:
+                recommendation = "review"
+            elif s_score >= HIGH and d_score >= HIGH:
+                recommendation = "consolidate"
+            else:
+                recommendation = "monitor"
+
+            # Category quadrant
+            if e_score >= 0.5 and s_score >= 0.5:
+                category = "stale_critical"
+            elif e_score >= 0.5 and s_score < 0.5:
+                category = "fresh_important"
+            elif e_score < 0.5 and s_score >= 0.5:
+                category = "stale_minor"
+            else:
+                category = "fresh_minor"
+
+            # Fetch label
+            row = self.conn.execute(
+                "SELECT label FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            label = row["label"] if row else ""
+
+            nodes_result.append({
+                "node_id": nid,
+                "label": label,
+                "priority": priority,
+                "entropy_score": round(e_score, 4),
+                "staleness_score": round(s_score, 4),
+                "connectivity_score": round(d_score, 4),
+                "degree": degree_map.get(nid, 0),
+                "recommendation": recommendation,
+                "category": category,
+            })
+
+        # Sort by priority descending
+        nodes_result.sort(key=lambda x: x["priority"], reverse=True)
+
+        if limit > 0:
+            nodes_result = nodes_result[:limit]
+
+        # Summary
+        priorities = [n["priority"] for n in nodes_result]
+        mean_priority = sum(priorities) / len(priorities) if priorities else 0.0
+
+        category_counts = {}
+        for n in nodes_result:
+            category_counts[n["category"]] = category_counts.get(n["category"], 0) + 1
+
+        recommendation_counts = {}
+        for n in nodes_result:
+            recommendation_counts[n["recommendation"]] = recommendation_counts.get(n["recommendation"], 0) + 1
+
+        return {
+            "nodes": nodes_result,
+            "summary": {
+                "total_nodes": len(nodes_result),
+                "mean_priority": round(mean_priority, 4),
+                "urgent_count": sum(1 for n in nodes_result if n["recommendation"] == "refresh"),
+                "fresh_important_count": category_counts.get("fresh_important", 0),
+                "stale_critical_count": category_counts.get("stale_critical", 0),
+                "archivable_count": sum(1 for n in nodes_result if n["recommendation"] == "archive"),
+            },
+            "category_counts": category_counts,
+            "recommendation_counts": recommendation_counts,
+            "weights": {"entropy": round(ew, 4), "temporal": round(tw, 4), "connectivity": round(cw, 4)},
+            "index": index,
+        }
+
+
+
+
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
@@ -46485,8 +46714,6 @@ class TemporalEntropyTracker:
             "volatility":        (sum(x * x for x in d1) / len(d1)) if d1 else 0.0,
             "labels":            [s["label"] for s in self.snapshots],
         }
-
-
 
 if __name__ == "__main__":
     demo()
