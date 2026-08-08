@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~50,500 | ⭐ 知识图谱记忆引擎：484 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活 |
+| [agent-memory-graph](agent-memory-graph/) | ~51,500 | ⭐ 知识图谱记忆引擎：497 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析 |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 50,500+ 行的完整图记忆引擎，包含 484 公开 API 和 2,800+ 测试用例。
+该项目已从 300 行的教学示例演化为 51,500+ 行的完整图记忆引擎，包含 497 公开 API 和 3,078+ 测试用例。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -62,7 +62,7 @@
 | **分类元策略** | 2 | `classification_compare_methods`, `classification_consensus` — 跨方法对比 + 多数投票元分类器 |
 | **分类可解释性** | 2 | `classification_confusion_explain`, `classification_counterfactual` — 逐模态贡献分解 + 反事实翻转分析 |
 | **分类优化** | 2 | `classification_learned_weights` — 网格搜索最优模态权重；`classification_noise_adaptive` — 噪声水平自适应选择 |
-| **认知检索** | 5 | `spreading_activation` — ACT-R 认知扩散激活；`personalized_pagerank` — 个性化 PageRank；`multi_hop_reason` — 多跳推理链；`activation_trace` — 可解释扩散激活路径；`competitive_spreading` — 多种子竞争扩散（干扰/增强）|
+| **认知检索** | 8 | `spreading_activation` — ACT-R 认知扩散激活；`personalized_pagerank` — 个性化 PageRank；`multi_hop_reason` — 多跳推理链；`activation_trace` — 可解释扩散激活路径；`competitive_spreading` — 多种子竞争扩散（干扰/增强）；`temporal_spreading` — 时间感知扩散激活；`activation_diff` — 激活结果集对比；`node_influence_zone` — k-hop 熵加权影响力范围 |
 | **安全防护（OWASP ASI06）** | 6 | `trust_score` — 4 因子信任评分；`memory_quarantine` — 批量隔离；`selective_repair` — 级联修复；`memory_audit_report` — 取证审计；`detect_provenance_laundering` — 来源洗钱检测；`security_dashboard` — 一键安全概览 |
 | **性能基准** | 3 | `BenchHarness` — 多规模基准；`BenchmarkResult` — 结果数据类；`run_bench` — 便捷函数 |
 | **流式健康** | 4 | `StreamingGraph` 类、`FINGEREntropy` 类、`enrich_node`、`streaming_health` — 实时 FINGER 熵追踪 + 异常检测 |
@@ -70,13 +70,17 @@
 | **代码感知** | 8 | `add_code_node`, `explain_code`, `impact_analysis`, `code_subgraph`, `record_code_decision`, `code_nodes_by_kind`, `code_graph_summary` |
 | **双时序** | 2 | `query_believed_as_of`, `temporal_delta_query` — 真·双时序查询（valid time + transaction time）|
 | **变更追踪** | 1 | `what_changed_since` — 时间戳以来的图变更报告 |
-| **诊断** | 3 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` |
+| **诊断** | 10 | `graph_health_score`, `entropy_dashboard`, `get_operation_history`, `graph_health_check` — 统一诊断；`centrality_report` — 中心性概览；`graph_digest` — SHA-256 完整性哈希；`graph_similarity_report` — 多指标图对比；`temporal_evolution_report` — 演化统计；`memory_age_stats` — 年龄分布；`graph_contrast_report` — 结构+熵对比；`edge_entropy_sensitivity` — 边级 leave-one-out 熵 |
 | **条件遍历** | 3 | `conditioned_traverse`, `project_graph`, `multi_perspective_analysis` |
 | **序列化** | 24 | `export_json`, `to_markdown`, `serialize_dot`, `serialize_graphml` |
+| **OTel 遥测** | 2 | `enable_telemetry` — 自动包装 8 个 CRUD 方法的 OTel gen_ai.memory.* span；`gen_ai_system_metric` — GenAI 语义约定系统指标 |
+| **时序分析** | 4 | `temporal_freshness_map` — 全图时效性热力图；`memory_generations_report` — 记忆代际报告；`temporal_entropy_centrality` — 结构-时序复合重要性排名；`community_entropy_profile` — 社区级熵分析（内/外部熵、凝聚力、JSD 散度矩阵）|
+| **韧性分析** | 3 | `reconsolidation_feedback` — 记忆再巩固反馈循环；`foresight_signals` — 前瞻性信号检测；`graph_resilience_score` — 图韧性评分 |
+| **MCP 工具** | 1 | MCP server 16 工具 + 请求指标追踪（延迟、错误率、调用日志）|
 
-### 📐 信息论进化史（Cycles 306–316 + 326–373）
+### 📐 信息论进化史（Cycles 306–316 + 326–392）
 
-最新里程碑：**安全防护 + 性能基准 + 竞争扩散** — 从认知记忆架构扩展到 OWASP ASI06 安全体系、性能基准工具链、可解释与竞争扩散激活（Cycles 367-373）。
+最新里程碑：**社区熵分析 + 时序熵中心性 + OTel 遥测** — 从安全/性能/竞争扩散扩展到 OTel GenAI 遥测、图诊断报告套件、时序演化分析、社区级熵分析（Cycles 374-392）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -110,6 +114,25 @@
 | MCP 工具扩展 | 371 | `entropy`, `reason`, `snapshot`, `code_explain`, `quarantine`, `security` | MCP server 10→16 工具（熵仪表盘、多跳推理、双时序快照、代码分析、隔离 CRUD、安全审计）|
 | 可解释扩散激活 | 372 | `activation_trace` | spreading_activation 超集：逐步 firing 日志 + 瓶颈节点识别 + 传播树 + 种子→目标最短路径 |
 | 竞争扩散激活 | 373 | `competitive_spreading` | 多种子竞争：Anderson & Reder fan-effect 干扰 + Biedberman 冗余增益 + 领地划分 + 胜者通吃 |
+| OTel 遥测 | 374 | `gen_ai_system_metric`, OTel GenAI module | gen_ai.memory.* 语义约定 span |
+| 图完整性 | 375 | `graph_digest` | SHA-256 完整性哈希 — 检测图的任何结构变化 |
+| 图相似度 | 376 | `graph_similarity_report` | 多指标图对比（结构 + 熵 + 拓扑 + 时序）|
+| 中心性报告 | 377 | `centrality_report` | 统一中心性概览（degree/betweenness/closeness/eigenvector/pagerank）|
+| 时序演化 | 378 | `temporal_evolution_report` | 聚合图演化统计（增长速率、密度趋势、关键事件时间线）|
+| 记忆年龄 | 379 | `memory_age_stats` | 节点年龄分布统计（按代际分组、陈旧度热力图）|
+| 统一诊断 | 380 | `graph_health_check` | 一站式诊断（合并 health_score + entropy_dashboard + operation_history）|
+| 遥测自动化 | 381 | `enable_telemetry` | 自动包装 8 个 CRUD 方法的 OTel gen_ai.memory.* span |
+| 时间感知扩散 | 382 | `temporal_spreading` | 时间加权扩散激活 — 衰减函数 + 时序约束 + 历史窗口 |
+| 激活对比 | 383 | `activation_diff` | 对比两次激活结果集（Jaccard/Kendall tau + 新增/消失/共同节点）|
+| 韧性分析 | 384 | `reconsolidation_feedback`, `foresight_signals`, `graph_resilience_score` | 记忆再巩固反馈循环 + 前瞻信号 + 图韧性评分 |
+| 分类批量对比 | 385 | `classification_compare_batch` | 全方法×全查询 McNemar 显著性检验矩阵 |
+| 边熵敏感性 | 386 | `edge_entropy_sensitivity` | 逐边 leave-one-out 熵变化 — 识别关键边和冗余边 |
+| 图对比报告 | 387 | `graph_contrast_report` | 两图结构 + 熵差异对比 |
+| 影响力区域 | 388 | `node_influence_zone` | k-hop 熵加权可达范围 — 节点影响力边界 |
+| 时效性地图 | 389 | `temporal_freshness_map`, `memory_generations_report` | 全图时效性热力图 + 记忆代际报告 |
+| MCP 请求指标 | 390 | MCP server request metrics | 工具调用追踪（延迟、错误率、最近调用日志）|
+| 时序熵中心性 | 391 | `temporal_entropy_centrality` | 结构-时序复合重要性排名（40% 熵贡献 + 30% 陈旧度 + 30% 连通性）+ 6 条维护建议 |
+| 社区熵分析 | 392 | `community_entropy_profile` | 社区级熵分析（内/外部熵、凝聚力比、leave-one-out delta、社区间 JSD 散度矩阵）|
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---
