@@ -39449,6 +39449,171 @@ class MemoryGraph:
             "evaluated":         n_eval,
         }
 
+    # ── Cycle 388: Node influence zone (k-hop entropy-weighted reach) ──
+
+    def node_influence_zone(self, node_id: str, *, max_radius: int = 3,
+                             index: str = "sombor"
+                             ) -> Optional[dict]:
+        """Compute a node's k-hop influence zone with per-layer statistics.
+
+        Performs BFS from *node_id*, layer by layer up to *max_radius*,
+        and for each layer reports:
+
+        - **Nodes reached** at this layer (frontier only).
+        - **Cumulative nodes** (all nodes within this radius).
+        - **Layer entropy** -- mean ego-entropy of frontier nodes.
+        - **Edge density** within the cumulative subgraph.
+        - **Influence score** -- 1/(layer+1) weighted node count.
+
+        The influence score approximates how much structural impact a
+        node has at each distance: closer nodes receive higher weight.
+
+        **Use cases:**
+
+        * Identify nodes with broad vs narrow structural reach.
+        * Compare influence zones before/after consolidation.
+        * Find nodes whose influence drops off sharply (structural
+          boundaries / bridges).
+        * Estimate retrieval breadth for spreading activation.
+
+        Args:
+            node_id: The seed node.
+            max_radius: Maximum BFS depth.
+            index: Entropy index for ego computation.
+
+        Returns:
+            Dict with:
+
+            - ``node_id``: the seed.
+            - ``max_radius``: max depth reached.
+            - ``layers``: list of per-layer dicts.
+            - ``total_reach``: total unique nodes reached.
+            - ``influence_score``: cumulative influence.
+            - ``influence_radius``: effective radius (where frontier stops).
+            - ``summary``: human-readable text.
+
+            Returns ``None`` if node doesn't exist.
+        """
+        if not self.has_node(node_id):
+            return None
+
+        # Build adjacency
+        adj: dict[str, set[str]] = {}
+        for r in self.conn.execute("SELECT source, target FROM edges").fetchall():
+            adj.setdefault(str(r["source"]), set()).add(str(r["target"]))
+            adj.setdefault(str(r["target"]), set()).add(str(r["source"]))
+
+        all_nodes = [str(r["id"]) for r in self.conn.execute("SELECT id FROM nodes").fetchall()]
+        if not all_nodes:
+            return None
+
+        # Degrees for entropy
+        deg = {nid: self.degree(nid) for nid in all_nodes}
+
+        # Contribution function
+        import math as _m
+        def _contrib(du, dv):
+            if index == "sombor":
+                return _m.sqrt(du * du + dv * dv) if du > 0 and dv > 0 else 0.0
+            elif index == "randic":
+                return 1.0 / _m.sqrt(du * dv) if du > 0 and dv > 0 else 0.0
+            elif index == "abc":
+                return _m.sqrt((du + dv - 2) / (du * dv)) if du > 1 and dv > 1 else 0.0
+            else:
+                return _m.sqrt(du * du + dv * dv) if du > 0 and dv > 0 else 0.0
+
+        def _shannon(contribs):
+            valid = [c for c in contribs if c > 0]
+            if not valid:
+                return 0.0
+            total = sum(valid)
+            h = 0.0
+            for c in valid:
+                p = c / total
+                if p > 0:
+                    h -= p * _m.log(p)
+            return h / _m.log(len(valid)) if len(valid) > 1 else 0.0
+
+        # BFS layers
+        visited = {node_id}
+        frontier = {node_id}
+        layers = []
+        total_influence = 0.0
+        effective_radius = 0
+
+        for depth in range(1, max_radius + 1):
+            next_frontier: set[str] = set()
+            for fnid in frontier:
+                next_frontier.update(adj.get(fnid, set()) - visited)
+
+            if not next_frontier:
+                break
+
+            visited.update(next_frontier)
+
+            # Layer statistics
+            n_layer = len(next_frontier)
+            cumulative = len(visited)
+
+            # Layer entropy: ego-entropy of each frontier node
+            layer_entropies = []
+            for nid in next_frontier:
+                ego_nodes = {nid}
+                ego_nodes.update(adj.get(nid, set()))
+                ego_edges = []
+                for s in ego_nodes:
+                    for t in adj.get(s, set()):
+                        if t in ego_nodes and s < t:
+                            ego_edges.append((s, t))
+                contribs = [_contrib(deg.get(s, 0), deg.get(t, 0)) for s, t in ego_edges]
+                layer_entropies.append(_shannon(contribs))
+
+            mean_entropy = (
+                sum(layer_entropies) / len(layer_entropies)
+                if layer_entropies else 0.0
+            )
+
+            # Edge density within cumulative subgraph
+            sub_edges = 0
+            for s in visited:
+                for t in visited:
+                    if s < t and t in adj.get(s, set()):
+                        sub_edges += 1
+            max_possible = cumulative * (cumulative - 1) / 2
+            density = sub_edges / max_possible if max_possible > 0 else 0.0
+
+            layer_score = n_layer / (depth + 1)
+            total_influence += layer_score
+            effective_radius = depth
+
+            layers.append({
+                "depth": depth,
+                "frontier_nodes": n_layer,
+                "cumulative_nodes": cumulative,
+                "layer_mean_entropy": round(mean_entropy, 6),
+                "subgraph_density": round(density, 6),
+                "layer_influence": round(layer_score, 6),
+            })
+
+            frontier = next_frontier
+
+        total_reach = len(visited)
+        summary = (
+            f"Influence zone for '{node_id}': reaches {total_reach} nodes "
+            f"in {effective_radius} hops. "
+            f"Influence score: {total_influence:.4f}."
+        )
+
+        return {
+            "node_id": node_id,
+            "max_radius": effective_radius,
+            "layers": layers,
+            "total_reach": total_reach,
+            "influence_score": round(total_influence, 6),
+            "influence_radius": effective_radius,
+            "summary": summary,
+        }
+
     # ── Cycle 307: Entropy stability under random perturbation ──
 
     def entropy_stability(self, index: str = "sombor",
