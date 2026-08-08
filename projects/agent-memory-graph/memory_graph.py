@@ -44810,6 +44810,232 @@ class MemoryGraph:
             "summary": summary,
         }
 
+    # ── Cycle 385: Batch all-methods comparison with McNemar ──────
+
+    def classification_compare_batch(
+        self,
+        references: list["MemoryGraph"],
+        queries: list["MemoryGraph"],
+        expected_labels: list[str],
+        *,
+        degree_index: str = "sombor",
+        spectral_measure: str = "jsd",
+        bins: int = 20,
+        include_quarantined: bool = False,
+        alpha: float = 0.05,
+    ) -> dict:
+        """Run **all classification methods** on **multiple queries**
+        and produce per-method accuracy + pairwise McNemar significance.
+
+        This is the full-production evaluation API: combine the
+        all-methods scope of :meth:`classification_compare` with the
+        statistical rigour of :meth:`classification_mcnemar`.
+
+        **What it does:**
+
+        1. Runs 5 methods (graph, spectral, hybrid, rrf, bayesian)
+           on every query.
+        2. Computes per-method accuracy and 95% Wilson CI.
+        3. Builds full pairwise McNemar chi-squared + p-value for all
+           C(5,2)=10 method pairs.
+        4. Produces per-query agreement matrix and hardest queries
+           (where most methods fail).
+
+        **When to use:**
+
+        - After accumulating >=30 classified queries with ground truth.
+        - To decide which method to deploy to production.
+        - To verify that ensemble methods are *significantly* better
+          than single-method baselines (not just numerically).
+
+        Args:
+            references: Reference MemoryGraph objects with
+                ``graph_meta["label"]`` set.
+            queries: Query MemoryGraph objects.
+            expected_labels: Ground-truth label per query.
+            degree_index: Degree index for entropy distance.
+            spectral_measure: Spectral divergence measure.
+            bins: Histogram bins for spectral fingerprint.
+            include_quarantined: Include quarantined nodes.
+            alpha: Significance level for McNemar test.
+
+        Returns:
+            Dict with:
+
+            - ``n_queries`` -- number of queries evaluated.
+            - ``n_methods`` -- number of methods that ran.
+            - ``per_method`` -> {method: {accuracy, correct, wilson_lo,
+              wilson_hi, n_correct, n_total}}.
+            - ``pairwise_mcnemar`` -> list of dicts per pair with
+              chi-squared, p-value, significant, better.
+            - ``best_method`` -- name of highest-accuracy method.
+            - ``agreement_matrix`` -> {query_idx: n_methods_agreeing}.
+            - ``hardest_queries`` -- list of query indices where <=1
+              method was correct.
+            - ``summary`` -- human-readable summary.
+        """
+        import math as _math
+
+        if not queries:
+            raise ValueError("Need at least one query.")
+        if len(expected_labels) != len(queries):
+            raise ValueError(
+                f"expected_labels length {len(expected_labels)} != "
+                f"queries length {len(queries)}"
+            )
+
+        method_names = [
+            "graph", "spectral", "hybrid", "rrf", "bayesian",
+        ]
+
+        # Dispatch helper.
+        def _run(method_name, query):
+            if method_name == "graph":
+                return query.graph_classification(
+                    references, index=degree_index)
+            elif method_name == "spectral":
+                return query.spectral_classification(
+                    references, measure=spectral_measure,
+                    bins=bins,
+                    include_quarantined=include_quarantined)
+            elif method_name == "hybrid":
+                return query.hybrid_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined)
+            elif method_name == "rrf":
+                return query.rrf_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined)
+            elif method_name == "bayesian":
+                return query.bayesian_classification(
+                    references, degree_index=degree_index,
+                    include_quarantined=include_quarantined)
+            return None
+
+        # Derive reference labels.
+        ref_labels = [
+            getattr(r, "graph_meta", {}).get("label", f"ref_{i}")
+            if isinstance(getattr(r, "graph_meta", None), dict)
+            else f"ref_{i}"
+            for i, r in enumerate(references)
+        ]
+
+        # ── Run all methods on all queries ────────────────────────
+        results: dict[str, list[bool]] = {}
+        methods_ok: list[str] = []
+
+        for m in method_names:
+            row: list[bool] = []
+            ran = False
+            for qi, q in enumerate(queries):
+                try:
+                    r = _run(m, q)
+                    ran = True
+                    if r is None:
+                        row.append(False)
+                        continue
+                    idx = r.get("best_match")
+                    if idx is None:
+                        idx = r.get("best_ref", 0)
+                    predicted = (
+                        ref_labels[idx]
+                        if isinstance(idx, int) and idx < len(ref_labels)
+                        else str(idx)
+                    )
+                    row.append(predicted == expected_labels[qi])
+                except Exception:
+                    row.append(False)
+            if ran:
+                results[m] = row
+                methods_ok.append(m)
+
+        n_q = len(queries)
+        n_m = len(methods_ok)
+
+        # ── Per-method accuracy + Wilson CI ───────────────────────
+        per_method: dict[str, dict] = {}
+        for m in methods_ok:
+            n_correct = sum(results[m])
+            acc = n_correct / n_q if n_q else 0.0
+            # Wilson score interval (95%).
+            z = 1.96
+            denom = 1 + z * z / n_q
+            centre = (acc + z * z / (2 * n_q)) / denom
+            spread = z * _math.sqrt(acc * (1 - acc) / n_q + z * z / (4 * n_q * n_q)) / denom
+            per_method[m] = {
+                "accuracy": round(acc, 6),
+                "n_correct": n_correct,
+                "n_total": n_q,
+                "wilson_lo": round(max(0.0, centre - spread), 6),
+                "wilson_hi": round(min(1.0, centre + spread), 6),
+            }
+
+        # ── Pairwise McNemar ──────────────────────────────────────
+        pairwise: list[dict] = []
+        for i in range(n_m):
+            for j in range(i + 1, n_m):
+                ma, mb = methods_ok[i], methods_ok[j]
+                ca, cb = results[ma], results[mb]
+                n11 = sum(1 for a, b in zip(ca, cb) if a and b)
+                n00 = sum(1 for a, b in zip(ca, cb) if not a and not b)
+                n01 = sum(1 for a, b in zip(ca, cb) if not a and b)
+                n10 = sum(1 for a, b in zip(ca, cb) if a and not b)
+                n_disc = n01 + n10
+                if n_disc == 0:
+                    chi2 = 0.0
+                    p_val = 1.0
+                else:
+                    chi2 = (abs(n01 - n10) - 1) ** 2 / n_disc
+                    p_val = _math.erfc(_math.sqrt(chi2 / 2))
+                if n10 > n01:
+                    better = ma
+                elif n01 > n10:
+                    better = mb
+                else:
+                    better = "tie"
+                pairwise.append({
+                    "method_a": ma,
+                    "method_b": mb,
+                    "n11": n11, "n00": n00,
+                    "n01": n01, "n10": n10,
+                    "chi_squared": round(chi2, 6),
+                    "p_value": round(p_val, 6),
+                    "significant": p_val < alpha,
+                    "better": better,
+                    "alpha": alpha,
+                })
+
+        # ── Agreement matrix + hardest queries ────────────────────
+        agreement_matrix: dict[int, int] = {}
+        hardest: list[int] = []
+        for qi in range(n_q):
+            n_agree = sum(1 for m in methods_ok if results[m][qi])
+            agreement_matrix[qi] = n_agree
+            if n_agree <= 1:
+                hardest.append(qi)
+
+        # Best method.
+        best = max(methods_ok, key=lambda m: per_method[m]["accuracy"])
+
+        # Summary.
+        sig_pairs = [p for p in pairwise if p["significant"]]
+        summary = (
+            f"Batch comparison: {n_m} methods x {n_q} queries. "
+            f"Best: {best} ({per_method[best]['accuracy']:.1%}). "
+            f"{len(sig_pairs)}/{len(pairwise)} pairs significant "
+            f"at alpha={alpha}."
+        )
+
+        return {
+            "n_queries": n_q,
+            "n_methods": n_m,
+            "per_method": per_method,
+            "pairwise_mcnemar": pairwise,
+            "best_method": best,
+            "agreement_matrix": agreement_matrix,
+            "hardest_queries": hardest,
+            "summary": summary,
+        }
 
     def classification_mcnemar(
         self,
