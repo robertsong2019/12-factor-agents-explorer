@@ -36487,6 +36487,196 @@ class MemoryGraph:
             "evaluated":        n_eval,
         }
 
+    # ── Cycle 386: Edge-level entropy sensitivity (leave-one-out) ──
+
+    def edge_entropy_sensitivity(self, index: str = "sombor",
+                                  sample: int | None = None,
+                                  top_k: int = 0) -> Optional[dict]:
+        """Leave-one-out marginal entropy sensitivity per **edge**.
+
+        For each edge *e = (u, v)*, computes the graph's degree-based
+        entropy as if *e* were removed (degrees of *u* and *v*
+        decremented by 1), then measures the absolute change:
+
+            ΔH_e = |H(G) − H(G − e)|
+
+        This is the **edge-level** counterpart to ``entropy_contribution()``
+        (which is node-level).  Edges with high ΔH_e are
+        **information-critical links**: their removal most disrupts
+        structural diversity.
+
+        **Use cases:**
+
+        * Edge pruning — safely remove low-sensitivity edges
+        * Link prediction — high-sensitivity edges connect
+          structurally important nodes
+        * Graph compression — collapse low-sensitivity edges first
+        * Robustness analysis — identify bridges whose loss would
+          most damage the graph's information structure
+
+        Complexity: O(m²) for the degree-based version (m edges),
+        since each edge removal only affects 2 nodes' degrees.
+
+        Args:
+            index: Degree-based entropy index (``sombor``, ``randic``,
+                ``abc``, ``ga``, ``zagreb_m1``, ``augmented_zagreb``,
+                ``reduced_sombor``).
+            sample: If graph has more edges, randomly sample this many.
+                ``None`` = exhaustive.
+            top_k: If > 0, only return top-*k* sensitive edges.
+
+        Returns:
+            Dict with:
+
+            - ``baseline_entropy``: H(G)
+            - ``sensitivities``: {"source→target": ΔH_e}
+            - ``ranked``: [("source→target", ΔH_e)] sorted descending
+            - ``mean``, ``std``, ``max_delta``, ``min_delta``: stats
+            - ``critical_edges``: ΔH > mean + std
+            - ``expendable_edges``: ΔH < max(0, mean - std)
+            - ``index``: entropy index used
+            - ``sampled``: whether sampling was used
+            - ``evaluated``: number of edges evaluated
+
+            Returns ``None`` if < 3 nodes or < 2 edges.
+        """
+        import random as _random
+
+        # ── Contribution functions (same as entropy_contribution) ──
+        def _sombor(du, dv):
+            return math.sqrt(du * du + dv * dv)
+
+        def _reduced_sombor(du, dv):
+            return math.sqrt(max(du-1,0)**2 + max(dv-1,0)**2)
+
+        def _randic(du, dv):
+            return 1.0/math.sqrt(du*dv) if du > 0 and dv > 0 else 0.0
+
+        def _zagreb_m1(du, dv):
+            return float(du*du + dv*dv)
+
+        def _abc(du, dv):
+            return math.sqrt((du+dv-2)/(du*dv)) if du > 1 and dv > 1 else 0.0
+
+        def _ga(du, dv):
+            return 2.0*math.sqrt(du*dv)/(du+dv) if du > 0 and dv > 0 else 0.0
+
+        def _augmented_zagreb(du, dv):
+            return (du*dv/(du+dv))**3 if du > 0 and dv > 0 else 0.0
+
+        CONTRIB = {
+            "sombor": _sombor, "reduced_sombor": _reduced_sombor,
+            "randic": _randic, "zagreb_m1": _zagreb_m1,
+            "abc": _abc, "ga": _ga,
+            "augmented_zagreb": _augmented_zagreb,
+        }
+        if index not in CONTRIB:
+            raise ValueError(f"Unknown index '{index}'. Valid: {list(CONTRIB)}")
+        cfn = CONTRIB[index]
+
+        def _shannon(contribs):
+            valid = [c for c in contribs if c > 0]
+            if not valid:
+                return 0.0 if contribs else None
+            total = sum(valid)
+            if total <= 0:
+                return None
+            m = len(valid)
+            h = 0.0
+            for c in valid:
+                p = c / total
+                if p > 0:
+                    h -= p * math.log(p)
+            if m > 1:
+                h /= math.log(m)
+            return h
+
+        # ── Cache graph state ──
+        node_rows = self.conn.execute("SELECT id FROM nodes").fetchall()
+        all_nodes = [str(r["id"]) for r in node_rows]
+        n_nodes = len(all_nodes)
+        edge_rows = self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall()
+        all_edges = [(str(r["source"]), str(r["target"])) for r in edge_rows]
+        n_edges = len(all_edges)
+
+        if n_nodes < 3 or n_edges < 2:
+            return None
+
+        # Original degrees
+        orig_deg = {nid: self.degree(nid) for nid in all_nodes}
+
+        # Baseline entropy
+        baseline_contribs = [
+            cfn(orig_deg.get(s, 0), orig_deg.get(t, 0))
+            for s, t in all_edges
+        ]
+        baseline = _shannon(baseline_contribs)
+        if baseline is None:
+            return None
+
+        # ── Determine which edges to evaluate ──
+        use_sampling = sample is not None and n_edges > sample
+        if use_sampling:
+            eval_edges = _random.sample(all_edges, sample)
+        else:
+            eval_edges = all_edges
+
+        sensitivities: dict[str, float] = {}
+
+        for es, et in eval_edges:
+            # Adjusted degrees: decrement both endpoints by 1
+            adj_deg = dict(orig_deg)
+            adj_deg[es] = max(0, adj_deg.get(es, 0) - 1)
+            adj_deg[et] = max(0, adj_deg.get(et, 0) - 1)
+
+            # Recompute all edge contributions with adjusted degrees
+            removed_contribs = [
+                cfn(adj_deg.get(s, 0), adj_deg.get(t, 0))
+                for s, t in all_edges
+                if not (s == es and t == et)
+            ]
+
+            h_without = _shannon(removed_contribs)
+            key = f"{es}\u2192{et}"
+            if h_without is not None:
+                sensitivities[key] = round(abs(baseline - h_without), 6)
+            else:
+                sensitivities[key] = 0.0
+
+        if not sensitivities:
+            return None
+
+        deltas = list(sensitivities.values())
+        n_eval = len(deltas)
+        mean_d = sum(deltas) / n_eval
+        var_d = sum((d - mean_d) ** 2 for d in deltas) / n_eval
+        std_d = var_d ** 0.5
+
+        ranked = sorted(sensitivities.items(), key=lambda x: x[1], reverse=True)
+        if top_k > 0:
+            ranked = ranked[:top_k]
+
+        critical = [k for k, d in sensitivities.items() if d > mean_d + std_d]
+        expendable = [k for k, d in sensitivities.items()
+                      if d < max(0.0, mean_d - std_d)]
+
+        return {
+            "baseline_entropy":   round(baseline, 6),
+            "sensitivities":      sensitivities,
+            "ranked":             ranked,
+            "mean":               round(mean_d, 6),
+            "std":                round(std_d, 6),
+            "max_delta":          round(max(deltas), 6),
+            "min_delta":           round(min(deltas), 6),
+            "critical_edges":     critical,
+            "expendable_edges":   expendable,
+            "index":              index,
+            "sampled":            use_sampling,
+            "evaluated":          n_eval,
+        }
+
     # ── Cycle 311: Spectral entropy stability (von Neumann) ──
 
     def entropy_stability_spectral(self, *, trials: int = 30,
