@@ -516,7 +516,7 @@ class TestListTools:
                              else srv.list_tools())
 
         tool_names = [t.name for t in result]
-        assert len(result) == 16, f"Expected 16 tools, got {len(result)}: {tool_names}"
+        assert len(result) == 17, f"Expected 17 tools, got {len(result)}: {tool_names}"
 
         # Check all basic tools
         for name in ["remember", "recall", "relate", "ask", "lookup",

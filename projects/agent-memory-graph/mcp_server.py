@@ -4,9 +4,10 @@ agent-memory-graph MCP Server
 =============================
 Exposes MemoryGraph as MCP tools for AI agents to use as long-term memory.
 
-Tools (16):
+Tools (17):
   Basic:   remember, recall, relate, ask, lookup, neighbors, forget, stats, timeline, health
   Advanced: entropy, reason, snapshot, code_explain, quarantine, security
+  Ops:      metrics
 
 Usage:
     python3 mcp_server.py                    # stdio mode (for mcporter/MCP clients)
@@ -16,6 +17,7 @@ Usage:
 import json
 import sys
 import os
+import time
 import argparse
 from pathlib import Path
 
@@ -32,6 +34,7 @@ DB_PATH = os.environ.get(
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 _graph: MemoryGraph | None = None
+_metrics_conn = None
 
 def get_graph() -> MemoryGraph:
     global _graph
@@ -45,6 +48,98 @@ def get_graph() -> MemoryGraph:
         except Exception:
             pass
     return _graph
+
+# ── Metrics tracking ──
+
+_METRICS_DB = os.environ.get(
+    "AMG_METRICS_DB",
+    str(Path.home() / ".openclaw" / "data" / "amg_mcp_metrics.db"),
+)
+
+def _get_metrics_conn():
+    """Lazy-init a separate SQLite connection for metrics."""
+    global _metrics_conn
+    if _metrics_conn is None:
+        os.makedirs(os.path.dirname(_METRICS_DB), exist_ok=True)
+        import sqlite3
+        _metrics_conn = sqlite3.connect(_METRICS_DB)
+        _metrics_conn.execute("""
+            CREATE TABLE IF NOT EXISTS tool_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tool TEXT NOT NULL,
+                timestamp REAL NOT NULL,
+                duration_ms REAL NOT NULL,
+                success INTEGER NOT NULL,
+                error_msg TEXT
+            )
+        """)
+        _metrics_conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_tool ON tool_calls(tool)
+        """)
+        _metrics_conn.commit()
+    return _metrics_conn
+
+
+def record_tool_call(tool: str, duration_ms: float, success: bool, error_msg: str = ""):
+    """Record a tool invocation in the metrics DB."""
+    conn = _get_metrics_conn()
+    conn.execute(
+        "INSERT INTO tool_calls (tool, timestamp, duration_ms, success, error_msg) VALUES (?, ?, ?, ?, ?)",
+        (tool, time.time(), duration_ms, int(success), error_msg[:500]),
+    )
+    conn.commit()
+
+
+def get_metrics_summary() -> dict:
+    """Aggregate metrics for all tools."""
+    conn = _get_metrics_conn()
+    rows = conn.execute("""
+        SELECT
+            tool,
+            COUNT(*) as call_count,
+            AVG(duration_ms) as avg_ms,
+            MIN(duration_ms) as min_ms,
+            MAX(duration_ms) as max_ms,
+            SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as error_count,
+            MAX(timestamp) as last_called
+        FROM tool_calls
+        GROUP BY tool
+        ORDER BY call_count DESC
+    """).fetchall()
+
+    tools = []
+    total_calls = 0
+    total_errors = 0
+    for r in rows:
+        calls = r[1]
+        errors = r[5] or 0
+        total_calls += calls
+        total_errors += errors
+        tools.append({
+            "tool": r[0],
+            "calls": calls,
+            "avg_ms": round(r[2], 2) if r[2] else 0,
+            "min_ms": round(r[3], 2) if r[3] else 0,
+            "max_ms": round(r[4], 2) if r[4] else 0,
+            "errors": errors,
+            "error_rate": round(errors / calls, 4) if calls else 0,
+            "last_called": r[6],
+        })
+
+    return {
+        "total_calls": total_calls,
+        "total_errors": total_errors,
+        "overall_error_rate": round(total_errors / total_calls, 4) if total_calls else 0,
+        "tools": tools,
+    }
+
+
+def reset_metrics() -> int:
+    """Clear all metrics. Returns deleted row count."""
+    conn = _get_metrics_conn()
+    cur = conn.execute("DELETE FROM tool_calls")
+    conn.commit()
+    return cur.rowcount
 
 def node_to_dict(n) -> dict:
     return {"id": n.id, "label": n.label, "kind": n.kind, "data": n.data, "tags": getattr(n, "tags", [])}
@@ -247,6 +342,17 @@ async def list_tools() -> list[types.Tool]:
             description="Security audit: run OWASP ASI06 memory security checks. Reports quarantine status, trust levels, and potential provenance laundering.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="metrics",
+            description="MCP server observability: view tool call counts, latency, error rates. Actions: summary (default), recent, reset.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["summary", "recent", "reset"], "description": "summary: aggregated stats; recent: last N calls; reset: clear all metrics", "default": "summary"},
+                    "limit": {"type": "integer", "description": "Number of recent calls to return (for action=recent, default 20)", "default": 20},
+                },
+            },
+        ),
     ]
 
 
@@ -272,7 +378,33 @@ def _resolve(name_or_id: str) -> str | None:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     g = get_graph()
+    _t0 = time.monotonic()
+    _success = True
+    _err = ""
 
+    try:
+        result = await _dispatch_tool(name, arguments, g)
+        # Detect logical errors (returned, not thrown)
+        if result and isinstance(result, list) and len(result) > 0:
+            txt = result[0].text if hasattr(result[0], 'text') else str(result[0])
+            if txt.startswith("Unknown tool") or txt.startswith("Error:"):
+                _success = False
+                _err = txt[:200]
+        return result
+    except Exception as e:
+        _success = False
+        _err = f"{type(e).__name__}: {e}"
+        return [types.TextContent(type="text", text=f"Error: {_err}")]
+    finally:
+        _dur = (time.monotonic() - _t0) * 1000
+        try:
+            record_tool_call(name, _dur, _success, _err)
+        except Exception:
+            pass  # metrics must never break the server
+
+
+async def _dispatch_tool(name: str, arguments: dict, g: MemoryGraph) -> list[types.TextContent]:
+    """Inner tool dispatcher — all tool logic lives here."""
     try:
         if name == "remember":
             node = g.add(
@@ -563,6 +695,30 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 ),
             }
             return [types.TextContent(type="text", text=json.dumps(audit, ensure_ascii=False, indent=2))]
+
+        elif name == "metrics":
+            action = arguments.get("action", "summary")
+            if action == "summary":
+                result = get_metrics_summary()
+                return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+            elif action == "reset":
+                deleted = reset_metrics()
+                return [types.TextContent(type="text", text=json.dumps({"status": "reset", "deleted": deleted}, ensure_ascii=False))]
+            elif action == "recent":
+                limit = arguments.get("limit", 20)
+                conn = _get_metrics_conn()
+                rows = conn.execute(
+                    "SELECT tool, timestamp, duration_ms, success, error_msg FROM tool_calls ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+                recent = [{
+                    "tool": r[0], "timestamp": r[1],
+                    "duration_ms": round(r[2], 2),
+                    "success": bool(r[3]), "error": r[4] if r[4] else None,
+                } for r in rows]
+                return [types.TextContent(type="text", text=json.dumps(recent, ensure_ascii=False, indent=2))]
+            else:
+                return [types.TextContent(type="text", text=json.dumps({"error": f"Unknown action: {action}"}, ensure_ascii=False))]
 
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
