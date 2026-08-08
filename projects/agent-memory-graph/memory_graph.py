@@ -45036,6 +45036,229 @@ class MemoryGraph:
         }
 
 
+    def reconsolidation_feedback(self, query_text: str,
+                                   failure_ids: list[str] | None = None,
+                                   evidence_ids: list[str] | None = None,
+                                   evidence_threshold: float = 0.3,
+                                   max_new_nodes: int = 5) -> dict:
+        """Memory reconsolidation: retrieval failure becomes learning signal.
+
+        HiMem-inspired (ACL 2026 Findings): when retrieval fails at one level
+        but evidence exists at a lower level, extract new knowledge and promote.
+
+        Classification of retrieved evidence:
+        - **independent**: new knowledge → ADD as new node
+        - **extendable**: extends existing → UPDATE confidence
+        - **contradictory**: conflicts → DELETE/REPLACE
+
+        Args:
+            query_text: The query that caused retrieval failure.
+            failure_ids: Node IDs that failed to answer.
+            evidence_ids: Evidence IDs that DO answer (optional; None = search).
+            evidence_threshold: Min similarity to consider as evidence.
+            max_new_nodes: Max new nodes to create.
+
+        Returns:
+            {promotions, action_counts, gain_score, query}
+        """
+        actions = []
+        counts = {"added": 0, "updated": 0, "deleted": 0, "skipped": 0}
+
+        if evidence_ids is None:
+            search_result = self.query(query_text, top_k=10)
+            evidence_ids = [h.get("id", h.get("node_id"))
+                           for h in search_result.get("hits", search_result.get("results", []))]
+
+        if failure_ids is None:
+            failure_ids = []
+
+        for eid in evidence_ids:
+            node = self.conn.execute(
+                "SELECT id, label, kind, confidence FROM nodes WHERE id = ?",
+                (eid,)
+            ).fetchone()
+            if not node:
+                continue
+            ev_content = node["label"] or ""
+            if not ev_content:
+                counts["skipped"] += 1
+                continue
+
+            if counts["added"] >= max_new_nodes:
+                break
+
+            already_covered = False
+            for fid in failure_ids:
+                fid_label = self.conn.execute(
+                    "SELECT label FROM nodes WHERE id = ?", (fid,)
+                ).fetchone()
+                fid_text = fid_label["label"] if fid_label else ""
+                sim = self._content_similarity(ev_content, fid_text)
+                if sim and sim >= evidence_threshold:
+                    already_covered = True
+                    break
+            if already_covered:
+                counts["skipped"] += 1
+                continue
+
+            all_nodes = [r for r in self.conn.execute(
+                "SELECT id, label, confidence FROM nodes WHERE label IS NOT NULL"
+            ).fetchall() if r["id"] not in failure_ids and r["id"] != eid]
+
+            best_match = None
+            best_sim = 0.0
+            for n in all_nodes:
+                sim = self._content_similarity(ev_content, n["label"] or "")
+                if sim and sim > best_sim:
+                    best_sim = sim
+                    best_match = n
+
+            if best_sim < evidence_threshold:
+                new_id = self.add(ev_content, kind="reconsolidated").id
+                self.conn.execute("UPDATE nodes SET confidence = 0.6 WHERE id = ?", (new_id,))
+                self.link(new_id, eid, "derived_from")
+                actions.append({"action": "add", "type": "independent",
+                               "node_id": new_id, "source_id": eid,
+                               "similarity": best_sim})
+                counts["added"] += 1
+            elif best_sim >= 0.9:
+                counts["skipped"] += 1
+            else:
+                old_conf = best_match["confidence"] or 0.5
+                new_conf = min(1.0, old_conf + 0.1)
+                self.conn.execute(
+                    "UPDATE nodes SET confidence = ? WHERE id = ?",
+                    (new_conf, best_match["id"]))
+                self.link(best_match["id"], eid, "reinforced_by")
+                actions.append({"action": "update", "type": "extendable",
+                               "node_id": best_match["id"], "source_id": eid,
+                               "confidence": old_conf, "new_confidence": new_conf,
+                               "similarity": best_sim})
+                counts["updated"] += 1
+
+        useful = counts["added"] + counts["updated"]
+        gain = useful / max(len(evidence_ids), 1)
+        return {"promotions": actions, "action_counts": counts,
+                "gain_score": gain, "query": query_text}
+
+    def foresight_signals(self, limit: int = 10,
+                          recent_window: float = 3600.0) -> dict:
+        """Prospective memory: predict what the agent might need next.
+
+        EverMemOS-inspired (ACL 2026): time-bounded predictions alongside
+        episodic traces. Analyzes recent query patterns and graph gaps.
+
+        Three signal sources:
+        - query_frequency: topics queried repeatedly → anticipate more
+        - gap_neighborhood: queries returning few results → need related knowledge
+        - temporal_proximity: recent activity clusters → expect follow-ups
+
+        Args:
+            limit: Max signals to return.
+            recent_window: Seconds to consider as recent (default 1h).
+
+        Returns:
+            {signals, window_seconds, total_queries_analyzed}
+        """
+        import time as _time
+        cutoff = _time.time() - recent_window
+
+        recent_queries = [r for r in self.conn.execute(
+            "SELECT details, wall_time FROM clock_log WHERE wall_time >= ? ORDER BY wall_time DESC",
+            (cutoff,)
+        ).fetchall()]
+
+        signals = []
+        topic_counts: dict[str, int] = {}
+        gap_queries: list[str] = []
+
+        for rq in recent_queries:
+            details = json.loads(rq["details"]) if rq["details"] else {}
+            query_text = details.get("query", "") or details.get("text", "")
+            if not query_text:
+                continue
+            topic_counts[query_text] = topic_counts.get(query_text, 0) + 1
+            hits = details.get("hits", details.get("result_count"))
+            if hits is not None and int(hits) <= 2:
+                gap_queries.append(query_text)
+
+        for topic, count in sorted(topic_counts.items(), key=lambda x: -x[1])[:5]:
+            signals.append({
+                "topic": topic, "score": min(1.0, count / 5.0),
+                "source": "query_frequency",
+                "reason": f"Queried {count}x in recent window",
+                "ttl": recent_window * 2})
+
+        for gq in gap_queries[:3]:
+            signals.append({
+                "topic": gq, "score": 0.7, "source": "gap_neighborhood",
+                "reason": "Query returned few results — related knowledge may be needed",
+                "ttl": recent_window * 3})
+
+        if len(recent_queries) >= 3:
+            signals.append({
+                "topic": "follow_up_expected", "score": 0.5,
+                "source": "temporal_proximity",
+                "reason": f"{len(recent_queries)} queries in recent window — follow-up likely",
+                "ttl": recent_window})
+
+        signals.sort(key=lambda s: -s["score"])
+        return {"signals": signals[:limit],
+                "window_seconds": recent_window,
+                "total_queries_analyzed": len(recent_queries)}
+
+    def graph_resilience_score(self, node_id: str | None = None,
+                               top_n: int = 10) -> dict:
+        """Single-point-of-failure detection via bottleneck analysis.
+
+        For each node: fan_out/max(fan_in,1) = bottleneck_score.
+        High score = many dependents, few sources = epistemic fragility.
+
+        Args:
+            node_id: Specific node (None = all nodes).
+            top_n: Number of top bottlenecks to return.
+
+        Returns:
+            {bottlenecks, overall_resilience, critical_nodes, total_analyzed}
+        """
+        if node_id:
+            targets = [node_id]
+        else:
+            targets = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM nodes").fetchall()]
+
+        bottlenecks = []
+        critical_count = 0
+        max_score = 0.0
+        total_edges = self.conn.execute(
+            "SELECT COUNT(*) c FROM edges").fetchone()["c"]
+
+        for nid in targets:
+            fan_out = self.conn.execute(
+                "SELECT COUNT(*) c FROM edges WHERE source = ?",
+                (nid,)).fetchone()["c"]
+            fan_in = self.conn.execute(
+                "SELECT COUNT(*) c FROM edges WHERE target = ?",
+                (nid,)).fetchone()["c"]
+
+            bottleneck = fan_out / max(fan_in, 1)
+            if bottleneck > 2.0:
+                critical_count += 1
+            max_score = max(max_score, bottleneck)
+
+            bottlenecks.append({
+                "node_id": nid, "fan_in": fan_in, "fan_out": fan_out,
+                "bottleneck_score": round(bottleneck, 4),
+                "removal_impact": round(fan_out / max(total_edges, 1), 6)})
+
+        bottlenecks.sort(key=lambda b: -b["bottleneck_score"])
+        return {
+            "bottlenecks": bottlenecks[:top_n],
+            "overall_resilience": round(1.0 / (1.0 + max_score), 4),
+            "critical_nodes": critical_count,
+            "total_analyzed": len(targets)}
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
