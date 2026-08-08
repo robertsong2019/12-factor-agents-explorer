@@ -46521,12 +46521,320 @@ class MemoryGraph:
             "index": index,
         }
 
+    def community_entropy_profile(
+        self,
+        *,
+        algorithm: str = "leiden",
+        resolution: float = 1.0,
+        index: str = "sombor",
+    ) -> Optional[dict]:
+        """Per-community entropy analysis.
 
+        Partitions the graph into communities, then for each community
+        computes:
+
+        * **Internal entropy** — Shannon entropy of edge contributions
+          restricted to edges *within* the community.  Measures how
+          structurally diverse the community is internally.
+        * **External entropy** — entropy of edge contributions for
+          *bridge* edges (one endpoint in the community, one outside).
+          Measures how diverse the community's external connections are.
+        * **Cohesion ratio** — internal_edges / (internal + external).
+          High cohesion (> 0.7) means a tight cluster; low (< 0.3)
+          means a diffuse boundary.
+        * **Dominant index** — which degree-based entropy index varies
+          most within the community (information fingerprint).
+
+        Additionally computes:
+
+        * **Inter-community divergence** — pairwise JSD between
+          communities' internal edge-contribution distributions.
+          High divergence = communities are structurally distinct.
+        * **Leave-one-community-out** — removing each community's
+          internal edges and measuring whole-graph entropy change.
+          Identifies communities that contribute most to global
+          structural diversity.
+
+        Builds on ``community_partition`` (community detection) and
+        ``_contribution_distribution`` (entropy infrastructure).
+
+        Args:
+            algorithm: Community detection algorithm (``leiden``,
+                ``greedy``, ``lp``).
+            resolution: Leiden resolution parameter.
+            index: Degree-based entropy index for internal/external
+                entropy computation.
+
+        Returns:
+            Dict with keys:
+
+            * ``communities``: list of per-community dicts sorted by
+              size descending.  Each contains ``id``, ``size``,
+              ``internal_entropy``, ``external_entropy``, ``cohesion_ratio``,
+              ``internal_edges``, ``external_edges``, ``contribution_delta``.
+            * ``inter_community_divergence``: mean pairwise JSD.
+            * ``divergence_matrix``: N×N JSD matrix (upper triangular
+              values, diagonal = 0).
+            * ``summary``: ``num_communities``, ``mean_internal_entropy``,
+              ``mean_cohesion``, ``total_bridge_edges``, ``max_contribution_delta``.
+            * ``algorithm``, ``index``, ``modularity``.
+
+            Returns ``None`` if fewer than 2 communities detected or
+            fewer than 3 nodes / 1 edge.
+        """
+        import math
+
+        stats = self.stats()
+        if stats.get("nodes", 0) < 3 or stats.get("edges", 0) < 1:
+            return None
+
+        # ── 1. Partition into communities ──
+        partition = self.community_partition(
+            algorithm=algorithm, resolution=resolution
+        )
+        if not partition:
+            return None
+
+        comm_ids = sorted(set(partition.values()))
+        if len(comm_ids) < 2:
+            return None  # need at least 2 communities for meaningful analysis
+
+        # Build community membership maps
+        comm_members: dict[int, set[str]] = {cid: set() for cid in comm_ids}
+        for nid, cid in partition.items():
+            comm_members.setdefault(cid, set()).add(str(nid))
+        comm_ids = sorted(comm_members.keys())
+
+        # ── 2. Edge contribution function ──
+        CONTRIB_MAP = {
+            "sombor": lambda du, dv: math.sqrt(du * du + dv * dv),
+            "reduced_sombor": lambda du, dv: math.sqrt(
+                max(du - 1, 0) ** 2 + max(dv - 1, 0) ** 2
+            ),
+            "randic": lambda du, dv: 1.0 / math.sqrt(du * dv) if du > 0 and dv > 0 else 0.0,
+            "zagreb_m1": lambda du, dv: float(du * du + dv * dv),
+            "abc": lambda du, dv: math.sqrt((du + dv - 2.0) / (du * dv))
+            if du > 1 and dv > 1 else 0.0,
+            "ga": lambda du, dv: 2.0 * math.sqrt(du * dv) / (du + dv)
+            if du > 0 and dv > 0 else 0.0,
+            "augmented_zagreb": lambda du, dv: ((du * dv) / (du + dv)) ** 3
+            if du > 0 and dv > 0 else 0.0,
+        }
+        if index not in CONTRIB_MAP:
+            raise ValueError(
+                f"Unknown index '{index}'. Valid: {list(CONTRIB_MAP)}"
+            )
+        contrib_fn = CONTRIB_MAP[index]
+
+        # ── 3. Compute degree map ──
+        degree_map: dict[str, int] = {}
+        deg_rows = self.conn.execute(
+            """
+            SELECT n.id, (
+                SELECT COUNT(*) FROM edges
+                WHERE source = n.id OR target = n.id
+            ) as deg
+            FROM nodes n
+            """
+        ).fetchall()
+        for r in deg_rows:
+            degree_map[str(r["id"])] = r["deg"]
+
+        # ── 4. Classify edges as internal/bridge per community ──
+        edge_rows = self.conn.execute(
+            "SELECT source, target FROM edges"
+        ).fetchall()
+
+        # For each community, collect internal and external edge contributions
+        comm_internal_contribs: dict[int, list[float]] = {cid: [] for cid in comm_ids}
+        comm_external_contribs: dict[int, list[float]] = {cid: [] for cid in comm_ids}
+        comm_internal_count: dict[int, int] = {cid: 0 for cid in comm_ids}
+        comm_external_count: dict[int, int] = {cid: 0 for cid in comm_ids}
+
+        # Also collect all internal contribs per community for distribution comparison
+        comm_distributions: dict[int, dict[str, float]] = {cid: {} for cid in comm_ids}
+
+        for r in edge_rows:
+            src = str(r["source"])
+            tgt = str(r["target"])
+            src_comm = partition.get(src)
+            tgt_comm = partition.get(tgt)
+
+            du = degree_map.get(src, 0)
+            dv = degree_map.get(tgt, 0)
+            c = contrib_fn(du, dv)
+
+            if src_comm == tgt_comm and src_comm is not None:
+                # Internal edge
+                cid = src_comm
+                comm_internal_contribs[cid].append(c)
+                comm_internal_count[cid] += 1
+                # Binned distribution key
+                binned = round(c, 6)
+                comm_distributions[cid][binned] = comm_distributions[cid].get(binned, 0.0) + c
+            else:
+                # Bridge edge
+                if src_comm is not None:
+                    comm_external_contribs[src_comm].append(c)
+                    comm_external_count[src_comm] += 1
+                if tgt_comm is not None and tgt_comm != src_comm:
+                    comm_external_contribs[tgt_comm].append(c)
+                    comm_external_count[tgt_comm] += 1
+
+        # ── 5. Shannon entropy helper ──
+        def _shannon(values: list[float]) -> float:
+            """Normalised Shannon entropy of a contribution list."""
+            valid = [v for v in values if v > 0]
+            if not valid:
+                return 0.0
+            total = sum(valid)
+            if total <= 0:
+                return 0.0
+            probs = [v / total for v in valid]
+            import math as _m
+            h = -sum(p * _m.log(p) for p in probs if p > 0)
+            n = len(valid)
+            if n <= 1:
+                return 0.0
+            return h / _m.log(n)
+
+        # ── 6. Per-community analysis ──
+        community_results = []
+        for cid in comm_ids:
+            internal_c = comm_internal_contribs[cid]
+            external_c = comm_external_contribs[cid]
+            n_internal = comm_internal_count[cid]
+            n_external = comm_external_count[cid]
+
+            h_internal = _shannon(internal_c)
+            h_external = _shannon(external_c)
+
+            total_edges = n_internal + n_external
+            cohesion = n_internal / total_edges if total_edges > 0 else 0.0
+
+            community_results.append({
+                "id": cid,
+                "size": len(comm_members[cid]),
+                "internal_entropy": round(h_internal, 6),
+                "external_entropy": round(h_external, 6),
+                "cohesion_ratio": round(cohesion, 4),
+                "internal_edges": n_internal,
+                "external_edges": n_external,
+                "contribution_delta": 0.0,  # filled in step 7
+            })
+
+        # ── 7. Leave-one-community-out entropy delta ──
+        # Baseline: entropy of all edge contributions
+        all_contribs = []
+        for r in edge_rows:
+            src = str(r["source"])
+            tgt = str(r["target"])
+            du = degree_map.get(src, 0)
+            dv = degree_map.get(tgt, 0)
+            all_contribs.append(contrib_fn(du, dv))
+        baseline_h = _shannon(all_contribs)
+
+        for i, cid in enumerate(comm_ids):
+            # Remove internal edges of this community
+            remaining = []
+            for r in edge_rows:
+                src = str(r["source"])
+                tgt = str(r["target"])
+                src_comm = partition.get(src)
+                tgt_comm = partition.get(tgt)
+                if src_comm == cid and tgt_comm == cid:
+                    continue  # skip internal edge
+                du = degree_map.get(src, 0)
+                dv = degree_map.get(tgt, 0)
+                remaining.append(contrib_fn(du, dv))
+            h_without = _shannon(remaining)
+            delta = abs(baseline_h - h_without)
+            community_results[i]["contribution_delta"] = round(delta, 6)
+
+        # Sort by size descending
+        community_results.sort(key=lambda x: x["size"], reverse=True)
+
+        # ── 8. Inter-community divergence (pairwise JSD) ──
+        n_comms = len(comm_ids)
+        divergence_matrix = [[0.0] * n_comms for _ in range(n_comms)]
+
+        # Build distributions for each community
+        comm_dist_arrays = []
+        for cid in comm_ids:
+            contribs = comm_internal_contribs[cid]
+            if contribs:
+                # Bin into 20 bins from 0 to max
+                max_val = max(contribs) if contribs else 1.0
+                if max_val <= 0:
+                    max_val = 1.0
+                bins = [0.0] * 20
+                for c in contribs:
+                    idx = min(int(c / max_val * 19), 19)
+                    bins[idx] += 1
+                total = sum(bins)
+                if total > 0:
+                    bins = [b / total for b in bins]
+                comm_dist_arrays.append(bins)
+            else:
+                comm_dist_arrays.append([1.0 / 20] * 20)
+
+        def _jsd(p: list[float], q: list[float]) -> float:
+            """Jensen-Shannon divergence between two distributions."""
+            m = [(p[i] + q[i]) / 2 for i in range(len(p))]
+            import math as _m
+
+            def _kl(a: list[float], b: list[float]) -> float:
+                return sum(
+                    a[i] * _m.log(a[i] / b[i])
+                    for i in range(len(a))
+                    if a[i] > 0 and b[i] > 0
+                )
+
+            return 0.5 * _kl(p, m) + 0.5 * _kl(q, m)
+
+        total_div = 0.0
+        pair_count = 0
+        for i in range(n_comms):
+            for j in range(i + 1, n_comms):
+                d = _jsd(comm_dist_arrays[i], comm_dist_arrays[j])
+                divergence_matrix[i][j] = round(d, 6)
+                total_div += d
+                pair_count += 1
+
+        mean_divergence = total_div / pair_count if pair_count > 0 else 0.0
+
+        # ── 9. Summary ──
+        mean_internal = sum(c["internal_entropy"] for c in community_results) / len(community_results)
+        mean_cohesion = sum(c["cohesion_ratio"] for c in community_results) / len(community_results)
+        total_bridge = sum(c["external_edges"] for c in community_results) // 2  # counted twice
+        max_delta = max(c["contribution_delta"] for c in community_results) if community_results else 0.0
+
+        try:
+            mod = self.modularity(communities=partition)
+        except Exception:
+            mod = 0.0
+
+        return {
+            "communities": community_results,
+            "inter_community_divergence": round(mean_divergence, 6),
+            "divergence_matrix": divergence_matrix,
+            "summary": {
+                "num_communities": len(community_results),
+                "mean_internal_entropy": round(mean_internal, 6),
+                "mean_cohesion": round(mean_cohesion, 4),
+                "total_bridge_edges": total_bridge,
+                "max_contribution_delta": round(max_delta, 6),
+            },
+            "algorithm": algorithm,
+            "index": index,
+            "modularity": round(mod, 4),
+        }
 
 
 
 
 def demo():
+    print("🧪 Agent Memory Graph Demo\n")
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
 
