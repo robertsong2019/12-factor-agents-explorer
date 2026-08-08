@@ -46031,6 +46031,271 @@ class MemoryGraph:
             "critical_nodes": critical_count,
             "total_analyzed": len(targets)}
 
+    # ───────────────────────────────────────────────────────
+    # Cycle 389: Temporal Freshness & Generations Analysis
+    # ───────────────────────────────────────────────────────
+
+    def temporal_freshness_map(self, *, now: float = None,
+                               bins: int = 10) -> dict:
+        """Graph-wide temporal freshness analysis.
+
+        Categorises nodes by age, computes freshness entropy (age diversity),
+        detects temporal clustering, and identifies stale hotspots.
+
+        Categories:
+          fresh   (< 1 hour)
+          recent  (< 1 day)
+          mature  (< 1 week)
+          aging   (< 1 month)
+          stale   (> 1 month)
+
+        Returns:
+            {categories, distribution, freshness_entropy,
+             temporal_clustering, stale_clusters, summary}
+        """
+        import math
+        if now is None:
+            now = time.time()
+
+        nodes = self.conn.execute(
+            "SELECT id, created FROM nodes").fetchall()
+        if not nodes:
+            return {"categories": {}, "distribution": [],
+                    "freshness_entropy": 0.0,
+                    "temporal_clustering": 0.0,
+                    "stale_clusters": [],
+                    "summary": {"total": 0}}
+
+        HOUR = 3600
+        DAY = 86400
+        WEEK = 604800
+        MONTH = 2592000
+
+        cat_names = ["fresh", "recent", "mature", "aging", "stale"]
+        cat_thresholds = [HOUR, DAY, WEEK, MONTH, float('inf')]
+        cat_counts = {c: 0 for c in cat_names}
+        cat_node_ids = {c: [] for c in cat_names}
+
+        ages = []
+        for row in nodes:
+            age = now - row["created"]
+            ages.append(age)
+            for i, thresh in enumerate(cat_thresholds):
+                if age <= thresh:
+                    cat_counts[cat_names[i]] += 1
+                    cat_node_ids[cat_names[i]].append(row["id"])
+                    break
+
+        total = len(nodes)
+
+        # Freshness entropy (Shannon on category distribution)
+        probs = [cat_counts[c] / total for c in cat_names if cat_counts[c] > 0]
+        freshness_entropy = -sum(p * math.log2(p) for p in probs) if probs else 0.0
+        max_entropy = math.log2(min(total, len(cat_names)))
+        normalised_entropy = freshness_entropy / max_entropy if max_entropy > 0 else 0.0
+
+        # Temporal histogram (log-spaced bins)
+        clamped_ages = [max(a, 1) for a in ages]  # clamp to >= 1 for log
+        min_age = min(clamped_ages)
+        max_age = max(clamped_ages)
+        if max_age <= min_age:
+            max_age = min_age + 1
+        log_min = math.log(min_age)
+        log_max = math.log(max_age)
+        bin_edges = [math.exp(log_min + (log_max - log_min) * i / bins)
+                      for i in range(bins + 1)]
+        histogram = []
+        for i in range(bins):
+            lo, hi = bin_edges[i], bin_edges[i + 1]
+            if i < bins - 1:
+                count = sum(1 for a in clamped_ages if lo <= a < hi)
+            else:
+                count = sum(1 for a in clamped_ages if lo <= a)
+            histogram.append({
+                "bin_start": round(lo, 1),
+                "bin_end": round(hi, 1),
+                "count": count,
+                "fraction": round(count / total, 4)})
+
+        # Temporal clustering: variance-to-mean ratio of inter-arrival gaps
+        sorted_created = sorted(row["created"] for row in nodes)
+        if len(sorted_created) > 1:
+            gaps = [sorted_created[i+1] - sorted_created[i]
+                    for i in range(len(sorted_created) - 1)]
+            mean_gap = sum(gaps) / len(gaps)
+            var_gap = sum((g - mean_gap) ** 2 for g in gaps) / len(gaps)
+            temporal_clustering = var_gap / (mean_gap ** 2) if mean_gap > 0 else 0.0
+        else:
+            temporal_clustering = 0.0
+
+        # Stale cluster detection: find edges among stale nodes
+        stale_nodes = cat_node_ids.get("stale", []) + cat_node_ids.get("aging", [])
+        stale_clusters = []
+        if len(stale_nodes) > 2:
+            stale_set = set(stale_nodes)
+            stale_subgraph = {}
+            for nid in stale_nodes:
+                neighbors = self.conn.execute(
+                    "SELECT target FROM edges WHERE source = ? AND target IN ({})"
+                    .format(",".join("?" * len(stale_set))),
+                    (nid, *stale_set)).fetchall()
+                if neighbors:
+                    stale_subgraph[nid] = [r["target"] for r in neighbors]
+            # Simple connected components (BFS)
+            visited = set()
+            for start in stale_subgraph:
+                if start in visited:
+                    continue
+                queue = [start]
+                component = []
+                while queue:
+                    node = queue.pop(0)
+                    if node in visited:
+                        continue
+                    visited.add(node)
+                    component.append(node)
+                    queue.extend(stale_subgraph.get(node, []))
+                if len(component) >= 3:
+                    stale_clusters.append({
+                        "size": len(component),
+                        "node_ids": component[:10]})
+            stale_clusters.sort(key=lambda c: -c["size"])
+
+        return {
+            "categories": cat_counts,
+            "category_fractions": {c: round(cat_counts[c] / total, 4)
+                                     for c in cat_names},
+            "distribution": histogram,
+            "freshness_entropy": round(normalised_entropy, 4),
+            "raw_entropy": round(freshness_entropy, 4),
+            "temporal_clustering": round(temporal_clustering, 4),
+            "stale_clusters": stale_clusters[:5],
+            "summary": {
+                "total": total,
+                "freshness_ratio": round(
+                    (cat_counts["fresh"] + cat_counts["recent"]) / total, 4),
+                "stale_ratio": round(cat_counts["stale"] / total, 4),
+                "median_age": round(sorted(ages)[total // 2], 1),
+                "mean_age": round(sum(ages) / total, 1),
+                "interpretation": (
+                    "healthy" if normalised_entropy > 0.6 else
+                    "concentrated" if normalised_entropy < 0.3 else
+                    "moderate")}}
+
+    def memory_generations_report(self, *, generation_size: int = 50,
+                                  now: float = None) -> dict:
+        """Cohort analysis of memory insertion batches.
+
+        Groups nodes into generations (sequential cohorts by insertion order)
+        and analyses per-generation characteristics: size, time span,
+        connectivity within vs across generations.
+
+        Useful for understanding memory growth patterns and identifying
+        bulk-insert events or sparse periods.
+
+        Args:
+            generation_size: Nodes per generation (default 50).
+            now: Reference timestamp (default: current time).
+
+        Returns:
+            {generations, cross_generation_edges, balance_score,
+             dominant_generation, summary}
+        """
+        if now is None:
+            now = time.time()
+
+        nodes = self.conn.execute(
+            "SELECT id, created, kind FROM nodes ORDER BY created ASC").fetchall()
+        total = len(nodes)
+        if total == 0:
+            return {"generations": [], "cross_generation_edges": 0,
+                    "balance_score": 0.0, "dominant_generation": None,
+                    "summary": {"total": 0}}
+
+        # Partition into generations
+        num_gens = max(1, (total + generation_size - 1) // generation_size)
+        generations = []
+        gen_map = {}  # node_id → gen_index
+
+        for gi in range(num_gens):
+            start = gi * generation_size
+            end = min(start + generation_size, total)
+            batch = nodes[start:end]
+            for row in batch:
+                gen_map[row["id"]] = gi
+
+            created_times = [r["created"] for r in batch]
+            kinds = {}
+            for r in batch:
+                kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
+
+            generations.append({
+                "index": gi,
+                "size": len(batch),
+                "time_start": created_times[0],
+                "time_end": created_times[-1],
+                "time_span": round(created_times[-1] - created_times[0], 1),
+                "age": round(now - created_times[0], 1),
+                "dominant_kind": max(kinds, key=kinds.get) if kinds else None,
+                "kind_distribution": kinds})
+
+        # Cross-generation edges
+        edges = self.conn.execute(
+            "SELECT source, target FROM edges").fetchall()
+        cross_count = 0
+        within_count = 0
+        cross_matrix = {}
+        for e in edges:
+            gs = gen_map.get(e["source"], -1)
+            gt = gen_map.get(e["target"], -1)
+            if gs < 0 or gt < 0:
+                continue
+            if gs != gt:
+                cross_count += 1
+                pair = (min(gs, gt), max(gs, gt))
+                cross_matrix[pair] = cross_matrix.get(pair, 0) + 1
+            else:
+                within_count += 1
+
+        total_edges = cross_count + within_count
+        cross_fraction = cross_count / total_edges if total_edges > 0 else 0.0
+
+        # Balance score: coefficient of variation of generation sizes
+        sizes = [g["size"] for g in generations]
+        mean_size = sum(sizes) / len(sizes)
+        var_size = sum((s - mean_size) ** 2 for s in sizes) / len(sizes)
+        cv = (var_size ** 0.5) / mean_size if mean_size > 0 else 0.0
+        balance_score = round(1.0 / (1.0 + cv), 4)  # 1=perfectly balanced, 0=skewed
+
+        # Dominant generation (largest)
+        dominant = max(generations, key=lambda g: g["size"])
+
+        # Top cross-generation pairs
+        top_cross = sorted(cross_matrix.items(), key=lambda x: -x[1])[:5]
+        top_cross_list = [{"generations": list(pair), "edges": cnt}
+                          for pair, cnt in top_cross]
+
+        return {
+            "generations": generations,
+            "num_generations": num_gens,
+            "cross_generation_edges": cross_count,
+            "within_generation_edges": within_count,
+            "cross_generation_fraction": round(cross_fraction, 4),
+            "top_cross_generation_pairs": top_cross_list,
+            "balance_score": balance_score,
+            "dominant_generation": {
+                "index": dominant["index"],
+                "size": dominant["size"],
+                "fraction": round(dominant["size"] / total, 4)},
+            "summary": {
+                "total": total,
+                "generation_size": generation_size,
+                "avg_generation_size": round(mean_size, 1),
+                "interpretation": (
+                    "well_distributed" if balance_score > 0.7 else
+                    "bulk_skewed" if balance_score < 0.5 else
+                    "moderate")}}
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
