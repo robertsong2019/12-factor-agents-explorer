@@ -1808,6 +1808,198 @@ class MemoryGraph:
             "label_diffs": label_diffs
         }
 
+    def graph_contrast_report(self, other: 'MemoryGraph', *, 
+                              indices: list[str] | None = None
+                              ) -> dict:
+        """Structural and information-theoretic comparison of two graphs.
+
+        Goes well beyond :meth:`diff_summary` (node-level set diff) by
+        comparing topology, entropy profiles, and graph metrics.
+
+        **What it computes:**
+
+        1. **Node/edge set differences** (like diff_summary but with edges).
+        2. **Degree distribution comparison** — Jensen-Shannon divergence
+           between binned degree histograms.
+        3. **Entropy contrast** — absolute difference across multiple
+           degree-based entropy indices (Sombor, Randić, ABC, etc.).
+        4. **Spectral contrast** — von Neumann entropy difference.
+        5. **Topology metrics** — density, avg degree, clustering proxy.
+        6. **Verdict** — "similar", "moderately_different", or "divergent".
+
+        **Use cases:**
+
+        * Compare graph snapshots before/after consolidation.
+        * Evaluate structural drift between agent memory states.
+        * Verify that forgetting didn't damage topology.
+        * A/B test consolidation strategies.
+
+        Args:
+            other: The graph to compare against.
+            indices: Entropy indices to compare. Default: all 7.
+
+        Returns:
+            Dict with:
+
+            - ``node_diff``: {only_self, only_other, common}
+            - ``edge_diff``: {only_self, only_other, common}
+            - ``degree_jsd``: Jensen-Shannon divergence of degree dist.
+            - ``entropy_contrast``: {index: {self, other, delta}}
+            - ``spectral_contrast``: {self_vn, other_vn, delta}
+            - ``topology``: {self: {density, avg_deg}, other: {...}}
+            - ``verdict``: "similar" / "moderately_different" / "divergent"
+            - ``summary``: human-readable summary
+        """
+        import math as _m
+
+        default_indices = [
+            "sombor", "randic", "abc", "ga",
+            "zagreb_m1", "augmented_zagreb", "reduced_sombor",
+        ]
+        idx_list = indices if indices else default_indices
+
+        # ── Node/edge set diffs ───────────────────────────────────
+        self_nodes = {r["id"] for r in self.conn.execute("SELECT id FROM nodes").fetchall()}
+        other_nodes = {r["id"] for r in other.conn.execute("SELECT id FROM nodes").fetchall()}
+
+        self_edges = {
+            (r["source"], r["target"])
+            for r in self.conn.execute("SELECT source, target FROM edges").fetchall()
+        }
+        other_edges = {
+            (r["source"], r["target"])
+            for r in other.conn.execute("SELECT source, target FROM edges").fetchall()
+        }
+
+        node_diff = {
+            "only_self": len(self_nodes - other_nodes),
+            "only_other": len(other_nodes - self_nodes),
+            "common": len(self_nodes & other_nodes),
+        }
+        edge_diff = {
+            "only_self": len(self_edges - other_edges),
+            "only_other": len(other_edges - self_edges),
+            "common": len(self_edges & other_edges),
+        }
+
+        # ── Degree distribution JSD ───────────────────────────────
+        def _degree_histogram(g):
+            degs = []
+            rows = g.conn.execute("SELECT id FROM nodes").fetchall()
+            for r in rows:
+                degs.append(g.degree(str(r["id"])))
+            if not degs:
+                return [0], [0.0]
+            max_d = max(degs) if degs else 0
+            bins = list(range(max_d + 2))
+            counts = [0] * (max_d + 2)
+            for d in degs:
+                counts[d] += 1
+            total = sum(counts) or 1
+            probs = [c / total for c in counts]
+            return bins, probs
+
+        _, p_self = _degree_histogram(self)
+        _, p_other = _degree_histogram(other)
+
+        # Align lengths
+        max_len = max(len(p_self), len(p_other))
+        p_s = p_self + [0.0] * (max_len - len(p_self))
+        p_o = p_other + [0.0] * (max_len - len(p_other))
+
+        # JSD
+        p_m = [(a + b) / 2 for a, b in zip(p_s, p_o)]
+        def _kl(p, q):
+            return sum(
+                pi * _m.log(pi / qi) for pi, qi in zip(p, q)
+                if pi > 0 and qi > 0
+            )
+        jsd = 0.5 * _kl(p_s, p_m) + 0.5 * _kl(p_o, p_m) if max(p_m) > 0 else 0.0
+        degree_jsd = round(jsd, 6)
+
+        # ── Entropy contrast ──────────────────────────────────────
+        entropy_fns = {
+            "sombor":           "sombor_entropy",
+            "randic":           "randic_entropy",
+            "abc":              "abc_entropy",
+            "ga":               "ga_entropy",
+            "zagreb_m1":        "zagreb_m1_entropy",
+            "augmented_zagreb": "augmented_zagreb_entropy",
+            "reduced_sombor":   "reduced_sombor_entropy",
+        }
+        entropy_contrast: dict[str, dict] = {}
+        for idx_name in idx_list:
+            fn_name = entropy_fns.get(idx_name)
+            if not fn_name:
+                continue
+            fn = getattr(self, fn_name, None)
+            if fn is None:
+                continue
+            h_self = fn()
+            fn_o = getattr(other, fn_name, None)
+            h_other = fn_o() if fn_o else None
+            if h_self is not None and h_other is not None:
+                entropy_contrast[idx_name] = {
+                    "self": round(h_self, 6),
+                    "other": round(h_other, 6),
+                    "delta": round(abs(h_self - h_other), 6),
+                }
+
+        # ── Spectral contrast ─────────────────────────────────────
+        vn_self = self.von_neumann_entropy(normalized=True)
+        vn_other = other.von_neumann_entropy(normalized=True)
+        spectral = {
+            "self_vn": round(vn_self, 6) if vn_self is not None else None,
+            "other_vn": round(vn_other, 6) if vn_other is not None else None,
+            "delta": round(abs((vn_self or 0) - (vn_other or 0)), 6),
+        }
+
+        # ── Topology metrics ──────────────────────────────────────
+        def _topo(g):
+            n = len(g.conn.execute("SELECT id FROM nodes").fetchall())
+            e = g.count_edges()
+            max_e = n * (n - 1) / 2 if n > 1 else 1
+            density = e / max_e if max_e > 0 else 0.0
+            avg_deg = 2 * e / n if n > 0 else 0.0
+            return {"nodes": n, "edges": e, "density": round(density, 6),
+                    "avg_degree": round(avg_deg, 6)}
+
+        topology = {"self": _topo(self), "other": _topo(other)}
+
+        # ── Verdict ───────────────────────────────────────────────
+        node_overlap = (
+            node_diff["common"] / max(1, len(self_nodes | other_nodes))
+        )
+        edge_overlap = (
+            edge_diff["common"] / max(1, len(self_edges | other_edges))
+        )
+        if not self_nodes and not other_nodes:
+            verdict = "similar"
+        elif node_overlap > 0.9 and edge_overlap > 0.9 and degree_jsd < 0.01:
+            verdict = "similar"
+        elif node_overlap > 0.5 and edge_overlap > 0.5:
+            verdict = "moderately_different"
+        else:
+            verdict = "divergent"
+
+        summary = (
+            f"Graph contrast: {verdict}. "
+            f"Node overlap: {node_overlap:.1%}, "
+            f"edge overlap: {edge_overlap:.1%}, "
+            f"degree JSD: {degree_jsd:.4f}."
+        )
+
+        return {
+            "node_diff": node_diff,
+            "edge_diff": edge_diff,
+            "degree_jsd": degree_jsd,
+            "entropy_contrast": entropy_contrast,
+            "spectral_contrast": spectral,
+            "topology": topology,
+            "verdict": verdict,
+            "summary": summary,
+        }
+
     def group_by(self, kind: str = None, tag: str = None) -> dict[str, list[Node]]:
         """Group nodes by kind or tag. Returns {group_key: [Node, ...]}.
 
