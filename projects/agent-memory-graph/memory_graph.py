@@ -47676,6 +47676,247 @@ class MemoryGraph:
             },
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 403: Memory Interference Report
+    # ------------------------------------------------------------------
+    def memory_interference_report(
+        self,
+        node_id: str,
+        *,
+        hop_radius: int = 2,
+        top_k: int = 10,
+        similarity_metric: str = "jaccard",
+    ) -> dict:
+        """Proactive/retroactive interference analysis for a target memory.
+
+        Identifies nodes that compete with *node_id* during retrieval
+        based on structural overlap (shared neighbours).  Competitors
+        created **before** the target cause *proactive interference* (PI);
+        those created **after** cause *retroactive interference* (RI).
+
+        Inspired by classic interference theory (McGeoch 1932;
+        Anderson & Reder 1999 fan effect).
+
+        Args:
+            node_id: Target memory to analyse.
+            hop_radius: How many hops out to search for competitors
+                (default 2).
+            top_k: Maximum competitors to return per category.
+            similarity_metric: ``"jaccard"`` (default) or
+                ``"overlap"`` (raw intersection size).
+
+        Returns:
+            Dict with ``target``, ``proactive_interference``,
+            ``retroactive_interference``, ``overall_risk``
+            (``"low"``, ``"moderate"``, ``"high"``),
+            ``risk_score``, ``recommendations`` and ``summary``.
+        """
+        target_row = self.conn.execute(
+            "SELECT * FROM nodes WHERE id=?", (node_id,)
+        ).fetchone()
+        if not target_row:
+            raise KeyError(f"Node '{node_id}' not found")
+
+        target_created = target_row["created"]
+
+        # --- Collect candidate competitors within hop_radius ---------
+        # 1-hop neighbours of the target
+        target_neighbours: set[str] = set()
+        rows = self.conn.execute(
+            "SELECT target FROM edges WHERE source=? UNION "
+            "SELECT source FROM edges WHERE target=?",
+            (node_id, node_id),
+        ).fetchall()
+        for r in rows:
+            target_neighbours.add(r[0])
+
+        if not target_neighbours:
+            return {
+                "target": node_id,
+                "target_label": target_row["label"],
+                "proactive_interference": [],
+                "retroactive_interference": [],
+                "overall_risk": "low",
+                "risk_score": 0.0,
+                "recommendations": [
+                    "Target node is isolated — no interference risk.",
+                ],
+                "summary": {
+                    "neighbour_count": 0,
+                    "proactive_count": 0,
+                    "retroactive_count": 0,
+                    "max_similarity": 0.0,
+                },
+            }
+
+        # Expand to hop_radius to find secondary candidates
+        visited: set[str] = {node_id}
+        frontier = list(target_neighbours)
+        candidates: set[str] = set()
+        for hop in range(hop_radius):
+            next_frontier: list[str] = []
+            for nid in frontier:
+                if nid in visited:
+                    continue
+                visited.add(nid)
+                candidates.add(nid)
+                nbrs = self.conn.execute(
+                    "SELECT target FROM edges WHERE source=? UNION "
+                    "SELECT source FROM edges WHERE target=?",
+                    (nid, nid),
+                ).fetchall()
+                for nb in nbrs:
+                    if nb[0] not in visited:
+                        next_frontier.append(nb[0])
+            frontier = next_frontier
+
+        # Remove the target itself
+        candidates.discard(node_id)
+
+        # --- Score each candidate ------------------------------------
+        def _neighbour_set(nid: str) -> set[str]:
+            r = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION "
+                "SELECT source FROM edges WHERE target=?",
+                (nid, nid),
+            ).fetchall()
+            return {x[0] for x in r}
+
+        scored: list[dict] = []
+        for cand_id in candidates:
+            cand_neighbours = _neighbour_set(cand_id)
+            intersection = target_neighbours & cand_neighbours
+            union = target_neighbours | cand_neighbours
+
+            if similarity_metric == "overlap":
+                sim = len(intersection)
+            else:  # jaccard
+                sim = len(intersection) / len(union) if union else 0.0
+
+            if sim == 0:
+                continue  # no overlap → no interference
+
+            cand_row = self.conn.execute(
+                "SELECT * FROM nodes WHERE id=?", (cand_id,)
+            ).fetchone()
+            if not cand_row:
+                continue
+
+            # Weight by competitor importance
+            try:
+                import json as _json
+                d = _json.loads(cand_row["data"]) if cand_row["data"] else {}
+            except Exception:
+                d = {}
+            importance = float(d.get("importance", cand_row["weight"]))
+            interference = sim * importance
+
+            direction = (
+                "proactive" if cand_row["created"] <= target_created
+                else "retroactive"
+            )
+
+            scored.append({
+                "node_id": cand_id,
+                "label": cand_row["label"],
+                "kind": cand_row["kind"],
+                "direction": direction,
+                "similarity": round(sim, 4),
+                "importance": round(importance, 4),
+                "interference_score": round(interference, 4),
+                "shared_neighbours": len(intersection),
+                "age_delta_s": abs(cand_row["created"] - target_created),
+            })
+
+        # Sort by interference score descending
+        scored.sort(key=lambda x: x["interference_score"], reverse=True)
+
+        proactive = [s for s in scored if s["direction"] == "proactive"][:top_k]
+        retroactive = [s for s in scored if s["direction"] == "retroactive"][:top_k]
+
+        # --- Risk assessment -----------------------------------------
+        max_pi = max((s["interference_score"] for s in proactive), default=0.0)
+        max_ri = max((s["interference_score"] for s in retroactive), default=0.0)
+        risk_score = max(max_pi, max_ri)
+
+        if risk_score >= 0.6:
+            risk_level = "high"
+        elif risk_score >= 0.3:
+            risk_level = "moderate"
+        else:
+            risk_level = "low"
+
+        # --- Recommendations -----------------------------------------
+        recs: list[str] = []
+        if not scored:
+            recs.append("No structural overlap detected — target is well-isolated.")
+        else:
+            if max_pi > max_ri:
+                recs.append(
+                    "Proactive interference dominates — consider strengthening "
+                    "target's unique retrieval cues or tagging distinct contexts."
+                )
+            elif max_ri > max_pi:
+                recs.append(
+                    "Retroactive interference dominates — consider protecting "
+                    "target via importance boost or consolidation (consolidate())."
+                )
+            else:
+                recs.append(
+                    "Balanced interference — monitor retrieval accuracy and "
+                    "consider differentiation strategies."
+                )
+
+            if risk_level == "high":
+                top_competitor = scored[0]
+                recs.append(
+                    f"Top competitor: '{top_competitor['label']}' "
+                    f"(score={top_competitor['interference_score']:.3f}). "
+                    "Consider merging or cross-linking with explicit differentiation."
+                )
+
+            # Staleness check on target
+            now = time.time()
+            age_days = (now - target_row["accessed"]) / 86400
+            if age_days > 7:
+                recs.append(
+                    f"Target not accessed in {age_days:.0f} days — "
+                    "interference risk amplified by disuse."
+                )
+
+            if len(proactive) + len(retroactive) > 2 * top_k:
+                recs.append(
+                    "High competitor count — retrieval fan effect likely. "
+                    "Consider graph pruning or community-based routing."
+                )
+
+        if len(recs) == 1 and not scored:
+            pass  # keep the single isolation message
+        elif not recs:
+            recs.append("Interference levels within normal range.")
+
+        max_sim = max((s["similarity"] for s in scored), default=0.0)
+
+        return {
+            "target": node_id,
+            "target_label": target_row["label"],
+            "target_created": target_created,
+            "proactive_interference": proactive,
+            "retroactive_interference": retroactive,
+            "overall_risk": risk_level,
+            "risk_score": round(risk_score, 4),
+            "recommendations": recs,
+            "summary": {
+                "candidate_count": len(candidates),
+                "competitor_count": len(scored),
+                "proactive_count": len(proactive),
+                "retroactive_count": len(retroactive),
+                "max_similarity": round(max_sim, 4),
+                "metric": similarity_metric,
+                "hop_radius": hop_radius,
+            },
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
