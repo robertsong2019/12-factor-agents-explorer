@@ -48212,6 +48212,346 @@ class MemoryGraph:
         result["duration_seconds"] = round(time.time() - t0, 4)
         return result
 
+    # ── Cycle 405: attention_distribution() ──────────────────
+    def attention_distribution(
+        self,
+        *,
+        algorithm: str = "leiden",
+        now: float | None = None,
+        num_zones: int = 4,
+    ) -> dict:
+        """Analyse how attention (access patterns) is distributed
+        across the memory graph.
+
+        Bridges three subsystems to answer: **Is attention
+        concentrated on a few nodes, or spread evenly?**
+
+        1. **Attention Gini** — inequality of access recency across
+           nodes, using the same Lorenz-curve method as
+           ``lorenz_coefficient()`` but applied to access timestamps.
+        2. **Attention entropy** — Shannon entropy of the access
+           distribution (higher = more uniform attention).
+        3. **Attention zones** — each node classified into a zone
+           based on recency × weight:
+           - **hot** — recently accessed, high weight
+           - **warm** — recently accessed, lower weight
+           - **cool** — older access, moderate weight
+           - **cold** — old access, low weight
+           - **inactive** — very old or never meaningfully accessed
+        4. **Community attention** — per-community attention share,
+           identifying over-attended and under-attended clusters.
+        5. **Hotspots & blindspots**:
+           - *Hotspots*: high-attention nodes (top 5th percentile)
+           - *Blindspots*: high-weight nodes with low attention
+             (important but underutilised)
+
+        Use cases:
+        - Detect "rabbit holes" where attention is over-concentrated.
+        - Find important memories that are being neglected.
+        - Balance retrieval across knowledge communities.
+        - Evaluate memory system health beyond just structure.
+
+        Args:
+            algorithm: Community algorithm (``"leiden"``, ``"greedy"``,
+                ``"lp"``) for community attention share.
+            now: Override timestamp (default: wall clock).
+            num_zones: Number of attention zones (default 4 →
+                hot/warm/cool/cold; 5 adds "inactive").
+
+        Returns:
+            Dict with ``gini``, ``entropy``, "zones`` (dict of
+            zone → count), ``zone_distribution``, ``per_community``
+            (attention share by community), ``hotspots``,
+            ``blindspots``, ``summary``, and ``recommendations``.
+        """
+        import math as _math
+        import time as _time
+
+        t0 = _time.time()
+        ts = now if now is not None else _time.time()
+
+        result: dict = {
+            "gini": 0.0,
+            "entropy": 0.0,
+            "zones": {},
+            "zone_distribution": {},
+            "per_community": [],
+            "hotspots": [],
+            "blindspots": [],
+            "summary": {
+                "total_nodes": 0,
+                "hot_count": 0,
+                "cold_count": 0,
+                "blindspot_count": 0,
+                "hotspot_count": 0,
+                "dominant_zone": "N/A",
+                "attention_concentration": "N/A",
+            },
+            "recommendations": [],
+            "duration_seconds": 0.0,
+        }
+
+        # ── Gather nodes ──────────────────────────────────────
+        rows = self.conn.execute(
+            "SELECT id, label, weight, accessed, created, kind "
+            "FROM nodes"
+        ).fetchall()
+
+        n = len(rows)
+        result["summary"]["total_nodes"] = n
+
+        if n == 0:
+            result["recommendations"].append(
+                "Empty graph — no attention data.")
+            result["duration_seconds"] = round(_time.time() - t0, 4)
+            return result
+
+        # ── Compute attention scores ──────────────────────────
+        # Attention = recency × weight
+        # Recency: 1.0 if just accessed → 0.0 if very old
+        # Uses Ebbinghaus-style decay with 7-day stability
+        stability = 86400 * 7  # 7 days
+
+        node_data: list[dict] = []
+        for r in rows:
+            accessed = r["accessed"] or r["created"] or ts
+            weight = r["weight"] or 1.0
+            age = ts - accessed
+            recency = _math.exp(-age / stability)
+            attention = recency * weight
+            node_data.append({
+                "id": r["id"],
+                "label": r["label"],
+                "weight": weight,
+                "accessed": accessed,
+                "created": r["created"] or ts,
+                "kind": r["kind"] or "fact",
+                "recency": recency,
+                "attention": attention,
+            })
+
+        # ── 1. Attention Gini (Lorenz curve) ──────────────────
+        attentions = sorted(nd["attention"] for nd in node_data)
+        total_attention = sum(attentions)
+
+        if total_attention > 0:
+            cum_share = 0.0
+            curve = [(0.0, 0.0)]
+            for a in attentions:
+                cum_share += a
+                curve.append((len(curve) / n, cum_share / total_attention))
+            # Gini = 1 - 2 × area under Lorenz curve
+            area = 0.0
+            for i in range(n):
+                x0, y0 = curve[i]
+                x1, y1 = curve[i + 1]
+                area += (y0 + y1) * (x1 - x0) / 2.0
+            gini = max(0.0, min(1.0, 1.0 - 2.0 * area))
+        else:
+            gini = 0.0
+
+        result["gini"] = round(gini, 4)
+
+        # ── 2. Attention entropy (Shannon) ────────────────────
+        if total_attention > 0:
+            probs = [a / total_attention for a in attentions if a > 0]
+            if probs:
+                entropy = -sum(p * _math.log(p) for p in probs)
+                max_entropy = _math.log(len(probs)) if len(probs) > 1 else 1.0
+                norm_entropy = entropy / max_entropy if max_entropy > 0 else 1.0
+            else:
+                norm_entropy = 0.0
+        else:
+            norm_entropy = 0.0
+
+        result["entropy"] = round(norm_entropy, 4)
+
+        # ── 3. Attention zones ────────────────────────────────
+        # Absolute thresholds (not relative to graph distribution):
+        #   recency > 0.5  ≈ accessed within ~5 days
+        #   recency < 0.05 ≈ not accessed in ~20+ days
+        #   weight > 1.0   = above-default importance
+        recency_threshold = 0.5      # e^(-5d / 7d) ≈ 0.49
+        weight_threshold = 1.0       # default weight
+
+        for nd in node_data:
+            if num_zones >= 5 and nd["recency"] < 0.05:
+                zone = "inactive"
+            elif nd["recency"] >= recency_threshold and nd["weight"] >= weight_threshold:
+                zone = "hot"
+            elif nd["recency"] >= recency_threshold:
+                zone = "warm"
+            elif nd["weight"] >= weight_threshold:
+                zone = "cool"
+            else:
+                zone = "cold"
+            nd["zone"] = zone
+            result["zones"].setdefault(zone, 0)
+            result["zones"][zone] += 1
+
+        # Zone distribution percentages
+        for zone, count in result["zones"].items():
+            result["zone_distribution"][zone] = round(count / n, 4)
+
+        result["summary"]["hot_count"] = result["zones"].get("hot", 0)
+        result["summary"]["cold_count"] = (
+            result["zones"].get("cold", 0)
+            + result["zones"].get("inactive", 0)
+        )
+        result["summary"]["dominant_zone"] = (
+            max(result["zones"], key=result["zones"].get)
+            if result["zones"] else "N/A"
+        )
+
+        if gini > 0.7:
+            result["summary"]["attention_concentration"] = "high"
+        elif gini > 0.4:
+            result["summary"]["attention_concentration"] = "moderate"
+        else:
+            result["summary"]["attention_concentration"] = "distributed"
+
+        # ── 4. Community attention ────────────────────────────
+        try:
+            partition = self.community_partition(algorithm=algorithm)
+        except Exception:
+            partition = {}
+
+        if partition:
+            comm_attention: dict[int, float] = {}
+            comm_size: dict[int, int] = {}
+            for nd in node_data:
+                cid = partition.get(nd["id"], -1)
+                comm_attention[cid] = comm_attention.get(cid, 0.0) + nd["attention"]
+                comm_size[cid] = comm_size.get(cid, 0) + 1
+
+            total_comm_attention = sum(comm_attention.values())
+            comm_list = []
+            for cid in sorted(comm_attention, key=lambda c: comm_attention[c], reverse=True):
+                share = (
+                    comm_attention[cid] / total_comm_attention
+                    if total_comm_attention > 0 else 0.0
+                )
+                expected = comm_size[cid] / n
+                # Over/under ratio: actual share / expected share
+                ratio = share / expected if expected > 0 else 1.0
+                comm_list.append({
+                    "community": cid,
+                    "size": comm_size[cid],
+                    "attention_share": round(share, 4),
+                    "expected_share": round(expected, 4),
+                    "over_under_ratio": round(ratio, 4),
+                    "label": "over-attended" if ratio > 1.5
+                             else ("under-attended" if ratio < 0.5
+                               else "balanced"),
+                })
+
+            result["per_community"] = comm_list
+
+        # ── 5. Hotspots & blindspots ──────────────────────────
+        # Hotspots: top 5th percentile by attention
+        attentions_all = [nd["attention"] for nd in node_data]
+        if attentions_all:
+            sorted_a = sorted(attentions_all, reverse=True)
+            pct5_idx = max(0, int(n * 0.05) - 1)
+            hotspot_threshold = sorted_a[pct5_idx]
+
+            # Blindspot threshold: high weight (top 25th pct)
+            # but attention in bottom 25th pct
+            sorted_w = sorted(
+                [nd["weight"] for nd in node_data], reverse=True)
+            wt_75_idx = max(0, int(n * 0.25) - 1)
+            high_weight_threshold = sorted_w[wt_75_idx]
+
+            sorted_attn_asc = sorted(attentions_all)
+            attn_25_idx = int(n * 0.25)
+            low_attn_threshold = (
+                sorted_attn_asc[attn_25_idx]
+                if attn_25_idx < n else 0.0
+            )
+
+            for nd in node_data:
+                if nd["attention"] >= hotspot_threshold and hotspot_threshold > 0:
+                    result["hotspots"].append({
+                        "node_id": nd["id"],
+                        "label": nd["label"],
+                        "attention": round(nd["attention"], 4),
+                        "weight": round(nd["weight"], 4),
+                        "recency": round(nd["recency"], 4),
+                    })
+                if (nd["weight"] >= high_weight_threshold
+                        and nd["attention"] <= low_attn_threshold):
+                    result["blindspots"].append({
+                        "node_id": nd["id"],
+                        "label": nd["label"],
+                        "weight": round(nd["weight"], 4),
+                        "attention": round(nd["attention"], 4),
+                        "recency": round(nd["recency"], 4),
+                    })
+
+            # Sort and cap
+            result["hotspots"] = sorted(
+                result["hotspots"],
+                key=lambda x: x["attention"],
+                reverse=True,
+            )[:20]
+            result["blindspots"] = sorted(
+                result["blindspots"],
+                key=lambda x: x["weight"],
+                reverse=True,
+            )[:20]
+
+        result["summary"]["hotspot_count"] = len(result["hotspots"])
+        result["summary"]["blindspot_count"] = len(result["blindspots"])
+
+        # ── Recommendations ───────────────────────────────────
+        recs: list[str] = []
+
+        if gini > 0.7:
+            recs.append(
+                f"High attention concentration (Gini={gini:.3f}) — "
+                "attention is heavily skewed. Consider diversifying "
+                "retrieval or re-evaluating which memories matter.")
+        elif gini < 0.2 and n > 10:
+            recs.append(
+                f"Very uniform attention (Gini={gini:.3f}) — "
+                "may indicate lack of focus or prioritisation.")
+
+        if result["blindspots"]:
+            top_bs = result["blindspots"][0]
+            recs.append(
+                f"Blindspot: '{top_bs['label']}' has high weight "
+                f"({top_bs['weight']:.2f}) but low attention "
+                f"({top_bs['attention']:.4f}). Consider refreshing "
+                "or re-linking this memory.")
+
+        # Check community imbalance
+        if result["per_community"]:
+            over = [c for c in result["per_community"]
+                    if c["label"] == "over-attended"]
+            under = [c for c in result["per_community"]
+                     if c["label"] == "under-attended"]
+            if over and under:
+                recs.append(
+                    f"Attention imbalance: {len(over)} community(ies) "
+                    f"over-attended, {len(under)} under-attended. "
+                    "Consider community-aware retrieval balancing.")
+
+        cold_pct = (
+            result["zones"].get("cold", 0) + result["zones"].get("inactive", 0)
+        ) / n
+        if cold_pct > 0.5:
+            recs.append(
+                f"{cold_pct:.0%} of nodes are cold/inactive — "
+                "consider strategic forgetting or consolidation.")
+
+        if not recs:
+            recs.append(
+                "Attention distribution is within healthy range.")
+
+        result["recommendations"] = recs
+        result["duration_seconds"] = round(_time.time() - t0, 4)
+        return result
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
