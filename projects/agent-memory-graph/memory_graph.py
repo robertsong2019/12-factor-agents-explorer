@@ -47233,6 +47233,334 @@ class MemoryGraph:
             },
         }
 
+    # ════════════════════════════════════════════════════════════
+    #  Offline Consolidation: NREM + REM dual-phase
+    #  Research #056 — CLS theory + Auto-Dreamer + SCM + Anthropic Dreams
+    # ════════════════════════════════════════════════════════════
+
+    def consolidate(self, *,                          # noqa: C901
+                    recent_nodes: list[str] | None = None,
+                    retrieved_nodes: list[str] | None = None,
+                    max_working_ratio: float = 0.3,
+                    similarity_threshold: float = 0.65,
+                    importance_floor: float = 0.05,
+                    max_prune_ratio: float = 0.2,
+                    co_occurrence_boost: float = 0.1,
+                    entropy_threshold: float = 0.9,
+                    conflict_density_threshold: float = 0.3,
+                    min_nodes: int = 10,
+                    dry_run: bool = False,
+                    force: bool = False) -> dict:
+        """Offline memory consolidation via NREM + REM dual-phase.
+
+        Implements Research #056 — brings sleep-inspired consolidation
+        to agent memory graphs:
+
+        - **NREM phase**: Merge redundant nodes + strengthen co-occurring
+          connections (Hebbian plasticity).
+        - **REM phase**: Prune low-importance edges + synaptic downscaling
+          (SCM synaptic homeostasis).
+
+        Working region selection follows Auto-Dreamer: new nodes ∪
+        recently retrieved nodes ∪ their neighbors, capped by
+        ``max_working_ratio``.
+
+        Copy-on-write: when ``dry_run=True``, no mutations occur.
+
+        Trigger conditions (SCM-inspired) — skipped when ``force=True``:
+        - Memory entropy > ``entropy_threshold``
+        - Conflict edge density > ``conflict_density_threshold``
+        - Manual trigger (``force=True``)
+
+        Args:
+            recent_nodes: IDs of recently added nodes.
+            retrieved_nodes: IDs of recently retrieved nodes.
+            max_working_ratio: Max fraction of graph in working region.
+            similarity_threshold: Content similarity for merge candidates.
+            importance_floor: Below this → prune candidate.
+            max_prune_ratio: Never prune more than this fraction.
+            co_occurrence_boost: Weight increment for co-occurring edges.
+            entropy_threshold: Memory entropy trigger.
+            conflict_density_threshold: Conflict ratio trigger.
+            min_nodes: Minimum graph size for auto-trigger.
+            dry_run: Simulate only — no mutations.
+            force: Bypass trigger checks.
+
+        Returns:
+            Dict with ``triggered``, ``reason``, ``working_region_size``,
+            ``nrem`` (merges, strengthened), ``rem`` (pruned_nodes,
+            pruned_edges), ``entropy_before/after``, ``noise_reduction_pct``,
+            ``dry_run``, ``duration_seconds``.
+        """
+        t0 = time.time()
+
+        # ── Helpers ───────────────────────────────────────────────
+        all_ids = [r["id"] for r in self.conn.execute(
+            "SELECT id FROM nodes"
+        ).fetchall()]
+
+        result: dict = {
+            "triggered": False, "reason": "",
+            "working_region_size": 0,
+            "total_graph_size": len(all_ids),
+            "nrem": {"nodes_merged": 0, "edges_strengthened": 0,
+                     "merges": []},
+            "rem": {"nodes_pruned": 0, "edges_pruned": 0,
+                    "pruned": []},
+            "entropy_before": 0.0, "entropy_after": 0.0,
+            "noise_reduction_pct": 0.0,
+            "dry_run": dry_run,
+            "duration_seconds": 0.0,
+        }
+
+        def _node_importance(nid: str) -> float:
+            row = self.conn.execute(
+                "SELECT data, weight FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if not row:
+                return 0.0
+            try:
+                import json as _json
+                d = _json.loads(row["data"]) if row["data"] else {}
+            except Exception:
+                d = {}
+            return float(d.get("importance", row["weight"]))
+
+        def _memory_entropy() -> float:
+            imps = [_node_importance(nid) for nid in all_ids]
+            total = sum(imps)
+            if total <= 0:
+                return 0.0
+            probs = [i / total for i in imps if i > 0]
+            if not probs:
+                return 0.0
+            return -sum(p * math.log(p) for p in probs)
+
+        def _conflict_density() -> float:
+            total_edges = self.edge_count()
+            if total_edges == 0:
+                return 0.0
+            conflicts = self.conn.execute(
+                "SELECT COUNT(*) as c FROM edges WHERE relation IN "
+                "('contradicts','conflicts_with','invalidates')"
+            ).fetchone()["c"]
+            return conflicts / total_edges
+
+        # ── Check triggers ────────────────────────────────────────
+        if not force:
+            if len(all_ids) < min_nodes:
+                result["reason"] = (
+                    f"graph_too_small ({len(all_ids)} < {min_nodes})")
+                result["duration_seconds"] = round(time.time() - t0, 4)
+                return result
+
+            h = _memory_entropy()
+            if h > entropy_threshold:
+                result["triggered"] = True
+                result["reason"] = f"entropy ({h:.3f} > {entropy_threshold})"
+            else:
+                cd = _conflict_density()
+                if cd > conflict_density_threshold:
+                    result["triggered"] = True
+                    result["reason"] = (
+                        f"conflict_density ({cd:.3f} > "
+                        f"{conflict_density_threshold})")
+                else:
+                    result["reason"] = "no_trigger"
+                    result["duration_seconds"] = round(time.time() - t0, 4)
+                    return result
+        else:
+            result["triggered"] = True
+            result["reason"] = "forced"
+
+        # ── Select working region ─────────────────────────────────
+        recent_set = set(recent_nodes or [])
+        retrieved_set = set(retrieved_nodes or [])
+        region = recent_set | retrieved_set
+
+        # Expand to neighbors of retrieved nodes
+        for nid in list(retrieved_set):
+            if self.has_node(nid):
+                for nbr in self.neighbors(nid):
+                    region.add(nbr.id)
+
+        # Cap working region size
+        max_size = int(len(all_ids) * max_working_ratio)
+        if max_size < 2:
+            max_size = min(10, len(all_ids))
+        if len(region) > max_size:
+            ranked = sorted(region, key=_node_importance, reverse=True)
+            region = set(ranked[:max_size])
+
+        # If region too small, add high-importance nodes
+        if len(region) < 2:
+            ranked = sorted(all_ids, key=_node_importance, reverse=True)
+            region = set(ranked[:max_size])
+
+        result["working_region_size"] = len(region)
+        result["entropy_before"] = round(_memory_entropy(), 4)
+
+        if len(region) < 2:
+            result["reason"] = "working_region_too_small"
+            result["duration_seconds"] = round(time.time() - t0, 4)
+            return result
+
+        # ── NREM phase: merge + strengthen ────────────────────────
+        region_list = list(region)
+
+        # Find merge candidates via content similarity
+        merge_pairs: list[tuple[float, str, str]] = []
+        for i in range(len(region_list)):
+            for j in range(i + 1, len(region_list)):
+                n1, n2 = region_list[i], region_list[j]
+                if not self.has_node(n1) or not self.has_node(n2):
+                    continue
+                node1 = self.get_node(n1)
+                node2 = self.get_node(n2)
+                if not node1 or not node2:
+                    continue
+                sim = self._content_similarity(node1.label, node2.label)
+                if sim >= similarity_threshold:
+                    merge_pairs.append((sim, n1, n2))
+
+        merge_pairs.sort(reverse=True)
+
+        merged: set[str] = set()
+        for sim, n1, n2 in merge_pairs:
+            if n1 in merged or n2 in merged:
+                continue
+            if not self.has_node(n1) or not self.has_node(n2):
+                continue
+
+            # Keep higher-importance node as survivor
+            imp1, imp2 = _node_importance(n1), _node_importance(n2)
+            survivor, donor = (n1, n2) if imp1 >= imp2 else (n2, n1)
+
+            if not dry_run:
+                merged_node = self.merge_nodes(donor, survivor)
+                if merged_node:
+                    # Boost importance
+                    try:
+                        import json as _json
+                        row = self.conn.execute(
+                            "SELECT data FROM nodes WHERE id=?",
+                            (survivor,)
+                        ).fetchone()
+                        d = _json.loads(row["data"]) if row and row["data"] else {}
+                        d["importance"] = max(imp1, imp2) + co_occurrence_boost
+                        d.setdefault("merged_from", []).append(donor)
+                        self.conn.execute(
+                            "UPDATE nodes SET data=? WHERE id=?",
+                            (_json.dumps(d), survivor)
+                        )
+                        self.conn.commit()
+                    except Exception:
+                        pass
+
+            merged.add(donor)
+            result["nrem"]["nodes_merged"] += 1
+            result["nrem"]["merges"].append({
+                "donor": donor, "survivor": survivor,
+                "similarity": round(sim, 4),
+            })
+
+        # Strengthen co-occurring edges in region
+        for n1 in region_list:
+            if n1 in merged or not self.has_node(n1):
+                continue
+            for n2 in region_list:
+                if n2 in merged or n1 == n2 or not self.has_node(n2):
+                    continue
+                # Check if edge exists via SQL
+                edge_row = self.conn.execute(
+                    "SELECT weight FROM edges WHERE source=? AND target=?",
+                    (n1, n2)
+                ).fetchone()
+                if edge_row:
+                    old_w = edge_row["weight"]
+                    new_w = old_w + co_occurrence_boost
+                    if not dry_run:
+                        self.conn.execute(
+                            "UPDATE edges SET weight=? "
+                            "WHERE source=? AND target=?",
+                            (new_w, n1, n2)
+                        )
+                    result["nrem"]["edges_strengthened"] += 1
+
+        if not dry_run:
+            self.conn.commit()
+
+        # ── REM phase: prune + downscale ──────────────────────────
+        # Compute normalized importance for remaining region nodes
+        active_region = [n for n in region_list if n not in merged
+                         and self.has_node(n)]
+        if active_region:
+            imps = {nid: _node_importance(nid) for nid in active_region}
+            max_imp = max(imps.values()) or 1.0
+            normalized = {nid: imps[nid] / max_imp for nid in active_region}
+
+            # Prune low-importance edges within region
+            edges_to_prune = []
+            for nid in active_region:
+                nbrs = self.neighbors(nid)
+                for nbr in nbrs:
+                    if nbr.id in normalized:
+                        combined = (normalized.get(nid, 0) +
+                                    normalized.get(nbr.id, 0)) / 2
+                        edge_row = self.conn.execute(
+                            "SELECT weight FROM edges "
+                            "WHERE source=? AND target=?",
+                            (nid, nbr.id)
+                        ).fetchone()
+                        edge_w = edge_row["weight"] if edge_row else 1.0
+                        if (combined < importance_floor and
+                                edge_w < 0.5):
+                            edges_to_prune.append((nid, nbr.id))
+
+            max_edge_prune = int(len(edges_to_prune) * max_prune_ratio) + 1
+            for src, tgt in edges_to_prune[:max_edge_prune]:
+                if not dry_run:
+                    self.conn.execute(
+                        "DELETE FROM edges WHERE source=? AND target=?",
+                        (src, tgt)
+                    )
+                    self.conn.commit()
+                result["rem"]["edges_pruned"] += 1
+                result["rem"]["pruned"].append({
+                    "type": "edge", "source": src, "target": tgt
+                })
+
+            # Prune isolated low-importance nodes
+            nodes_to_prune = [
+                nid for nid in active_region
+                if normalized.get(nid, 0) < importance_floor
+            ]
+            max_node_prune = int(len(all_ids) * max_prune_ratio) + 1
+            pruned_count = 0
+            for nid in nodes_to_prune:
+                if pruned_count >= max_node_prune:
+                    break
+                # Only prune if node has no edges
+                degree = len(self.neighbors(nid))
+                if degree == 0:
+                    if not dry_run:
+                        self.delete_node(nid)
+                    result["rem"]["nodes_pruned"] += 1
+                    result["rem"]["pruned"].append({
+                        "type": "node", "id": nid
+                    })
+                    pruned_count += 1
+
+        # ── Quality metrics ───────────────────────────────────────
+        result["entropy_after"] = round(_memory_entropy(), 4)
+        if result["entropy_before"] > 0:
+            delta = result["entropy_before"] - result["entropy_after"]
+            result["noise_reduction_pct"] = round(
+                delta / result["entropy_before"] * 100, 2)
+
+        result["duration_seconds"] = round(time.time() - t0, 4)
+        return result
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
