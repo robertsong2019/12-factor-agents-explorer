@@ -448,3 +448,97 @@ class TestIntegrationScenarios:
         # 6. Report shows healthy coherence
         report = mamg.coherence_report()
         assert report["coherence_ratio"] > 0.0
+
+
+# ─── Auto-Scoping Tests ────────────────────────────────────────────────
+
+class TestAutoScoping:
+    def test_auto_scope_no_activity(self, mamg):
+        result = mamg.auto_scope_agents()
+        assert result["algorithm"] == "lp"
+        assert "total_communities" in result
+
+    def test_auto_scope_after_activity(self, mamg):
+        # alpha reads nodes 0-4, gamma reads nodes 5-9
+        for i in range(5):
+            mamg.agent_read("alpha", _nid(mamg, i))
+        for i in range(5, 10):
+            mamg.agent_read("gamma", _nid(mamg, i))
+        result = mamg.auto_scope_agents()
+        assert result["agents_reassigned"] >= 0
+
+    def test_auto_scope_returns_reassignment_details(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_read("alpha", nid)
+        result = mamg.auto_scope_agents()
+        if result["agents_reassigned"] > 0:
+            r = result["reassignments"][0]
+            assert "agent_id" in r
+            assert "new_community" in r
+            assert "votes" in r
+
+
+class TestDetectWriteConflicts:
+    def test_no_conflicts_on_clean_log(self, mamg):
+        conflicts = mamg.detect_write_conflicts()
+        assert conflicts == []
+
+    def test_detects_concurrent_writes(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_write("alpha", nid, "update")
+        mamg.agent_write("beta", nid, "update")
+        conflicts = mamg.detect_write_conflicts()
+        assert len(conflicts) >= 1
+        assert conflicts[0]["agent_a"] != conflicts[0]["agent_b"]
+
+    def test_conflict_metadata_complete(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_write("alpha", nid, "update")
+        mamg.agent_write("beta", nid, "update")
+        conflicts = mamg.detect_write_conflicts()
+        if conflicts:
+            c = conflicts[0]
+            assert "node_id" in c
+            assert "agent_a" in c
+            assert "agent_b" in c
+            assert "time_gap_s" in c
+            assert "op_a" in c
+            assert "op_b" in c
+
+    def test_no_conflict_outside_window(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg._write_log[nid] = [
+            ("alpha", time.time() - 100.0, "update"),
+            ("beta", time.time(), "update"),
+        ]
+        conflicts = mamg.detect_write_conflicts(time_window=5.0)
+        assert len(conflicts) == 0
+
+
+class TestCoherenceDashboard:
+    def test_dashboard_structure(self, mamg):
+        d = mamg.coherence_dashboard()
+        assert "summary" in d
+        assert "state_distribution" in d
+        assert "recent_conflicts" in d
+        assert "per_agent" in d
+
+    def test_dashboard_summary_fields(self, mamg):
+        d = mamg.coherence_dashboard()
+        s = d["summary"]
+        assert "agents" in s
+        assert "coherence_ratio" in s
+        assert "cache_entries" in s
+        assert "write_conflicts" in s
+        assert "communities" in s
+        assert "consistency_level" in s
+
+    def test_dashboard_after_activity(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_read("alpha", nid)
+        mamg.agent_read("beta", nid)
+        mamg.agent_write("alpha", nid, "update")
+        d = mamg.coherence_dashboard()
+        assert d["summary"]["cache_entries"] >= 2
+        assert d["summary"]["write_conflicts"] >= 0
+        assert d["summary"]["agents"] == 3

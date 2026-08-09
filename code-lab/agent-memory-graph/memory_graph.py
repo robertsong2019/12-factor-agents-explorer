@@ -21821,6 +21821,97 @@ class MultiAgentMemoryGraph:
                 invalidated.append(aid)
         return {"node_id": node_id, "invalidated_agents": invalidated}
 
+    # --- Community-Based Auto-Scoping ---
+
+    def auto_scope_agents(self, algorithm: str = "lp") -> dict:
+        """Automatically assign agents to communities based on graph topology.
+
+        Uses the base graph's community detection to partition nodes,
+        then assigns agents to communities based on which partition
+        contains the most nodes they've interacted with.
+
+        Agents in the same community get SHARED cache access — writes
+        propagate as invalidations. Cross-community writes trigger
+        governance checks.
+        """
+        # Run community detection on base graph
+        if algorithm == "lp":
+            communities = self.graph.community_detect()
+        elif algorithm == "greedy":
+            communities = self.graph.community_detection_greedy()
+        else:
+            communities = self.graph.community_detect()
+
+        # Invert: node_id → community_id
+        node_to_comm = {}
+        for comm_id, members in communities.items():
+            for nid in members:
+                node_to_comm[nid] = comm_id
+
+        # Assign each agent to the community they interact with most
+        reassignments = []
+        for agent_id, cache in self._caches.items():
+            comm_votes: dict = {}
+            for nid in cache:
+                comm = node_to_comm.get(nid)
+                if comm is not None:
+                    comm_votes[comm] = comm_votes.get(comm, 0) + 1
+            if comm_votes:
+                best_comm = max(comm_votes, key=comm_votes.get)
+                old_comm = self._agent_communities.get(agent_id)
+                self._agent_communities[agent_id] = best_comm
+                reassignments.append({
+                    "agent_id": agent_id,
+                    "old_community": old_comm,
+                    "new_community": best_comm,
+                    "votes": comm_votes,
+                })
+
+        return {
+            "algorithm": algorithm,
+            "total_communities": len(communities),
+            "agents_reassigned": len(reassignments),
+            "reassignments": reassignments,
+        }
+
+    def detect_write_conflicts(self, time_window: float = 5.0) -> list[dict]:
+        """Scan all write logs for conflicts within the time window."""
+        conflicts = []
+        for node_id, log in self._write_log.items():
+            for i, (a1, t1, op1) in enumerate(log):
+                for j, (a2, t2, op2) in enumerate(log):
+                    if i < j and a1 != a2 and abs(t1 - t2) < time_window:
+                        conflicts.append({
+                            "node_id": node_id,
+                            "agent_a": a1,
+                            "op_a": op1,
+                            "agent_b": a2,
+                            "op_b": op2,
+                            "time_gap_s": round(abs(t1 - t2), 3),
+                        })
+        return conflicts
+
+    def coherence_dashboard(self) -> dict:
+        """One-call overview: coherence + conflicts + scoping."""
+        report = self.coherence_report()
+        scope = self.scope_report()
+        conflicts = self.detect_write_conflicts()
+        return {
+            "summary": {
+                "agents": report["total_agents"],
+                "coherence_ratio": report["coherence_ratio"],
+                "cache_entries": report["total_cache_entries"],
+                "write_conflicts": len(conflicts),
+                "communities": scope["total_communities"],
+                "cross_community_nodes": scope["cross_community_shared_nodes"],
+                "unconsumed_invalidations": report["unconsumed_invalidations"],
+                "consistency_level": report["consistency_level"],
+            },
+            "state_distribution": report["state_distribution"],
+            "recent_conflicts": conflicts[-5:],
+            "per_agent": report["per_agent"],
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
