@@ -22002,6 +22002,127 @@ class MultiAgentMemoryGraph:
         }
 
 
+# ---------------------------------------------------------------------------
+# FastAppendQueue — System-1/System-2 dual-process memory write path
+# Research #033: Every SOTA system (Engram, Mem0 v3, H-Mem) separates hot
+# write path (no LLM, O(1) append) from cold async consolidation.
+# ---------------------------------------------------------------------------
+
+class FastAppendQueue:
+    """Hot-path append queue with async consolidation.
+
+    System-1 (hot): O(1) append to queue, no LLM, no graph mutation.
+    System-2 (cold): Async consolidation — merge, deduplicate, enrich,
+    then commit to base graph. Triggered manually or by threshold.
+
+    This mirrors the dual-process architecture from Engram (83.6% vs 73.2%)
+    and Mem0 v3 (3x latency reduction via ADD-only hot path).
+    """
+
+    def __init__(self, graph: MemoryGraph, threshold: int = 50,
+                 max_age_seconds: float = 300):
+        self.graph = graph
+        self.threshold = threshold
+        self.max_age = max_age_seconds
+        self._queue: list[dict] = []  # pending entries
+        self._first_append_ts: float | None = None
+        self._total_appended = 0
+        self._total_consolidated = 0
+        self._consolidation_count = 0
+
+    def append(self, label: str, kind: str = "fact", data: dict | None = None,
+               tags: list[str] | None = None, source: str | None = None) -> dict:
+        """System-1: O(1) hot-path append. Does NOT touch the base graph."""
+        entry = {
+            "label": label,
+            "kind": kind,
+            "data": data or {},
+            "tags": tags or [],
+            "source": source,
+            "appended_at": time.time(),
+        }
+        self._queue.append(entry)
+        self._total_appended += 1
+        if self._first_append_ts is None:
+            self._first_append_ts = entry["appended_at"]
+
+        return {
+            "status": "queued",
+            "queue_position": len(self._queue),
+            "should_consolidate": self._should_consolidate(),
+        }
+
+    def _should_consolidate(self) -> bool:
+        if len(self._queue) >= self.threshold:
+            return True
+        if self._first_append_ts and (time.time() - self._first_append_ts) > self.max_age:
+            return True
+        return False
+
+    def consolidate(self, deduplicate: bool = True) -> dict:
+        """System-2: Process queue and commit to base graph."""
+        if not self._queue:
+            return {"status": "empty", "consolidated": 0}
+
+        batch = self._queue[:]
+        self._queue.clear()
+        self._first_append_ts = None
+
+        added_nodes = []
+        skipped_dupes = 0
+
+        for entry in batch:
+            # Deduplicate: skip if same label exists
+            if deduplicate:
+                existing = self.graph.search_by_label(entry["label"], limit=1)
+                if existing:
+                    skipped_dupes += 1
+                    continue
+
+            node = self.graph.add(
+                entry["label"], entry["kind"],
+                entry["data"], entry["tags"]
+            )
+            added_nodes.append(node)
+
+        self._total_consolidated += len(added_nodes)
+        self._consolidation_count += 1
+
+        return {
+            "status": "consolidated",
+            "batch_size": len(batch),
+            "nodes_added": len(added_nodes),
+            "duplicates_skipped": skipped_dupes,
+            "consolidation_round": self._consolidation_count,
+            "remaining_in_queue": len(self._queue),
+        }
+
+    def maybe_consolidate(self) -> dict | None:
+        """Auto-consolidate if threshold or age is exceeded."""
+        if self._should_consolidate():
+            return self.consolidate()
+        return None
+
+    def stats(self) -> dict:
+        """Queue statistics."""
+        return {
+            "pending": len(self._queue),
+            "threshold": self.threshold,
+            "max_age_seconds": self.max_age,
+            "total_appended": self._total_appended,
+            "total_consolidated": self._total_consolidated,
+            "consolidation_rounds": self._consolidation_count,
+            "oldest_pending_age": (
+                round(time.time() - self._first_append_ts, 2)
+                if self._first_append_ts else 0
+            ),
+        }
+
+    def flush(self) -> dict:
+        """Force-consolidate all pending entries regardless of threshold."""
+        return self.consolidate()
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
