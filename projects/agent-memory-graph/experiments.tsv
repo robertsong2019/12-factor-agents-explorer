@@ -483,3 +483,13 @@ timestamp	commit	metric	value	status	description
 2026-08-09T01:00:00+08:00	742486b	test_count	7662→7723	keep	Cycle 392: community_entropy_profile() — per-community entropy analysis. Internal/external entropy, cohesion ratio, leave-one-community-out delta, inter-community JSD divergence matrix. Bridges community detection + entropy infrastructure. 3 algorithm variants (leiden/greedy/lp), 7 entropy indices. +61 tests. 283rd day.
 2026-08-09T01:00:00+08:00	742486b	test_pass_rate	100%	keep	All 7723 passing, 109.76s.
 2026-08-09T01:00:00+08:00	742486b	code_lines	46600→47469	keep	+869 lines (230 source/docstring + 639 test)
+2026-08-08T19:00:00+08:00	1bb6f0c	test_count	7400→7431	keep	Cycle 384: reconsolidation_feedback + foresight_signals + graph_resilience_score. 3 APIs. +31 tests. 282nd day.
+2026-08-08T19:30:00+08:00	4420872	test_count	7431→7459	keep	Cycle 385: classification_compare_batch() — all-methods × all-queries McNemar. +28 tests.
+2026-08-08T20:00:00+08:00	de48548	test_count	7459→7492	keep	Cycle 386: edge_entropy_sensitivity() — edge-level leave-one-out entropy. +33 tests.
+2026-08-08T20:30:00+08:00	f5fd8d4	test_count	7492→7514	keep	Cycle 387: graph_contrast_report() — structural + entropy comparison. +22 tests.
+2026-08-08T21:00:00+08:00	6528d2d	test_count	7514→7537	keep	Cycle 388: node_influence_zone() — k-hop entropy-weighted reach. +23 tests.
+2026-08-08T22:01:00+08:00	ce4e27d	test_count	7537→7596	keep	Cycle 389: temporal_freshness_map + memory_generations_report. +59 tests. 283rd day.
+2026-08-08T23:00:00+08:00	24ea48a	test_count	7596→7614	keep	Cycle 390: MCP server request metrics — tool call tracking. +18 tests.
+2026-08-09T00:00:00+08:00	f6f17ad	test_count	7614→7662	keep	Cycle 391: temporal_entropy_centrality() — combined structural-temporal importance ranking. +48 tests. 283rd day.
+2026-08-09T01:00:00+08:00	742486b	test_count	7662→7723	keep	Cycle 392: community_entropy_profile() — per-community entropy analysis. +61 tests. 283rd day.
+2026-08-09T19:00	56b3257	test_count	7723+25=7748	keep	Cycle 393-394: temporal_decay_impact() + edge_weight_entropy() + node_summary(). Standalone retention scoring, edge weight Shannon entropy, one-call per-node dashboard. 25 new tests. Zero regressions.

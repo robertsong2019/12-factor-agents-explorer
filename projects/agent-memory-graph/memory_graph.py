@@ -46833,6 +46833,289 @@ class MemoryGraph:
 
 
 
+    # ── Cycle 393: temporal_decay_impact() standalone ──────────
+    def temporal_decay_impact(self, node_ids: list = None,
+                              half_life_hours: float = 168.0) -> dict:
+        """Compute Ebbinghaus retention scores for nodes.
+
+        Standalone version of the retention calculation used in
+        ``temporal_spreading``. Useful for batch auditing memory
+        freshness without running full spreading activation.
+
+        Args:
+            node_ids:       specific nodes (None = all).
+            half_life_hours: decay half-life in hours (default 168 = 7d).
+
+        Returns:
+            Dict with:
+            - ``nodes``: list of {id, label, retention, age_hours, category}
+            - ``summary``: {mean_retention, fresh_count, stale_count,
+              at_risk_count, decay_impact_score}
+            - ``categories``: {fresh: R>0.7, learning: 0.4<R<=0.7,
+              at_risk: 0.2<R<=0.4, stale: R<=0.2}
+        """
+        import math
+        nodes = []
+        rows = self.conn.execute(
+            "SELECT id, label, accessed FROM nodes"
+        ).fetchall()
+        if node_ids:
+            id_set = set(node_ids)
+            rows = [r for r in rows if r[0] in id_set]
+
+        now = time.time()
+        decay_const = 0.693 / half_life_hours  # ln(2) / half_life
+
+        for nid, label, accessed in rows:
+            age_hours = max(0, (now - accessed) / 3600)
+            retention = math.exp(-decay_const * age_hours)
+            if retention > 0.7:
+                cat = "fresh"
+            elif retention > 0.4:
+                cat = "learning"
+            elif retention > 0.2:
+                cat = "at_risk"
+            else:
+                cat = "stale"
+            nodes.append({
+                "id": nid, "label": label,
+                "retention": round(retention, 4),
+                "age_hours": round(age_hours, 1),
+                "category": cat,
+            })
+
+        if not nodes:
+            return {"nodes": [], "summary": {"mean_retention": 0,
+                "fresh_count": 0, "stale_count": 0, "at_risk_count": 0,
+                "decay_impact_score": 0}, "categories": {}}
+
+        retentions = [n["retention"] for n in nodes]
+        fresh = sum(1 for n in nodes if n["category"] == "fresh")
+        stale = sum(1 for n in nodes if n["category"] == "stale")
+        at_risk = sum(1 for n in nodes if n["category"] == "at_risk")
+        mean_r = sum(retentions) / len(retentions)
+        # decay_impact_score: fraction of memory at risk or stale
+        decay_impact = (at_risk + stale) / len(nodes)
+
+        return {
+            "nodes": nodes,
+            "summary": {
+                "mean_retention": round(mean_r, 4),
+                "fresh_count": fresh,
+                "stale_count": stale,
+                "at_risk_count": at_risk,
+                "decay_impact_score": round(decay_impact, 4),
+            },
+            "categories": {
+                "fresh": fresh, "learning": len(nodes) - fresh - stale - at_risk,
+                "at_risk": at_risk, "stale": stale,
+            },
+        }
+
+    # ── Cycle 393: edge_weight_entropy() ───────────────────────
+    def edge_weight_entropy(self, relation: str = None) -> dict:
+        """Shannon entropy of edge weight distribution.
+
+        Measures how uniformly weights are distributed across edges.
+        High entropy = uniform distribution (no dominant edges).
+        Low entropy = concentrated weights (few heavy edges).
+
+        Args:
+            relation: filter by relation type (None = all edges).
+
+        Returns:
+            Dict with entropy, normalized_entropy, num_edges, weight_range,
+            and dominant_edges (top-3 by weight).
+        """
+        import math
+        if relation:
+            rows = self.conn.execute(
+                "SELECT weight FROM edges WHERE relation=? AND weight IS NOT NULL",
+                (relation,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT weight FROM edges WHERE weight IS NOT NULL"
+            ).fetchall()
+
+        n = len(rows)
+        if n == 0:
+            return {"entropy": 0.0, "normalized_entropy": 0.0,
+                    "num_edges": 0, "weight_range": (0, 0),
+                    "dominant_edges": []}
+
+        weights = [r[0] for r in rows]
+        total = sum(weights)
+        if total <= 0:
+            return {"entropy": 0.0, "normalized_entropy": 0.0,
+                    "num_edges": n, "weight_range": (min(weights), max(weights)),
+                    "dominant_edges": []}
+
+        entropy = 0.0
+        for w in weights:
+            p = w / total
+            if p > 0:
+                entropy -= p * math.log(p)
+
+        max_ent = math.log(n) if n > 1 else 1.0
+        norm_ent = entropy / max_ent if max_ent > 0 else 0.0
+
+        # Top-3 dominant edges
+        if relation:
+            top = self.conn.execute(
+                "SELECT source, target, weight FROM edges "
+                "WHERE relation=? ORDER BY weight DESC LIMIT 3",
+                (relation,)).fetchall()
+        else:
+            top = self.conn.execute(
+                "SELECT source, target, weight FROM edges "
+                "ORDER BY weight DESC LIMIT 3"
+            ).fetchall()
+
+        return {
+            "entropy": round(entropy, 6),
+            "normalized_entropy": round(norm_ent, 4),
+            "num_edges": n,
+            "weight_range": (round(min(weights), 4), round(max(weights), 4)),
+            "dominant_edges": [{"source": t[0], "target": t[1],
+                              "weight": round(t[2], 4)} for t in top],
+        }
+
+    # ── Cycle 394: node_summary() one-call dashboard ─────────
+    def node_summary(self, node_id, *,
+                     include_entropy: bool = True,
+                     include_centrality: bool = True,
+                     include_temporal: bool = True,
+                     include_trust: bool = True) -> dict:
+        """One-call per-node dashboard combining multiple dimensions.
+
+        Aggregates entropy importance, centrality, temporal staleness,
+        trust score, and connectivity into a single profile.
+
+        Args:
+            node_id:            target node ID.
+            include_entropy:    include entropy_contribution.
+            include_centrality: include degree centrality + pagerank.
+            include_temporal:   include staleness + forgetting_curve.
+            include_trust:      include trust_score (if available).
+
+        Returns:
+            Dict with:
+            - ``node``: {id, label, kind, weight, data, accessed}
+            - ``connectivity``: {in_degree, out_degree, total_degree, neighbors}
+            - ``entropy``: {contribution, ...} (if include_entropy)
+            - ``centrality``: {degree_centrality, pagerank} (if include_centrality)
+            - ``temporal``: {age_hours, staleness, retention} (if include_temporal)
+            - ``trust``: {trust_score, ...} (if include_trust)
+            - ``role``: inferred structural role
+        """
+        import math
+        node = self.get_node(node_id)
+        if not node:
+            return {"error": f"Node {node_id} not found"}
+
+        result = {"node": {"id": node.id, "label": node.label,
+                    "kind": node.kind, "weight": node.weight,
+                    "data": node.data, "accessed": node.accessed}}
+
+        # Connectivity
+        all_nbrs = self.neighbors(node_id)
+        # Use edges table for in/out degree
+        in_rows = self.conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE target=?", (node_id,)
+        ).fetchone()
+        out_rows = self.conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE source=?", (node_id,)
+        ).fetchone()
+        in_deg = in_rows[0] if in_rows else 0
+        out_deg = out_rows[0] if out_rows else 0
+        result["connectivity"] = {
+            "in_degree": in_deg,
+            "out_degree": out_deg,
+            "total_degree": in_deg + out_deg,
+            "neighbors": [n.label if hasattr(n, 'label') else str(n) for n in all_nbrs[:10]],
+        }
+
+        # Structural role
+        total = len(self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()) or 1
+        deg = in_deg + out_deg
+        if total > 1:
+            avg_deg = (2 * self.edge_count()) / total
+        else:
+            avg_deg = 0
+        if deg == 0:
+            role = "isolated"
+        elif deg >= avg_deg * 2 and in_deg > 0 and out_deg > 0:
+            role = "hub"
+        elif in_deg > out_deg * 2:
+            role = "sink"
+        elif out_deg > in_deg * 2:
+            role = "source"
+        else:
+            role = "member"
+        result["role"] = role
+
+        # Entropy
+        if include_entropy:
+            try:
+                contrib = self.entropy_contribution()
+                node_ent = next((c for c in contrib if c["node_id"] == node_id), None)
+                if node_ent:
+                    result["entropy"] = {
+                        "contribution": node_ent.get("contribution", 0),
+                        "classification": node_ent.get("classification", "unknown"),
+                    }
+                else:
+                    result["entropy"] = {"contribution": None, "classification": "unknown"}
+            except Exception:
+                result["entropy"] = {"contribution": None, "error": True}
+
+        # Centrality
+        if include_centrality:
+            try:
+                dc = self.degree_centrality(node_id)
+                result["centrality"] = {
+                    "degree_centrality": dc,
+                }
+            except Exception:
+                result["centrality"] = {}
+
+        # Temporal
+        if include_temporal:
+            try:
+                accessed = result["node"].get("accessed", time.time())
+                age_h = (time.time() - accessed) / 3600
+                # Staleness: exponential approach to 1 with 30-day half-life
+                staleness = 1 - math.exp(-math.log(2) * age_h / (30 * 24))  # 30-day half-life
+                retention = math.exp(-0.693 * age_h / 168)  # 7-day half-life
+                result["temporal"] = {
+                    "age_hours": round(age_h, 1),
+                    "staleness": round(min(1, staleness), 4),
+                    "retention": round(max(0, retention), 4),
+                }
+            except Exception:
+                result["temporal"] = {}
+
+        # Trust
+        if include_trust:
+            try:
+                # Try multiple trust methods (may not exist in all versions)
+                if hasattr(self, 'trust_score'):
+                    ts = self.trust_score(node_id)
+                    if isinstance(ts, dict) and "error" not in ts:
+                        result["trust"] = ts
+                    else:
+                        result["trust"] = {"score": None}
+                elif hasattr(self, 'node_set_provenance'):
+                    result["trust"] = {"score": None, "note": "provenance-only"}
+                else:
+                    result["trust"] = {"score": None}
+            except Exception as e:
+                result["trust"] = {"score": None, "error": str(e)}
+
+        return result
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     print("🧪 Agent Memory Graph Demo\n")
