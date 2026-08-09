@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~51,500 | ⭐ 知识图谱记忆引擎：497 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析 |
+| [agent-memory-graph](agent-memory-graph/) | ~51,400 | ⭐ 知识图谱记忆引擎：507 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量审计、注意力分布 |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 51,500+ 行的完整图记忆引擎，包含 497 公开 API 和 3,078+ 测试用例。
+该项目已从 300 行的教学示例演化为 51,400+ 行的完整图记忆引擎，包含 507 公开 API 和 2,894+ 测试用例。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -76,11 +76,20 @@
 | **OTel 遥测** | 2 | `enable_telemetry` — 自动包装 8 个 CRUD 方法的 OTel gen_ai.memory.* span；`gen_ai_system_metric` — GenAI 语义约定系统指标 |
 | **时序分析** | 4 | `temporal_freshness_map` — 全图时效性热力图；`memory_generations_report` — 记忆代际报告；`temporal_entropy_centrality` — 结构-时序复合重要性排名；`community_entropy_profile` — 社区级熵分析（内/外部熵、凝聚力、JSD 散度矩阵）|
 | **韧性分析** | 3 | `reconsolidation_feedback` — 记忆再巩固反馈循环；`foresight_signals` — 前瞻性信号检测；`graph_resilience_score` — 图韧性评分 |
+| **衰减与摘要** | 3 | `temporal_decay_impact` — Ebbinghaus 遗忘衰减评分；`edge_weight_entropy` — 边权重熵分布；`node_summary` — 节点一键概览（连通性+角色+熵+中心性+时序+信任）|
+| **多 Agent 一致性** | 4 | `MultiAgentMemoryGraph` — MESI 缓存一致性协议启发的多 Agent 记忆层；`auto_scope_agents` — 社区检测自动划定 Agent 写入范围；`detect_write_conflicts` — 冲突检测；`coherence_dashboard` — 一致性可观测面板 |
+| **一致性 API** | 3 | `commit_snapshot` — 4 级一致性快照（strong/eventual/causal/read-your-writes）；`causal_order_check` — 因果顺序验证；4 级一致性模型选择 |
+| **写入架构** | 1 | `FastAppendQueue` — System-1/System-2 双进程写入路径（热路径 append + 异步巩固）|
+| **离线巩固** | 3 | `consolidate` — NREM/REM 双阶段离线巩固（记忆压缩+重排+强化）；`consolidation_status` — 巩固触发条件仪表盘；`ResidualExtractor` — 压缩残差回收（规则式原子事实提取）|
+| **压缩残差** | 1 | `ResidualExtractor` — 从压缩后残余中提取日期/数量/命名实体/URL/技术术语等原子事实（ProGraph 启发）|
+| **检索质量** | 1 | `retrieval_quality_audit` — 检索后质量评估（多样性/覆盖率/相关性/冗余度→综合 QA 评分）|
+| **干扰分析** | 1 | `memory_interference_report` — 前摄/后摄干扰分析（基于结构重叠的竞争记忆识别）|
+| **注意力分布** | 1 | `attention_distribution` — 访问模式分析（Gini 系数/Shannon 熵/区域分类 hot-warm-cool-cold-inactive/社区注意力份额/热点与盲点）|
 | **MCP 工具** | 1 | MCP server 16 工具 + 请求指标追踪（延迟、错误率、调用日志）|
 
-### 📐 信息论进化史（Cycles 306–316 + 326–392）
+### 📐 信息论进化史（Cycles 306–316 + 326–405）
 
-最新里程碑：**社区熵分析 + 时序熵中心性 + OTel 遥测** — 从安全/性能/竞争扩散扩展到 OTel GenAI 遥测、图诊断报告套件、时序演化分析、社区级熵分析（Cycles 374-392）。
+最新里程碑：**注意力分布 + 检索质量审计 + 离线巩固 + 多 Agent 一致性** — 从时序/社区熵分析扩展到多 Agent 记忆一致性、System-1/2 双进程写入、NREM/REM 离线巩固、检索质量评估、干扰分析、注意力分布（Cycles 393-405）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -133,6 +142,16 @@
 | MCP 请求指标 | 390 | MCP server request metrics | 工具调用追踪（延迟、错误率、最近调用日志）|
 | 时序熵中心性 | 391 | `temporal_entropy_centrality` | 结构-时序复合重要性排名（40% 熵贡献 + 30% 陈旧度 + 30% 连通性）+ 6 条维护建议 |
 | 社区熵分析 | 392 | `community_entropy_profile` | 社区级熵分析（内/外部熵、凝聚力比、leave-one-out delta、社区间 JSD 散度矩阵）|
+| 衰减影响 | 393 | `temporal_decay_impact` | Ebbinghaus 遗忘曲线衰减评分（fresh/learning/at_risk/stale 四级 + decay_impact_score）|
+| 边权重熵 | 394 | `edge_weight_entropy`, `node_summary` | 边权重熵分布 + 节点一键概览（连通性/角色/熵/中心性/时序/信任聚合仪表盘）|
+| 多 Agent 一致性 | 395–397 | `MultiAgentMemoryGraph`, `auto_scope_agents`, `detect_write_conflicts`, `coherence_dashboard`, `write_amplification`, `graph_temporal_summary` | MESI 缓存一致性协议启发的多 Agent 记忆层 + 社区自动划定 + 冲突检测 + 一致性面板 + 写入放大检测 + 时序摘要 |
+| 4 级一致性模型 | 398 | `commit_snapshot`, `causal_order_check` | 显式一致性 API（strong/eventual/causal/read-your-writes）+ 因果顺序验证 |
+| 双进程写入 | 399 | `FastAppendQueue` | System-1（热路径 append）/ System-2（异步巩固）双进程写入架构 |
+| 压缩残差回收 | 400 🎉 | `ResidualExtractor` | 从压缩残余中提取原子事实（日期/数量/命名实体/URL/技术术语）|
+| 离线巩固 | 401–402 | `consolidate`, `consolidation_status` | NREM/REM 双阶段离线巩固（压缩+重排+强化）+ 触发条件仪表盘 |
+| 干扰分析 | 403 | `memory_interference_report` | 前摄/后摄干扰分析（Jaccard 结构重叠竞争记忆识别）|
+| 检索质量审计 | 404 | `retrieval_quality_audit` | 检索后质量评估（多样性/覆盖率/相关性/冗余度 → 综合 QA 评分）|
+| 注意力分布 | 405 | `attention_distribution` | 访问模式分析（Gini 系数 + Shannon 熵 + 5 级区域分类 + 社区注意力份额 + 热点/盲点）|
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---
