@@ -542,3 +542,97 @@ class TestCoherenceDashboard:
         assert d["summary"]["cache_entries"] >= 2
         assert d["summary"]["write_conflicts"] >= 0
         assert d["summary"]["agents"] == 3
+
+
+# ─── Consistency Level Tests ───────────────────────────────────────────
+
+class TestConsistencyLevel:
+    def test_set_consistency_level(self, mamg):
+        result = mamg.set_consistency_level("causal")
+        assert result["new_level"] == "causal"
+        assert result["old_level"] == "eventual"
+        assert mamg.consistency_level == "causal"
+
+    def test_set_invalid_level(self, mamg):
+        result = mamg.set_consistency_level("bogus")
+        assert "error" in result
+
+    def test_set_all_four_levels(self, mamg):
+        for level in ("session", "causal", "eventual", "committed"):
+            result = mamg.set_consistency_level(level)
+            assert result["new_level"] == level
+
+    def test_level_description_included(self, mamg):
+        result = mamg.set_consistency_level("committed")
+        assert "description" in result
+        assert len(result["description"]) > 0
+
+
+class TestCommitSnapshot:
+    def test_snapshot_basic(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_read("alpha", nid)
+        snap = mamg.commit_snapshot("alpha", "milestone-1")
+        assert snap["agent_id"] == "alpha"
+        assert snap["label"] == "milestone-1"
+        assert snap["node_count"] >= 1
+        assert snap["immutable"] is True
+
+    def test_snapshot_version_increments(self, mamg):
+        mamg.agent_read("alpha", _nid(mamg, 0))
+        s1 = mamg.commit_snapshot("alpha")
+        s2 = mamg.commit_snapshot("alpha")
+        assert s2["snapshot_version"] > s1["snapshot_version"]
+
+    def test_snapshot_unregistered_agent(self, mamg):
+        result = mamg.commit_snapshot("nobody")
+        assert "error" in result
+
+    def test_snapshot_only_includes_readable(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_read("alpha", nid)
+        mamg.agent_read("beta", nid)
+        mamg.agent_write("alpha", nid, "update")  # invalidates beta
+        snap = mamg.commit_snapshot("alpha")
+        # alpha has Modified state — should be included
+        assert snap["node_count"] >= 1
+
+
+class TestCausalOrderCheck:
+    def test_causally_consistent_after_sync(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_read("alpha", nid)
+        mamg.agent_read("beta", nid)
+        mamg.agent_write("alpha", nid, "update")
+        mamg.sync_agent("beta")  # beta refreshes
+        result = mamg.causal_order_check("alpha", "beta")
+        assert result["causally_consistent"] is True
+        assert result["visible"] >= 1
+        assert result["stale"] == 0
+
+    def test_not_consistent_before_sync(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_read("alpha", nid)
+        mamg.agent_read("beta", nid)
+        mamg.agent_write("alpha", nid, "update")
+        # beta has NOT synced yet
+        result = mamg.causal_order_check("alpha", "beta")
+        assert result["causally_consistent"] is False
+        assert result["stale"] >= 1
+
+    def test_no_writes_is_consistent(self, mamg):
+        result = mamg.causal_order_check("alpha", "beta")
+        assert result["causally_consistent"] is True
+        assert result["stale"] == 0
+
+    def test_unregistered_agent(self, mamg):
+        result = mamg.causal_order_check("alpha", "nobody")
+        assert "error" in result
+
+    def test_causal_check_returns_stale_ids(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_read("alpha", nid)
+        mamg.agent_read("beta", nid)
+        mamg.agent_write("alpha", nid, "update")
+        result = mamg.causal_order_check("alpha", "beta")
+        assert nid in result["stale_node_ids"]

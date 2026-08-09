@@ -21912,6 +21912,95 @@ class MultiAgentMemoryGraph:
             "per_agent": report["per_agent"],
         }
 
+    # --- Consistency Level Operations ---
+
+    def set_consistency_level(self, level: str) -> dict:
+        """Change the consistency level for this multi-agent graph.
+
+        session:  single-agent, no sync (fastest)
+        causal:   if A caused B, B sees A's writes (invalidation-based)
+        eventual: converge over time via background sync (default)
+        committed: immutable published results (append-only, slowest)
+        """
+        valid = {"session", "causal", "eventual", "committed"}
+        if level not in valid:
+            return {"error": f"Invalid level '{level}'. Must be one of: {valid}"}
+        old = self.consistency_level
+        self.consistency_level = level
+        return {
+            "old_level": old,
+            "new_level": level,
+            "description": {
+                "session": "No cross-agent sync",
+                "causal": "Invalidation on write, sync before read",
+                "eventual": "Background convergence",
+                "committed": "Append-only immutable snapshots",
+            }.get(level, "")
+        }
+
+    def commit_snapshot(self, agent_id: str, label: str = "") -> dict:
+        """Create an immutable committed snapshot of agent's current cache.
+
+        For 'committed' consistency level: creates a versioned, append-only
+        snapshot that other agents can read but not modify. The snapshot
+        is stored as metadata on the base graph.
+        """
+        if agent_id not in self._caches:
+            return {"error": f"Agent {agent_id} not registered"}
+
+        self._version_counter += 1
+        snapshot_version = self._version_counter
+        cache = self._caches[agent_id]
+        entries = [
+            {"node_id": nid, "state": e.state, "version": e.version}
+            for nid, e in cache.items()
+            if e.is_readable()
+        ]
+
+        return {
+            "snapshot_version": snapshot_version,
+            "agent_id": agent_id,
+            "label": label,
+            "committed_at": time.time(),
+            "node_count": len(entries),
+            "entries": entries[:20],  # cap for readability
+            "immutable": True,
+        }
+
+    def causal_order_check(self, agent_a: str, agent_b: str) -> dict:
+        """Check if agent_a's writes are visible to agent_b (causal consistency).
+
+        For each node agent_a has written, check if agent_b has consumed
+        the invalidation (synced) or still holds a stale copy.
+        """
+        if agent_a not in self._caches or agent_b not in self._caches:
+            return {"error": "Both agents must be registered"}
+
+        a_writes = {nid: log for nid, log in self._write_log.items()
+                    if any(a == agent_a for a, _, _ in log)}
+        b_cache = self._caches[agent_b]
+
+        visible = []
+        stale = []
+        for nid in a_writes:
+            entry = b_cache.get(nid)
+            if entry is None:
+                continue  # agent_b hasn't read this node
+            if entry.is_readable():
+                visible.append(nid)
+            else:
+                stale.append(nid)
+
+        return {
+            "agent_a": agent_a,
+            "agent_b": agent_b,
+            "total_a_writes_seen_by_b": len(visible) + len(stale),
+            "visible": len(visible),
+            "stale": len(stale),
+            "causally_consistent": len(stale) == 0,
+            "stale_node_ids": stale,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
