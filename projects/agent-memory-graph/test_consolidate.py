@@ -333,3 +333,90 @@ class TestConsolidateFullRun:
                                 max_prune_ratio=1.0)
         assert _node_count(mg) == nodes_before
         assert mg.count_edges() == edges_before
+
+
+class TestConsolidationStatus:
+    """Tests for consolidation_status() dashboard."""
+
+    def test_healthy_graph(self):
+        """Small clean graph → not recommended."""
+        mg = MemoryGraph()
+        for i in range(5):
+            mg.add(f"clean_{i}", kind="fact", data={"importance": 0.5})
+        result = mg.consolidation_status(entropy_threshold=2.0)
+        assert result["recommend"] is False
+        assert result["reason"] in ("graph_too_small", "healthy")
+
+    def test_entropy_recommend(self):
+        """High entropy → recommend."""
+        mg = MemoryGraph()
+        for i in range(15):
+            mg.add(f"item_{i}", kind="fact",
+                   data={"importance": 0.001 * i})
+        result = mg.consolidation_status(entropy_threshold=0.01)
+        assert result["recommend"] is True
+        assert "entropy" in result["reason"]
+
+    def test_conflict_recommend(self):
+        """High conflict density → recommend."""
+        mg = MemoryGraph()
+        nodes = []
+        for i in range(10):
+            n = mg.add(f"fact_{i}", kind="fact", data={"importance": 0.5})
+            nodes.append(n)
+        for i in range(7):
+            mg.link(nodes[i].id, nodes[i + 1].id, relation="contradicts")
+        result = mg.consolidation_status(conflict_density_threshold=0.3)
+        assert result["recommend"] is True
+        assert "conflict" in result["reason"]
+
+    def test_metrics_structure(self):
+        mg = MemoryGraph()
+        mg.add("A", kind="fact", data={"importance": 0.5})
+        mg.add("B", kind="fact", data={"importance": 0.7})
+        result = mg.consolidation_status()
+        required = {"node_count", "edge_count", "entropy",
+                    "conflict_density", "conflict_edges",
+                    "avg_importance", "stale_node_ratio",
+                    "stale_nodes"}
+        assert required.issubset(result["metrics"].keys())
+
+    def test_thresholds_echoed(self):
+        mg = MemoryGraph()
+        mg.add("X", kind="fact")
+        result = mg.consolidation_status(
+            entropy_threshold=1.5, conflict_density_threshold=0.4,
+            min_nodes=20)
+        assert result["thresholds"]["entropy"] == 1.5
+        assert result["thresholds"]["conflict_density"] == 0.4
+        assert result["thresholds"]["min_nodes"] == 20
+
+    def test_stale_detection(self):
+        """Old accessed timestamps → stale_node_ratio > 0."""
+        mg = MemoryGraph()
+        n = mg.add("old_node", kind="fact", data={"importance": 0.5})
+        # Manually backdate accessed time
+        old_ts = time.time() - 30 * 86400  # 30 days ago
+        mg.conn.execute(
+            "UPDATE nodes SET accessed=? WHERE id=?",
+            (old_ts, n.id)
+        )
+        mg.conn.commit()
+        result = mg.consolidation_status()
+        assert result["metrics"]["stale_node_ratio"] > 0.0
+        assert result["metrics"]["stale_nodes"] >= 1
+
+    def test_empty_graph_safe(self):
+        mg = MemoryGraph()
+        result = mg.consolidation_status()
+        assert result["recommend"] is False
+        assert result["metrics"]["node_count"] == 0
+
+    def test_no_mutation(self):
+        """consolidation_status() should not modify the graph."""
+        mg = MemoryGraph()
+        for i in range(5):
+            mg.add(f"n_{i}", kind="fact")
+        before = _node_count(mg)
+        mg.consolidation_status()
+        assert _node_count(mg) == before

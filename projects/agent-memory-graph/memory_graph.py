@@ -47561,6 +47561,121 @@ class MemoryGraph:
         result["duration_seconds"] = round(time.time() - t0, 4)
         return result
 
+    # ════════════════════════════════════════════════════════════
+    #  Consolidation Dashboard
+    # ════════════════════════════════════════════════════════════
+
+    def consolidation_status(self, *,                          # noqa: C901
+                             entropy_threshold: float = 0.9,
+                             conflict_density_threshold: float = 0.3,
+                             min_nodes: int = 10) -> dict:
+        """One-call consolidation recommendation dashboard.
+
+        Checks all trigger conditions from :meth:`consolidate` and
+        reports whether consolidation is recommended, along with the
+        key metrics used in the decision.
+
+        Non-mutating — safe to call any time.
+
+        Args:
+            entropy_threshold: Trigger level for memory entropy.
+            conflict_density_threshold: Trigger level for conflict ratio.
+            min_nodes: Minimum graph size for auto-trigger.
+
+        Returns:
+            Dict with ``recommend``, ``reason``, ``metrics``
+            (entropy, conflict_density, node_count, edge_count,
+            avg_importance, stale_node_ratio), and ``thresholds``.
+        """
+        all_ids = [r["id"] for r in self.conn.execute(
+            "SELECT id FROM nodes"
+        ).fetchall()]
+        node_count = len(all_ids)
+        edge_count = self.count_edges()
+
+        def _node_importance(nid: str) -> float:
+            row = self.conn.execute(
+                "SELECT data, weight FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if not row:
+                return 0.0
+            try:
+                import json as _json
+                d = _json.loads(row["data"]) if row["data"] else {}
+            except Exception:
+                d = {}
+            return float(d.get("importance", row["weight"]))
+
+        # Entropy
+        imps = [_node_importance(nid) for nid in all_ids]
+        total_imp = sum(imps)
+        if total_imp > 0:
+            probs = [i / total_imp for i in imps if i > 0]
+            entropy = -sum(p * math.log(p) for p in probs) if probs else 0.0
+        else:
+            entropy = 0.0
+
+        # Conflict density
+        if edge_count > 0:
+            conflicts = self.conn.execute(
+                "SELECT COUNT(*) as c FROM edges WHERE relation IN "
+                "('contradicts','conflicts_with','invalidates')"
+            ).fetchone()["c"]
+            conflict_density = conflicts / edge_count
+        else:
+            conflicts = 0
+            conflict_density = 0.0
+
+        # Average importance
+        avg_importance = (sum(imps) / node_count) if node_count else 0.0
+
+        # Stale node ratio (accessed > 7 days ago)
+        now = time.time()
+        week_ago = now - 7 * 86400
+        stale = self.conn.execute(
+            "SELECT COUNT(*) as c FROM nodes WHERE accessed < ?",
+            (week_ago,)
+        ).fetchone()["c"]
+        stale_ratio = stale / node_count if node_count else 0.0
+
+        # Decision
+        triggers = []
+        if node_count < min_nodes:
+            triggers.append("graph_too_small")
+        if entropy > entropy_threshold:
+            triggers.append(f"entropy ({entropy:.3f} > {entropy_threshold})")
+        if conflict_density > conflict_density_threshold:
+            triggers.append(
+                f"conflict_density ({conflict_density:.3f} > "
+                f"{conflict_density_threshold})")
+
+        real_triggers = [t for t in triggers if "too_small" not in t]
+        recommend = len(real_triggers) > 0
+        reason = "; ".join(real_triggers) if real_triggers else (
+            "graph_too_small" if "graph_too_small" in triggers
+            else "healthy"
+        )
+
+        return {
+            "recommend": recommend,
+            "reason": reason,
+            "metrics": {
+                "node_count": node_count,
+                "edge_count": edge_count,
+                "entropy": round(entropy, 4),
+                "conflict_density": round(conflict_density, 4),
+                "conflict_edges": conflicts,
+                "avg_importance": round(avg_importance, 4),
+                "stale_node_ratio": round(stale_ratio, 4),
+                "stale_nodes": stale,
+            },
+            "thresholds": {
+                "entropy": entropy_threshold,
+                "conflict_density": conflict_density_threshold,
+                "min_nodes": min_nodes,
+            },
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
