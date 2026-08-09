@@ -47115,6 +47115,124 @@ class MemoryGraph:
 
         return result
 
+    # ── Cycle 395: write_amplification() cascade detection ─────
+    def write_amplification(self, baseline_snapshot: dict = None,
+                            window_seconds: float = 300) -> dict:
+        """Detect write amplification — cascading effects beyond
+        expected impact.
+
+        Compares edge count change to event_log activity in a time
+        window. High amplification = one write triggered many
+        downstream edge changes (e.g., merge, consolidation,
+        quarantine cascade).
+
+        Args:
+            baseline_snapshot: prior graph snapshot from stats().
+                If None, captures current state as baseline.
+            window_seconds: time window for event analysis.
+
+        Returns:
+            Dict with:
+            - ``current_edges``: current edge count
+            - ``events_in_window``: events from event_log within window
+            - ``write_ops``: count of add/link/delete operations
+            - ``amplification_ratio``: events_per_write_operation
+            - ``cascade_detected``: True if ratio > 3
+            - ``top_cascading_ops``: most frequent operation types
+        """
+        now = time.time()
+        cutoff = now - window_seconds
+
+        # Count current edges
+        edge_count = self.edge_count()
+
+        # Analyze event log
+        events = self.event_log()
+        recent = [e for e in events
+                  if e.get("timestamp", 0) >= cutoff]
+
+        write_ops = ["add", "link", "delete", "update",
+                     "conflict_resolve", "strategic_forget",
+                     "consolidate_merge"]
+        op_count = sum(1 for e in recent
+                       if e.get("op") in write_ops)
+
+        # Categorize
+        op_types: dict[str, int] = defaultdict(int)
+        for e in recent:
+            op_types[e.get("op", "unknown")] += 1
+
+        # Sort by frequency
+        top_ops = sorted(op_types.items(),
+                         key=lambda x: -x[1])[:5]
+
+        ratio = op_count / max(1, len(recent)) if recent else 0
+        cascade = ratio > 0.8 or len(recent) > op_count * 3
+
+        return {
+            "current_edges": edge_count,
+            "events_in_window": len(recent),
+            "write_ops": op_count,
+            "amplification_ratio": round(ratio, 4),
+            "cascade_detected": cascade,
+            "top_cascading_ops": [{"op": op, "count": cnt}
+                                  for op, cnt in top_ops],
+            "window_seconds": window_seconds,
+        }
+
+    # ── Cycle 395: graph_temporal_summary() ─────────────────────
+    def graph_temporal_summary(self) -> dict:
+        """Temporal overview of the entire graph.
+
+        Combines age distribution, creation timeline, and recency
+        patterns into a single report.
+
+        Returns:
+            Dict with age buckets, creation timeline, and
+            recency stats.
+        """
+        now = time.time()
+        rows = self.conn.execute(
+            "SELECT created, accessed FROM nodes"
+        ).fetchall()
+
+        if not rows:
+            return {"total_nodes": 0, "age_buckets": {},
+                    "creation_timeline": {}, "recency": {}}
+
+        # Age buckets (by creation time)
+        buckets = {"<1h": 0, "1-24h": 0, "1-7d": 0,
+                  "7-30d": 0, ">30d": 0}
+        for created, accessed in rows:
+            age_h = (now - created) / 3600
+            if age_h < 1:
+                buckets["<1h"] += 1
+            elif age_h < 24:
+                buckets["1-24h"] += 1
+            elif age_h < 168:
+                buckets["1-7d"] += 1
+            elif age_h < 720:
+                buckets["7-30d"] += 1
+            else:
+                buckets[">30d"] += 1
+
+        # Recency
+        access_ages = [(now - accessed) / 3600 for _, accessed in rows]
+        mean_access = sum(access_ages) / len(access_ages)
+        recent_count = sum(1 for a in access_ages if a < 24)
+
+        return {
+            "total_nodes": len(rows),
+            "age_buckets": buckets,
+            "creation_timeline": {k: v for k, v in
+                sorted(buckets.items(), key=lambda x: -x[1])},
+            "recency": {
+                "mean_access_age_hours": round(mean_access, 1),
+                "accessed_in_24h": recent_count,
+                "accessed_fraction": round(recent_count / len(rows), 4),
+            },
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
