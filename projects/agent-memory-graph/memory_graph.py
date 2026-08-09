@@ -47917,6 +47917,301 @@ class MemoryGraph:
             },
         }
 
+    # ── Cycle 404: Retrieval Quality Audit ────────────────────
+
+    def retrieval_quality_audit(
+        self,
+        node_ids: list[str],
+        *,
+        weights: dict[str, float] | None = None,
+        algorithm: str = "leiden",
+        now: float | None = None,
+    ) -> dict:
+        """Post-retrieval quality assessment for a result set.
+
+        Bridges four subsystems to score how *good* a retrieval result is:
+
+        1. **Diversity** (community detection) — Are results spread
+           across different knowledge clusters, or all from one?
+        2. **Interference** (structural overlap) — Do results share
+           too many neighbours, risking confusion at the LLM layer?
+        3. **Freshness** (temporal analysis) — Are results fresh or
+           stale?
+        4. **Coverage** (graph span) — How much of the graph is
+           represented by the result set?
+
+        Each sub-score is normalised to [0, 1] (higher = better).
+        Overall quality is a weighted combination.
+
+        Use cases:
+        - Post-process any search (BM25, vector, GraphRAG) to flag
+          low-quality result sets.
+        - A/B compare retrieval strategies.
+        - Trigger re-retrieval or query expansion when quality is low.
+
+        Args:
+            node_ids: Ordered list of node IDs from a retrieval result.
+            weights: Optional dict overriding the default component
+                weights. Keys: ``"diversity"``, ``"interference"``,
+                ``"freshness"``, ``"coverage"``. Values need not sum
+                to 1 — auto-normalised.
+            algorithm: Community algorithm for diversity scoring
+                (``"leiden"``, ``"greedy"``, ``"lp"``).
+            now: Override timestamp for freshness computation.
+
+        Returns:
+            Dict with ``overall_quality``, ``diversity_score``,
+            ``interference_score``, ``freshness_score``,
+            ``coverage_score``, ``per_node`` (per-result metadata),
+            ``conflict_pairs`` (high-overlap result pairs),
+            ``recommendations``, and ``summary``.
+        """
+        t0 = time.time()
+        ts = now if now is not None else time.time()
+
+        # ── Default weights ────────────────────────────────────
+        w = {
+            "diversity": 0.30,
+            "interference": 0.30,
+            "freshness": 0.20,
+            "coverage": 0.20,
+        }
+        if weights:
+            for k, v in weights.items():
+                if k in w:
+                    w[k] = float(v)
+        wsum = sum(w.values())
+        if wsum <= 0:
+            wsum = 1.0
+        for k in w:
+            w[k] /= wsum
+
+        result: dict = {
+            "overall_quality": 0.0,
+            "diversity_score": 0.0,
+            "interference_score": 0.0,
+            "freshness_score": 0.0,
+            "coverage_score": 0.0,
+            "weights": {k: round(v, 4) for k, v in w.items()},
+            "per_node": [],
+            "conflict_pairs": [],
+            "recommendations": [],
+            "summary": {
+                "result_count": len(node_ids),
+                "graph_size": 0,
+                "communities_represented": 0,
+                "conflict_pair_count": 0,
+                "mean_freshness": 0.0,
+            },
+            "duration_seconds": 0.0,
+        }
+
+        # ── Validate node_ids ──────────────────────────────────
+        valid_ids: list[str] = []
+        for nid in node_ids:
+            row = self.conn.execute(
+                "SELECT id FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if row:
+                valid_ids.append(nid)
+
+        result["summary"]["result_count"] = len(valid_ids)
+
+        if not valid_ids:
+            result["duration_seconds"] = round(time.time() - t0, 4)
+            result["recommendations"].append(
+                "Empty result set — no nodes to audit.")
+            return result
+
+        # Graph size
+        graph_size = self.conn.execute(
+            "SELECT COUNT(*) as c FROM nodes"
+        ).fetchone()["c"]
+        result["summary"]["graph_size"] = graph_size
+
+        # ── 1. Diversity score ─────────────────────────────────
+        # Use community detection to check spread
+        try:
+            partition = self.community_partition(algorithm=algorithm)
+        except Exception:
+            partition = {}
+
+        if partition and valid_ids:
+            communities_seen = set()
+            for nid in valid_ids:
+                cid = partition.get(nid, -1)
+                communities_seen.add(cid)
+            num_communities_seen = len(communities_seen)
+            # Count total communities
+            all_comms = set(partition.values())
+            total_comms = max(len(all_comms), 1)
+            # Diversity: ratio of communities represented, but
+            # penalise if all results are from one community
+            diversity = min(1.0, num_communities_seen / max(total_comms, 1))
+            # Also factor in entropy of community distribution
+            comm_counts: dict[int, int] = {}
+            for nid in valid_ids:
+                cid = partition.get(nid, -1)
+                comm_counts[cid] = comm_counts.get(cid, 0) + 1
+            total = sum(comm_counts.values())
+            if total > 0 and len(comm_counts) > 1:
+                probs = [c / total for c in comm_counts.values()]
+                entropy = -sum(p * math.log(p) for p in probs if p > 0)
+                max_entropy = math.log(len(comm_counts))
+                norm_entropy = entropy / max_entropy if max_entropy > 0 else 1.0
+                # Blend: 50% ratio, 50% entropy
+                diversity = 0.5 * diversity + 0.5 * norm_entropy
+            result["diversity_score"] = round(diversity, 4)
+            result["summary"]["communities_represented"] = num_communities_seen
+        else:
+            # No partition available — neutral
+            result["diversity_score"] = 0.5
+
+        # ── 2. Interference score ──────────────────────────────
+        # Pairwise neighbour overlap among result nodes
+        def _neighbour_set(nid: str) -> set[str]:
+            rows = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION "
+                "SELECT source FROM edges WHERE target=?",
+                (nid, nid),
+            ).fetchall()
+            return {r[0] for r in rows}
+
+        node_neighbours: dict[str, set[str]] = {
+            nid: _neighbour_set(nid) for nid in valid_ids
+        }
+
+        n = len(valid_ids)
+        if n > 1:
+            total_overlap = 0.0
+            pair_count = 0
+            conflict_pairs: list[dict] = []
+            for i in range(n):
+                for j in range(i + 1, n):
+                    ni = node_neighbours[valid_ids[i]]
+                    nj = node_neighbours[valid_ids[j]]
+                    union = ni | nj
+                    if not union:
+                        continue
+                    jaccard = len(ni & nj) / len(union)
+                    total_overlap += jaccard
+                    pair_count += 1
+                    if jaccard >= 0.5:
+                        conflict_pairs.append({
+                            "node_a": valid_ids[i],
+                            "node_b": valid_ids[j],
+                            "overlap": round(jaccard, 4),
+                            "shared_neighbours": len(ni & nj),
+                        })
+            mean_overlap = total_overlap / pair_count if pair_count > 0 else 0.0
+            interference_score = 1.0 - mean_overlap
+            result["interference_score"] = round(interference_score, 4)
+            result["conflict_pairs"] = sorted(
+                conflict_pairs, key=lambda x: x["overlap"], reverse=True
+            )[:20]
+            result["summary"]["conflict_pair_count"] = len(conflict_pairs)
+        else:
+            # Single result — no interference possible
+            result["interference_score"] = 1.0
+
+        # ── 3. Freshness score ─────────────────────────────────
+        freshness_values: list[float] = []
+        for nid in valid_ids:
+            row = self.conn.execute(
+                "SELECT accessed, created FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if row:
+                age = ts - row["accessed"]
+                # Retention via Ebbinghaus: e^(-age/S), S~86400*3 (3 days)
+                stability = 86400 * 3
+                retention = math.exp(-age / stability)
+                freshness_values.append(retention)
+
+        if freshness_values:
+            mean_freshness = sum(freshness_values) / len(freshness_values)
+            result["freshness_score"] = round(mean_freshness, 4)
+            result["summary"]["mean_freshness"] = round(mean_freshness, 4)
+        else:
+            result["freshness_score"] = 0.5
+
+        # ── 4. Coverage score ──────────────────────────────────
+        # How much of the graph is "reachable" from these results?
+        if graph_size > 0 and valid_ids:
+            # Count nodes within 1-hop of the result set
+            covered: set[str] = set(valid_ids)
+            for nid in valid_ids:
+                covered |= node_neighbours.get(nid, set())
+            coverage = min(1.0, len(covered) / graph_size)
+            result["coverage_score"] = round(coverage, 4)
+        else:
+            result["coverage_score"] = 0.0
+
+        # ── Overall quality ────────────────────────────────────
+        overall = (
+            w["diversity"] * result["diversity_score"]
+            + w["interference"] * result["interference_score"]
+            + w["freshness"] * result["freshness_score"]
+            + w["coverage"] * result["coverage_score"]
+        )
+        result["overall_quality"] = round(overall, 4)
+
+        # ── Per-node metadata ──────────────────────────────────
+        for nid in valid_ids:
+            row = self.conn.execute(
+                "SELECT label, weight, accessed, created FROM nodes WHERE id=?",
+                (nid,),
+            ).fetchone()
+            if row:
+                age = ts - row["accessed"]
+                stability = 86400 * 3
+                retention = math.exp(-age / stability)
+                result["per_node"].append({
+                    "node_id": nid,
+                    "label": row["label"],
+                    "weight": round(row["weight"], 4),
+                    "freshness": round(retention, 4),
+                    "community": partition.get(nid, -1),
+                    "neighbour_count": len(node_neighbours.get(nid, set())),
+                })
+
+        # ── Recommendations ────────────────────────────────────
+        recs: list[str] = []
+
+        if result["diversity_score"] < 0.3:
+            recs.append(
+                "Low diversity — results cluster in one community. "
+                "Consider query expansion or multi-hop retrieval.")
+
+        if result["interference_score"] < 0.5:
+            recs.append(
+                "High interference — several results share many "
+                "neighbours, risking confusion. Consider de-duplicating "
+                "or re-ranking by distinctiveness.")
+
+        if result["freshness_score"] < 0.3:
+            recs.append(
+                "Stale results — consider refreshing memories or "
+                "prioritising recently created content.")
+
+        if result["coverage_score"] < 0.1 and graph_size > 50:
+            recs.append(
+                "Low coverage — results touch a small fraction of "
+                "the graph. Consider GraphRAG hybrid retrieval.")
+
+        if result["conflict_pairs"]:
+            top_pair = result["conflict_pairs"][0]
+            recs.append(
+                f"Top conflict: '{top_pair['node_a']}' vs "
+                f"'{top_pair['node_b']}' (overlap="
+                f"{top_pair['overlap']:.3f}).")
+
+        if not recs:
+            recs.append("Retrieval quality is within normal range.")
+
+        result["recommendations"] = recs
+        result["duration_seconds"] = round(time.time() - t0, 4)
+        return result
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
