@@ -22123,6 +22123,131 @@ class FastAppendQueue:
         return self.consolidate()
 
 
+# ---------------------------------------------------------------------------
+# ResidualExtractor — compression residuals recovery (ProGraph pattern)
+# Research #045: co-extract atomic facts alongside summary in same prompt.
+# Disabling residuals costs -8.6pp on LoCoMo. Zero extra LLM calls.
+# ---------------------------------------------------------------------------
+
+class ResidualExtractor:
+    """Extract atomic facts (residuals) from node content.
+
+    When nodes are consolidated into summaries, narrative paraphrase
+    destroys dates, quantities, and named items. Residuals recover
+    these at zero extra LLM cost by extracting atomic facts alongside
+    the summary in the same prompt.
+
+    This implementation uses rule-based extraction (no LLM needed):
+    - Dates: YYYY-MM-DD, relative dates
+    - Numbers: quantities, measurements
+    - Named entities: capitalized sequences
+    - Key-value pairs from structured data
+    """
+
+    # Patterns for atomic fact extraction
+    DATE_PATTERNS = [
+        r'\d{4}-\d{2}-\d{2}',           # 2026-08-09
+        r'\d{4}/\d{2}/\d{2}',           # 2026/08/09
+        r'\d{1,2}/\d{1,2}/\d{4}',       # 9/8/2026
+        r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}',
+        r'yesterday|today|tomorrow|last week|next week',
+    ]
+
+    def __init__(self):
+        import re
+        self._re = re
+        self._compiled = [self._re.compile(p, self._re.IGNORECASE)
+                          for p in self.DATE_PATTERNS]
+
+    def extract(self, content: str, node_data: dict | None = None) -> list[str]:
+        """Extract atomic residuals from content + structured data.
+
+        Returns a list of atomic fact strings that would be lost in
+        a narrative summary.
+        """
+        residuals = []
+
+        # 1. Dates from content
+        for pattern in self._compiled:
+            for m in pattern.finditer(content):
+                residuals.append(f"date: {m.group()}")
+
+        # 2. Numbers with context (quantities, measurements)
+        for m in self._re.finditer(r'(\d+(?:\.\d+)?)\s*(ms|kg|km|cm|min|hour|day|week|month|year|byte|KB|MB|GB|TB|%|pp|x|m|s)', content, self._re.IGNORECASE):
+            residuals.append(f"quantity: {m.group()}")
+
+        # 3. Key-value pairs from structured data
+        if node_data:
+            for k, v in node_data.items():
+                if isinstance(v, (int, float, str)) and str(v).strip():
+                    residuals.append(f"{k}: {v}")
+
+        # 4. Named entities (capitalized sequences 2+ words)
+        for m in self._re.finditer(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b', content):
+            name = m.group()
+            if len(name) > 3:  # skip short false positives
+                residuals.append(f"entity: {name}")
+
+        # 5. URLs
+        for m in self._re.finditer(r'https?://\S+', content):
+            residuals.append(f"url: {m.group()}")
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique = []
+        for r in residuals:
+            if r not in seen:
+                seen.add(r)
+                unique.append(r)
+
+        return unique
+
+    def extract_from_node(self, graph: MemoryGraph, node_id: str) -> list[str]:
+        """Extract residuals from a specific node in the graph."""
+        node = graph.get_node(node_id)
+        if not node:
+            return []
+        import json
+        data = {}
+        try:
+            data = json.loads(node.data) if isinstance(node.data, str) else node.data
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return self.extract(node.label + " " + (data.get("text", "") if isinstance(data, dict) else ""), data if isinstance(data, dict) else {})
+
+    def compression_audit(self, graph: MemoryGraph, summary_node_id: str,
+                          source_node_ids: list[str]) -> dict:
+        """Audit how much information a summary preserves vs its sources.
+
+        Returns:
+          - total_source_residuals: atomic facts in source nodes
+          - preserved_in_summary: facts still findable in summary
+          - lost_residuals: facts destroyed by summarization
+          - retention_rate: preserved / total
+        """
+        source_residuals = []
+        for nid in source_node_ids:
+            source_residuals.extend(self.extract_from_node(graph, nid))
+
+        summary_residuals = set(self.extract_from_node(graph, summary_node_id))
+
+        preserved = [r for r in source_residuals if r in summary_residuals]
+        lost = [r for r in source_residuals if r not in summary_residuals]
+
+        total = len(source_residuals)
+        retention = len(preserved) / total if total > 0 else 1.0
+
+        return {
+            "summary_node": summary_node_id,
+            "source_count": len(source_node_ids),
+            "total_source_residuals": total,
+            "preserved": len(preserved),
+            "lost": len(lost),
+            "retention_rate": round(retention, 4),
+            "lost_residuals": lost[:20],  # cap for readability
+        }
+
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     mg = MemoryGraph()
