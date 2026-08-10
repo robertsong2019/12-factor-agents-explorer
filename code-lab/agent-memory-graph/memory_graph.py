@@ -1649,6 +1649,95 @@ class MemoryGraph:
         results.sort(key=lambda x: x["importance"], reverse=True)
         return results[:limit]
 
+    def link_prediction(self, node_id: str = None, method: str = "adamic_adar",
+                        limit: int = 10, min_score: float = 0.0) -> list[dict]:
+        """Predict missing edges using graph topology heuristics.
+
+        Three scoring methods:
+          - **adamic_adar**: sum of 1/log(degree) over shared neighbors.
+            Favors connections through low-degree hubs (resource index).
+          - **preferential_attachment**: degree(a) × degree(b).
+            Favors connecting high-degree nodes (rich-get-richer model).
+          - **common_neighbors**: raw count of shared neighbors.
+            Simple but effective baseline.
+
+        If *node_id* is given, predicts edges from that node to all others.
+        If *node_id* is None, predicts top missing edges across the entire graph.
+
+        Returns list of dicts with source, target, score, method, shared_neighbors.
+        """
+        import math
+
+        valid_methods = {"adamic_adar", "preferential_attachment", "common_neighbors"}
+        if method not in valid_methods:
+            raise ValueError(
+                f"Unknown method '{method}'. Valid: {sorted(valid_methods)}"
+            )
+
+        # Build neighbor adjacency (undirected)
+        adj: dict[str, set[str]] = {}
+        for s, t in self.conn.execute("SELECT source, target FROM edges"):
+            adj.setdefault(s, set()).add(t)
+            adj.setdefault(t, set()).add(s)
+
+        node_ids = list(adj.keys())
+        if node_id and node_id not in adj:
+            return []
+
+        # Compute degree for each node
+        degree = {nid: len(neighbors) for nid, neighbors in adj.items()}
+
+        # Existing edges (directed pairs in DB)
+        existing = set()
+        for s, t in self.conn.execute("SELECT source, target FROM edges"):
+            existing.add((s, t))
+            existing.add((t, s))
+
+        candidates = []
+
+        if node_id:
+            # Single-source prediction
+            sources = [node_id]
+        else:
+            # All-pairs (limit to top-degree nodes for efficiency)
+            sources = sorted(node_ids, key=lambda n: degree[n], reverse=True)[:50]
+
+        for src in sources:
+            src_neighbors = adj[src]
+            for dst in node_ids:
+                if dst == src or (src, dst) in existing:
+                    continue
+                dst_neighbors = adj[dst]
+                shared = src_neighbors & dst_neighbors
+                if not shared:
+                    if method == "preferential_attachment":
+                        score = degree[src] * degree[dst]
+                    else:
+                        continue
+                else:
+                    if method == "adamic_adar":
+                        score = sum(
+                            1.0 / math.log(degree[sn])
+                            for sn in shared
+                            if degree[sn] > 1
+                        )
+                    elif method == "preferential_attachment":
+                        score = degree[src] * degree[dst]
+                    else:  # common_neighbors
+                        score = float(len(shared))
+                if score > min_score:
+                    candidates.append({
+                        "source": src,
+                        "target": dst,
+                        "score": round(score, 4),
+                        "method": method,
+                        "shared_neighbors": sorted(shared)[:10],
+                        "shared_count": len(shared),
+                    })
+
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        return candidates[:limit]
+
     def patch(self, diff: dict, source: 'MemoryGraph' = None) -> dict:
         """Apply a graph_diff result to sync this graph.
 
