@@ -14,23 +14,23 @@
 
 ---
 
-## Current Focus (2026-08-07)
+## Current Focus (2026-08-10)
 
 ### Active Theme
-Autoresearch 方法论实践 — amg **连续281天零回滚率** 🏆。Entropy framework **40+ APIs**: 7 degree-based Shannon + 3 spectral (von Neumann, QJSD, spectral_divergence) + 1 dashboard + 2 generalized (Tsallis, Rényi) + 4 inter-graph (JSD, cross-entropy, KL divergence, QJSD) + TemporalEntropyTracker + **entropy_contribution** (leave-one-out) + **entropy_stability** (Monte Carlo) + **spectral_divergence_scan** (multi-resolution) + **entropy_fingerprint** (12+ dim) + **fingerprint_distance** (L2) + **entropy_explain** (5-layer human-readable) + **entropy_scan/scan_compare/depth_profile/scan_summary** (4-API multi-scale suite) + **25-API classification suite** ✅ + **three_layer_router_cascade** + **conditioned_traverse** + **project_graph** + **multi_perspective_analysis** ✅ + **4-API provenance/lineage suite** ✅ + **topology stats** + **graph_digest** (SHA-256) + **copy_graph** + **FINGEREntropy** + **StreamingGraph** + **PPR** + **multi_hop_reason** + **spreading_activation** + **activation_trace** (explainable SA with wave log + bottleneck detection) + **competitive_spreading** (lateral inhibition & reinforcement) + **SummaryTree** (5-level temporal hierarchy) + **enrich_node** + **code-aware APIs** (explainCode + recordCodeDecision + impactAnalysis) + **5-API OWASP ASI06 security suite** (trust_score + memory_quarantine + selective_repair + memory_audit_report + detect_provenance_laundering + security_dashboard) + **amg-bench** (performance harness)。Adaptive forgetting suite complete。EntityResolver + entropy-weighted retrieval。Triple-loop quality system complete。acs **200天** 🏆。context-forge **1458 tests** / 11000+ lines (F79, 21 dimensions)。MCP server expanded to **16 tools** (entropy, reason, snapshot, code_explain, quarantine, security added)。Research #031-#052: all fully implemented ✅.
+Autoresearch 方法论实践 — amg **连续285天零回滚率** 🏆。Entropy framework **40+ APIs**: 7 degree-based Shannon + 3 spectral (von Neumann, QJSD, spectral_divergence) + 1 dashboard + 2 generalized (Tsallis, Rényi) + 4 inter-graph (JSD, cross-entropy, KL divergence, QJSD) + TemporalEntropyTracker + **entropy_contribution** (leave-one-out) + **entropy_stability** (Monte Carlo) + **spectral_divergence_scan** (multi-resolution) + **entropy_fingerprint** (12+ dim) + **fingerprint_distance** (L2) + **entropy_explain** (5-layer human-readable) + **entropy_scan/scan_compare/depth_profile/scan_summary** (4-API multi-scale suite) + **25-API classification suite** ✅ + **three_layer_router_cascade** + **conditioned_traverse** + **project_graph** + **multi_perspective_analysis** ✅ + **4-API provenance/lineage suite** ✅ + **topology stats** + **graph_digest** (SHA-256) + **copy_graph** + **FINGEREntropy** + **StreamingGraph** + **PPR** + **multi_hop_reason** + **spreading_activation** + **activation_trace** (explainable SA with wave log + bottleneck detection) + **competitive_spreading** (lateral inhibition & reinforcement) + **SummaryTree** (5-level temporal hierarchy) + **enrich_node** + **code-aware APIs** (explainCode + recordCodeDecision + impactAnalysis) + **5-API OWASP ASI06 security suite** (trust_score + memory_quarantine + selective_repair + memory_audit_report + detect_provenance_laundering + security_dashboard) + **amg-bench** (performance harness)。Adaptive forgetting suite complete。EntityResolver + entropy-weighted retrieval。Triple-loop quality system complete。acs **200天** 🏆。context-forge **1458 tests** / 11000+ lines (F79, 21 dimensions)。MCP server expanded to **16 tools**. **Multi-agent coherence** (MESI 4-state, Cycle 396) + **FastAppendQueue** (System-1/System-2, Cycle 399) + **consolidate()** NREM/REM (Cycle 401) + **retrieval_quality_audit()** (Cycle 404) + **attention_distribution()** (Cycle 405) (entropy, reason, snapshot, code_explain, quarantine, security added)。Research #031-#052: all fully implemented ✅.
 
-### 项目测试总量 (08-07 快照)
+### 项目测试总量 (08-10 快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
 | agent-memory-graph (TS) | **7349** | 1000+ | entropy framework (40+) + **25-API classification suite** ✅ + FINGEREntropy + StreamingGraph + PPR + multi_hop_reason + spreading_activation + SummaryTree + enrich_node + code-aware APIs + provenance/lineage (4) + entropy scan (4) + adaptive forgetting (6) + EntityResolver (8) + MCP Day 1-5 |
-| agent-memory-graph (Python) | **2459** | 500+ | entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + **activation_trace** + **competitive_spreading** + SummaryTree + enrich_node + code-aware APIs + provenance (4) + **OWASP security suite (6)** + **amg-bench** + MCP 16 tools |
+| agent-memory-graph (Python) | **7926** | 873+ | entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace + competitive_spreading + SummaryTree + enrich_node + code-aware + provenance (4) + OWASP security (6) + amg-bench + MCP 16 tools + OTel telemetry + **MultiAgentMemoryGraph** (MESI) + FastAppendQueue + ResidualExtractor + **consolidate()** NREM/REM + retrieval_quality_audit + attention_distribution |
 | structured-output-toolkit | **571** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
 | agent-task-cli | **1485** | 226 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F226** |
-| **四项目总计** | **12303** | — | — |
+| **四项目总计** | **17331** | — | 7349+7926+571+1485. Python +203 from cycles 404-405 |
 
 其他: context-forge **1458** / nano-agent **791** / amg-mcp **122** / prompt-weaver 223 / openclaw-langgraph-bridge 261 / better-ralph-core 376 / lab/agent-observability 166 / AMS 645 / prompt-router 72 / edge-agent-runtime **345** / agent-mesh-network **505** / prompt-mgr **196** / session-archiver 44 / agent-cost-tracker 11
 
-**全项目总计**: ~20000 tests (amg Python 2459 ✅, prompt-mgr 196 ✅)
+**全项目总计**: ~25700 tests (amg Python 7926 ✅, code-lab 2852 ✅)
 
 ### 最高优先级
 **README → npm publish** (四项目)。12303 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 竞争窗口收紧。**25-API classification suite** = full pipeline (single-match → ensemble → meta → evaluation → optimization → **explainability** + **uncertainty quantification**, incl. LOOCV + calibration + reference optimization + noise-adaptive + confusion_explain + counterfactual + **confidence_interval**)。**Provenance/lineage suite** = first npm library with cascading correction。**Entropy scan suite** = multi-scale Rényi sweep。**Three-layer router cascade** = MemFlow production pattern。
@@ -40,6 +40,16 @@ Autoresearch 方法论实践 — amg **连续281天零回滚率** 🏆。Entropy
 
 - **07-14 cycles 239-242**: immutable_store + compact_node + serialize + RelationIntegrityChecker. Context Engineering Layer 3/4 ✅. +145 tests
 - **07-14 Research #008**: Memory Security — ShadowMerge 93.8% ASR, amg positioning 
+
+### 08-08 PM ~ 08-10 AM 开发 (cycles 384-405 Python) — ARCHIVED
+> 22 cycles in 3 days. Key milestones:
+> - **Cycles 384-395**: reconsolidation_feedback, foresight_signals, graph_resilience_score, edge_entropy_sensitivity, graph_contrast_report, node_influence_zone, temporal_freshness_map, memory_generations_report, MCP metrics, temporal_entropy_centrality, community_entropy_profile, temporal_decay_impact, edge_weight_entropy, node_summary, write_amplification, graph_temporal_summary
+> - **Cycle 396-398** 🏆: **MultiAgentMemoryGraph** — MESI 4-state cache coherence. auto_scope_agents + 4-level consistency. Research #055.
+> - **Cycle 399**: FastAppendQueue — System-1/System-2 dual-process (Research #033)
+> - **Cycle 400** 🎉: ResidualExtractor — compression residuals (Research #045)
+> - **Cycle 401-403**: consolidate() NREM/REM + consolidation_status() + memory_interference_report(). Research #056.
+> - **Cycle 404-405**: retrieval_quality_audit() (4 sub-scores) + attention_distribution() (Gini + zones + hotspots/blindspots)
+> - **amg Python**: 7723→7926 (+203). **285th day** 🏆.
 
 ### 08-06 PM ~ 08-07 开发 (cycles 367-373 Python)
 - **Cycle 367**: OWASP ASI06 Security Suite (5 APIs) — trust_score() + memory_quarantine() + selective_repair() + memory_audit_report() + detect_provenance_laundering(). Research #052 fully implemented same-day. +33 Python tests.
@@ -365,6 +375,8 @@ Autoresearch 方法论实践 — amg **连续281天零回滚率** 🏆。Entropy
 - [ ] **amg README: 竞品对比表** — Mem0/Zep/Mandol/PlugMem/PRISM/Hippocampus + **GraphRAG/LightRAG positioning: security-first agent-native GraphRAG**
 
 ### 🟣 Deep Research (detailed notes in catalyst-research/exploration-notes/)
+- **#056 (08-09)** ✅ **IMPL**: Memory Consolidation & Offline Replay. MIRROR (ICLR 2026 Workshop): consolidation > encoding (+9.3% vs +2.4%). Auto-Dreamer: RL-learned working region selection (12× smaller). SCM: NREM+REM dual-phase (90.9% noise reduction). Copy-on-write (Anthropic-inspired). Learning to Forget: sleep-inspired proactive interference. 13 references. consolidate() implemented c401. [笔记](catalyst-research/exploration-notes/2026-08-09-memory-consolidation-offline-replay-agent-graphs.md)
+- **#055 (08-09)** ✅ **IMPL**: Multi-Agent Memory Consistency Architecture. MESI cache protocol adapted for multi-agent LLM memory (M/E/S/I states). Full-state rebroadcast O(n×S×|D|) pathology → invalidation 100× reduction. 4 consistency levels (session/causal/eventual/committed). Community-based agent scoping (no competitor has this). Token economics (15× cost) drives adoption. MultiAgentMemoryGraph + auto_scope_agents + 4-level consistency implemented c396-398. 5 insights (#226-230). [笔记](catalyst-research/exploration-notes/2026-08-09-multi-agent-memory-consistency-architecture.md)
 - **#052 (08-06)** ✅: Memory Poisoning & Agent Memory Security. OWASP ASI06 (5 defense layers). MPBench (ICML 2026 Spotlight): 9 vulnerabilities, 4 write channels, 6 attack classes. Sleeper Memory Poisoning (arXiv:2605.15338): delayed dormant attack. MemSecBench (arXiv:2607.27080): 310 WEF packages, 84.2% persistence, 50.3% e2e attack. Provenance Laundering (EMNLP 2026): toxicity 0.6→0.0852 via compression. SSGM: decouple evolution from governance. A-MemGuard (ICML 2026): 95% ASR reduction, dual-memory consensus. EvolveMem (NeurIPS 2026): AutoResearch for retrieval, +25.7% LoCoMo. **amg = only system with all 5 OWASP layers.** 2 verified TypeScript code examples. 5 insights (#216-220). 5 proposed APIs (~300 lines). [笔记](catalyst-research/exploration-notes/2026-08-06-memory-poisoning-agent-memory-security.md)
 - **#048 (08-05)** ✅: GraphRAG 2.0 — From Retrieval to Reasoning. HippoRAG2 (ICML 2025): PPR for memory retrieval, 10-30× cheaper. GFM-RAG (NeurIPS 2025, ICLR 2026): 34M param pre-trained GNN for zero-shot graph reasoning. A-MEM (NeurIPS 2025, 930★): Zettelkasten self-organizing memory with retroactive evolution. StepChain GraphRAG: question decomposition + BFS evidence chains. PathRAG: flow-based pruning. LogicRAG (AAAI 2026): dynamic reasoning DAG. MemGraphRAG (KDD 2026): multi-agent hierarchical indexing. GraphRAG cost cliff: $33K→$33. 2 runnable code examples (BFS multi-hop + PPR numpy). 5 insights (#206-210). Maps to amg: multi_hop_reason() + personalized_pagerank() + enrich_node(). [笔记](catalyst-research/exploration-notes/2026-08-05-graphrag-reasoning-agent-memory.md)
 - **#047 (08-05)** ✅: Streaming & Incremental Graph Entropy for Real-Time Agent Memory. FINGER (Chen et al., ICML 2019): O(n³)→O(Δn+Δm) incremental von Neumann entropy via quadratic proxy Q. Two variants: b_H (needs λmax) and e_H (needs only smax, fully streaming). Theorem 2 incremental Q' update proven. SLaQ (Tsitsulin WWW 2020): stochastic Lanczos quadrature for web-scale, no error bound. Radial Projection: no eigenvalue needed. Yang AIJ 2024: incremental structural entropy for encoding trees. "Are We Ready" (arXiv:2606.24775): localized maintenance > global reorganization (O7). Graph Praxis: "agent doesn't have memory problem, has recompute problem." Full TypeScript FINGEREntropy class (~200 lines, 7 tests verified ✅). Performance: 4ms build for 1000 nodes, <1ms incremental. 5 insights (#201-205). Maps to amg cycle 358: FINGEREntropy + streaming anomaly detection. [笔记](catalyst-research/exploration-notes/2026-08-05-streaming-incremental-graph-entropy.md)
@@ -422,7 +434,7 @@ Autoresearch 方法论实践 — amg **连续281天零回滚率** 🏆。Entropy
 | 12 | better-ralph-core | 376 | ✅ 稳定 |
 | 13 | edge-agent-runtime | **345** | ✅ sensors + actuators + coordinators |
 | 14 | **amg-mcp** | **122** | ✅ Phase 1 Day 1-5 (14 tools, dual transport, dual-era verified) |
-| 15 | **prompt-mgr** | **196** | ✅ render + to_markdown + find_duplicates + clone_template + tag_summary |
+| 15 | **prompt-mgr** | **267** | ✅ search_by_variables + find_similar + content_stats |
 
 ---
 
@@ -466,7 +478,7 @@ curl -X POST "https://api.tavily.com/search" \
 
 ## Timeline
 
-### Immediate (Week of August 5)
+### Immediate → Short-term (Moved from Week of August 5)
 - [x] ✅ **amg: FINGEREntropy class** — Cycle 361. Streaming incremental von Neumann entropy. O(Δ) per edge. Research #047.
 - [x] ✅ **amg: personalized_pagerank()** — Cycle 361. HippoRAG2 PPR pattern. Research #048.
 - [x] ✅ **amg: multi_hop_reason()** — Cycle 361. PPR + BFS evidence paths. First reasoning API. Research #048.
