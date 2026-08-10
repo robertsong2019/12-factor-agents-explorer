@@ -22211,6 +22211,21 @@ class ResidualExtractor:
         for m in self._re.finditer(r'https?://\S+', content):
             residuals.append(f"url: {m.group()}")
 
+        # 6. Email addresses
+        for m in self._re.finditer(r'[\w.+-]+@[\w-]+\.[\w.-]+', content):
+            residuals.append(f"email: {m.group()}")
+
+        # 7. Version numbers (semver-style)
+        for m in self._re.finditer(r'\bv?(\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?)\b', content):
+            ver = m.group()
+            # Filter out plain dates like 2026.08
+            if not (ver.startswith("20") and "." in ver and len(ver.split(".")[0]) == 4):
+                residuals.append(f"version: {ver}")
+
+        # 8. File paths
+        for m in self._re.finditer(r'(?:src|lib|test|docs|bin)/[\w/]+\.[a-z]{2,4}', content):
+            residuals.append(f"path: {m.group()}")
+
         # Deduplicate while preserving order
         seen = set()
         unique = []

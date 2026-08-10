@@ -94,6 +94,53 @@ class TestExtractURLs:
         assert not any(x.startswith("url:") for x in r)
 
 
+class TestExtractEmails:
+    def test_simple_email(self, extractor):
+        r = extractor.extract("Contact alice@example.com")
+        assert any("alice@example.com" in x for x in r)
+
+    def test_plus_addressing(self, extractor):
+        r = extractor.extract("Send to bob+filter@test.org")
+        assert any("bob+filter@test.org" in x for x in r)
+
+    def test_no_emails(self, extractor):
+        r = extractor.extract("Just text without emails")
+        assert not any(x.startswith("email:") for x in r)
+
+
+class TestExtractVersions:
+    def test_semver(self, extractor):
+        r = extractor.extract("Upgraded to v1.2.3")
+        assert any("v1.2.3" in x for x in r)
+
+    def test_two_part_version(self, extractor):
+        r = extractor.extract("Using library 2.0")
+        assert any("2.0" in x for x in r)
+
+    def test_pre_release(self, extractor):
+        r = extractor.extract("Released 3.0.0-beta.1")
+        assert any("3.0.0-beta.1" in x for x in r)
+
+    def test_date_not_version(self, extractor):
+        # Year-like numbers should not be treated as versions
+        r = extractor.extract("In 2026.08 we shipped")
+        assert not any(x.startswith("version:") for x in r)
+
+
+class TestExtractPaths:
+    def test_src_path(self, extractor):
+        r = extractor.extract("Modified src/index.ts today")
+        assert any("src/index.ts" in x for x in r)
+
+    def test_test_path(self, extractor):
+        r = extractor.extract("Added test/utils.py for coverage")
+        assert any("test/utils.py" in x for x in r)
+
+    def test_no_paths(self, extractor):
+        r = extractor.extract("No file references")
+        assert not any(x.startswith("path:") for x in r)
+
+
 class TestDeduplication:
     def test_duplicate_dates_deduped(self, extractor):
         r = extractor.extract("2026-08-09 and 2026-08-09")
