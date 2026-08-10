@@ -22079,9 +22079,13 @@ class FastAppendQueue:
                     skipped_dupes += 1
                     continue
 
+            # Merge source metadata into data before adding to graph
+            merged_data = dict(entry["data"])
+            if entry.get("source"):
+                merged_data["_source"] = entry["source"]
             node = self.graph.add(
                 entry["label"], entry["kind"],
-                entry["data"], entry["tags"]
+                merged_data, entry["tags"]
             )
             added_nodes.append(node)
 
@@ -22121,6 +22125,21 @@ class FastAppendQueue:
     def flush(self) -> dict:
         """Force-consolidate all pending entries regardless of threshold."""
         return self.consolidate()
+
+    def pending(self) -> list[dict]:
+        """Peek at pending queue without consolidating."""
+        return self._queue[:]
+
+    def drain(self) -> list[dict]:
+        """Remove and return all pending entries without consolidating.
+
+        Unlike flush() (which commits to graph), drain() discards the
+        queue — useful for rollback scenarios or inspection without write.
+        """
+        batch = self._queue[:]
+        self._queue.clear()
+        self._first_append_ts = None
+        return batch
 
 
 # ---------------------------------------------------------------------------

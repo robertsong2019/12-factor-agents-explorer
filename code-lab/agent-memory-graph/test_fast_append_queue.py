@@ -172,6 +172,79 @@ class TestStats:
         assert s["oldest_pending_age"] > 0.04
 
 
+class TestPending:
+    def test_pending_empty(self, faq):
+        assert faq.pending() == []
+
+    def test_pending_returns_copy(self, faq):
+        faq.append("x", "test")
+        p = faq.pending()
+        assert len(p) == 1
+        # Mutating the returned list should not affect the queue
+        p.clear()
+        assert len(faq._queue) == 1
+
+    def test_pending_after_consolidate(self, faq):
+        faq.append("x", "test")
+        faq.consolidate()
+        assert faq.pending() == []
+
+    def test_pending_preserves_order(self, faq):
+        faq.append("first", "test")
+        faq.append("second", "test")
+        faq.append("third", "test")
+        labels = [e["label"] for e in faq.pending()]
+        assert labels == ["first", "second", "third"]
+
+
+class TestDrain:
+    def test_drain_returns_entries(self, faq):
+        faq.append("a", "test")
+        faq.append("b", "test")
+        batch = faq.drain()
+        assert len(batch) == 2
+        assert batch[0]["label"] == "a"
+
+    def test_drain_clears_queue(self, faq):
+        faq.append("a", "test")
+        faq.drain()
+        assert len(faq._queue) == 0
+        assert faq._first_append_ts is None
+
+    def test_drain_does_not_write_to_graph(self, faq):
+        faq.append("ghost", "test")
+        faq.drain()
+        # Graph should have no nodes
+        assert faq.graph.stats()["nodes"] == 0
+
+    def test_drain_empty_queue(self, faq):
+        assert faq.drain() == []
+
+    def test_drain_resets_consolidation_timer(self, faq):
+        faq.append("x", "test")
+        assert faq._first_append_ts is not None
+        faq.drain()
+        assert faq._first_append_ts is None
+
+
+class TestSourcePropagation:
+    def test_source_carried_through_consolidation(self, faq):
+        faq.append("sourced", "fact", {"text": "hello"}, source="agent_42")
+        faq.consolidate()
+        node = faq.graph.search_by_label("sourced", limit=1)[0]
+        import json
+        data = json.loads(node.data) if isinstance(node.data, str) else node.data
+        assert data.get("_source") == "agent_42"
+
+    def test_no_source_when_not_provided(self, faq):
+        faq.append("plain", "fact")
+        faq.consolidate()
+        node = faq.graph.search_by_label("plain", limit=1)[0]
+        import json
+        data = json.loads(node.data) if isinstance(node.data, str) else node.data
+        assert "_source" not in data
+
+
 class TestIntegration:
     def test_hot_then_cold_workflow(self, faq):
         # System-1: rapid appends (no graph mutation)
