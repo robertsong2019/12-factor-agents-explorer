@@ -48899,6 +48899,400 @@ class MemoryGraph:
         result["duration_seconds"] = round(_time.time() - t0, 4)
         return result
 
+    # ------------------------------------------------------------------
+    # Cycle 407: attention_rebalance_plan
+    # ------------------------------------------------------------------
+
+    def attention_rebalance_plan(
+        self,
+        *,
+        algorithm: str = "leiden",
+        now: float | None = None,
+        max_actions: int = 20,
+    ) -> dict:
+        """Generate a prioritised, per-node action plan to rebalance
+        attention distribution.
+
+        This is the action-oriented companion to
+        ``attention_distribution()`` (Cycle 405).  Instead of merely
+        diagnosing attention health, it produces **concrete actions**
+        with estimated Gini impact and priority ordering.
+
+        Action types:
+
+        - **refresh** — Blindspot nodes (high weight, low attention):
+          re-accessing them would boost their recency and reduce
+          attention inequality.
+        - **boost** — Key nodes in under-attended communities:
+          surfacing them would balance community attention shares.
+        - **diversify** — Hotspot nodes that dominate attention:
+          consider whether over-utilised nodes need links to other
+          communities to spread load.
+        - **consolidate** — Cold-zone nodes with moderate weight:
+          candidates for merging into related memories.
+        - **forget** — Cold/inactive-zone nodes with low weight:
+          candidates for strategic forgetting.
+
+        Each action includes:
+
+        - ``node_id``, ``label``, ``zone``
+        - ``action`` type
+        - ``priority`` (critical / high / medium / low)
+        - ``reason`` (human-readable rationale)
+        - ``current_attention``, ``weight``
+        - ``estimated_gini_delta`` (how much Gini would improve if
+          this single action were executed)
+
+        The API also computes **projected metrics** — the estimated
+        Gini and entropy if all *refresh* and *boost* actions were
+        executed (simulating their attention scores being raised to
+        the graph median).
+
+        Args:
+            algorithm: Community algorithm for community-level actions.
+            now: Override timestamp (default: wall clock).
+            max_actions: Cap on the number of returned actions.
+
+        Returns:
+            Dict with ``current_gini``, ``current_entropy``,
+            ``projected_gini``, ``projected_entropy``, ``improvement``,
+            ``actions``, ``summary``, ``duration_seconds``.
+        """
+        import math as _math
+        import time as _time
+
+        t0 = _time.time()
+        ts = now if now is not None else _time.time()
+
+        # ── Run attention_distribution ───────────────────────
+        dist = self.attention_distribution(
+            algorithm=algorithm, now=ts, num_zones=5)
+        current_gini = dist["gini"]
+        current_entropy = dist["entropy"]
+
+        result: dict = {
+            "current_gini": current_gini,
+            "current_entropy": current_entropy,
+            "projected_gini": current_gini,
+            "projected_entropy": current_entropy,
+            "improvement": {
+                "gini_delta": 0.0,
+                "entropy_delta": 0.0,
+            },
+            "actions": [],
+            "summary": {
+                "total_actions": 0,
+                "by_type": {},
+                "by_priority": {},
+                "top_priority": "none",
+            },
+            "duration_seconds": 0.0,
+        }
+
+        # ── Gather node details for action generation ────────
+        rows = self.conn.execute(
+            "SELECT id, label, weight, accessed, created, kind "
+            "FROM nodes"
+        ).fetchall()
+        n = len(rows)
+        if n == 0:
+            result["duration_seconds"] = round(_time.time() - t0, 4)
+            return result
+
+        stability = 86400 * 7  # 7-day (matches attention_distribution)
+        node_data: list[dict] = []
+        for r in rows:
+            accessed = r["accessed"] or r["created"] or ts
+            weight = r["weight"] or 1.0
+            age = ts - accessed
+            recency = _math.exp(-age / stability)
+            attention = recency * weight
+            node_data.append({
+                "id": r["id"],
+                "label": r["label"],
+                "weight": weight,
+                "accessed": accessed,
+                "recency": recency,
+                "attention": attention,
+            })
+
+        # Compute median attention for projection simulation
+        sorted_attn = sorted(nd["attention"] for nd in node_data)
+        median_attn = (
+            sorted_attn[n // 2] if n % 2 == 1
+            else (sorted_attn[n // 2 - 1] + sorted_attn[n // 2]) / 2
+        )
+
+        # ── Helper: compute Gini from attention list ────────
+        def _gini(values: list[float]) -> float:
+            if not values or sum(values) <= 0:
+                return 0.0
+            s = sorted(values)
+            total = sum(s)
+            m = len(s)
+            cum = 0.0
+            area = 0.0
+            for i, v in enumerate(s):
+                cum += v
+                x1 = (i + 1) / m
+                y1 = cum / total
+                x0 = i / m
+                y0 = (cum - v) / total
+                area += (y0 + y1) * (x1 - x0) / 2.0
+            return max(0.0, min(1.0, 1.0 - 2.0 * area))
+
+        # ── Helper: compute normalised Shannon entropy ──────
+        def _entropy(values: list[float]) -> float:
+            total = sum(values)
+            if total <= 0:
+                return 0.0
+            probs = [v / total for v in values if v > 0]
+            if not probs or len(probs) < 2:
+                return 0.0
+            h = -sum(p * _math.log(p) for p in probs)
+            max_h = _math.log(len(probs))
+            return h / max_h if max_h > 0 else 1.0
+
+        # ── Helper: estimate Gini delta from simulating ─────
+        def _gini_if_raised(
+                target_ids: set[str],
+                new_attention: float) -> float:
+            """Recompute Gini if target nodes' attention is raised."""
+            sim = []
+            for nd in node_data:
+                if nd["id"] in target_ids and nd["attention"] < new_attention:
+                    sim.append(new_attention)
+                else:
+                    sim.append(nd["attention"])
+            return _gini(sim)
+
+        # ── Helper: estimate Gini delta from removing nodes ──
+        def _gini_if_removed(target_ids: set[str]) -> float:
+            """Recompute Gini if target nodes are removed."""
+            sim = [
+                nd["attention"] for nd in node_data
+                if nd["id"] not in target_ids
+            ]
+            return _gini(sim)
+
+        # ── Classify nodes into zones (same logic as dist) ───
+        for nd in node_data:
+            if nd["recency"] < 0.05:
+                nd["zone"] = "inactive"
+            elif nd["recency"] >= 0.5 and nd["weight"] >= 1.0:
+                nd["zone"] = "hot"
+            elif nd["recency"] >= 0.5:
+                nd["zone"] = "warm"
+            elif nd["weight"] >= 1.0:
+                nd["zone"] = "cool"
+            else:
+                nd["zone"] = "cold"
+
+        # ── Community partition for boost actions ────────────
+        try:
+            partition = self.community_partition(algorithm=algorithm)
+        except Exception:
+            partition = {}
+
+        comm_nodes: dict[int, list[dict]] = {}
+        for nd in node_data:
+            cid = partition.get(nd["id"], -1)
+            comm_nodes.setdefault(cid, []).append(nd)
+
+        # ── Generate actions ─────────────────────────────────
+        actions: list[dict] = []
+
+        # 1. Refresh actions for blindspots.
+        # Use attention_distribution's blindspots list AND independently
+        # identify high-weight nodes with below-median attention to be
+        # more robust than percentile-based detection alone.
+        blindspot_ids = {bs["node_id"] for bs in dist.get("blindspots", [])}
+        for nd in node_data:
+            if (nd["weight"] >= 1.5 and nd["attention"] < median_attn
+                    and nd["id"] not in blindspot_ids):
+                blindspot_ids.add(nd["id"])
+
+        for bid in blindspot_ids:
+            nd = next((x for x in node_data if x["id"] == bid), None)
+            if not nd:
+                continue
+            # Skip if attention is already at or above median
+            if nd["attention"] >= median_attn:
+                continue
+            delta = _gini_if_raised({nd["id"]}, median_attn) - current_gini
+            actions.append({
+                "node_id": nd["id"],
+                "label": nd["label"],
+                "action": "refresh",
+                "priority": "high" if nd["weight"] >= 2.0 else "medium",
+                "reason": (
+                    f"High weight ({nd['weight']:.2f}) but low attention "
+                    f"({nd['attention']:.4f}). Refreshing this memory "
+                    "would improve attention equity."),
+                "current_attention": round(nd["attention"], 4),
+                "weight": round(nd["weight"], 4),
+                "zone": nd["zone"],
+                "estimated_gini_delta": round(delta, 4),
+            })
+
+        # 2. Boost actions for under-attended communities
+        for comm in dist.get("per_community", []):
+            if comm["label"] == "under-attended":
+                cid = comm["community"]
+                members = comm_nodes.get(cid, [])
+                if not members:
+                    continue
+                # Pick the highest-weight node in this community
+                best = max(members, key=lambda x: x["weight"])
+                delta = _gini_if_raised({best["id"]}, median_attn) - current_gini
+                actions.append({
+                    "node_id": best["id"],
+                    "label": best["label"],
+                    "action": "boost",
+                    "priority": "high",
+                    "reason": (
+                        f"Community {cid} is under-attended "
+                        f"(share={comm['attention_share']:.3f}, "
+                        f"expected={comm['expected_share']:.3f}). "
+                        f"Boosting key node would balance attention."),
+                    "current_attention": round(best["attention"], 4),
+                    "weight": round(best["weight"], 4),
+                    "zone": best["zone"],
+                    "estimated_gini_delta": round(delta, 4),
+                })
+
+        # 3. Diversify actions for top hotspots
+        hotspots = dist.get("hotspots", [])[:3]  # top 3 only
+        for hs in hotspots:
+            nd = next(
+                (x for x in node_data if x["id"] == hs["node_id"]), None)
+            if not nd:
+                continue
+            # Check if this node is in an over-attended community
+            cid = partition.get(nd["id"], -1)
+            comm_info = next(
+                (c for c in dist.get("per_community", [])
+                 if c["community"] == cid), None)
+            is_over = comm_info and comm_info["label"] == "over-attended"
+            actions.append({
+                "node_id": nd["id"],
+                "label": nd["label"],
+                "action": "diversify",
+                "priority": "low",
+                "reason": (
+                    f"Top hotspot (attention={nd['attention']:.4f}). "
+                    + (f"In over-attended community {cid}. "
+                       if is_over else "")
+                    + "Consider linking to other communities to "
+                    "spread attention load."),
+                "current_attention": round(nd["attention"], 4),
+                "weight": round(nd["weight"], 4),
+                "zone": nd["zone"],
+                "estimated_gini_delta": 0.0,  # informational
+            })
+
+        # 4. Consolidate actions for cool-zone nodes
+        for nd in node_data:
+            if nd["zone"] == "cool" and nd["weight"] >= 1.5:
+                actions.append({
+                    "node_id": nd["id"],
+                    "label": nd["label"],
+                    "action": "consolidate",
+                    "priority": "medium",
+                    "reason": (
+                        f"Important node (weight={nd['weight']:.2f}) "
+                        "in cool zone (stale). Consider merging "
+                        "with related active memories."),
+                    "current_attention": round(nd["attention"], 4),
+                    "weight": round(nd["weight"], 4),
+                    "zone": nd["zone"],
+                    "estimated_gini_delta": 0.0,
+                })
+
+        # 5. Forget actions for cold/inactive low-weight nodes
+        forget_count = 0
+        for nd in node_data:
+            if nd["zone"] in ("cold", "inactive") and nd["weight"] < 0.5:
+                if forget_count >= 10:  # cap forget suggestions
+                    break
+                # Estimate Gini if this node were removed
+                delta = _gini_if_removed({nd["id"]}) - current_gini
+                actions.append({
+                    "node_id": nd["id"],
+                    "label": nd["label"],
+                    "action": "forget",
+                    "priority": "low",
+                    "reason": (
+                        f"Low-weight ({nd['weight']:.2f}), "
+                        f"{nd['zone']} zone. Strategic forgetting "
+                        "would reduce noise."),
+                    "current_attention": round(nd["attention"], 4),
+                    "weight": round(nd["weight"], 4),
+                    "zone": nd["zone"],
+                    "estimated_gini_delta": round(delta, 4),
+                })
+                forget_count += 1
+
+        # ── Sort actions by priority then by |gini_delta| ────
+        priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        actions.sort(
+            key=lambda a: (
+                priority_order.get(a["priority"], 3),
+                -abs(a["estimated_gini_delta"]),
+            )
+        )
+
+        # Cap at max_actions
+        actions = actions[:max_actions]
+        result["actions"] = actions
+
+        # ── Summary ──────────────────────────────────────────
+        by_type: dict[str, int] = {}
+        by_priority: dict[str, int] = {}
+        for a in actions:
+            by_type[a["action"]] = by_type.get(a["action"], 0) + 1
+            by_priority[a["priority"]] = (
+                by_priority.get(a["priority"], 0) + 1)
+
+        result["summary"] = {
+            "total_actions": len(actions),
+            "by_type": by_type,
+            "by_priority": by_priority,
+            "top_priority": (
+                min(by_priority, key=lambda p: priority_order.get(p, 3))
+                if by_priority else "none"
+            ),
+        }
+
+        # ── Projected metrics ────────────────────────────────
+        # Simulate: all refresh + boost actions raise attention to median
+        target_ids = {
+            a["node_id"] for a in actions
+            if a["action"] in ("refresh", "boost")
+        }
+        if target_ids:
+            sim_values = []
+            for nd in node_data:
+                if nd["id"] in target_ids and nd["attention"] < median_attn:
+                    sim_values.append(median_attn)
+                else:
+                    sim_values.append(nd["attention"])
+            projected_gini = _gini(sim_values)
+            projected_entropy = _entropy(sim_values)
+        else:
+            projected_gini = current_gini
+            projected_entropy = current_entropy
+
+        result["projected_gini"] = round(projected_gini, 4)
+        result["projected_entropy"] = round(projected_entropy, 4)
+        result["improvement"] = {
+            "gini_delta": round(current_gini - projected_gini, 4),
+            "entropy_delta": round(projected_entropy - current_entropy, 4),
+        }
+
+        result["duration_seconds"] = round(_time.time() - t0, 4)
+        return result
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
