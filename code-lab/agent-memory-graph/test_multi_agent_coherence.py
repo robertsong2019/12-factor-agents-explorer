@@ -636,3 +636,59 @@ class TestCausalOrderCheck:
         mamg.agent_write("alpha", nid, "update")
         result = mamg.causal_order_check("alpha", "beta")
         assert nid in result["stale_node_ids"]
+
+
+class TestAgentDiff:
+    """Tests for agent_diff() — knowledge divergence detection."""
+
+    def test_identical_caches_zero_divergence(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_read("alpha", nid)
+        mamg.agent_read("beta", nid)
+        result = mamg.agent_diff("alpha", "beta")
+        assert result["divergence_score"] == 0.0
+        assert result["shared_readable"] == 1
+
+    def test_a_exclusive_node(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_read("alpha", nid)  # only alpha reads
+        result = mamg.agent_diff("alpha", "beta")
+        assert result["a_exclusive"] == 1
+        assert result["b_exclusive"] == 0
+
+    def test_both_exclusive(self, mamg):
+        n1 = _nid(mamg, 0)
+        n2 = _nid(mamg, 1)
+        mamg.agent_read("alpha", n1)
+        mamg.agent_read("beta", n2)
+        result = mamg.agent_diff("alpha", "beta")
+        assert result["a_exclusive"] == 1
+        assert result["b_exclusive"] == 1
+
+    def test_stale_detection(self, mamg):
+        nid = _nid(mamg, 0)
+        mamg.agent_read("alpha", nid)
+        mamg.agent_read("beta", nid)
+        mamg.agent_write("alpha", nid)  # invalidates beta
+        result = mamg.agent_diff("alpha", "beta")
+        assert result["b_stale_a_fresh"] == 1
+
+    def test_unregistered_agent(self, mamg):
+        result = mamg.agent_diff("alpha", "ghost")
+        assert "error" in result
+
+    def test_divergence_score_in_range(self, mamg):
+        n1 = _nid(mamg, 0)
+        mamg.agent_read("alpha", n1)
+        result = mamg.agent_diff("alpha", "beta")
+        assert 0.0 <= result["divergence_score"] <= 1.0
+
+    def test_exclusive_ids_capped_at_20(self, mamg):
+        # Add more nodes to exceed the 20-item cap
+        for i in range(20):
+            n = mamg.graph.add(f"extra_{i}", "concept")
+            mamg._test_node_ids.append(n.id)
+        for i in range(25):
+            mamg.agent_read("alpha", _nid(mamg, i))
+        result = mamg.agent_diff("alpha", "beta")
+        assert len(result["a_exclusive_ids"]) <= 20

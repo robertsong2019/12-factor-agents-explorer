@@ -22001,6 +22001,42 @@ class MultiAgentMemoryGraph:
             "stale_node_ids": stale,
         }
 
+    def agent_diff(self, agent_a: str, agent_b: str) -> dict:
+        """Find knowledge divergence between two agents.
+
+        Returns nodes that agent_a has in cache but agent_b doesn't,
+        and vice versa. Useful for sync prioritization and debugging
+        coherence issues.
+        """
+        if agent_a not in self._caches or agent_b not in self._caches:
+            return {"error": "Both agents must be registered"}
+
+        a_cache = self._caches[agent_a]
+        b_cache = self._caches[agent_b]
+
+        a_only = [nid for nid in a_cache if nid not in b_cache and a_cache[nid].is_readable()]
+        b_only = [nid for nid in b_cache if nid not in a_cache and b_cache[nid].is_readable()]
+        shared = [nid for nid in a_cache if nid in b_cache
+                   and a_cache[nid].is_readable() and b_cache[nid].is_readable()]
+        a_stale_b_fresh = [nid for nid in a_cache if nid in b_cache
+                           and not a_cache[nid].is_readable() and b_cache[nid].is_readable()]
+        b_stale_a_fresh = [nid for nid in b_cache if nid in a_cache
+                           and not b_cache[nid].is_readable() and a_cache[nid].is_readable()]
+
+        return {
+            "agent_a": agent_a,
+            "agent_b": agent_b,
+            "a_exclusive": len(a_only),
+            "b_exclusive": len(b_only),
+            "shared_readable": len(shared),
+            "a_stale_b_fresh": len(a_stale_b_fresh),
+            "b_stale_a_fresh": len(b_stale_a_fresh),
+            "divergence_score": round((len(a_only) + len(b_only)) /
+                                      max(len(a_cache) + len(b_cache), 1), 4),
+            "a_exclusive_ids": a_only[:20],
+            "b_exclusive_ids": b_only[:20],
+        }
+
 
 # ---------------------------------------------------------------------------
 # FastAppendQueue — System-1/System-2 dual-process memory write path
