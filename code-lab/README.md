@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~51,400 | ⭐ 知识图谱记忆引擎：507 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量审计、注意力分布 |
+| [agent-memory-graph](agent-memory-graph/) | ~52,200 | ⭐ 知识图谱记忆引擎：514 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量审计、注意力分布、注意力重平衡、链路预测 |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 51,400+ 行的完整图记忆引擎，包含 507 公开 API 和 2,894+ 测试用例。
+该项目已从 300 行的教学示例演化为 52,200+ 行的完整图记忆引擎，包含 514 公开 API 和 2,959+ 测试用例。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -85,11 +85,16 @@
 | **检索质量** | 1 | `retrieval_quality_audit` — 检索后质量评估（多样性/覆盖率/相关性/冗余度→综合 QA 评分）|
 | **干扰分析** | 1 | `memory_interference_report` — 前摄/后摄干扰分析（基于结构重叠的竞争记忆识别）|
 | **注意力分布** | 1 | `attention_distribution` — 访问模式分析（Gini 系数/Shannon 熵/区域分类 hot-warm-cool-cold-inactive/社区注意力份额/热点与盲点）|
+| **注意力重平衡** | 1 | `attention_rebalance_plan` — 行动导向注意力伴侣（refresh 盲点/boost 弱势社区/diversify 热点/consolidate 高权重冷区/forget 死角，含 Gini delta 预估和优先级）|
+| **链路预测** | 1 | `link_prediction` — 缺失边预测（Adamic-Adar/Preferential Attachment/Common Neighbors 三种评分，单源+全图模式）|
+| **检索质量诊断** | 1 | `retrieval_quality_explain` — 逐节点检索质量诊断（新鲜度对比/成对干扰/多样性贡献/边际覆盖分析+可读解释）|
+| **层级记忆增强** | 2 | `SummaryTree.search` 关键词查找 + `SummaryTree.compact` 空节点清理 |
+| **Agent 知识差异** | 1 | `MultiAgentMemoryGraph.agent_diff` — 知识分歧检测（独有/共有节点+Jaccard 差异度）|
 | **MCP 工具** | 1 | MCP server 16 工具 + 请求指标追踪（延迟、错误率、调用日志）|
 
-### 📐 信息论进化史（Cycles 306–316 + 326–405）
+### 📐 信息论进化史（Cycles 306–316 + 326–407）
 
-最新里程碑：**注意力分布 + 检索质量审计 + 离线巩固 + 多 Agent 一致性** — 从时序/社区熵分析扩展到多 Agent 记忆一致性、System-1/2 双进程写入、NREM/REM 离线巩固、检索质量评估、干扰分析、注意力分布（Cycles 393-405）。
+最新里程碑：**注意力重平衡 + 链路预测 + 检索质量诊断 + Agent 知识差异检测** — 在注意力分布和检索质量审计基础上，新增行动导向的重平衡计划、结构化链路预测、逐节点检索诊断、以及多 Agent 知识分歧量化（Cycles 406-407）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -152,6 +157,11 @@
 | 干扰分析 | 403 | `memory_interference_report` | 前摄/后摄干扰分析（Jaccard 结构重叠竞争记忆识别）|
 | 检索质量审计 | 404 | `retrieval_quality_audit` | 检索后质量评估（多样性/覆盖率/相关性/冗余度 → 综合 QA 评分）|
 | 注意力分布 | 405 | `attention_distribution` | 访问模式分析（Gini 系数 + Shannon 熵 + 5 级区域分类 + 社区注意力份额 + 热点/盲点）|
+| 链路预测 | 406a | `link_prediction` | Adamic-Adar + Preferential Attachment + Common Neighbors 三种缺失边预测评分 |
+| 检索质量诊断 | 406b | `retrieval_quality_explain` | 逐节点检索质量诊断（新鲜度对比 + 成对干扰 + 多样性贡献 + 边际覆盖 + 可读建议）|
+| 注意力重平衡 | 407 | `attention_rebalance_plan` | 行动导向注意力伴侣（refresh/boost/diversify/consolidate/forget + Gini delta 预估 + 优先级 + 投影模拟）|
+| SummaryTree 增强 | 407 | `SummaryTree.search`, `SummaryTree.compact` | 关键词查找 + 空节点移除 |
+| Agent 知识差异 | 407 | `MultiAgentMemoryGraph.agent_diff` | 知识分歧检测（独有/共有节点 + Jaccard 差异度）|
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---
