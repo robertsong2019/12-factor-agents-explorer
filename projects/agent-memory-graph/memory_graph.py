@@ -48212,6 +48212,353 @@ class MemoryGraph:
         result["duration_seconds"] = round(time.time() - t0, 4)
         return result
 
+    # ── Cycle 406: retrieval_quality_explain() ──────────────
+    def retrieval_quality_explain(
+        self,
+        node_ids: list[str],
+        target_node_id: str,
+        *,
+        weights: dict[str, float] | None = None,
+        algorithm: str = "leiden",
+        now: float | None = None,
+    ) -> dict:
+        """Per-node diagnostic explanation for retrieval quality.
+
+        Given a retrieval result set and a *target* node within it,
+        explain **why** that specific node contributes (or detracts
+        from) the overall retrieval quality.  This is the per-node
+        companion to :meth:`retrieval_quality_audit`.
+
+        For the target node, computes:
+
+        - **Freshness** — Ebbinghaus retention and how it compares
+          to the set average.
+        - **Interference** — pairwise Jaccard overlap with every
+          other result node, identifying which specific nodes are
+          most similar (confusion risk).
+        - **Diversity contribution** — does this node's community
+          add to or merely reinforce the community spread?
+        - **Coverage contribution** — how many *additional* nodes
+          does this node's 1-hop neighbourhood cover vs the set
+          without it.
+
+        Returns a structured diagnostic dict with:
+
+        - Per-dimension sub-scores for the target node.
+        - Comparison to the set average (above / below / at par).
+        - Ranked list of the most similar (highest-overlap) peer
+          nodes.
+        - A human-readable ``explanation`` string.
+        - Actionable per-node ``suggestions``.
+
+        Args:
+            node_ids:       Full retrieval result set.
+            target_node_id: The node to explain.
+            weights:        Optional weight overrides (same keys
+                            as :meth:`retrieval_quality_audit`).
+            algorithm:      Community algorithm (``"leiden"``,
+                            ``"greedy"``, ``"lp"``).
+            now:            Override timestamp.
+
+        Returns:
+            Diagnostic dict (see above).
+
+        Raises:
+            ValueError: If ``target_node_id`` not in ``node_ids``
+                or node does not exist.
+        """
+        t0 = time.time()
+        ts = now if now is not None else time.time()
+
+        if target_node_id not in node_ids:
+            raise ValueError(
+                f"target_node_id {target_node_id!r} is not in node_ids"
+            )
+
+        # ── Fetch target node data ────────────────────────────
+        row = self.conn.execute(
+            "SELECT id, label, weight, accessed, created FROM nodes "
+            "WHERE id=?",
+            (target_node_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(
+                f"target_node_id {target_node_id!r} does not exist"
+            )
+
+        # ── Helper: neighbour set ─────────────────────────────
+        def _neighbour_set(nid: str) -> set[str]:
+            rows = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION "
+                "SELECT source FROM edges WHERE target=?",
+                (nid, nid),
+            ).fetchall()
+            return {r[0] for r in rows}
+
+        target_neighbours = _neighbour_set(target_node_id)
+        valid_ids = [
+            nid for nid in node_ids
+            if nid != target_node_id
+            and self.conn.execute(
+                "SELECT 1 FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            is not None
+        ]
+
+        # ── 1. Freshness ──────────────────────────────────────
+        stability = 86400 * 3  # 3-day stability constant
+        target_age = ts - row["accessed"]
+        target_freshness = math.exp(-target_age / stability)
+
+        # Set freshness for comparison
+        set_freshness: list[float] = []
+        for nid in [target_node_id] + valid_ids:
+            r = self.conn.execute(
+                "SELECT accessed FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if r:
+                age = ts - r["accessed"]
+                set_freshness.append(math.exp(-age / stability))
+        mean_freshness = (
+            sum(set_freshness) / len(set_freshness)
+            if set_freshness
+            else 0.5
+        )
+
+        if mean_freshness > 0:
+            freshness_ratio = target_freshness / mean_freshness
+        else:
+            freshness_ratio = 1.0
+
+        if freshness_ratio > 1.1:
+            freshness_status = "above"
+        elif freshness_ratio < 0.9:
+            freshness_status = "below"
+        else:
+            freshness_status = "par"
+
+        # ── 2. Interference (pairwise) ────────────────────────
+        peer_overlaps: list[dict] = []
+        for nid in valid_ids:
+            peer_n = _neighbour_set(nid)
+            union = target_neighbours | peer_n
+            if not union:
+                jaccard = 0.0
+            else:
+                jaccard = len(target_neighbours & peer_n) / len(union)
+            peer_overlaps.append({
+                "node_id": nid,
+                "overlap": round(jaccard, 4),
+                "shared_neighbours": len(target_neighbours & peer_n),
+            })
+        peer_overlaps.sort(key=lambda x: x["overlap"], reverse=True)
+        top_peers = peer_overlaps[:10]
+
+        # Target interference contribution:
+        # average overlap with all peers
+        mean_overlap = (
+            sum(p["overlap"] for p in peer_overlaps) / len(peer_overlaps)
+            if peer_overlaps
+            else 0.0
+        )
+        target_interference = 1.0 - mean_overlap  # higher = better
+
+        if mean_overlap > 0.3:
+            interference_status = "high_overlap"
+        elif mean_overlap < 0.05:
+            interference_status = "distinct"
+        else:
+            interference_status = "moderate"
+
+        # ── 3. Diversity contribution ─────────────────────────
+        partition = self.community_partition(
+            algorithm=algorithm
+        )
+        target_community = partition.get(target_node_id, -1)
+
+        # Communities in the set without target
+        communities_without = {
+            partition.get(nid, -1) for nid in valid_ids
+        }
+        communities_with = communities_without | {target_community}
+
+        unique_contribution = target_community not in communities_without
+        diversity_gain = (
+            len(communities_with) - len(communities_without)
+            if communities_without
+            else 1
+        )
+
+        # ── 4. Coverage contribution ──────────────────────────
+        # Nodes covered without target
+        covered_without: set[str] = set(valid_ids)
+        for nid in valid_ids:
+            covered_without |= _neighbour_set(nid)
+
+        covered_with: set[str] = covered_without | {target_node_id} | target_neighbours
+        marginal_coverage = len(covered_with) - len(covered_without)
+
+        # Graph size
+        graph_size = self.conn.execute(
+            "SELECT COUNT(*) FROM nodes"
+        ).fetchone()[0]
+
+        if graph_size > 0:
+            marginal_pct = marginal_coverage / graph_size
+        else:
+            marginal_pct = 0.0
+
+        if marginal_coverage > 0:
+            coverage_status = "contributing"
+        elif marginal_coverage == 0:
+            coverage_status = "redundant"
+        else:
+            coverage_status = "redundant"
+
+        # ── Explanation string ────────────────────────────────
+        explanation_parts: list[str] = []
+        explanation_parts.append(
+            f"Node '{row['label']}' (id={target_node_id[:8]}, "
+            f"weight={row['weight']:.2f}, community={target_community}):"
+        )
+
+        if freshness_status == "above":
+            explanation_parts.append(
+                f"  Freshness is above average "
+                f"({target_freshness:.3f} vs set mean "
+                f"{mean_freshness:.3f})."
+            )
+        elif freshness_status == "below":
+            explanation_parts.append(
+                f"  Freshness is below average "
+                f"({target_freshness:.3f} vs set mean "
+                f"{mean_freshness:.3f}) — consider refreshing."
+            )
+        else:
+            explanation_parts.append(
+                f"  Freshness is at par ({target_freshness:.3f} "
+                f"vs set mean {mean_freshness:.3f})."
+            )
+
+        if interference_status == "high_overlap":
+            top_peer = top_peers[0] if top_peers else None
+            if top_peer:
+                explanation_parts.append(
+                    f"  High overlap with {len([p for p in top_peers if p['overlap'] >= 0.3])} "
+                    f"peers (top: {top_peer['node_id'][:8]} "
+                    f"overlap={top_peer['overlap']:.3f})."
+                )
+        elif interference_status == "distinct":
+            explanation_parts.append(
+                "  Structurally distinct from other results "
+                "(low neighbour overlap)."
+            )
+        else:
+            explanation_parts.append(
+                f"  Moderate neighbour overlap (mean={mean_overlap:.3f})."
+            )
+
+        if unique_contribution:
+            explanation_parts.append(
+                f"  Adds community {target_community} to the result set "
+                "(+1 diversity)."
+            )
+        else:
+            explanation_parts.append(
+                f"  Community {target_community} already represented "
+                "(no diversity gain)."
+            )
+
+        if coverage_status == "contributing":
+            explanation_parts.append(
+                f"  Contributes +{marginal_coverage} nodes of coverage "
+                f"({marginal_pct:.1%} of graph)."
+            )
+        else:
+            explanation_parts.append(
+                "  No additional coverage (neighbourhood "
+                "already covered by other results)."
+            )
+
+        # ── Suggestions ───────────────────────────────────────
+        suggestions: list[str] = []
+
+        if freshness_status == "below":
+            suggestions.append(
+                "Refresh this memory by accessing or updating it "
+                "to improve freshness score."
+            )
+        if interference_status == "high_overlap":
+            dupes = [
+                p for p in top_peers if p["overlap"] >= 0.5
+            ]
+            if dupes:
+                suggestions.append(
+                    f"Consider removing one of the {len(dupes)} "
+                    "high-overlap peers (>50% neighbour sharing) "
+                    "to reduce redundancy."
+                )
+            else:
+                suggestions.append(
+                    "Moderate overlap detected — consider re-ranking "
+                    "by distinctiveness."
+                )
+        if not unique_contribution:
+            suggestions.append(
+                "This node's community is already represented. "
+                "If diversity is a priority, consider replacing "
+                "with a node from an underrepresented community."
+            )
+        if coverage_status == "redundant":
+            suggestions.append(
+                "This node adds no new graph coverage. "
+                "Consider a better-connected alternative."
+            )
+        if not suggestions:
+            suggestions.append(
+                "This node contributes positively to all "
+                "quality dimensions — retain."
+            )
+
+        return {
+            "target_node": {
+                "node_id": target_node_id,
+                "label": row["label"],
+                "weight": round(row["weight"], 4),
+                "community": target_community,
+                "neighbour_count": len(target_neighbours),
+                "freshness": round(target_freshness, 4),
+            },
+            "freshness": {
+                "score": round(target_freshness, 4),
+                "set_mean": round(mean_freshness, 4),
+                "ratio": round(freshness_ratio, 4),
+                "status": freshness_status,
+            },
+            "interference": {
+                "mean_overlap": round(mean_overlap, 4),
+                "score": round(target_interference, 4),
+                "status": interference_status,
+                "top_overlapping_peers": top_peers,
+            },
+            "diversity": {
+                "community": target_community,
+                "unique_contribution": unique_contribution,
+                "communities_without": len(communities_without),
+                "communities_with": len(communities_with),
+                "gain": diversity_gain,
+            },
+            "coverage": {
+                "marginal_nodes": marginal_coverage,
+                "marginal_pct": round(marginal_pct, 4),
+                "status": coverage_status,
+                "graph_size": graph_size,
+            },
+            "explanation": "\n".join(explanation_parts),
+            "suggestions": suggestions,
+            "duration_seconds": round(time.time() - t0, 4),
+        }
+
     # ── Cycle 405: attention_distribution() ──────────────────
     def attention_distribution(
         self,
