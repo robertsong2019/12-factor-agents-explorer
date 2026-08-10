@@ -21346,6 +21346,49 @@ class SummaryTree:
 
         return pruned
 
+    def search(self, keyword: str, level: str = None) -> list[dict]:
+        """Direct keyword search across tree nodes.
+
+        Searches summary + residuals for keyword (case-insensitive).
+        Optionally filter by level. Returns matching nodes sorted by
+        access count (most accessed first).
+        """
+        kw_lower = keyword.lower()
+        matches = []
+        for node in self._nodes.values():
+            if level and node['level'] != level:
+                continue
+            searchable = (node['summary'] + ' ' +
+                          ' '.join(node['residuals'])).lower()
+            if kw_lower in searchable:
+                matches.append(node)
+        matches.sort(key=lambda n: n.get('access_count', 0), reverse=True)
+        return matches
+
+    def compact(self) -> int:
+        """Remove empty intermediate nodes (no summary, no residuals, no children).
+
+        Unlike prune_stale (age-based), compact removes structurally empty
+        nodes that add no value. Root and segments are preserved.
+        Returns count of removed nodes.
+        """
+        removed = 0
+        to_delete = []
+        for nid, node in self._nodes.items():
+            if node['level'] in ('segment', 'profile'):
+                continue
+            if not node['summary'] and not node['residuals'] and not node['child_ids']:
+                to_delete.append(nid)
+
+        for nid in to_delete:
+            parent = self._nodes.get(self._nodes[nid].get('parent_id', ''))
+            if parent:
+                parent['child_ids'] = [c for c in parent['child_ids'] if c != nid]
+            del self._nodes[nid]
+            removed += 1
+
+        return removed
+
     # ─── Stats ───
 
     def stats(self) -> dict:

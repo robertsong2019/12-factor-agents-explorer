@@ -22402,6 +22402,108 @@ class TestSummaryTreeIntegration:
         assert len(pottery_evidence) > 0
 
 
+class TestSummaryTreeSearch:
+    """Tests for SummaryTree.search() — direct keyword search."""
+
+    def test_search_finds_summary(self):
+        st = SummaryTree()
+        st.add_segment("discussed AI", "AI conversation", [])
+        results = st.search("AI")
+        assert len(results) >= 1
+
+    def test_search_finds_residual(self):
+        st = SummaryTree()
+        st.add_segment("event", "summary text", ["date: 2026-08-10"])
+        results = st.search("2026-08-10")
+        assert len(results) >= 1
+
+    def test_search_case_insensitive(self):
+        st = SummaryTree()
+        st.add_segment("Python discussion", "Python is great", [])
+        results = st.search("python")
+        assert len(results) >= 1
+
+    def test_search_no_match(self):
+        st = SummaryTree()
+        st.add_segment("hello", "greeting", [])
+        results = st.search("nonexistent")
+        assert results == []
+
+    def test_search_filter_by_level(self):
+        st = SummaryTree()
+        st.add_segment("topic", "segment summary", [])
+        # Only search segment level
+        seg_results = st.search("summary", level='segment')
+        assert len(seg_results) >= 1
+        # Search at profile level should return nothing
+        profile_results = st.search("summary", level='profile')
+        assert len(profile_results) == 0
+
+    def test_search_sorted_by_access_count(self):
+        st = SummaryTree()
+        st.add_segment("a", "python topic", [])
+        st.add_segment("b", "python again", [])
+        # Directly bump access on second segment
+        seg_b = [n for n in st._nodes.values() if n['summary'] == 'python again'][0]
+        seg_b['access_count'] = 5
+        results = st.search("python")
+        # More accessed node should come first
+        assert results[0]['summary'] == 'python again'
+
+
+class TestSummaryTreeCompact:
+    """Tests for SummaryTree.compact() — remove empty intermediate nodes."""
+
+    def test_compact_removes_empty_nodes(self):
+        st = SummaryTree()
+        st.add_segment("data", "real content", [])
+        # After adding, intermediate nodes exist with child refs but no content
+        # Manually create a truly empty node to test compact
+        empty_id = "day-test-empty"
+        st._nodes[empty_id] = {
+            'id': empty_id, 'level': 'day', 'timestamp': time.time(),
+            'summary': '', 'residuals': [], 'child_ids': [],
+            'parent_id': st.root_id, 'access_count': 0,
+            'last_accessed': time.time()
+        }
+        before = len(st._nodes)
+        removed = st.compact()
+        assert removed >= 1
+        assert empty_id not in st._nodes
+
+    def test_compact_preserves_segments(self):
+        st = SummaryTree()
+        st.add_segment("data", "important summary", ["fact: value"])
+        before = st.stats()['total_nodes']
+        removed = st.compact()
+        # Segment should still exist
+        results = st.search("important summary")
+        assert len(results) >= 1
+
+    def test_compact_preserves_root(self):
+        st = SummaryTree()
+        st.compact()
+        # Root (profile) must survive
+        assert st.root_id in st._nodes
+
+    def test_compact_idempotent(self):
+        st = SummaryTree()
+        st.add_segment("x", "summary", [])
+        st.compact()
+        second = st.compact()
+        assert second == 0
+
+    def test_compact_cleans_child_refs(self):
+        st = SummaryTree()
+        st.add_segment("x", "summary", [])
+        # Before compact, parent has child refs to now-empty intermediates
+        st.compact()
+        # Verify no dangling child references
+        for node in st._nodes.values():
+            for cid in node['child_ids']:
+                assert cid in st._nodes
+
+
 
 # ═══ Code-Aware APIs (Research #044) ═════════════════════════════
 
