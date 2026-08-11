@@ -50357,6 +50357,287 @@ class MemoryGraph:
             "duration_seconds": round(time.time() - t0, 4),
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 415: retrieval_quality_compare — multi-set comparison
+    # ------------------------------------------------------------------
+
+    def retrieval_quality_compare(
+        self,
+        result_sets: list[list[str]],
+        *,
+        labels: list[str] | None = None,
+        weights: dict[str, float] | None = None,
+        algorithm: str = "leiden",
+        now: float | None = None,
+    ) -> dict:
+        """Compare multiple retrieval result sets on quality dimensions.
+
+        Given 2 or more retrieval result sets (e.g. from different
+        methods, parameter configurations, or timestamps), compute
+        :meth:`retrieval_quality_audit` for each and produce a
+        head-to-head comparison report.
+
+        This is the retrieval equivalent of
+        :meth:`classification_compare` — instead of choosing one
+        method, evaluate them all and see where they win, where they
+        agree, and which is best overall.
+
+        Use cases:
+        - **A/B testing** retrieval strategies (BM25 vs vector vs
+          GraphRAG).
+        - **Parameter tuning** — compare results at different
+          ``top_k`` values or similarity thresholds.
+        - **Temporal comparison** — compare retrieval quality now
+          vs a week ago (via bi-temporal queries).
+        - **Ensemble selection** — identify complementary result
+          sets for fusion.
+
+        Args:
+            result_sets: List of 2+ node-ID lists, each from a
+                different retrieval strategy.
+            labels: Optional names for each set (e.g.
+                ``["bm25", "vector", "graphrag"]``).
+                Defaults to ``["set_0", "set_1", ...]``.
+            weights: Optional quality dimension weights (same
+                as :meth:`retrieval_quality_audit`).
+            algorithm: Community detection algorithm.
+            now: Override timestamp for freshness.
+
+        Returns:
+            Dict with:
+
+            - **per_set** — audit result for each set.
+            - **pairwise_overlap** — Jaccard similarity matrix.
+            - **unique_nodes** — per-set nodes not in any other.
+            - **common_nodes** — nodes present in all sets.
+            - **ranking** — sets sorted by overall quality.
+            - **dimension_winners** — best set per dimension.
+            - **overall_winner** — index + label of best set.
+            - **agreement** — overlap statistics.
+            - **summary** — human-readable comparison.
+            - **recommendations** — actionable suggestions.
+        """
+        t0 = time.time()
+
+        if not result_sets or len(result_sets) < 2:
+            return {
+                "error": "Provide at least 2 result sets to compare.",
+                "duration_seconds": round(time.time() - t0, 4),
+            }
+
+        n_sets = len(result_sets)
+        if labels is None:
+            labels = [f"set_{i}" for i in range(n_sets)]
+        elif len(labels) != n_sets:
+            return {
+                "error": f"Expected {n_sets} labels, got {len(labels)}.",
+                "duration_seconds": round(time.time() - t0, 4),
+            }
+
+        # ── 1. Audit each set ─────────────────────────────────
+        audits: list[dict] = []
+        for ids in result_sets:
+            audit = self.retrieval_quality_audit(
+                ids,
+                weights=weights,
+                algorithm=algorithm,
+                now=now,
+            )
+            audits.append(audit)
+
+        # ── 2. Pairwise Jaccard overlap ───────────────────────
+        sets_as_sets: list[set[str]] = []
+        for ids in result_sets:
+            valid: set[str] = set()
+            for nid in ids:
+                row = self.conn.execute(
+                    "SELECT id FROM nodes WHERE id=?", (nid,)
+                ).fetchone()
+                if row:
+                    valid.add(nid)
+            sets_as_sets.append(valid)
+
+        pairwise: list[list[float]] = [
+            [0.0] * n_sets for _ in range(n_sets)
+        ]
+        for i in range(n_sets):
+            for j in range(i, n_sets):
+                if i == j:
+                    pairwise[i][j] = 1.0
+                else:
+                    union = sets_as_sets[i] | sets_as_sets[j]
+                    if union:
+                        jac = len(sets_as_sets[i] & sets_as_sets[j]) / len(union)
+                    else:
+                        jac = 0.0
+                    pairwise[i][j] = round(jac, 4)
+                    pairwise[j][i] = round(jac, 4)
+
+        # ── 3. Unique & common nodes ──────────────────────────
+        all_union: set[str] = set()
+        for s in sets_as_sets:
+            all_union |= s
+        common = all_union.copy()
+        for s in sets_as_sets:
+            common &= s
+
+        unique_per_set: list[list[str]] = []
+        for i, s in enumerate(sets_as_sets):
+            others: set[str] = set()
+            for j, s2 in enumerate(sets_as_sets):
+                if j != i:
+                    others |= s2
+            uniq = sorted(s - others)
+            unique_per_set.append(uniq)
+
+        # ── 4. Ranking by overall quality ─────────────────────
+        indices_with_scores = [
+            (i, audits[i]["overall_quality"]) for i in range(n_sets)
+        ]
+        indices_with_scores.sort(key=lambda x: x[1], reverse=True)
+        ranking = [
+            {
+                "rank": rank + 1,
+                "set_index": idx,
+                "label": labels[idx],
+                "overall_quality": round(score, 4),
+                "set_size": len(sets_as_sets[idx]),
+            }
+            for rank, (idx, score) in enumerate(indices_with_scores)
+        ]
+
+        # ── 5. Per-dimension winners ──────────────────────────
+        dimensions = [
+            "diversity_score",
+            "interference_score",
+            "freshness_score",
+            "coverage_score",
+            "overall_quality",
+        ]
+        dim_winners: dict[str, dict] = {}
+        for dim in dimensions:
+            best_i = max(range(n_sets), key=lambda i: audits[i][dim])
+            dim_winners[dim] = {
+                "set_index": best_i,
+                "label": labels[best_i],
+                "value": round(audits[best_i][dim], 4),
+            }
+
+        # ── 6. Agreement statistics ───────────────────────────
+        mean_overlap: float = 0.0
+        pair_count = 0
+        for i in range(n_sets):
+            for j in range(i + 1, n_sets):
+                mean_overlap += pairwise[i][j]
+                pair_count += 1
+        mean_overlap = mean_overlap / pair_count if pair_count else 0.0
+
+        agreement_label: str
+        if mean_overlap >= 0.8:
+            agreement_label = "very_high"
+        elif mean_overlap >= 0.6:
+            agreement_label = "high"
+        elif mean_overlap >= 0.4:
+            agreement_label = "moderate"
+        elif mean_overlap >= 0.2:
+            agreement_label = "low"
+        else:
+            agreement_label = "very_low"
+
+        # ── 7. Recommendations ────────────────────────────────
+        recommendations: list[str] = []
+
+        winner_idx = ranking[0]["set_index"]
+        winner_label = labels[winner_idx]
+        recommendations.append(
+            f"{winner_label} has the highest overall quality "
+            f"({audits[winner_idx]['overall_quality']:.4f})."
+        )
+
+        if mean_overlap < 0.2:
+            recommendations.append(
+                "Very low overlap between sets — strategies return "
+                "largely different results. Consider ensemble fusion "
+                "(union + rerank) for broader coverage."
+            )
+        elif mean_overlap > 0.8:
+            recommendations.append(
+                "Very high overlap between sets — strategies are "
+                "converging on the same results. A single strategy "
+                "may suffice."
+            )
+
+        # Per-dimension insight
+        for dim in dimensions:
+            dw = dim_winners[dim]
+            worst_i = min(range(n_sets), key=lambda i: audits[i][dim])
+            gap = dw["value"] - round(audits[worst_i][dim], 4)
+            if gap > 0.1:
+                rec = (
+                    f"{dw['label']} wins on {dim.replace('_score', '')} "
+                    f"({dw['value']:.4f} vs {audits[worst_i][dim]:.4f}, "
+                    f"gap {gap:.4f})."
+                )
+                recommendations.append(rec)
+
+        # Unique contribution insight
+        for i in range(n_sets):
+            uniq_ratio = (
+                len(unique_per_set[i]) / len(sets_as_sets[i])
+                if sets_as_sets[i] else 0.0
+            )
+            if uniq_ratio > 0.5:
+                recommendations.append(
+                    f"{labels[i]} has {uniq_ratio:.0%} unique nodes "
+                    f"({len(unique_per_set[i])}/{len(sets_as_sets[i])}) "
+                    f"not found by other strategies — valuable for "
+                    f"ensemble approaches."
+                )
+
+        # ── 8. Human-readable summary ─────────────────────────
+        summary_lines = [
+            f"Compared {n_sets} retrieval result sets.",
+            f"Overall winner: {winner_label} "
+            f"(quality={audits[winner_idx]['overall_quality']:.4f}).",
+            f"Mean pairwise overlap: {mean_overlap:.4f} ({agreement_label}).",
+            f"Common nodes (in all sets): {len(common)}.",
+            f"Union (all sets): {len(all_union)} nodes.",
+        ]
+        for dim in dimensions:
+            dw = dim_winners[dim]
+            summary_lines.append(
+                f"  {dim.replace('_score', ''):>14s}: "
+                f"best={dw['label']} ({dw['value']:.4f})"
+            )
+
+        return {
+            "per_set": [
+                {**audits[i], "_label": labels[i]}
+                for i in range(n_sets)
+            ],
+            "pairwise_overlap": pairwise,
+            "labels": labels,
+            "unique_nodes": unique_per_set,
+            "common_nodes": sorted(common),
+            "ranking": ranking,
+            "dimension_winners": dim_winners,
+            "overall_winner": {
+                "set_index": winner_idx,
+                "label": winner_label,
+                "overall_quality": round(
+                    audits[winner_idx]["overall_quality"], 4),
+            },
+            "agreement": {
+                "mean_pairwise_overlap": round(mean_overlap, 4),
+                "label": agreement_label,
+                "union_size": len(all_union),
+                "intersection_size": len(common),
+            },
+            "summary": "\n".join(summary_lines),
+            "recommendations": recommendations,
+            "duration_seconds": round(time.time() - t0, 4),
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
