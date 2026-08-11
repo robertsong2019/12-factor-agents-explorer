@@ -16159,6 +16159,271 @@ class MemoryGraph:
         history.sort(key=lambda x: x["valid_from"], reverse=True)
         return history
 
+    # ── Bi-Temporal Query APIs ───────────────────────────────
+    #
+    # Full bi-temporal support: valid-time (valid_from/valid_until)
+    # plus transaction-time (recorded_at/expired_at).
+    # Enables as-of queries: "what did the agent know at time T?"
+    #
+    # References: Zep arXiv:2501.13956, Engram arXiv:2606.09900,
+    # Martin Fowler bitemporal-history, SQL:2011.
+
+    def edge_record(self, source_id: str, target_id: str,
+                     relation: str, valid_at: float = None,
+                     source_episode: str = None) -> dict | None:
+        """Record an edge with full bi-temporal metadata.
+
+        If the edge already exists, returns existing temporal dict
+        without modification (idempotent).
+
+        Args:
+            source_id: Source node ID.
+            target_id: Target node ID.
+            relation: Edge relation.
+            valid_at: Valid-time start (epoch seconds).
+                      Defaults to now.
+            source_episode: Provenance — originating message/session.
+
+        Returns:
+            Temporal dict with recorded_at, valid_from, etc.,
+            or None if edge creation fails.
+        """
+        # Check if edge already exists
+        existing = self.get_edge(source_id, target_id, relation)
+        if existing:
+            props = self.edge_properties(source_id, target_id, relation) or {}
+            t = props.get("_temporal", {})
+            if t.get("recorded_at"):
+                return t  # already recorded — idempotent
+
+        now = time.time()
+        if not self.has_node(source_id):
+            self._insert_node_raw(source_id, source_id)
+        if not self.has_node(target_id):
+            self._insert_node_raw(target_id, target_id)
+        self.link(source_id, target_id, relation)
+        props = self.edge_properties(source_id, target_id, relation) or {}
+        props["_temporal"] = {
+            "valid_from": valid_at if valid_at is not None else now,
+            "valid_until": None,
+            "recorded_at": now,
+            "expired_at": None,
+            "supersedes": None,
+            "source_episode": source_episode,
+        }
+        self.set_edge_properties(source_id, target_id, relation, props)
+        self.conn.commit()
+        return props["_temporal"]
+
+    def edge_supersede(self, source_id: str, old_target_id: str,
+                        relation: str, new_target: str,
+                        valid_at: float = None,
+                        recorded_at: float = None) -> dict | None:
+        """Non-destructively supersede an edge with a new version.
+
+        The old edge gets expired_at set (not deleted).
+        The new edge references the old via supersedes field.
+
+        Args:
+            source_id: Source node ID.
+            old_target_id: Target of the edge being superseded.
+            relation: Edge relation.
+            new_target: New target for the replacement edge.
+            valid_at: Valid-time start for the new fact.
+            recorded_at: Transaction-time for the new fact.
+
+        Returns:
+            Temporal dict of the new edge, or None if old edge
+            doesn't exist.
+        """
+        old_edge = self.get_edge(source_id, old_target_id, relation)
+        if not old_edge:
+            return None
+
+        now = time.time()
+        rec_at = recorded_at if recorded_at is not None else now
+        v_at = valid_at if valid_at is not None else now
+
+        # Invalidate old edge: set valid_until and expired_at
+        old_props = self.edge_properties(source_id, old_target_id, relation) or {}
+        old_temporal = old_props.get("_temporal", {})
+        # Generate a temporal_id for chain tracking
+        import uuid
+        old_tid = old_temporal.get("temporal_id") or f"bt_{uuid.uuid4().hex[:8]}"
+        old_temporal["temporal_id"] = old_tid
+        old_temporal["valid_until"] = v_at
+        old_temporal["expired_at"] = rec_at
+        old_props["_temporal"] = old_temporal
+        self.set_edge_properties(source_id, old_target_id, relation, old_props)
+
+        # Create new edge
+        if not self.has_node(new_target):
+            self._insert_node_raw(new_target, new_target)
+        self.link(source_id, new_target, relation)
+        new_props = self.edge_properties(source_id, new_target, relation) or {}
+        new_temporal = {
+            "valid_from": v_at,
+            "valid_until": None,
+            "recorded_at": rec_at,
+            "expired_at": None,
+            "supersedes": old_tid,
+            "source_episode": old_temporal.get("source_episode"),
+        }
+        new_props["_temporal"] = new_temporal
+        self.set_edge_properties(source_id, new_target, relation, new_props)
+        self.conn.commit()
+        return new_temporal
+
+    def bitemporal_as_of(self, timestamp: float, mode: str = "knowledge",
+                    source: str = None,
+                    relation: str = None) -> list[dict]:
+        """Bi-temporal point-in-time query.
+
+        Returns edges (as dicts) that satisfy the mode-specific
+        temporal filter at the given timestamp.
+
+        Modes:
+          - 'knowledge': what the agent believed was true at T.
+            Filters by recorded_at/expired_at AND valid_from/valid_until.
+          - 'truth': what was objectively true at T.
+            Filters by valid_from/valid_until only.
+          - 'certain': what the agent knew AND was actually true.
+            Intersection of both axes.
+
+        Args:
+            timestamp: Query time (epoch seconds).
+            mode: 'knowledge', 'truth', or 'certain'.
+            source: Optional source node filter.
+            relation: Optional relation filter.
+
+        Returns:
+            List of dicts with source, target, relation keys.
+        """
+        if mode not in ("knowledge", "truth", "certain"):
+            raise ValueError(f"Unknown mode: {mode}")
+
+        rows = self.conn.execute(
+            "SELECT source, target, relation FROM edges"
+        ).fetchall()
+        results = []
+        for r in rows:
+            s, t, rel = r["source"], r["target"], r["relation"]
+            if source and s != source:
+                continue
+            if relation and rel != relation:
+                continue
+
+            props = self.edge_properties(s, t, rel)
+            temporal = (props or {}).get("_temporal")
+
+            if not temporal:
+                # No temporal metadata → always included (backward compat)
+                results.append({"source": s, "target": t, "relation": rel})
+                continue
+
+            valid_ok = (temporal.get("valid_from") is None or
+                        temporal["valid_from"] <= timestamp) and \
+                       (temporal.get("valid_until") is None or
+                        temporal["valid_until"] > timestamp)
+
+            known_ok = (temporal.get("recorded_at") is None or
+                         temporal["recorded_at"] <= timestamp) and \
+                        (temporal.get("expired_at") is None or
+                         temporal["expired_at"] > timestamp)
+
+            if mode == "knowledge" and known_ok:
+                results.append({"source": s, "target": t, "relation": rel})
+            elif mode == "truth" and valid_ok:
+                results.append({"source": s, "target": t, "relation": rel})
+            elif mode == "certain" and valid_ok and known_ok:
+                results.append({"source": s, "target": t, "relation": rel})
+
+        return results
+
+    def knowledge_diff(self, t1: float, t2: float,
+                        mode: str = "knowledge") -> dict:
+        """What changed in agent knowledge between t1 and t2?
+
+        Returns dict with 'added', 'removed', 'updated' lists.
+        """
+        at_t1 = self.bitemporal_as_of(t1, mode=mode)
+        at_t2 = self.bitemporal_as_of(t2, mode=mode)
+
+        set_t1 = {(f["source"], f["target"], f["relation"]) for f in at_t1}
+        set_t2 = {(f["source"], f["target"], f["relation"]) for f in at_t2}
+
+        by_key_t1 = {(f["source"], f["target"], f["relation"]): f for f in at_t1}
+        by_key_t2 = {(f["source"], f["target"], f["relation"]): f for f in at_t2}
+
+        added = [by_key_t2[k] for k in set_t2 - set_t1]
+        removed = [by_key_t1[k] for k in set_t1 - set_t2]
+        # Updated: present at both times but temporal validity changed
+        updated = []
+        for k in set_t1 & set_t2:
+            p1 = self.edge_properties(k[0], k[1], k[2])
+            t1_vu = (p1 or {}).get("_temporal", {}).get("valid_until")
+            if t1_vu is not None and t1_vu <= t2:
+                updated.append(by_key_t2[k])
+
+        return {"added": added, "removed": removed, "updated": updated}
+
+    def supersedence_chain(self, temporal_id: str) -> list[dict]:
+        """Trace the full supersedence chain for a temporal record.
+
+        Returns a list of temporal dicts from oldest to newest.
+        """
+        if not temporal_id:
+            return []
+
+        # Scan all edges for temporal records
+        rows = self.conn.execute(
+            "SELECT source, target, relation FROM edges"
+        ).fetchall()
+
+        by_tid = {}
+        for r in rows:
+            props = self.edge_properties(r["source"], r["target"], r["relation"])
+            temporal = (props or {}).get("_temporal")
+            if temporal and temporal.get("temporal_id"):
+                by_tid[temporal["temporal_id"]] = {
+                    "source": r["source"],
+                    "target": r["target"],
+                    "relation": r["relation"],
+                    "temporal_id": temporal["temporal_id"],
+                }
+
+        if temporal_id not in by_tid:
+            return [by_tid.get(temporal_id, {})] if temporal_id in by_tid else []
+
+        # Find the root: follow supersedes links backward
+        chain_tids = [temporal_id]
+        current = by_tid.get(temporal_id)
+        if not current:
+            return []
+
+        # Walk backward to find oldest
+        start = temporal_id
+        while True:
+            # Find who this was superseded BY (look for edges with supersedes=start)
+            found_prev = None
+            for tid, entry in by_tid.items():
+                if tid != start:
+                    # Check the edge's temporal for supersedes pointing to start
+                    r_props = self.edge_properties(entry["source"], entry["target"], entry["relation"])
+                    t = (r_props or {}).get("_temporal", {})
+                    if t.get("supersedes") == start:
+                        found_prev = tid
+                        break
+            if found_prev:
+                chain_tids.insert(0, found_prev)
+                start = found_prev
+            else:
+                break
+            if len(chain_tids) > 50:
+                break  # safety limit
+
+        return [by_tid[tid] for tid in chain_tids if tid in by_tid]
+
     # ── Node-Level Bi-Temporal Validity ───────────────────────
     #
     # Extends bi-temporal tracking from edges to nodes.  Enables:
