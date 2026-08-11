@@ -83,6 +83,11 @@
 - [x] **F53**: `Memory.find_duplicates(threshold)` — Find all near-duplicate entry pairs sorted by descending similarity ✅ 2026-08-07
 - [x] **F54**: `Memory.tag_stats()` — Tag frequency distribution + co-occurrence matrix ✅ 2026-08-07
 
+### Batch, Snippet & Health (Round 16 — 2026-08-11)
+- [x] **F55**: `Memory.batch_add(entries)` — Bulk add multiple entries with metadata/tags/importance, returns assigned indices ✅ 2026-08-11
+- [x] **F56**: `Memory.search_snippet(query, context_chars)` — Search with context-windowed snippets and highlight markers ✅ 2026-08-11
+- [x] **F57**: `Memory.health_check()` — Comprehensive health report: capacity, duplicates, importance, staleness, tagging ✅ 2026-08-11
+
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
