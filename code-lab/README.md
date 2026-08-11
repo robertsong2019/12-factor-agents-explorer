@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~52,200 | ⭐ 知识图谱记忆引擎：514 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量审计、注意力分布、注意力重平衡、链路预测 |
+| [agent-memory-graph](agent-memory-graph/) | ~52,800 | ⭐ 知识图谱记忆引擎：529 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询 |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 52,200+ 行的完整图记忆引擎，包含 514 公开 API 和 2,959+ 测试用例。
+该项目已从 300 行的教学示例演化为 52,800+ 行的完整图记忆引擎，包含 529 公开 API 和 2,917+ 测试用例。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -90,11 +90,16 @@
 | **检索质量诊断** | 1 | `retrieval_quality_explain` — 逐节点检索质量诊断（新鲜度对比/成对干扰/多样性贡献/边际覆盖分析+可读解释）|
 | **层级记忆增强** | 2 | `SummaryTree.search` 关键词查找 + `SummaryTree.compact` 空节点清理 |
 | **Agent 知识差异** | 1 | `MultiAgentMemoryGraph.agent_diff` — 知识分歧检测（独有/共有节点+Jaccard 差异度）|
+| **时序分析三部曲** | 3 | `temporal_changepoints` — 突变检测（burst + mean+2σ 离群点）；`temporal_stability_score` — 增长一致性×留存×突变密度；`temporal_velocity` — 知识变化速率（创建/废弃趋势斜率）|
+| **双时序查询（增强）** | 3 | `edge_record` — 事实记录（valid_time + transaction_time）；`edge_supersede` — 非破坏性废弃；`bitemporal_as_of` — 三模式时间点查询（knowledge/truth/certain）；`knowledge_diff` — 时点差异；`supersedence_chain` — 废弃链追踪 |
+| **遗忘预测** | 1 | `forgetting_forecast` — 非破坏性 Ebbinghaus 衰减预测（4 级风险区 critical/high/medium/low + 群体 TTT 摘要）|
+| **检索质量重排** | 1 | `retrieval_quality_rerank` — 贪心边际贡献重排（覆盖率/多样性/新鲜度/冗余度 4 维优化 + 审计前后对比）|
+| **检索质量对比** | 1 | `retrieval_quality_compare` — 多集合 A/B 对比（Jaccard 重叠矩阵 + 独有/共有节点 + 一致性分级）|
 | **MCP 工具** | 1 | MCP server 16 工具 + 请求指标追踪（延迟、错误率、调用日志）|
 
 ### 📐 信息论进化史（Cycles 306–316 + 326–407）
 
-最新里程碑：**注意力重平衡 + 链路预测 + 检索质量诊断 + Agent 知识差异检测** — 在注意力分布和检索质量审计基础上，新增行动导向的重平衡计划、结构化链路预测、逐节点检索诊断、以及多 Agent 知识分歧量化（Cycles 406-407）。
+最新里程碑：**检索质量族完结（audit → explain → rerank → compare）+ 双时序查询 + 遗忘预测 + 时序分析三部曲** — 检索质量从单点审计发展为完整的诊断→解释→修正→对比四步流水线；新增三模式双时序查询（knowledge/truth/certain）、非破坏性遗忘预测、以及突变检测/稳定性/速率时序三部曲（Cycles 408-415）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -162,6 +167,14 @@
 | 注意力重平衡 | 407 | `attention_rebalance_plan` | 行动导向注意力伴侣（refresh/boost/diversify/consolidate/forget + Gini delta 预估 + 优先级 + 投影模拟）|
 | SummaryTree 增强 | 407 | `SummaryTree.search`, `SummaryTree.compact` | 关键词查找 + 空节点移除 |
 | Agent 知识差异 | 407 | `MultiAgentMemoryGraph.agent_diff` | 知识分歧检测（独有/共有节点 + Jaccard 差异度）|
+| 时序突变检测 | 408 | `temporal_changepoints` | Burst 检测 + mean+2σ 离群点 + 相邻合并（知识演化的结构断点定位）|
+| 时序稳定性 | 409 | `temporal_stability_score` | 增长一致性 × 留存率 × 突变密度（几何平均，5 级评级 stable→fragile）|
+| 时序速率 | 410 | `temporal_velocity` | 按时间桶的创建/废弃率 + 趋势斜率（加速/减速/稳定）+ 近期 vs 基线比 |
+| 确定性修复 | 411 | `community_detect` (seeded RNG) | 种子化随机数修复 — 消除 label propagation 的非确定性，100% 可复现 |
+| 双时序查询 | 412 | `edge_record`, `edge_supersede`, `bitemporal_as_of`, `knowledge_diff`, `supersedence_chain` | 事实记录(valid+transaction time) + 非破坏性废弃 + 三模式时间点查询(knowledge/truth/certain) + 时点差异 + 废弃链 |
+| 遗忘预测 | 413 | `forgetting_forecast` | 非破坏性 Ebbinghaus 衰减预测 — 4 级风险区(critical<24h/high<72h/medium<168h/low) + 群体 TTT 解析求解 |
+| 检索质量重排 | 414 | `retrieval_quality_rerank` | 贪心边际贡献选择 — 4 维加权(覆盖率/多样性/新鲜度/冗余度) + 审计前后改进 delta |
+| 检索质量对比 | 415 | `retrieval_quality_compare` | 多集合 A/B 对比 — Jaccard 重叠矩阵 + 独有/共有节点 + 维度胜者 + 一致性分级 |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---

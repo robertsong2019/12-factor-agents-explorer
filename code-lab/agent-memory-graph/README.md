@@ -1,8 +1,8 @@
 # Agent Memory Graph 🧠
 
-> A graph-native memory engine for AI agents — 27,000+ lines, 600+ API methods, 2,728 tests, zero dependencies.
+> A graph-native memory engine for AI agents — 27,000+ lines, 529 API methods, 2,917 tests, zero dependencies.
 >
-> **281 consecutive days of iteration** 🏆
+> **288 consecutive days of iteration** 🏆
 
 **Zero dependencies** — pure Python stdlib + sqlite3. `sqlite-vec` optional for vector search.
 
@@ -20,6 +20,10 @@ Agents wake up fresh each session. Files work, but they're flat. A memory graph 
 - **Secure memory** — OWASP ASI06 security suite (6 APIs: trust score, quarantine, selective repair, audit, laundering detection, dashboard)
 - **Observe operations** — OTel GenAI telemetry with 5 context managers
 - **Serve via MCP** — 16-tool MCP server for any MCP client
+- **Manage retrieval quality** — 4-API family: audit → explain → rerank → compare (complete lifecycle)
+- **Track bi-temporal queries** — 3-mode point-in-time queries (knowledge/truth/certain)
+- **Forecast forgetting** — non-destructive Ebbinghaus decay prediction with risk zones
+- **Analyze temporal dynamics** — changepoints/stability/velocity trilogy
 
 ---
 
@@ -79,6 +83,12 @@ print(mg.to_markdown())               # human-readable summary
 | **Embedding / Vector** | 19 | `add_embedding`, `search_similar`, `train_kge`, `kge_score` |
 | **Entity Resolution** | 8 | `EntityResolver` — alias detection, merge, split, cluster dedup |
 | **Diagnostics** | 5+ | `graph_health_score`, `entropy_dashboard`, `get_operation_history`, `streaming_health`, `graph_digest` |
+| **Retrieval Quality** | 4 | `retrieval_quality_audit` (diversity/coverage/relevance/redundancy), `retrieval_quality_explain` (per-node diagnostic), `retrieval_quality_rerank` (Greedy Marginal Contribution), `retrieval_quality_compare` (multi-set A/B) |
+| **Attention Management** | 2 | `attention_distribution` (Gini + Shannon + zones + hotspots/blindspots), `attention_rebalance_plan` (refresh/boost/diversify/consolidate/forget + Gini delta) |
+| **Temporal Analysis** | 3 | `temporal_changepoints` (burst detection + outliers), `temporal_stability_score` (growth × retention × changepoint density), `temporal_velocity` (creation/supersession rates + trend slope) |
+| **Bi-Temporal Queries** | 5 | `edge_record`, `edge_supersede`, `bitemporal_as_of` (3-mode: knowledge/truth/certain), `knowledge_diff`, `supersedence_chain` |
+| **Forgetting Forecast** | 1 | `forgetting_forecast` — non-destructive Ebbinghaus decay projection with 4 risk zones |
+| **Link Prediction** | 1 | `link_prediction` — Adamic-Adar / Preferential Attachment / Common Neighbors |
 | **Serialization** | 24 | `export_json`, `to_markdown`, `serialize_dot`, `serialize_graphml`, `serialize_cytoscape` |
 | **Telemetry** | 5 | `enable_telemetry()` auto-instrumentation + 5 OTel context managers |
 | **MCP Server** | 16 | remember/recall/relate/ask/lookup/neighbors/forget/stats/timeline/health + entropy/reason/snapshot/code_explain/quarantine/security |
@@ -484,6 +494,114 @@ sg.link(1, 2, "knows")
 report = sg.streaming_report()
 ```
 
+### Retrieval Quality Family (4 APIs)
+
+Complete lifecycle: **diagnose → explain → correct → compare**.
+
+```python
+# 1. Audit: evaluate retrieval result quality
+audit = mg.retrieval_quality_audit(
+    query="machine learning",
+    results=mg.recall("machine learning", limit=20)
+)
+# audit.diversity_score, audit.coverage_score, audit.relevance_score,
+# audit.redundancy_score, audit.qa_score (composite)
+
+# 2. Explain: per-node diagnostic (why each node is good/bad)
+explain = mg.retrieval_quality_explain(
+    query="machine learning",
+    results=mg.recall("machine learning", limit=20)
+)
+# explain.nodes[0].freshness, .interference, .diversity_gain, .marginal_coverage
+# explain.nodes[0].suggestion  (human-readable)
+
+# 3. Rerank: fix quality issues via Greedy Marginal Contribution
+reranked = mg.retrieval_quality_rerank(
+    query="machine learning",
+    results=mg.recall("machine learning", limit=20),
+    weights={"coverage": 0.3, "diversity": 0.3, "freshness": 0.2, "redundancy": 0.2}
+)
+# reranked.reranked_nodes, reranked.audit_before, reranked.audit_after, reranked.improvement_deltas
+
+# 4. Compare: A/B test multiple retrieval strategies
+comparison = mg.retrieval_quality_compare(
+    query="machine learning",
+    result_sets={
+        "keyword": mg.recall("machine learning", limit=10),
+        "hybrid": mg.search_hybrid("machine learning", limit=10),
+        "graphrag": mg.search_graphrag("machine learning", limit=10)
+    }
+)
+# comparison.pairwise_jaccard, comparison.unique_nodes, comparison.winners, comparison.agreement
+```
+
+### Bi-Temporal Query APIs (5 APIs)
+
+Three-mode point-in-time queries — what the agent knew, what was true, what was certain.
+
+```python
+import time
+
+# Record a fact with both valid_time and transaction_time
+mg.edge_record(alice.id, "works_at", "Acme Corp",
+               valid_time=time.time() - 86400,  # started yesterday
+               source="hr_system")
+
+# Later, Alice moves to Google — supersede (non-destructive)
+mg.edge_supersede(alice.id, "works_at", "Acme Corp",
+                  new_value="Google Corp",
+                  supersede_time=time.time())
+
+# Query at a specific time — 3 modes
+knowledge = mg.bitemporal_as_of(timestamp=time.time() - 3600, mode="knowledge")
+# → "Acme Corp" (what the agent believed 1h ago)
+
+truth = mg.bitemporal_as_of(timestamp=time.time(), mode="truth")
+# → "Google Corp" (what's objectively true now)
+
+certain = mg.bitemporal_as_of(timestamp=time.time(), mode="certain")
+# → intersection of knowledge and truth
+
+# Trace the full supersession chain
+chain = mg.supersedence_chain(alice.id, "works_at")
+# chain = [Acme Corp → Google Corp]
+
+# Diff between two time points
+diff = mg.knowledge_diff(t1=time.time() - 86400, t2=time.time())
+# diff.added, diff.removed, diff.superseded
+```
+
+### Forgetting Forecast
+
+Non-destructive Ebbinghaus decay projection — predict which memories will fade.
+
+```python
+# Forecast: which nodes are at risk of being forgotten?
+forecast = mg.forgetting_forecast(
+    node_ids=None,  # None = all nodes
+    horizon_hours=168  # 1 week ahead
+)
+# forecast.risk_zones: {critical: [...], high: [...], medium: [...], low: [...]}
+# forecast.population_summary: {median_ttt_hours, earliest_crossing, at_risk_count}
+# Non-destructive: does NOT modify weights (unlike forgetting_curve())
+```
+
+### Temporal Analysis Trilogy
+
+```python
+# 1. Changepoints: when did the graph structure shift?
+cp = mg.temporal_changepoints(bucket_size="day")
+# cp.changepoints, cp.bursts, cp.outliers
+
+# 2. Stability: how stable is the knowledge graph?
+stability = mg.temporal_stability_score()
+# stability.score (0-1), stability.tier (stable/healthy/moderate/fragile/unstable)
+
+# 3. Velocity: how fast is knowledge changing?
+vel = mg.temporal_velocity(bucket_size="day", window_days=7)
+# vel.creation_rate, vel.supersession_rate, vel.trend (accelerating/decelerating/steady)
+```
+
 ### MCP Server (16 Tools)
 
 Built-in MCP server for any MCP client (Claude Desktop, mcporter, OpenClaw).
@@ -520,7 +638,7 @@ python3 -m pytest -k "classification" -q  # classification suite
 python3 -m pytest -k "activation" -q  # spreading activation family
 ```
 
-**2,728 test cases** across 40+ test files. **281st consecutive day** 🏆.
+**2,917 test cases** across 40+ test files. **288th consecutive day** 🏆.
 
 ---
 
@@ -534,4 +652,4 @@ python3 -m pytest -k "activation" -q  # spreading activation family
 
 ---
 
-*Part of [Code Lab](../) · 281 days of iteration · Cycle 383+*
+*Part of [Code Lab](../) · 288 days of iteration · Cycle 415+*
