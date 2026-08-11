@@ -50108,6 +50108,255 @@ class MemoryGraph:
             "at_risk": at_risk,
         }
 
+    # ── Cycle 414: retrieval_quality_rerank() ─────────────
+    def retrieval_quality_rerank(
+        self,
+        node_ids: list[str],
+        *,
+        weights: dict[str, float] | None = None,
+        algorithm: str = "leiden",
+        now: float | None = None,
+    ) -> dict:
+        """Quality-aware re-ranking of a retrieval result set.
+
+        Re-orders retrieval results to **maximise coverage and
+        diversity** while **penalising redundancy**.  Turns the
+        diagnostics from :meth:`retrieval_quality_audit` and
+        :meth:`retrieval_quality_explain` into actionable
+        improvement.
+
+        Algorithm — **Greedy Marginal Contribution (GMC)**::
+
+            ordered = []
+            remaining = set(node_ids)
+            while remaining:
+                pick the node in *remaining* with the highest
+                marginal contribution =
+                    α · coverage_gain
+                  + β · diversity_gain
+                  + γ · freshness
+                  - δ · redundancy_penalty
+                move it to *ordered*
+
+        Default weights favour **coverage first**, then
+        **diversity**, then **freshness**, with a moderate
+        **redundancy penalty**.
+
+        Use cases:
+        - Post-process any retrieval (BM25, vector, GraphRAG)
+          to improve result set quality without re-querying.
+        - Replace heuristic diversification rules in search
+          pipelines.
+        - A/B test: original ranking vs quality-reranked.
+
+        Args:
+            node_ids:   Ordered list of node IDs from retrieval.
+            weights:    Override default contribution weights.
+                        Keys: ``"coverage"``, ``"diversity"``,
+                        ``"freshness"``, ``"redundancy"``.
+                        Values need not sum to 1 (auto-normalised).
+            algorithm:  Community algorithm for diversity scoring
+                        (``"leiden"``, ``"greedy"``, ``"lp"``).
+            now:        Override timestamp for freshness.
+
+        Returns:
+            Dict with:
+
+            - ``reranked_ids`` — new node ID ordering
+            - ``original_ids`` — input ordering (for diffing)
+            - ``improvement`` — dict of metric deltas
+              (``diversity_delta``, ``interference_delta``,
+              ``coverage_delta``, ``overall_delta``)
+            - ``audit_before`` — :meth:`retrieval_quality_audit`
+              result for the original ordering
+            - ``audit_after`` — same audit for the re-ranked
+              ordering
+            - ``marginal_contributions`` — per-node contribution
+              score at selection time
+            - ``duration_seconds``
+        """
+        t0 = time.time()
+        ts = now if now is not None else time.time()
+
+        # ── Default contribution weights ──────────────────────
+        dw = {
+            "coverage": 0.35,
+            "diversity": 0.30,
+            "freshness": 0.15,
+            "redundancy": 0.20,
+        }
+        if weights:
+            for k, v in weights.items():
+                if k in dw:
+                    dw[k] = float(v)
+        wsum = sum(dw.values())
+        if wsum <= 0:
+            wsum = 1.0
+        for k in dw:
+            dw[k] /= wsum
+
+        alpha = dw["coverage"]
+        beta = dw["diversity"]
+        gamma = dw["freshness"]
+        delta = dw["redundancy"]
+
+        # ── Validate node_ids ──────────────────────────────────
+        valid_ids: list[str] = []
+        for nid in node_ids:
+            row = self.conn.execute(
+                "SELECT id FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if row:
+                valid_ids.append(nid)
+
+        if len(valid_ids) <= 1:
+            audit = self.retrieval_quality_audit(
+                valid_ids, algorithm=algorithm, now=now)
+            return {
+                "reranked_ids": list(valid_ids),
+                "original_ids": list(node_ids),
+                "improvement": {
+                    "diversity_delta": 0.0,
+                    "interference_delta": 0.0,
+                    "coverage_delta": 0.0,
+                    "overall_delta": 0.0,
+                },
+                "audit_before": audit,
+                "audit_after": audit,
+                "marginal_contributions": [],
+                "duration_seconds": round(time.time() - t0, 4),
+            }
+
+        # ── Pre-compute neighbour sets ─────────────────────────
+        def _neighbour_set(nid: str) -> set[str]:
+            rows = self.conn.execute(
+                "SELECT target FROM edges WHERE source=? UNION "
+                "SELECT source FROM edges WHERE target=?",
+                (nid, nid),
+            ).fetchall()
+            return {r[0] for r in rows}
+
+        neighbours: dict[str, set[str]] = {
+            nid: _neighbour_set(nid) for nid in valid_ids
+        }
+
+        # ── Pre-compute freshness ──────────────────────────────
+        stability = 86400 * 3  # 3-day stability constant
+        freshness: dict[str, float] = {}
+        for nid in valid_ids:
+            row = self.conn.execute(
+                "SELECT accessed FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if row:
+                age = ts - row["accessed"]
+                freshness[nid] = math.exp(-max(0, age) / stability)
+            else:
+                freshness[nid] = 0.5
+
+        # ── Pre-compute community partition ────────────────────
+        try:
+            partition = self.community_partition(algorithm=algorithm)
+        except Exception:
+            partition = {}
+
+        # ── Greedy Marginal Contribution selection ─────────────
+        ordered: list[str] = []
+        remaining = set(valid_ids)
+        covered: set[str] = set()
+        seen_communities: set = set()
+        marginal_log: list[dict] = []
+
+        while remaining:
+            best_node = None
+            best_score = -float("inf")
+            best_data: dict = {}
+
+            for nid in remaining:
+                nb = neighbours[nid]
+
+                # Coverage gain: new nodes covered by this node
+                new_covered = nb - covered
+                cov_gain = len(new_covered) / max(1, len(nb))
+
+                # Diversity gain: does this node's community add?
+                comm = partition.get(nid, -1)
+                div_gain = 1.0 if comm not in seen_communities else 0.0
+
+                # Freshness
+                fresh = freshness[nid]
+
+                # Redundancy penalty: overlap with already-selected
+                if ordered:
+                    overlap_sum = 0.0
+                    for sel in ordered:
+                        sel_nb = neighbours[sel]
+                        union = nb | sel_nb
+                        if union:
+                            overlap_sum += len(nb & sel_nb) / len(union)
+                    mean_overlap = overlap_sum / len(ordered)
+                else:
+                    mean_overlap = 0.0
+
+                score = (
+                    alpha * cov_gain
+                    + beta * div_gain
+                    + gamma * fresh
+                    - delta * mean_overlap
+                )
+
+                if score > best_score:
+                    best_score = score
+                    best_node = nid
+                    best_data = {
+                        "coverage_gain": round(cov_gain, 4),
+                        "diversity_gain": div_gain,
+                        "freshness": round(fresh, 4),
+                        "redundancy_penalty": round(mean_overlap, 4),
+                        "marginal_score": round(score, 4),
+                        "community": comm,
+                        "position": len(ordered),
+                    }
+
+            # Commit the best node
+            ordered.append(best_node)
+            remaining.discard(best_node)
+            covered |= neighbours[best_node]
+            seen_communities.add(partition.get(best_node, -1))
+            best_data["node_id"] = best_node
+            marginal_log.append(best_data)
+
+        # ── Audits before & after ──────────────────────────────
+        audit_before = self.retrieval_quality_audit(
+            valid_ids, algorithm=algorithm, now=now)
+        audit_after = self.retrieval_quality_audit(
+            ordered, algorithm=algorithm, now=now)
+
+        improvement = {
+            "diversity_delta": round(
+                audit_after["diversity_score"]
+                - audit_before["diversity_score"], 4),
+            "interference_delta": round(
+                audit_after["interference_score"]
+                - audit_before["interference_score"], 4),
+            "coverage_delta": round(
+                audit_after["coverage_score"]
+                - audit_before["coverage_score"], 4),
+            "overall_delta": round(
+                audit_after["overall_quality"]
+                - audit_before["overall_quality"], 4),
+        }
+
+        return {
+            "reranked_ids": ordered,
+            "original_ids": list(valid_ids),
+            "improvement": improvement,
+            "audit_before": audit_before,
+            "audit_after": audit_after,
+            "marginal_contributions": marginal_log,
+            "weights": {k: round(v, 4) for k, v in dw.items()},
+            "duration_seconds": round(time.time() - t0, 4),
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
