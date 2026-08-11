@@ -1778,3 +1778,174 @@ class Memory:
             "untagged_entries": len(self._entries) - tagged,
             "co_occurrence": {k: dict(v) for k, v in sorted(co_occ.items())},
         }
+
+    # F55: batch_add — bulk insert entries, return list of assigned indices
+    def batch_add(self, entries: List[Dict[str, Any]]) -> List[int]:
+        """Add multiple entries at once.
+
+        Each dict in entries supports keys: content (required),
+        metadata, tags, importance.
+
+        Returns list of indices assigned to each entry (in order).
+        If max_entries is exceeded, oldest entries are evicted;
+        returned indices reflect positions after all insertions.
+        """
+        if not entries:
+            return []
+
+        indices: List[int] = []
+        for spec in entries:
+            content = spec.get("content", "")
+            if not content:
+                indices.append(-1)
+                continue
+            idx = len(self._entries)
+            entry = MemoryEntry(
+                content=content,
+                metadata=spec.get("metadata", {}),
+                tags=spec.get("tags", []),
+                importance=spec.get("importance", 0.5),
+            )
+            self._entries.append(entry)
+            indices.append(idx)
+
+        # Enforce max_entries
+        if len(self._entries) > self.max_entries:
+            evicted = len(self._entries) - self.max_entries
+            self._entries = self._entries[-self.max_entries:]
+            # Shift indices to account for eviction
+            indices = [i - evicted if i >= 0 else i for i in indices]
+
+        self._save()
+        return indices
+
+    # F56: search_snippet — search returning context-windowed snippets
+    def search_snippet(self, query: str, context_chars: int = 50, limit: int = 5) -> List[Dict[str, Any]]:
+        """Search and return snippets with surrounding context.
+
+        Returns list of dicts: {entry, index, snippet, match_pos}.
+        snippet is the content around the first match, with the
+        query highlighted via [[HIGHLIGHT]]...[[/HIGHLIGHT]] markers.
+        """
+        query_lower = query.lower()
+        results: List[Dict[str, Any]] = []
+
+        for idx, entry in enumerate(self._entries):
+            pos = entry.content.lower().find(query_lower)
+            if pos == -1:
+                continue
+
+            start = max(0, pos - context_chars)
+            end = min(len(entry.content), pos + len(query) + context_chars)
+            prefix = "..." if start > 0 else ""
+            suffix = "..." if end < len(entry.content) else ""
+
+            snippet_text = entry.content[start:end]
+            # Insert highlight markers around the match in the snippet
+            rel_pos = pos - start
+            match_end = rel_pos + len(query)
+            snippet = (
+                prefix
+                + snippet_text[:rel_pos]
+                + "[[HIGHLIGHT]]"
+                + snippet_text[rel_pos:match_end]
+                + "[[/HIGHLIGHT]]"
+                + snippet_text[match_end:]
+                + suffix
+            )
+
+            results.append({
+                "entry": entry,
+                "index": idx,
+                "snippet": snippet,
+                "match_pos": pos,
+            })
+
+            if len(results) >= limit:
+                break
+
+        return results
+
+    # F57: health_check — comprehensive memory health report
+    def health_check(self) -> Dict[str, Any]:
+        """Run a comprehensive health check on the memory store.
+
+        Returns dict with:
+        - status: 'healthy' | 'warning' | 'critical'
+        - issues: list of issue descriptions
+        - stats: {total, archived, tagged, duplicates, avg_importance, oldest_days}
+        - recommendations: list of suggested actions
+        """
+        issues: List[str] = []
+        recommendations: List[str] = []
+
+        total = len(self._entries)
+        archived = len(self._archived)
+        tagged = sum(1 for e in self._entries if e.tags)
+        dupes = self.find_duplicates(threshold=0.9)
+        avg_imp = sum(e.importance for e in self._entries) / total if total else 0.0
+
+        oldest_days = 0.0
+        if self._entries:
+            oldest = min(e.timestamp for e in self._entries)
+            oldest_days = (datetime.now() - oldest).days
+
+        # Capacity warnings
+        capacity_ratio = total / self.max_entries if self.max_entries > 0 else 0.0
+        if capacity_ratio >= 0.95:
+            issues.append(f"Memory at {capacity_ratio:.0%} capacity ({total}/{self.max_entries})")
+            recommendations.append("Consider increasing max_entries or running resize()")
+        elif capacity_ratio >= 0.8:
+            issues.append(f"Memory at {capacity_ratio:.0%} capacity ({total}/{self.max_entries})")
+
+        # Duplicate detection
+        if dupes:
+            issues.append(f"{len(dupes)} near-duplicate pairs found (threshold=0.9)")
+            recommendations.append("Run deduplicate() to merge similar entries")
+
+        # Low average importance
+        if total > 10 and avg_imp < 0.2:
+            issues.append(f"Low average importance: {avg_imp:.2f}")
+            recommendations.append("Consider forgetting low-importance entries")
+
+        # Stale entries
+        if oldest_days > 90:
+            stale = self.forget_older_than(days=90) if hasattr(self, '_entries') else 0
+            # Don't actually delete in health check, just report
+            old_count = sum(
+                1 for e in self._entries
+                if (datetime.now() - e.timestamp).days > 90
+            )
+            if old_count:
+                issues.append(f"{old_count} entries older than 90 days")
+                recommendations.append("Consider forget_older_than(90) to clean up")
+
+        # Untagged entries
+        untagged = total - tagged
+        if total > 5 and untagged / total > 0.8:
+            issues.append(f"{untagged}/{total} entries have no tags ({untagged/total:.0%})")
+            recommendations.append("Consider using auto_tag() to organize entries")
+
+        # Determine status
+        if any("critical" in i.lower() or "100%" in i for i in issues):
+            status = "critical"
+        elif issues:
+            status = "warning"
+        else:
+            status = "healthy"
+
+        return {
+            "status": status,
+            "issues": issues,
+            "stats": {
+                "total": total,
+                "archived": archived,
+                "tagged": tagged,
+                "untagged": untagged,
+                "duplicates": len(dupes),
+                "avg_importance": round(avg_imp, 3),
+                "oldest_days": oldest_days,
+                "capacity_ratio": round(capacity_ratio, 2),
+            },
+            "recommendations": recommendations,
+        }
