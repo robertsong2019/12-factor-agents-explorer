@@ -49560,6 +49560,121 @@ class MemoryGraph:
             "interpretation": interp,
         }
 
+    # ── Cycle 410: temporal_velocity() ─────────────────────────
+
+    def temporal_velocity(self, *, window_buckets: int = 5,
+                          bucket: str = "auto") -> Optional[dict]:
+        """Measure the current rate of knowledge change.
+
+        Computes per-bucket node creation/supersession rates over the
+        last *window_buckets* time buckets, then extrapolates trends:
+        acceleration, deceleration, or steady-state.
+
+        This is the "speedometer" for the graph: how fast is knowledge
+        arriving or departing right now?
+
+        Args:
+            window_buckets: Number of recent buckets to analyze (default 5).
+            bucket: Bucket size: 'hour', 'day', 'week', or 'auto'.
+
+        Returns:
+            Dict with creation_rate, supersession_rate, net_rate,
+            trend ('accelerating'|'decelerating'|'steady'),
+            trend_strength, recent_activity, historical_baseline.
+            None if < 3 events.
+        """
+        cp = self.temporal_changepoints(bucket=bucket)
+        if cp is None:
+            return None
+
+        timeline = cp["activity_timeline"]
+        bs = cp["bucket_size"]
+        if len(timeline) < 2:
+            return None
+
+        # Split recent vs historical
+        n_recent = min(window_buckets, len(timeline) // 2)
+        if n_recent < 1:
+            n_recent = 1
+
+        recent = timeline[-n_recent:]
+        historical = timeline[:-n_recent] if len(timeline) > n_recent else timeline
+
+        recent_rates = [a["activity"] for a in recent]
+        hist_rates = [a["activity"] for a in historical]
+
+        recent_mean = sum(recent_rates) / len(recent_rates)
+        hist_mean = sum(hist_rates) / len(hist_rates) if hist_rates else 0.0
+
+        # Per-bucket rates
+        creation_rate = recent_mean  # events per bucket
+        historical_rate = hist_mean
+
+        # Trend analysis
+        if len(recent_rates) >= 2:
+            # Simple linear regression slope
+            n = len(recent_rates)
+            xs = list(range(n))
+            mean_x = sum(xs) / n
+            mean_y = sum(recent_rates) / n
+            denom = sum((x - mean_x) ** 2 for x in xs)
+            if denom > 0:
+                slope = sum(
+                    (x - mean_x) * (y - mean_y)
+                    for x, y in zip(xs, recent_rates)
+                ) / denom
+            else:
+                slope = 0.0
+        else:
+            slope = 0.0
+
+        if abs(slope) < 0.01:
+            trend = "steady"
+        elif slope > 0:
+            trend = "accelerating"
+        else:
+            trend = "decelerating"
+
+        trend_strength = min(abs(slope), 1.0)
+
+        # Separately count creation vs supersession in recent window
+        recent_start_ts = recent[0]["bucket_start"]
+        recent_end_ts = recent[-1]["bucket_start"] + bs
+
+        recent_created = 0
+        recent_superseded = 0
+        for row in self.conn.execute(
+            "SELECT created FROM nodes WHERE created IS NOT NULL "
+            "AND created >= ? AND created < ?",
+            (recent_start_ts, recent_end_ts)
+        ).fetchall():
+            recent_created += 1
+
+        for row in self.conn.execute(
+            "SELECT valid_to FROM nodes WHERE valid_to IS NOT NULL "
+            "AND valid_to >= ? AND valid_to < ?",
+            (recent_start_ts, recent_end_ts)
+        ).fetchall():
+            recent_superseded += 1
+
+        net_rate = (recent_created - recent_superseded) / n_recent
+
+        return {
+            "creation_rate": round(recent_created / n_recent, 4),
+            "supersession_rate": round(recent_superseded / n_recent, 4),
+            "net_rate": round(net_rate, 4),
+            "trend": trend,
+            "trend_strength": round(trend_strength, 4),
+            "recent_activity": recent_rates,
+            "historical_baseline": round(historical_rate, 4),
+            "window_buckets": n_recent,
+            "bucket_size": bs,
+            "recent_vs_baseline_ratio": (
+                round(recent_mean / hist_mean, 4)
+                if hist_mean > 0 else None
+            ),
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
