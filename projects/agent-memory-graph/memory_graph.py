@@ -49438,6 +49438,128 @@ class MemoryGraph:
             "coverage_period": {"earliest": earliest, "latest": latest},
         }
 
+    # ── Cycle 409: temporal_stability_score() ──────────────────
+
+    def temporal_stability_score(self, *, window: int = 10) -> Optional[dict]:
+        """Quantify how structurally stable the graph has been over time.
+
+        Computes a composite stability score from three dimensions:
+
+        1. **Growth consistency** (CV of inter-arrival times) — regular
+           growth is more stable than bursty growth.
+        2. **Retention rate** — fraction of created nodes that remain
+           valid (not superseded).
+        3. **Changepoint density** — fewer changepoints per unit time
+           means more stable evolution.
+
+        Returns a 0–1 score where 1 = perfectly stable and 0 = chaotic.
+
+        Args:
+            window: Number of time buckets to divide history into for
+                    inter-arrival analysis (default 10).
+
+        Returns:
+            Dict with stability_score, growth_cv, retention_rate,
+            changepoint_density, interpretation.
+            None if < 3 temporal events exist.
+        """
+        import statistics
+
+        # Gather creation and supersession events
+        created_times = []
+        superseded_times = []
+
+        for row in self.conn.execute(
+            "SELECT created FROM nodes WHERE created IS NOT NULL"
+        ).fetchall():
+            created_times.append(row["created"])
+
+        for row in self.conn.execute(
+            "SELECT valid_to FROM nodes WHERE valid_to IS NOT NULL"
+        ).fetchall():
+            if row["valid_to"] is not None:
+                superseded_times.append(row["valid_to"])
+
+        all_events = sorted(created_times + superseded_times)
+        if len(all_events) < 3:
+            return None
+
+        earliest, latest = all_events[0], all_events[-1]
+        span = latest - earliest
+        if span <= 0:
+            return None
+
+        # 1. Growth consistency: coefficient of variation of inter-arrival times
+        if len(created_times) < 2:
+            growth_cv = 1.0  # maximally inconsistent
+        else:
+            created_sorted = sorted(created_times)
+            inter_arrivals = [
+                created_sorted[i + 1] - created_sorted[i]
+                for i in range(len(created_sorted) - 1)
+            ]
+            inter_arrivals = [ia for ia in inter_arrivals if ia > 0]
+            if len(inter_arrivals) < 2:
+                growth_cv = 0.0
+            else:
+                mean_ia = statistics.mean(inter_arrivals)
+                std_ia = statistics.stdev(inter_arrivals)
+                growth_cv = std_ia / mean_ia if mean_ia > 0 else 1.0
+
+        # Growth consistency score: lower CV → higher score
+        growth_score = max(0.0, 1.0 - min(growth_cv, 2.0) / 2.0)
+
+        # 2. Retention rate
+        total_created = len(created_times)
+        total_superseded = len(superseded_times)
+        retention_rate = (
+            (total_created - total_superseded) / total_created
+            if total_created > 0 else 1.0
+        )
+        retention_rate = max(0.0, min(1.0, retention_rate))
+
+        # 3. Changepoint density
+        cp_result = self.temporal_changepoints()
+        if cp_result is not None:
+            n_cps = len(cp_result["changepoints"])
+            cp_span = cp_result["coverage_period"]["latest"] - \
+                cp_result["coverage_period"]["earliest"]
+            # Normalize: changepoints per week
+            cp_per_week = n_cps / max(cp_span / 604800, 0.001)
+            # Score: 0 cp/week = 1.0, 5+ cp/week = 0.0
+            cp_density_score = max(0.0, 1.0 - min(cp_per_week, 5.0) / 5.0)
+        else:
+            cp_density_score = 1.0
+
+        # Composite: geometric mean of three dimensions
+        stability = (
+            growth_score * retention_rate * cp_density_score
+        ) ** (1 / 3)
+
+        # Interpretation
+        if stability >= 0.8:
+            interp = "very stable"
+        elif stability >= 0.6:
+            interp = "stable"
+        elif stability >= 0.4:
+            interp = "moderate turnover"
+        elif stability >= 0.2:
+            interp = "unstable — frequent structural change"
+        else:
+            interp = "chaotic — rapid, unpredictable evolution"
+
+        return {
+            "stability_score": round(stability, 4),
+            "growth_cv": round(growth_cv, 4),
+            "growth_consistency": round(growth_score, 4),
+            "retention_rate": round(retention_rate, 4),
+            "changepoint_density_score": round(cp_density_score, 4),
+            "total_created": total_created,
+            "total_superseded": total_superseded,
+            "span_seconds": round(span, 2),
+            "interpretation": interp,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
