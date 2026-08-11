@@ -1403,16 +1403,17 @@ class MemoryGraph:
                 count += 1
         return count / max(actual_samples, 1)
 
-    def community_detect(self, max_iter: int = 10) -> dict:
+    def community_detect(self, max_iter: int = 10, seed: int = 42) -> dict:
         """Label-propagation community detection. Returns {community_label: [node_ids]}."""
         nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
         if not nodes:
             return {}
         import random
+        rng = random.Random(seed)
         labels = {r["id"]: i for i, r in enumerate(nodes)}
         ids = list(labels.keys())
         for _ in range(max_iter):
-            random.shuffle(ids)
+            rng.shuffle(ids)
             changed = False
             for nid in ids:
                 neighbor_labels = {}
@@ -3845,7 +3846,7 @@ class MemoryGraph:
             return self.community_detection_greedy()
         else:
             # Label propagation returns {label: [nodes]}, invert to {node: label}
-            lp_result = self.community_detect()
+            lp_result = self.community_detect(seed=seed)
             return {nid: label for label, nids in lp_result.items() for nid in nids}
 
     def community_quality_report(self, algorithm: str = "leiden",
