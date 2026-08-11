@@ -49293,6 +49293,151 @@ class MemoryGraph:
         result["duration_seconds"] = round(_time.time() - t0, 4)
         return result
 
+    # ── Cycle 408: temporal_changepoints() ─────────────────────
+
+    def temporal_changepoints(self, *, bucket: str = "auto",
+                              min_separation: float = None) -> Optional[dict]:
+        """Discover significant structural change points in graph history.
+
+        Scans node creation and supersession timestamps to identify
+        time windows where the graph underwent unusually rapid or
+        significant structural change.  Complements ``temporal_diff``
+        (which compares two known timestamps) by *discovering* which
+        timestamps matter.
+
+        Uses a sliding-window burst-detection algorithm:
+        1. Bucket all node timestamps into time windows.
+        2. Compute per-bucket activity = nodes_created + nodes_superseded.
+        3. Flag buckets where activity exceeds mean + 2σ.
+        4. Merge adjacent flagged buckets into changepoint intervals.
+
+        Args:
+            bucket: Time bucket size — 'hour', 'day', 'week',
+                    or 'auto' (picks a size that yields 10–50 buckets).
+            min_separation: Minimum seconds between reported changepoints
+                           (default: 2× bucket size).
+
+        Returns:
+            Dict with changepoints, activity_timeline, bucket_size,
+            total_events, mean/std activity, threshold, coverage_period.
+            None if < 3 temporal events exist.
+        """
+        import statistics
+
+        events: list[tuple[float, str]] = []
+
+        for row in self.conn.execute(
+            "SELECT created FROM nodes WHERE created IS NOT NULL"
+        ).fetchall():
+            events.append((row["created"], "created"))
+
+        for row in self.conn.execute(
+            "SELECT valid_to FROM nodes WHERE valid_to IS NOT NULL"
+        ).fetchall():
+            events.append((row["valid_to"], "superseded"))
+
+        if len(events) < 3:
+            return None
+
+        events.sort(key=lambda x: x[0])
+        earliest, latest = events[0][0], events[-1][0]
+        span = latest - earliest
+        if span <= 0:
+            return None
+
+        bucket_map = {"hour": 3600, "day": 86400, "week": 604800}
+        if bucket == "auto":
+            if span / 3600 <= 50:
+                bs = 3600
+            elif span / 86400 <= 50:
+                bs = 86400
+            else:
+                bs = 604800
+        elif bucket in bucket_map:
+            bs = bucket_map[bucket]
+        else:
+            raise ValueError(
+                f"Unknown bucket '{bucket}'. Use 'hour', 'day', 'week', or 'auto'.")
+
+        if min_separation is None:
+            min_separation = bs * 2
+
+        # Bucket the events (align to epoch-multiple buckets)
+        timeline_start = int(earliest - (earliest % bs))
+        bucket_counts: dict[int, int] = {}
+        for ts, _ in events:
+            offset = int(ts - timeline_start)
+            b = timeline_start + (offset // bs) * bs
+            bucket_counts[b] = bucket_counts.get(b, 0) + 1
+
+        # Build full timeline (fill gaps)
+        timeline = []
+        cursor = timeline_start
+        while cursor <= int(latest):
+            timeline.append({
+                "bucket_start": cursor,
+                "activity": bucket_counts.get(cursor, 0),
+            })
+            cursor += bs
+
+        values = [a["activity"] for a in timeline]
+        mean_act = statistics.mean(values)
+        std_act = statistics.stdev(values) if len(values) > 1 else 0.0
+        threshold = mean_act + 2 * std_act if std_act > 0 else mean_act + 0.5
+
+        # Flag changepoints
+        for a in timeline:
+            a["is_changepoint"] = a["activity"] > threshold
+
+        # Merge adjacent flagged buckets into intervals
+        changepoints = []
+        i = 0
+        while i < len(timeline):
+            if not timeline[i]["is_changepoint"]:
+                i += 1
+                continue
+            cp_start = timeline[i]["bucket_start"]
+            cp_end = cp_start + bs
+            peak = timeline[i]["activity"]
+            ev_count = timeline[i]["activity"]
+            j = i + 1
+            while j < len(timeline) and timeline[j]["is_changepoint"]:
+                cp_end = timeline[j]["bucket_start"] + bs
+                peak = max(peak, timeline[j]["activity"])
+                ev_count += timeline[j]["activity"]
+                j += 1
+            duration_buckets = max(1, (cp_end - cp_start) // bs)
+            changepoints.append({
+                "start": cp_start,
+                "end": cp_end,
+                "peak_activity": peak,
+                "events": ev_count,
+                "intensity": round(ev_count / max(threshold * duration_buckets, 1), 4),
+                "duration_buckets": duration_buckets,
+            })
+            i = j
+
+        # Apply min_separation filter
+        if min_separation > 0 and len(changepoints) > 1:
+            changepoints.sort(key=lambda c: c["intensity"], reverse=True)
+            kept = []
+            for cp in changepoints:
+                if all(abs(cp["start"] - k["start"]) >= min_separation
+                       for k in kept):
+                    kept.append(cp)
+            changepoints = sorted(kept, key=lambda c: c["start"])
+
+        return {
+            "changepoints": changepoints,
+            "activity_timeline": timeline,
+            "bucket_size": bs,
+            "total_events": len(events),
+            "mean_activity": round(mean_act, 4),
+            "std_activity": round(std_act, 4),
+            "threshold": round(threshold, 4),
+            "coverage_period": {"earliest": earliest, "latest": latest},
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
