@@ -49941,6 +49941,173 @@ class MemoryGraph:
             ),
         }
 
+    # ─────────────────────────────────────────────
+    # Cycle 413: Forgetting Forecast
+    # Predicts when nodes will cross critical thresholds.
+    # Bridges temporal_velocity + forgetting_curve.
+    # ─────────────────────────────────────────────
+
+    def forgetting_forecast(self, *,
+                             threshold: float = 0.1,
+                             horizon_hours: float = 720,
+                             node_ids: list | None = None,
+                             limit: int = 50) -> Optional[dict]:
+        """Forecast when nodes will drop below a critical weight threshold.
+
+        Uses the Ebbinghaus decay model (same as :meth:`forgetting_curve`)
+        but **non-destructively**: does not modify node weights.  Instead
+        it projects current decay forward and reports:
+
+        * Which nodes will cross *threshold* within *horizon_hours*
+        * Estimated time-to-threshold (TTT) per node
+        * Risk zones: ``critical`` (< 24h), ``high`` (< 72h),
+          ``medium`` (< 168h), ``low`` (> 168h)
+        * Population-level summary (at-risk count, median TTT,
+          earliest crossing)
+
+        This is the predictive companion to:
+        - :meth:`forgetting_curve` (destructive, per-node)
+        - :meth:`staleness_score` (current snapshot, no forecast)
+        - :meth:`temporal_velocity` (rate of change, no per-node forecast)
+
+        Args:
+            threshold: Critical weight below which a node is "forgotten"
+                (default 0.1).
+            horizon_hours: Maximum forecast window (default 720h = 30 days).
+            node_ids: Restrict to specific nodes.  None = all nodes.
+            limit: Maximum at-risk nodes to return (sorted by TTT).
+
+        Returns:
+            Dict with ``summary`` and ``at_risk`` list, or None if graph empty.
+            Each at-risk entry: ``{node_id, label, current_weight,
+            projected_weight, ttt_hours, risk_zone, community}``
+        """
+        now = time.time()
+
+        # Gather node data
+        if node_ids:
+            placeholders = ",".join("?" * len(node_ids))
+            rows = self.conn.execute(
+                f"SELECT id, label, created, accessed, weight, q_value "
+                f"FROM nodes WHERE id IN ({placeholders}) AND weight IS NOT NULL",
+                node_ids,
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, label, created, accessed, weight, q_value "
+                "FROM nodes WHERE weight IS NOT NULL"
+            ).fetchall()
+
+        if not rows:
+            return None
+
+        base_half_life = 168.0       # 1 week
+        reinforcement_factor = 1.5
+
+        at_risk = []
+        all_ttt = []
+        already_below = 0
+
+        for r in rows:
+            weight = r["weight"] if r["weight"] is not None else 0.5
+            q_val = r["q_value"] or 0.0
+
+            # Effective half-life
+            time_since_access_h = max(
+                0.0, (now - (r["accessed"] or r["created"])) / 3600.0
+            )
+            access_proxy = 1 if time_since_access_h < 24.0 else 0
+            q_mult = 1.0 + q_val * 4.0
+            access_mult = reinforcement_factor ** access_proxy
+            s_eff = base_half_life * access_mult * q_mult
+
+            # If already below threshold
+            if weight <= threshold:
+                already_below += 1
+                continue
+
+            # Project forward: weight(t) = weight_now * exp(-0.693 * dt / s_eff)
+            # Solve for t when weight(t) = threshold:
+            # threshold = weight * exp(-0.693 * t / s_eff)
+            # t = -s_eff / 0.693 * ln(threshold / weight)
+            ratio = threshold / weight
+            if ratio >= 1.0:
+                # Already at or below
+                already_below += 1
+                continue
+
+            ttt_hours = -s_eff / 0.693 * math.log(ratio)
+
+            if ttt_hours > horizon_hours:
+                continue
+
+            # Risk zone classification
+            if ttt_hours < 24:
+                risk_zone = "critical"
+            elif ttt_hours < 72:
+                risk_zone = "high"
+            elif ttt_hours < 168:
+                risk_zone = "medium"
+            else:
+                risk_zone = "low"
+
+            # Projected weight at horizon (for context)
+            projected = weight * math.exp(-0.693 * horizon_hours / s_eff)
+            projected = max(0.0, projected)
+
+            # Community lookup (best-effort, column may not exist)
+            community = None
+            try:
+                comm_row = self.conn.execute(
+                    "SELECT community FROM nodes WHERE id=?", (r["id"],)
+                ).fetchone()
+                if comm_row and comm_row["community"] is not None:
+                    community = comm_row["community"]
+            except Exception:
+                pass
+
+            at_risk.append({
+                "node_id": r["id"],
+                "label": r["label"],
+                "current_weight": round(weight, 4),
+                "projected_weight_at_horizon": round(projected, 4),
+                "ttt_hours": round(ttt_hours, 1),
+                "ttt_days": round(ttt_hours / 24.0, 1),
+                "risk_zone": risk_zone,
+                "effective_half_life_hours": round(s_eff, 1),
+                "community": community,
+            })
+            all_ttt.append(ttt_hours)
+
+        # Sort by TTT ascending (most urgent first)
+        at_risk.sort(key=lambda x: x["ttt_hours"])
+        at_risk = at_risk[:limit]
+
+        # Summary
+        zone_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for entry in at_risk:
+            zone_counts[entry["risk_zone"]] += 1
+
+        median_ttt = (
+            round(sorted(all_ttt)[len(all_ttt) // 2], 1)
+            if all_ttt else None
+        )
+        earliest_ttt = round(min(all_ttt), 1) if all_ttt else None
+
+        return {
+            "summary": {
+                "total_nodes": len(rows),
+                "already_below_threshold": already_below,
+                "at_risk_count": len(all_ttt),
+                "threshold": threshold,
+                "horizon_hours": horizon_hours,
+                "median_ttt_hours": median_ttt,
+                "earliest_ttt_hours": earliest_ttt,
+                "zone_counts": zone_counts,
+            },
+            "at_risk": at_risk,
+        }
+
 
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
