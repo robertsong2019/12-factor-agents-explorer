@@ -30043,6 +30043,137 @@ class MemoryGraph:
 
         return rule_node
 
+    # ── Compression Spectrum Analysis (L0-L3) ─────────────────────
+
+    def compression_spectrum_report(self) -> dict:
+        """Analyze the graph's distribution across the L0-L3 compression spectrum.
+
+        Returns a diagnostic report following the Experience Compression
+        Spectrum framework (Zhang et al., arXiv:2604.15877; Research #060):
+
+        - **L0** (Raw Trace): Uncompressed execution logs / events
+        - **L1** (Episodic): Individual memories with context
+        - **L2** (Procedural Skill): Reusable workflow patterns
+        - **L3** (Declarative Rule): Domain-agnostic principles
+
+        The report includes:
+
+        1. Node count per level with percentages.
+        2. Dominant compression level.
+        3. Estimated overall compression ratio.
+        4. Actionable recommendations for upward compression.
+
+        Returns:
+            Spectrum analysis dict.
+        """
+        rows = self.conn.execute(
+            "SELECT kind, COUNT(*) as cnt FROM nodes GROUP BY kind"
+        ).fetchall()
+
+        # Classify kinds into compression levels
+        L0_kinds = {"trace", "event", "log", "action", "message"}
+        L1_kinds = {"episode", "memory", "fact", "note", "context"}
+        L2_kinds = {"skill"}
+        L3_kinds = {"rule"}
+
+        distribution = {
+            "L0_raw": 0,
+            "L1_episodic": 0,
+            "L2_skill": 0,
+            "L3_rule": 0,
+            "uncategorized": 0,
+        }
+
+        for row in rows:
+            kind = row["kind"] or "uncategorized"
+            cnt = row["cnt"]
+            if kind in L0_kinds:
+                distribution["L0_raw"] += cnt
+            elif kind in L1_kinds:
+                distribution["L1_episodic"] += cnt
+            elif kind in L2_kinds:
+                distribution["L2_skill"] += cnt
+            elif kind in L3_kinds:
+                distribution["L3_rule"] += cnt
+            else:
+                distribution["uncategorized"] += cnt
+
+        total = sum(distribution.values())
+
+        # Percentages
+        percentages = {}
+        for k, v in distribution.items():
+            percentages[k] = round(v / total * 100, 2) if total > 0 else 0.0
+
+        # Dominant level
+        level_keys = ["L0_raw", "L1_episodic", "L2_skill", "L3_rule"]
+        max_cnt = 0
+        dominant = "none"
+        for lk in level_keys:
+            if distribution[lk] > max_cnt:
+                max_cnt = distribution[lk]
+                dominant = lk
+
+        # Compression ratio: weighted sum
+        # L0=1x, L1=10x, L2=100x, L3=1000x (geometric means from the spectrum)
+        level_weights = {"L0_raw": 1, "L1_episodic": 10, "L2_skill": 100, "L3_rule": 1000}
+        weighted = sum(distribution[k] * level_weights[k] for k in level_keys)
+        ratio = round(weighted / max(total, 1), 2)
+
+        # Recommendations
+        recs = []
+        l0, l1, l2, l3 = (distribution["L0_raw"], distribution["L1_episodic"],
+                          distribution["L2_skill"], distribution["L3_rule"])
+
+        if l0 > 5 and l0 / max(total, 1) > 0.4:
+            recs.append(
+                f"High L0 trace count ({l0}). Consider compressing traces into "
+                "episodic memories (L0→L1) via thematic grouping."
+            )
+        if l1 > 5 and l2 == 0:
+            recs.append(
+                f"{l1} episodic memories but no skills (L2). Run "
+                "detect_skill_candidates() or compress_to_skill() to identify "
+                "recurring patterns."
+            )
+        if l1 > 10 and l2 < 2:
+            recs.append(
+                f"L1 pool ({l1}) is large relative to skills ({l2}). "
+                "More L1→L2 compression would improve retrieval efficiency."
+            )
+        if l2 >= 2 and l3 == 0:
+            recs.append(
+                f"{l2} skills exist but no declarative rules (L3). Run "
+                "extract_rules() to identify cross-skill principles."
+            )
+        if l3 >= 1 and l2 == 0:
+            recs.append(
+                "Rules exist without source skills. Ensure lineage "
+                "tracking via derived_from edges."
+            )
+        if not recs:
+            if total == 0:
+                recs.append("Graph is empty. Add nodes to begin.")
+            elif l3 > 0 and l2 > 0 and l1 > 0:
+                recs.append(
+                    "Compression spectrum is well-balanced across L1-L3. "
+                    "Healthy knowledge hierarchy."
+                )
+            else:
+                recs.append(
+                    "Graph is developing. Continue adding episodes and "
+                    "compressing into skills."
+                )
+
+        return {
+            "total_nodes": total,
+            "level_distribution": distribution,
+            "level_percentages": percentages,
+            "dominant_level": dominant,
+            "estimated_compression_ratio": ratio,
+            "recommendations": recs,
+        }
+
     # ── Skill Composition (L1→L2 Meta-Skill) ──────────────────────
 
     def skill_compose(self, skill_ids: list[str], name: str,
