@@ -51050,6 +51050,229 @@ class MemoryGraph:
 
         return result
 
+    def staleness_report(
+        self,
+        *,
+        node_ids: list[str] | None = None,
+        group_by: str = "kind",
+        limit: int = 20,
+    ) -> dict:
+        """Population-level staleness analysis across the graph.
+
+        Runs :meth:`staleness_score` on all (or a subset of) nodes
+        and produces a population-level report:
+
+        - **Staleness distribution**: fresh / aging / stale / critical
+        - **Statistics**: mean, median, std, min, max
+        - **Most stale nodes": top-N nodes by staleness score
+        - **Group breakdown": per-kind (or per-tag) staleness summary
+        - **Recommendations**: actionable maintenance suggestions
+
+        This is the population-level companion to per-node
+        :meth:`staleness_score`.  It answers: "Overall, how stale
+        is my memory? Where are the problem areas?"
+
+        Args:
+            node_ids: Restrict analysis to specific nodes.
+                None = all nodes.
+            group_by: Grouping dimension for breakdown.
+                ``"kind"`` (default), ``"tag"``, or ``"community"``.
+            limit: Max most-stale nodes to return.
+
+        Returns:
+            Dict with distribution, statistics, most_stale,
+            group_breakdown, summary, recommendations.
+        """
+        import statistics as stats_mod
+
+        # ── Gather node data ───────────────────────────────────
+        if node_ids:
+            placeholders = ",".join("?" * len(node_ids))
+            rows = self.conn.execute(
+                f"SELECT id, label, kind, weight, created, accessed "
+                f"FROM nodes WHERE id IN ({placeholders})",
+                node_ids,
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id, label, kind, weight, created, accessed "
+                "FROM nodes"
+            ).fetchall()
+
+        if not rows:
+            return {
+                "total_nodes": 0,
+                "summary": "Graph is empty — no nodes to analyze.",
+                "distribution": {},
+                "statistics": {},
+                "most_stale": [],
+                "group_breakdown": {},
+                "recommendations": ["Add nodes to the graph first."],
+            }
+
+        # ── Compute staleness per node ─────────────────────────
+        node_scores: list[dict] = []
+        for row in rows:
+            score = self.staleness_score(row["id"])
+            node_scores.append({
+                "node_id": row["id"],
+                "label": row["label"],
+                "kind": row["kind"] or "unknown",
+                "staleness": round(score, 6),
+                "weight": round(row["weight"] or 0.0, 6),
+            })
+
+        # ── Staleness levels ───────────────────────────────────
+        def _level(s: float) -> str:
+            if s < 0.25:
+                return "fresh"
+            elif s < 0.50:
+                return "aging"
+            elif s < 0.75:
+                return "stale"
+            else:
+                return "critical"
+
+        for ns in node_scores:
+            ns["level"] = _level(ns["staleness"])
+
+        distribution = {"fresh": 0, "aging": 0, "stale": 0, "critical": 0}
+        for ns in node_scores:
+            distribution[ns["level"]] += 1
+
+        total = len(node_scores)
+        distribution_pct = {
+            k: round(v / total * 100, 2) for k, v in distribution.items()
+        }
+
+        # ── Statistics ─────────────────────────────────────────
+        scores = [ns["staleness"] for ns in node_scores]
+        statistics = {
+            "mean": round(stats_mod.mean(scores), 6),
+            "median": round(stats_mod.median(scores), 6),
+            "std": round(stats_mod.stdev(scores), 6) if len(scores) > 1 else 0.0,
+            "min": round(min(scores), 6),
+            "max": round(max(scores), 6),
+            "count": total,
+        }
+
+        # ── Most stale nodes ───────────────────────────────────
+        most_stale = sorted(node_scores, key=lambda x: x["staleness"],
+                           reverse=True)[:limit]
+
+        # ── Group breakdown ────────────────────────────────────
+        groups: dict[str, list[float]] = {}
+        if group_by == "community":
+            # Community-based grouping
+            try:
+                partition = self.community_partition()
+            except Exception:
+                partition = {}
+            for ns in node_scores:
+                comm = partition.get(ns["node_id"], -1)
+                key = f"community_{comm}"
+                groups.setdefault(key, []).append(ns["staleness"])
+        elif group_by == "tag":
+            for ns in node_scores:
+                row = self.conn.execute(
+                    "SELECT tags FROM nodes WHERE id=?",
+                    (ns["node_id"],),
+                ).fetchone()
+                import json as _json
+                tags = json.loads(row["tags"]) if row and row["tags"] else []
+                tags = tags or ["untagged"]
+                for tag in tags:
+                    groups.setdefault(tag, []).append(ns["staleness"])
+        else:  # kind
+            for ns in node_scores:
+                groups.setdefault(ns["kind"], []).append(ns["staleness"])
+
+        group_breakdown: dict[str, dict] = {}
+        for gname, gscores in groups.items():
+            group_breakdown[gname] = {
+                "count": len(gscores),
+                "mean_staleness": round(stats_mod.mean(gscores), 6),
+                "median_staleness": round(stats_mod.median(gscores), 6),
+                "fresh_count": sum(1 for s in gscores if s < 0.25),
+                "stale_count": sum(1 for s in gscores if s >= 0.50),
+            }
+
+        # Sort groups by mean staleness (most stale first)
+        group_breakdown = dict(sorted(
+            group_breakdown.items(),
+            key=lambda x: x[1]["mean_staleness"],
+            reverse=True,
+        ))
+
+        # ── Recommendations ────────────────────────────────────
+        recommendations: list[str] = []
+
+        aging_pct = distribution_pct.get("aging", 0)
+        stale_pct = distribution_pct.get("stale", 0) + distribution_pct.get("critical", 0)
+        non_fresh_pct = aging_pct + stale_pct
+
+        if stale_pct > 50:
+            recommendations.append(
+                f"⚠️ {stale_pct:.0f}% of nodes are stale or critical. "
+                f"Consider running batch_forgetting() or refresh_node() "
+                f"on the most stale entries."
+            )
+        elif stale_pct > 25:
+            recommendations.append(
+                f"{stale_pct:.0f}% of nodes are stale. Monitor trend "
+                f"and plan maintenance."
+            )
+        elif non_fresh_pct > 60:
+            recommendations.append(
+                f"{non_fresh_pct:.0f}% of nodes are aging or worse. "
+                f"Consider refreshing high-value memories."
+            )
+        else:
+            recommendations.append(
+                "Memory is mostly fresh. No urgent maintenance needed."
+            )
+
+        # Most stale group
+        if group_breakdown:
+            worst_group = list(group_breakdown.keys())[0]
+            worst_mean = group_breakdown[worst_group]["mean_staleness"]
+            if worst_mean > 0.5 and len(group_breakdown) > 1:
+                recommendations.append(
+                    f"'{worst_group}' has the highest mean staleness "
+                    f"({worst_mean:.4f}). Consider targeted refresh."
+                )
+
+        # Critical nodes
+        crit_count = distribution.get("critical", 0)
+        if crit_count > 0:
+            recommendations.append(
+                f"{crit_count} node(s) are critically stale "
+                f"(staleness ≥ 0.75). Review or remove."
+            )
+
+        # ── Summary ────────────────────────────────────────────
+        summary_lines = [
+            f"Analyzed {total} nodes.",
+            f"Mean staleness: {statistics['mean']:.4f} "
+            f"(median: {statistics['median']:.4f}).",
+            f"Fresh: {distribution['fresh']} ({distribution_pct['fresh']:.1f}%)",
+            f"Aging: {distribution['aging']} ({distribution_pct['aging']:.1f}%)",
+            f"Stale: {distribution['stale']} ({distribution_pct['stale']:.1f}%)",
+            f"Critical: {distribution['critical']} ({distribution_pct['critical']:.1f}%)",
+        ]
+
+        return {
+            "total_nodes": total,
+            "distribution": distribution,
+            "distribution_pct": distribution_pct,
+            "statistics": statistics,
+            "most_stale": most_stale,
+            "group_breakdown": group_breakdown,
+            "group_by": group_by,
+            "summary": "\n".join(summary_lines),
+            "recommendations": recommendations,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     print("🧪 Agent Memory Graph Demo\n")
