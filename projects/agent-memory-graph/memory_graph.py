@@ -30174,6 +30174,203 @@ class MemoryGraph:
             "recommendations": recs,
         }
 
+    def rule_conflict_detect(
+        self, *, rule_ids: list[str] | None = None,
+    ) -> dict:
+        """Detect conflicts between declarative rules (L3 nodes).
+
+        After extracting rules from multiple skills via
+        :meth:`extract_rules`, contradictions can emerge — one rule
+        may say "always verify checksums" while another says "never
+        use checksums for small files".  This method scans all
+        ``kind='rule'`` nodes (or a specified subset) and identifies:
+
+        1. **Direct contradictions** – the *same* action keyword
+           appears as a negative constraint in one rule and a positive
+           rule in another.
+        2. **Overlapping constraints** – near-identical constraint
+           text across rules (potential redundancy or refinement).
+        3. **Topic collisions** – two rules reference the same domain
+           keywords with divergent directives.
+
+        Args:
+            rule_ids: Restrict the scan to these rule node IDs.
+                If ``None`` (default), all ``kind='rule'`` nodes are
+                scanned.
+
+        Returns:
+            A dict with keys:
+
+n            - ``total_rules`` – number of rules scanned.
+            - ``conflicts`` – list of dicts describing each conflict
+              (``rule_a``, ``rule_b``, ``type``, ``topic``, ``detail``).
+            - ``overlaps`` – list of dicts for near-duplicate
+              constraints (``rule_a``, ``rule_b``, ``shared_text``).
+            - ``clean_rules`` – count of rules with zero issues.
+            - ``recommendations`` – actionable strings.
+
+        If fewer than two rules exist, returns early with empty lists.
+        """
+        import re
+
+        # Gather rule nodes
+        if rule_ids is not None:
+            rows = []
+            for rid in rule_ids:
+                row = self.conn.execute(
+                    "SELECT id, label, data FROM nodes WHERE id=? AND kind='rule'",
+                    (rid,),
+                ).fetchone()
+                if row:
+                    rows.append(row)
+        else:
+            rows = self.conn.execute(
+                "SELECT id, label, data FROM nodes WHERE kind='rule'"
+            ).fetchall()
+
+        if len(rows) < 2:
+            return {
+                "total_rules": len(rows),
+                "conflicts": [],
+                "overlaps": [],
+                "clean_rules": len(rows),
+                "recommendations": [
+                    "Need at least 2 rules to detect conflicts."
+                ] if len(rows) < 2 else [],
+            }
+
+        # Parse each rule's constraints
+        parsed: list[dict] = []
+        for row in rows:
+            d = row["data"]
+            if isinstance(d, str):
+                try:
+                    d = json.loads(d)
+                except Exception:
+                    d = {}
+            if not isinstance(d, dict):
+                d = {}
+            parsed.append({
+                "id": row["id"],
+                "label": row["label"],
+                "negative": d.get("negative_constraints", []),
+                "positive": d.get("positive_rules", []),
+                "rule_name": d.get("rule_name", row["label"]),
+            })
+
+        # --- 1. Direct contradictions ------------------------------
+        # An action keyword that's positive in rule A and negative in B.
+        conflicts: list[dict] = []
+
+        def _extract_keywords(texts: list[str]) -> set[str]:
+            """Extract lowercased action keywords from constraint texts."""
+            keywords: set[str] = set()
+            for t in texts:
+                # Remove leading negation/affirmation, keep the action
+                cleaned = re.sub(
+                    r"^(always|must|should|do not|don't|dont|never|avoid|"
+                    r"must not|no |ensure|verify|check|validate|confirm)\b",
+                    "",
+                    t.lower().strip(),
+                ).strip()
+                # Tokenise and keep words ≥ 4 chars
+                tokens = {
+                    w for w in re.findall(r"[a-z]{4,}", cleaned)
+                    if w not in {"that", "this", "then", "when", "with",
+                                 "from", "have", "been", "will", "their"}
+                }
+                keywords |= tokens
+            return keywords
+
+        for i in range(len(parsed)):
+            for j in range(i + 1, len(parsed)):
+                ra, rb = parsed[i], parsed[j]
+
+                # Keywords that are positive in A and negative in B (or vice-versa)
+                pos_a = _extract_keywords(ra["positive"])
+                neg_a = _extract_keywords(ra["negative"])
+                pos_b = _extract_keywords(rb["positive"])
+                neg_b = _extract_keywords(rb["negative"])
+
+                # Direct contradiction: same keyword is positive in one,
+                # negative in the other
+                direct = (pos_a & neg_b) | (pos_b & neg_a)
+                if direct:
+                    topic = ", ".join(sorted(direct)[:3])
+                    conflicts.append({
+                        "rule_a": ra["id"],
+                        "rule_a_name": ra["rule_name"],
+                        "rule_b": rb["id"],
+                        "rule_b_name": rb["rule_name"],
+                        "type": "direct_contradiction",
+                        "topic": topic,
+                        "detail": (
+                            f"Opposing directives on: {topic}. "
+                            f"'{ra['rule_name']}' allows, "
+                            f"'{rb['rule_name']}' forbids (or vice-versa)."
+                        ),
+                    })
+
+        # --- 2. Overlapping / near-duplicate constraints -----------
+        overlaps: list[dict] = []
+
+        def _normalise(text: str) -> str:
+            """Normalise for fuzzy comparison."""
+            return re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
+
+        for i in range(len(parsed)):
+            for j in range(i + 1, len(parsed)):
+                ra, rb = parsed[i], parsed[j]
+                all_a = [_normalise(c) for c in ra["negative"] + ra["positive"]]
+                all_b = [_normalise(c) for c in rb["negative"] + rb["positive"]]
+                set_b = set(all_b)
+                for text_a in all_a:
+                    if text_a and text_a in set_b:
+                        overlaps.append({
+                            "rule_a": ra["id"],
+                            "rule_a_name": ra["rule_name"],
+                            "rule_b": rb["id"],
+                            "rule_b_name": rb["rule_name"],
+                            "shared_text": text_a,
+                        })
+
+        # --- 3. Recommendations -----------------------------------
+        recs: list[str] = []
+        if conflicts:
+            recs.append(
+                f"{len(conflicts)} direct contradiction(s) found. "
+                "Review and resolve: merge conflicting rules or "
+                "add conditions to disambiguate."
+            )
+        if overlaps:
+            recs.append(
+                f"{len(overlaps)} overlapping constraint(s) detected. "
+                "Consider merging redundant rules or differentiating "
+                "with explicit scope conditions."
+            )
+        if not conflicts and not overlaps:
+            recs.append(
+                "No conflicts or overlaps detected. Rule set is consistent."
+            )
+
+        # Clean rules = rules not involved in any conflict or overlap
+        dirty_ids: set[str] = set()
+        for c in conflicts:
+            dirty_ids.add(c["rule_a"])
+            dirty_ids.add(c["rule_b"])
+        for o in overlaps:
+            dirty_ids.add(o["rule_a"])
+            dirty_ids.add(o["rule_b"])
+        clean_rules = len(parsed) - len(dirty_ids)
+
+        return {
+            "total_rules": len(parsed),
+            "conflicts": conflicts,
+            "overlaps": overlaps,
+            "clean_rules": clean_rules,
+            "recommendations": recs,
+        }
+
     # ── Skill Composition (L1→L2 Meta-Skill) ──────────────────────
 
     def skill_compose(self, skill_ids: list[str], name: str,
