@@ -51050,6 +51050,158 @@ class MemoryGraph:
 
         return result
 
+    def batch_half_life(
+        self,
+        node_ids: list[str] | None = None,
+        *,
+        sort_by: str = "half_life",
+        limit: int = 0,
+    ) -> dict:
+        """Compute memory half-life for multiple nodes at once.
+
+        Batch wrapper around :meth:`memory_half_life` that processes
+        all (or a subset of) nodes and returns aggregate statistics
+        plus per-node results.
+
+        Useful for answering:
+        - "Which memories are most/least durable?"
+        - "What fraction of my graph is durable vs ephemeral?"
+        - "Which nodes should I reinforce?"
+
+        Args:
+            node_ids: Restrict to specific nodes. None = all nodes.
+            sort_by: Sort key for results: ``"half_life"`` (default),
+                ``"decay_rate"``, ``"weight"``, or ``"degree"``.
+            limit: Max results (0 = no limit).
+
+        Returns:
+            Dict with:
+
+            - **statistics**: mean, median, min, max, std of half-life.
+            - **categories**: count per stability category.
+            - **nodes**: per-node results (sorted).
+            - **most_durable** / **least_durable**: top/bottom 5.
+            - **recommendations**: maintenance suggestions.
+        """
+        import statistics as stats_mod
+
+        if node_ids:
+            placeholders = ",".join("?" * len(node_ids))
+            rows = self.conn.execute(
+                f"SELECT id FROM nodes WHERE id IN ({placeholders})",
+                node_ids,
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT id FROM nodes"
+            ).fetchall()
+
+        if not rows:
+            return {
+                "total": 0,
+                "statistics": {},
+                "categories": {},
+                "nodes": [],
+                "most_durable": [],
+                "least_durable": [],
+                "recommendations": ["Graph is empty."],
+            }
+
+        # ── Compute half-life per node ─────────────────────────
+        results: list[dict] = []
+        for row in rows:
+            hl = self.memory_half_life(row["id"])
+            if hl:
+                results.append(hl)
+
+        if not results:
+            return {
+                "total": 0,
+                "statistics": {},
+                "categories": {},
+                "nodes": [],
+                "most_durable": [],
+                "least_durable": [],
+                "recommendations": ["No valid nodes found."],
+            }
+
+        # ── Sort ───────────────────────────────────────────────
+        reverse_sort = sort_by in ("half_life_hours", "half_life", "degree")
+        sort_key = {
+            "half_life": "half_life_hours",
+            "half_life_hours": "half_life_hours",
+            "decay_rate": "decay_rate",
+            "weight": "current_weight",
+            "degree": "degree",
+        }.get(sort_by, "half_life_hours")
+
+        results.sort(key=lambda x: x.get(sort_key, 0), reverse=reverse_sort)
+
+        if limit > 0:
+            results = results[:limit]
+
+        # ── Statistics ─────────────────────────────────────────
+        half_lives = [r["half_life_hours"] for r in results]
+
+        statistics = {
+            "mean": round(stats_mod.mean(half_lives), 4),
+            "median": round(stats_mod.median(half_lives), 4),
+            "min": round(min(half_lives), 4),
+            "max": round(max(half_lives), 4),
+            "std": round(stats_mod.stdev(half_lives), 4) if len(half_lives) > 1 else 0.0,
+            "count": len(results),
+        }
+
+        # ── Category distribution ──────────────────────────────
+        categories: dict[str, int] = {
+            "durable": 0, "stable": 0, "fragile": 0, "ephemeral": 0,
+        }
+        for r in results:
+            categories[r["stability_category"]] += 1
+
+        # ── Top / bottom ───────────────────────────────────────
+        by_hl = sorted(results, key=lambda x: x["half_life_hours"])
+        most_durable = by_hl[-5:][::-1]  # top 5, descending
+        least_durable = by_hl[:5]         # bottom 5
+
+        # ── Recommendations ────────────────────────────────────
+        recommendations: list[str] = []
+        total = len(results)
+        ephemeral_pct = categories["ephemeral"] / total * 100 if total else 0
+        fragile_pct = categories["fragile"] / total * 100 if total else 0
+        durable_pct = categories["durable"] / total * 100 if total else 0
+
+        if ephemeral_pct > 25:
+            recommendations.append(
+                f"⚠️ {ephemeral_pct:.0f}% of nodes are ephemeral "
+                f"(half-life ≤ 48h). Consider reinforcing or linking them."
+            )
+        if fragile_pct > 40:
+            recommendations.append(
+                f"{fragile_pct:.0f}% of nodes are fragile. "
+                f"Add connections or increase Q-values to improve durability."
+            )
+        if durable_pct > 50:
+            recommendations.append(
+                f"✅ {durable_pct:.0f}% of nodes are durable. "
+                f"Memory graph has strong long-term retention."
+            )
+        if not recommendations:
+            recommendations.append(
+                "Half-life distribution is balanced. No urgent action needed."
+            )
+
+        return {
+            "total": len(results),
+            "statistics": statistics,
+            "categories": categories,
+            "sort_by": sort_by,
+            "nodes": results,
+            "most_durable": most_durable,
+            "least_durable": least_durable,
+            "recommendations": recommendations,
+        }
+
     def staleness_report(
         self,
         *,
