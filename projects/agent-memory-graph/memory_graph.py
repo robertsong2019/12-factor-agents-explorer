@@ -50906,6 +50906,150 @@ class MemoryGraph:
             "recommendations": recommendations,
         }
 
+    def memory_half_life(
+        self,
+        node_id: str,
+        *,
+        include_factors: bool = False,
+    ) -> Optional[dict]:
+        """Compute the knowledge half-life of a single node.
+
+        The **half-life** is the time required for the node's
+        importance (weight) to halve from its current value, based
+        on the Ebbinghaus decay model used by
+        :meth:`forgetting_curve`.
+
+        Unlike :meth:`forgetting_curve` (which *applies* decay) and
+        :meth:`forgetting_forecast` (which projects time-to-threshold),
+        this method computes the **doubling/halving time** — a single
+        intuitive number for "how durable is this knowledge?"
+
+        The half-life depends on:
+        - **Access recency**: recently accessed nodes have longer
+          half-lives (spaced repetition effect).
+        - **Q-value**: high-quality nodes decay slower.
+        - **Degree**: well-connected nodes have structural support.
+        - **Graph activity**: overall graph busyness modulates decay.
+
+        Args:
+            node_id: The node to analyze.
+            include_factors: If True, include the per-factor breakdown
+                in the result.
+
+        Returns:
+            Dict with:
+
+            - **half_life_hours**: Estimated hours for weight to halve.
+            - **half_life_human**: Human-readable duration string.
+            - **current_weight**: Node's current weight.
+            - **projected_weight**: Weight after one half-life.
+            - **decay_rate**: Exponential decay constant (per hour).
+            - **stability_category**: ``durable`` (>720h),
+              ``stable`` (>168h), ``fragile`` (>48h), ``ephemeral`` (≤48h).
+            - **factors**: (if include_factors) per-factor multipliers.
+
+            Returns None if node not found.
+        """
+        row = self.conn.execute(
+            "SELECT created, accessed, weight, q_value FROM nodes "
+            "WHERE id=?",
+            (node_id,),
+        ).fetchone()
+        if not row:
+            return None
+
+        # ── Base parameters (same as forgetting_curve) ──────────
+        base_half_life = 168.0       # 1 week default
+        reinforcement_factor = 1.5   # each access ×1.5
+        intensity_sensitivity = 0.1 # activity modulation
+
+        now = time.time()
+        time_since_access = max(0.0, (now - row["accessed"]) / 3600.0)
+        accessed_recently = time_since_access < 24.0
+        access_proxy = 1 if accessed_recently else 0
+
+        # Q-value multiplier (Q=1 → 5x)
+        q_val = row["q_value"] or 0.0
+        q_multiplier = 1.0 + q_val * 4.0
+
+        # Reinforcement
+        access_multiplier = reinforcement_factor ** access_proxy
+
+        # ── Structural support: degree bonus ───────────────────
+        # Well-connected nodes are more durable. Each edge adds ~5%
+        # to half-life, capped at 3x.
+        degree = self.conn.execute(
+            "SELECT COUNT(*) as c FROM edges WHERE source=? OR target=?",
+            (node_id, node_id),
+        ).fetchone()["c"]
+        degree_multiplier = min(3.0, 1.0 + degree * 0.05)
+
+        # Activity adjustment (medium default)
+        activity_multiplier = 1.0 + intensity_sensitivity * 0.5
+
+        # ── Effective half-life ────────────────────────────────
+        s_eff = (
+            base_half_life
+            * access_multiplier
+            * activity_multiplier
+            * q_multiplier
+            * degree_multiplier
+        )
+
+        # Decay constant: R(t) = e^(-λt), half-life = ln(2)/λ
+        decay_rate = 0.693 / s_eff if s_eff > 0 else float('inf')
+
+        current_weight = row["weight"] or 1.0
+        projected_weight = current_weight * 0.5
+
+        # ── Human-readable duration ────────────────────────────
+        hours = s_eff
+        if hours >= 720:
+            human = f"{hours / 720:.1f} months"
+        elif hours >= 168:
+            human = f"{hours / 24:.1f} days"
+        elif hours >= 24:
+            human = f"{hours / 24:.1f} days"
+        elif hours >= 1:
+            human = f"{hours:.1f} hours"
+        else:
+            human = f"{hours * 60:.0f} minutes"
+
+        # ── Stability category ─────────────────────────────────
+        if s_eff > 720:
+            category = "durable"
+        elif s_eff > 168:
+            category = "stable"
+        elif s_eff > 48:
+            category = "fragile"
+        else:
+            category = "ephemeral"
+
+        result = {
+            "node_id": node_id,
+            "half_life_hours": round(s_eff, 2),
+            "half_life_human": human,
+            "current_weight": round(current_weight, 6),
+            "projected_weight": round(projected_weight, 6),
+            "decay_rate": round(decay_rate, 8),
+            "stability_category": category,
+            "degree": degree,
+        }
+
+        if include_factors:
+            result["factors"] = {
+                "base": base_half_life,
+                "access_recency": round(access_multiplier, 4),
+                "q_value": round(q_multiplier, 4),
+                "degree_bonus": round(degree_multiplier, 4),
+                "activity": round(activity_multiplier, 4),
+                "q_value_raw": round(q_val, 4),
+                "accessed_recently": accessed_recently,
+                "time_since_access_hours": round(time_since_access, 2),
+            }
+
+        return result
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     print("🧪 Agent Memory Graph Demo\n")
