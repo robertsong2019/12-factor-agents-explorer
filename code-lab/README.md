@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~52,800 | ⭐ 知识图谱记忆引擎：529 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询 |
+| [agent-memory-graph](agent-memory-graph/) | ~52,800 | ⭐ 知识图谱记忆引擎：529 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询、Experience Compression Spectrum L2→L3 规则生命周期（提取/检测/匹配/诊断） |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 52,800+ 行的完整图记忆引擎，包含 529 公开 API 和 2,917+ 测试用例。
+该项目已从 300 行的教学示例演化为 52,800+ 行的完整图记忆引擎，包含 538 公开 API 和 2,917+ 测试用例。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -95,11 +95,17 @@
 | **遗忘预测** | 1 | `forgetting_forecast` — 非破坏性 Ebbinghaus 衰减预测（4 级风险区 critical/high/medium/low + 群体 TTT 摘要）|
 | **检索质量重排** | 1 | `retrieval_quality_rerank` — 贪心边际贡献重排（覆盖率/多样性/新鲜度/冗余度 4 维优化 + 审计前后对比）|
 | **检索质量对比** | 1 | `retrieval_quality_compare` — 多集合 A/B 对比（Jaccard 重叠矩阵 + 独有/共有节点 + 一致性分级）|
+| **检索质量趋势** | 1 | `retrieval_quality_trend` — N 份快照时序趋势（4 维线性回归 + 变化点 + 波动率）|
+| **知识耐久度** | 2 | `memory_half_life` — 逐节点半衰期；`batch_half_life` — 批量聚合分析 |
+| **群体陈旧度** | 1 | `staleness_report` — fresh/aging/stale/critical 分布 + 分组排名 |
+| **压缩谱: 规则提取** | 1 | `extract_rules` — L2→L3 声明式规则提取（负向约束分离 + 跨技能模式检测）|
+| **压缩谱: 分布分析** | 1 | `compression_spectrum_report` — L0-L3 全谱分布 + 加权压缩比 + 压缩建议 |
+| **L3 规则治理** | 3 | `rule_conflict_detect` — 矛盾检测；`rule_apply` — 运行时匹配；`rule_explain` — 匹配诊断 |
 | **MCP 工具** | 1 | MCP server 16 工具 + 请求指标追踪（延迟、错误率、调用日志）|
 
 ### 📐 信息论进化史（Cycles 306–316 + 326–407）
 
-最新里程碑：**检索质量族完结（audit → explain → rerank → compare）+ 双时序查询 + 遗忘预测 + 时序分析三部曲** — 检索质量从单点审计发展为完整的诊断→解释→修正→对比四步流水线；新增三模式双时序查询（knowledge/truth/certain）、非破坏性遗忘预测、以及突变检测/稳定性/速率时序三部曲（Cycles 408-415）。
+最新里程碑：**Experience Compression Spectrum L2→L3 规则生命周期完结（extract→detect→apply→explain）+ 检索质量五步流水线完结（audit→explain→rerank→compare→trend）+ 知识耐久度分析** — 从检索质量审计发展为完整的诊断→解释→修正→对比→趋势五步流水线；L2 技能节点可提取为 L3 声明式规则，经冲突检测后运行时匹配并诊断；新增半衰期估算与群体陈旧度分析（Cycles 408-424）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -175,6 +181,15 @@
 | 遗忘预测 | 413 | `forgetting_forecast` | 非破坏性 Ebbinghaus 衰减预测 — 4 级风险区(critical<24h/high<72h/medium<168h/low) + 群体 TTT 解析求解 |
 | 检索质量重排 | 414 | `retrieval_quality_rerank` | 贪心边际贡献选择 — 4 维加权(覆盖率/多样性/新鲜度/冗余度) + 审计前后改进 delta |
 | 检索质量对比 | 415 | `retrieval_quality_compare` | 多集合 A/B 对比 — Jaccard 重叠矩阵 + 独有/共有节点 + 维度胜者 + 一致性分级 |
+| 检索质量趋势 | 416 | `retrieval_quality_trend` | N 份审计快照的时序趋势分析 — 4 维线性回归(斜率/r²) + 方向判定 + 变化点(z-score) — **检索质量族完结: audit→explain→rerank→compare→trend** |
+| 知识耐久度 | 417 | `memory_half_life` | 逐节点半衰期估算（Ebbinghaus 衰减 + 访问/Q值/度数因子）— durable/stable/fragile/ephemeral 四级稳定性分类 |
+| 群体陈旧度 | 418 | `staleness_report` | 全图陈旧度分析（fresh/aging/stale/critical 分布 + 统计 + 分组排名 + 维护建议）|
+| 群体耐久度 | 419 | `batch_half_life` | 批量半衰期分析（聚合统计 + 类别分布 + top/bottom-5 排名 + 维护建议）|
+| 规则提取 | 420 | `extract_rules` | **Experience Compression Spectrum L2→L3** — 从技能节点提取声明式规则（分离负向约束 vs 正向规则，跨技能模式检测）|
+| 压缩谱报告 | 421 | `compression_spectrum_report` | L0-L3 分布分析（节点分类/级别分布/加权压缩比/主导级别识别/压缩建议）|
+| 规则冲突检测 | 422 | `rule_conflict_detect` | L3 规则集矛盾检测（直接矛盾 + 重叠检测 + 清洁规则计数）|
+| 规则运行时匹配 | 423 | `rule_apply` | 运行时 L3 规则匹配（Jaccard 关键词重叠 + 正/负向引导排序）— **规则生命周期: extract→detect→apply** |
+| 规则诊断 | 424 | `rule_explain` | 逐规则匹配诊断（关键词重叠分解 + Jaccard 贡献评分 + 可读解释 + 建议）— **规则自省生命周期完结: extract→detect→apply→explain** |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---

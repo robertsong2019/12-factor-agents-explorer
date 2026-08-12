@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-7400-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-8505-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -2293,7 +2293,73 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-6692 个测试覆盖所有 API（341 个 cycle，275 天零回滚）。
+8505 个测试覆盖所有 API（424 个 cycle，290 天零回滚）。
+
+## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
+
+### 架构里程碑
+
+Cycles 416-424 完成了两个重要架构里程碑：
+
+**1. Experience Compression Spectrum L2→L3 规则生命周期完结**
+
+```
+L0 (raw trace) → L1 (episode) → L2 (skill) → L3 (rule)
+                                   ↑              ↑
+                             compress_to_skill    extract_rules (Cycle 420)
+                                                rule_conflict_detect (422)
+                                                rule_apply (423)
+                                                rule_explain (424)
+```
+
+完整生命周期：从原始跟踪到声明式规则的全谱压缩。L3 规则分离负向约束（RuleShaping 研究：负向约束 +7-14pp）与正向规则，支持矛盾检测、运行时匹配和诊断解释。
+
+**2. 检索质量五步流水线完结**
+
+```
+audit (404) → explain (406b) → rerank (414) → compare (415) → trend (416)
+                                                            COMPLETE ✅
+```
+
+### 新增 API 参考
+
+#### `retrieval_quality_trend(snapshots) -> dict` (Cycle 416)
+
+N 份审计快照的时序趋势分析。每维度线性回归（斜率/r²），方向判定（improving/degrading/stable），波动率（变异系数），变化点检测（z-score）。
+
+#### `memory_half_life(node_id) -> dict` (Cycle 417)
+
+逐节点知识耐久度估算。基于 Ebbinghaus 衰减模型，综合访问频率、Q 值、度数、活动因子计算半衰期。4 级分类：durable（>720h）/ stable（168-720h）/ fragile（24-168h）/ ephemeral（<24h）。
+
+#### `staleness_report(*, group_by=None) -> dict` (Cycle 418)
+
+全图陈旧度人口分析。4 级分布（fresh/aging/stale/critical）+ 统计（mean/median/std）+ 最陈旧排名 + 分组分解 + 维护建议。
+
+#### `batch_half_life(node_ids=None) -> dict` (Cycle 419)
+
+批量半衰期分析。聚合统计（mean/median/std）+ 类别分布 + top/bottom-5 排名 + 维护建议。
+
+#### `extract_rules(skill_ids, *, min_confidence=0.7) -> list[dict]` (Cycle 420)
+
+**Experience Compression Spectrum L2→L3。** 从技能节点提取声明式规则。自动分离负向约束（"never/avoid/not"）与正向规则。跨技能模式检测（共享约束置信度 +0.15）。返回规则节点（kind='rule'），建立 `derived_from` 边链接回源技能。
+
+#### `compression_spectrum_report() -> dict` (Cycle 421)
+
+L0-L3 全谱分布分析。按 kind 分类所有节点（trace/event→L0, episode/fact→L1, skill→L2, rule→L3）。级别分布 + 百分比 + 加权压缩比（L0=1×, L1=10×, L2=100×, L3=1000×）+ 主导级别识别 + 可执行压缩建议。
+
+#### `rule_conflict_detect(*, rule_ids=None) -> dict` (Cycle 422)
+
+L3 规则集矛盾检测。直接矛盾（同一动作关键词在一规则中正向、另一规则中负向）+ 重叠检测（共享约束文本）+ 清洁规则计数。
+
+#### `rule_apply(content, *, top_k=5) -> list[dict]` (Cycle 423)
+
+运行时 L3 规则匹配。通过 Jaccard 关键词重叠将规则与新内容匹配。返回排名匹配 + 正/负向引导。完整规则生命周期：extract_rules → rule_conflict_detect → rule_apply。
+
+#### `rule_explain(content, rule_id) -> dict` (Cycle 424)
+
+逐规则匹配诊断。关键词重叠分解 + Jaccard 贡献评分 + 人类可读解释 + 可执行建议。规则自省生命周期完结：extract_rules → rule_conflict_detect → rule_apply → rule_explain。
+
+---
 
 ## 设计思路
 

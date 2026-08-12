@@ -1,8 +1,8 @@
 # Agent Memory Graph 🧠
 
-> A graph-native memory engine for AI agents — 27,000+ lines, 529 API methods, 2,917 tests, zero dependencies.
+> A graph-native memory engine for AI agents — 27,000+ lines, 538 API methods, 2,917 tests, zero dependencies.
 >
-> **288 consecutive days of iteration** 🏆
+> **290th consecutive day of iteration** 🏆
 
 **Zero dependencies** — pure Python stdlib + sqlite3. `sqlite-vec` optional for vector search.
 
@@ -602,6 +602,88 @@ vel = mg.temporal_velocity(bucket_size="day", window_days=7)
 # vel.creation_rate, vel.supersession_rate, vel.trend (accelerating/decelerating/steady)
 ```
 
+### Retrieval Quality Trend (Cycle 416)
+
+Temporal trend analysis across N audit snapshots — completes the retrieval quality lifecycle:
+audit → explain → rerank → compare → **trend**.
+
+```python
+# Collect daily quality snapshots
+snapshots = [mg.retrieval_quality_audit(results) for results in daily_results]
+
+trend = mg.retrieval_quality_trend(snapshots)
+# trend.directions: {diversity: 'improving', coverage: 'degrading', ...}
+# trend.slopes: {diversity: +0.03, coverage: -0.01, ...}
+# trend.change_points: dimensions where sudden shifts occurred
+# trend.volatility: coefficient of variation per dimension
+```
+
+### Knowledge Durability (Cycles 417-419)
+
+Estimate how long memories last and which are going stale:
+
+```python
+# Per-node half-life: time for weight to halve
+hl = mg.memory_half_life('concept:react')
+# hl.half_life_hours, hl.category ('durable'|'stable'|'fragile'|'ephemeral')
+
+# Population-level batch analysis
+batch = mg.batch_half_life()
+# batch.mean, batch.median, batch.category_distribution
+# batch.top5_durable, batch.bottom5_fragile
+
+# Population staleness report
+report = mg.staleness_report()
+# report.distribution: {fresh: 45, aging: 30, stale: 15, critical: 5}
+# report.most_stale: [(node_id, age_days), ...]
+# report.recommendations: ['Consider consolidating 15 stale nodes...']
+```
+
+### Experience Compression Spectrum: L2→L3 Rules (Cycles 420-424)
+
+The highest compression level — extract declarative rules from procedural skills.
+Full lifecycle: **extract_rules → rule_conflict_detect → rule_apply → rule_explain**.
+
+```python
+# L1→L2 already existed: compress_to_skill()
+mg.compress_to_skill(['event:bug_fix_1', 'event:bug_fix_2'], name='fix-null-pointer')
+
+# L2→L3: Extract rules from skills
+rules = mg.extract_rules(['skill:fix-null-pointer', 'skill:fix-race-condition'],
+                         min_confidence=0.7)
+# Each rule: {action, constraint, polarity: 'positive'|'negative', confidence}
+# Negative constraints ("never assume non-null") are separated from
+# positive rules ("always check before dereference")
+
+# Check for contradictions in your rule set
+conflicts = mg.rule_conflict_detect()
+# conflicts.contradictions: rules that directly oppose each other
+# conflicts.overlaps: redundant rules that may need merging
+
+# Apply rules at runtime — match against new situations
+matches = mg.rule_apply('event:new_bug_report', top_k=5)
+# matches: [{rule_id, score, polarity: 'positive'|'negative'}, ...]
+
+# Explain WHY a rule matched (or didn't)
+explanation = mg.rule_explain('event:new_bug_report', 'rule:always-check-null')
+# explanation.keyword_overlap: which keywords matched
+# explanation.jaccard_contribution: per-keyword Jaccard scores
+# explanation.suggestions: human-readable next steps
+```
+
+### Compression Spectrum Report
+
+```python
+report = mg.compression_spectrum_report()
+# L0 (raw traces): 1,250 nodes (62%)
+# L1 (episodes):   450 nodes (22%)
+# L2 (skills):      85 nodes (4%)
+# L3 (rules):       12 nodes (0.6%)
+# Weighted compression ratio: 8.3x
+# Dominant level: L0 (raw traces dominate — consider L0→L1 compression)
+# Recommendations: actionable next steps for each compression transition
+```
+
 ### MCP Server (16 Tools)
 
 Built-in MCP server for any MCP client (Claude Desktop, mcporter, OpenClaw).
@@ -638,7 +720,7 @@ python3 -m pytest -k "classification" -q  # classification suite
 python3 -m pytest -k "activation" -q  # spreading activation family
 ```
 
-**2,917 test cases** across 40+ test files. **288th consecutive day** 🏆.
+**2,917 test cases** across 40+ test files. **290th consecutive day** 🏆.
 
 ---
 
@@ -652,4 +734,4 @@ python3 -m pytest -k "activation" -q  # spreading activation family
 
 ---
 
-*Part of [Code Lab](../) · 288 days of iteration · Cycle 415+*
+*Part of [Code Lab](../) · 290 days of iteration · Cycle 424+*
