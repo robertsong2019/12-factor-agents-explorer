@@ -30371,6 +30371,144 @@ n            - ``total_rules`` – number of rules scanned.
             "recommendations": recs,
         }
 
+    def rule_apply(
+        self, query: str, *, top_k: int = 10,
+        include_metadata: bool = False,
+    ) -> dict:
+        """Apply extracted L3 rules to a runtime *query*.
+
+        Given a user query or task description, this method finds
+        which declarative rules (``kind='rule'`` nodes created by
+        :meth:`extract_rules`) are relevant, ranks them by keyword
+        overlap, and returns actionable guidance.
+
+        This completes the rule lifecycle:
+        ``extract_rules`` → ``rule_conflict_detect`` → **``rule_apply``**.
+
+        Args:
+            query: The runtime query or task description.
+            top_k: Maximum number of rules to return (default 10).
+            include_metadata: If ``True``, each matched rule includes
+                its full ``data`` dict (negative_constraints,
+                positive_rules, etc.).
+
+        Returns:
+            A dict with keys:
+
+            - ``query`` – the input query string.
+            - ``total_rules_scanned`` – number of L3 rules in the graph.
+            - ``matched_count`` – number of rules with relevance > 0.
+            - ``matches`` – list of dicts, sorted by relevance descending.
+              Each dict has ``rule_id``, "rule_name", ``relevance``
+              (0..1), ``positive_rules``, ``negative_constraints``,
+              and optionally ``metadata``.
+            - ``guidance`` – list of human-readable action strings
+              compiled from matched rules.
+            - ``unmatched_rules`` – count of rules with zero overlap.
+
+            If no rules exist in the graph, returns early with empty
+            matches and a suggestion to run ``extract_rules`` first.
+        """
+        import re
+
+        # Gather all rule nodes
+        rows = self.conn.execute(
+            "SELECT id, label, data FROM nodes WHERE kind='rule'"
+        ).fetchall()
+
+        if not rows:
+            return {
+                "query": query,
+                "total_rules_scanned": 0,
+                "matched_count": 0,
+                "matches": [],
+                "guidance": [
+                    "No rules found. Run extract_rules() first."
+                ],
+                "unmatched_rules": 0,
+            }
+
+        # Tokenise the query
+        query_tokens = {
+            w for w in re.findall(r"[a-z]{3,}", query.lower())
+            if w not in {"the", "and", "for", "are", "but", "not",
+                         "you", "all", "can", "her", "was", "one",
+                         "our", "out", "day", "had", "has", "how",
+                         "its", "may", "new", "now", "old", "see",
+                         "way", "who", "did", "get", "let", "say",
+                         "she", "too", "use"}
+        }
+
+        matches: list[dict] = []
+
+        for row in rows:
+            d = row["data"]
+            if isinstance(d, str):
+                try:
+                    d = json.loads(d)
+                except Exception:
+                    d = {}
+            if not isinstance(d, dict):
+                d = {}
+
+            rule_name = d.get("rule_name", row["label"])
+            positive = d.get("positive_rules", [])
+            negative = d.get("negative_constraints", [])
+            derived_from = d.get("derived_from", [])
+
+            # Build the rule's keyword set from name + constraints
+            rule_text = " ".join([rule_name] + positive + negative)
+            rule_tokens = {
+                w for w in re.findall(r"[a-z]{3,}", rule_text.lower())
+            }
+
+            # Compute Jaccard-like relevance
+            if not rule_tokens:
+                relevance = 0.0
+            else:
+                overlap = len(query_tokens & rule_tokens)
+                union = len(query_tokens | rule_tokens)
+                relevance = overlap / union if union > 0 else 0.0
+
+            if relevance > 0:
+                entry = {
+                    "rule_id": row["id"],
+                    "rule_name": rule_name,
+                    "relevance": round(relevance, 4),
+                    "positive_rules": positive,
+                    "negative_constraints": negative,
+                }
+                if include_metadata:
+                    entry["metadata"] = d
+                matches.append(entry)
+
+        # Sort by relevance descending
+        matches.sort(key=lambda m: m["relevance"], reverse=True)
+        matches = matches[:top_k]
+
+        # Build guidance lines
+        guidance: list[str] = []
+        for m in matches:
+            for pos in m["positive_rules"]:
+                guidance.append(f"[{m['rule_name']}] DO: {pos}")
+            for neg in m["negative_constraints"]:
+                guidance.append(f"[{m['rule_name']}] DON'T: {neg}")
+
+        if not guidance:
+            guidance.append(
+                "No matching rules for this query. "
+                "Proceed with general best practices."
+            )
+
+        return {
+            "query": query,
+            "total_rules_scanned": len(rows),
+            "matched_count": len(matches),
+            "matches": matches,
+            "guidance": guidance,
+            "unmatched_rules": len(rows) - len(matches),
+        }
+
     # ── Skill Composition (L1→L2 Meta-Skill) ──────────────────────
 
     def skill_compose(self, skill_ids: list[str], name: str,
