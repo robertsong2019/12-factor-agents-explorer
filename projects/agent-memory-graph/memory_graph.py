@@ -50639,6 +50639,273 @@ class MemoryGraph:
         }
 
 
+    def retrieval_quality_trend(
+        self,
+        snapshots: list[dict],
+        *,
+        weights: dict[str, float] | None = None,
+    ) -> dict:
+        """Analyze retrieval quality trends over time.
+
+        Given a series of :meth:`retrieval_quality_audit` results
+        taken at different points in time, compute the overall
+        trend (improving, degrading, stable) for each quality
+        dimension and overall.
+
+        This completes the retrieval quality lifecycle:
+        audit → explain → rerank → compare → **trend**.
+
+        Use cases:
+        - Monitor retrieval health as the graph grows.
+        - Detect quality regressions after bulk imports.
+        - Evaluate the long-term impact of parameter changes.
+        - Report retrieval KPIs to stakeholders.
+
+        Args:
+            snapshots: List of audit result dicts, each containing
+                ``overall_quality``, ``diversity_score``,
+                ``interference_score``, ``freshness_score``,
+                ``coverage_score``, and optionally ``timestamp``
+                and ``label``.  Must have at least 2 entries.
+            weights: Optional weights for computing a composite
+                trend significance. Keys: same as audit.
+
+        Returns:
+            Dict with:
+
+            - **dimensions**: per-dimension trend (slope, r_squared,
+              direction, significance).
+            - **overall_trend**: composite assessment.
+            - **best_snapshot** / **worst_snapshot**: index + value.
+            - **volatility**: coefficient of variation per dimension.
+            - **change_points**: snapshots where quality dropped
+              > 1σ from rolling mean.
+            - **summary**: human-readable narrative.
+            - **recommendations**: actionable suggestions.
+        """
+        import math
+
+        if len(snapshots) < 2:
+            return {
+                "error": "Need at least 2 snapshots for trend analysis.",
+            }
+
+        dims = [
+            "overall_quality",
+            "diversity_score",
+            "interference_score",
+            "freshness_score",
+            "coverage_score",
+        ]
+
+        n = len(snapshots)
+
+        # ── Extract time series per dimension ─────────────────
+        series: dict[str, list[float]] = {d: [] for d in dims}
+        labels: list[str] = []
+        timestamps: list[float | None] = []
+
+        for snap in snapshots:
+            for d in dims:
+                val = snap.get(d)
+                if val is None:
+                    val = snap.get("overall_quality", 0.0) if d == "overall_quality" else 0.0
+                series[d].append(float(val))
+            labels.append(snap.get("label", f"snap_{len(labels)}"))
+            timestamps.append(snap.get("timestamp"))
+
+        # ── Linear regression for trend ───────────────────────
+        def _linreg(ys: list[float]) -> tuple[float, float]:
+            """Return (slope, r_squared) via least squares."""
+            nn = len(ys)
+            xs = list(range(nn))
+            mean_x = sum(xs) / nn
+            mean_y = sum(ys) / nn
+            num = sum((xs[i] - mean_x) * (ys[i] - mean_y) for i in range(nn))
+            den_x = sum((x - mean_x) ** 2 for x in xs)
+            den_y = sum((y - mean_y) ** 2 for y in ys)
+            if den_x == 0:
+                return 0.0, 0.0
+            slope = num / den_x
+            if den_y == 0:
+                r2 = 1.0 if slope == 0 else 0.0
+            else:
+                r2 = (num ** 2) / (den_x * den_y) if den_x * den_y > 0 else 0.0
+            return round(slope, 6), round(r2, 6)
+
+        dim_trends: dict[str, dict] = {}
+        for d in dims:
+            slope, r2 = _linreg(series[d])
+            vals = series[d]
+            mean_v = sum(vals) / len(vals)
+            std_v = (sum((v - mean_v) ** 2 for v in vals) / len(vals)) ** 0.5
+            cv = round(std_v / mean_v, 6) if abs(mean_v) > 1e-12 else 0.0
+
+            if abs(slope) < 1e-6 or r2 < 0.3:
+                direction = "stable"
+            elif slope > 0:
+                direction = "improving"
+            else:
+                direction = "degrading"
+
+            # Significance: r_squared * magnitude
+            delta = vals[-1] - vals[0]
+            significance = "negligible"
+            if r2 >= 0.7 and abs(delta) >= 0.05:
+                significance = "strong"
+            elif r2 >= 0.4 and abs(delta) >= 0.03:
+                significance = "moderate"
+
+            dim_trends[d] = {
+                "slope": slope,
+                "r_squared": r2,
+                "direction": direction,
+                "significance": significance,
+                "mean": round(mean_v, 6),
+                "std": round(std_v, 6),
+                "cv": cv,
+                "delta": round(delta, 6),
+                "first": round(vals[0], 6),
+                "last": round(vals[-1], 6),
+                "series": [round(v, 6) for v in vals],
+            }
+
+        # ── Overall trend ─────────────────────────────────────
+        overall = dim_trends["overall_quality"]
+        if overall["direction"] == "improving" and overall["significance"] in ("strong", "moderate"):
+            overall_label = "healthy_improvement"
+        elif overall["direction"] == "degrading" and overall["significance"] in ("strong", "moderate"):
+            overall_label = "quality_regression"
+        elif overall["direction"] == "stable" and overall["cv"] < 0.1:
+            overall_label = "stable"
+        else:
+            overall_label = "fluctuating"
+
+        # ── Best / worst snapshots ────────────────────────────
+        overall_vals = series["overall_quality"]
+        best_i = max(range(n), key=lambda i: overall_vals[i])
+        worst_i = min(range(n), key=lambda i: overall_vals[i])
+
+        # ── Change points (> 1σ from rolling mean) ────────────
+        change_points: list[dict] = []
+        window = min(3, n)
+        for i in range(window, n):
+            hist = overall_vals[i - window:i]
+            mu = sum(hist) / len(hist)
+            sigma = (sum((v - mu) ** 2 for v in hist) / len(hist)) ** 0.5
+            if sigma > 1e-9:
+                z = (overall_vals[i] - mu) / sigma
+                if abs(z) > 1.0:
+                    change_points.append({
+                        "snapshot_index": i,
+                        "label": labels[i],
+                        "value": round(overall_vals[i], 6),
+                        "expected": round(mu, 6),
+                        "z_score": round(z, 4),
+                        "direction": "drop" if z < 0 else "spike",
+                    })
+
+        # ── Volatility summary ────────────────────────────────
+        volatility = {d: dim_trends[d]["cv"] for d in dims}
+        most_volatile = max(volatility, key=volatility.get)
+        least_volatile = min(volatility, key=volatility.get)
+
+        # ── Recommendations ───────────────────────────────────
+        recommendations: list[str] = []
+
+        if overall_label == "quality_regression":
+            recommendations.append(
+                "⚠️ Overall quality is degrading. Investigate the "
+                "most affected dimension and consider retrieval "
+                "parameter tuning or graph maintenance."
+            )
+            # Find worst dimension
+            worst_dim = min(
+                (d for d in dims if d != "overall_quality"),
+                key=lambda d: dim_trends[d]["slope"],
+            )
+            if dim_trends[worst_dim]["slope"] < 0:
+                recommendations.append(
+                    f"{worst_dim.replace('_score', '')} shows the "
+                    f"steepest decline (slope={dim_trends[worst_dim]['slope']:.6f})."
+                )
+        elif overall_label == "healthy_improvement":
+            recommendations.append(
+                "✅ Quality is improving. Current configuration "
+                "is working well."
+            )
+        elif overall_label == "fluctuating":
+            recommendations.append(
+                "Quality is fluctuating. Consider increasing "
+                "result set size or using ensemble retrieval "
+                "for stability."
+            )
+        else:
+            recommendations.append(
+                "Quality is stable. No action needed."
+            )
+
+        if change_points:
+            drops = [cp for cp in change_points if cp["direction"] == "drop"]
+            if drops:
+                recommendations.append(
+                    f"{len(drops)} quality drop(s) detected. "
+                    f"First at '{drops[0]['label']}' "
+                    f"(z={drops[0]['z_score']:.2f})."
+                )
+
+        high_cv = volatility[most_volatile]
+        if high_cv > 0.3:
+            recommendations.append(
+                f"{most_volatile.replace('_score', '')} is volatile "
+                f"(CV={high_cv:.4f}). May benefit from smoothing "
+                f"or larger result sets."
+            )
+
+        # ── Summary ───────────────────────────────────────────
+        summary_lines = [
+            f"Analyzed {n} snapshots.",
+            f"Overall trend: {overall_label} "
+            f"(slope={overall['slope']:.6f}, R²={overall['r_squared']:.4f}).",
+            f"Best: '{labels[best_i]}' ({overall_vals[best_i]:.4f}).",
+            f"Worst: '{labels[worst_i]}' ({overall_vals[worst_i]:.4f}).",
+            f"Most volatile: {most_volatile.replace('_score', '')} "
+            f"(CV={high_cv:.4f}).",
+            f"Change points: {len(change_points)}.",
+        ]
+
+        return {
+            "dimensions": dim_trends,
+            "overall_trend": {
+                "label": overall_label,
+                "slope": overall["slope"],
+                "r_squared": overall["r_squared"],
+                "direction": overall["direction"],
+                "significance": overall["significance"],
+                "volatility_cv": overall["cv"],
+            },
+            "best_snapshot": {
+                "index": best_i,
+                "label": labels[best_i],
+                "value": round(overall_vals[best_i], 6),
+            },
+            "worst_snapshot": {
+                "index": worst_i,
+                "label": labels[worst_i],
+                "value": round(overall_vals[worst_i], 6),
+            },
+            "volatility": {
+                "per_dimension": volatility,
+                "most_volatile": most_volatile,
+                "least_volatile": least_volatile,
+            },
+            "change_points": change_points,
+            "labels": labels,
+            "n_snapshots": n,
+            "summary": "\n".join(summary_lines),
+            "recommendations": recommendations,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     print("🧪 Agent Memory Graph Demo\n")
