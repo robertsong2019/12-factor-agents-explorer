@@ -30509,6 +30509,226 @@ n            - ``total_rules`` – number of rules scanned.
             "unmatched_rules": len(rows) - len(matches),
         }
 
+    def rule_explain(
+        self, rule_id: str, query: str,
+        *, include_suggestions: bool = True,
+    ) -> dict:
+        """Explain WHY a specific *rule* matches (or doesn't match) a query.
+
+        Diagnostic companion to :meth:`rule_apply`.  While
+        ``rule_apply`` tells you *which* rules matched,
+        ``rule_explain`` tells you *why* — showing the exact
+        keyword overlap breakdown, contribution scores, and
+        actionable suggestions.
+
+        Rule introspection lifecycle:
+        ``extract_rules`` → ``rule_conflict_detect`` →
+        ``rule_apply`` → **``rule_explain``**.
+
+        Args:
+            rule_id: The node ID of the rule to explain.
+            query: The runtime query or task description.
+            include_suggestions: If ``True`` (default), include
+                actionable suggestions for improving match quality.
+
+        Returns:
+            A dict with keys:
+
+            - ``rule_id`` – the queried rule node ID.
+            - ``rule_name`` – the rule's display name.
+            - ``query`` – the input query string.
+            - ``matched`` – ``True`` if relevance > 0.
+            - ``relevance`` – Jaccard score in [0, 1].
+            - ``query_keywords`` – sorted list of query tokens.
+            - ``rule_keywords`` – sorted list of rule tokens.
+            - ``intersection`` – sorted list of overlapping keywords.
+            - ``union`` – sorted list of all unique keywords.
+            - ``query_only`` – keywords in query but not rule.
+            - ``rule_only`` – keywords in rule but not query.
+            - ``jaccard_numerator`` – intersection size.
+            - ``jaccard_denominator`` – union size.
+            - ``contribution_scores`` – per-keyword contribution
+              to the Jaccard score (each intersection keyword
+              contributes ``1 / union_size``).
+            - ``positive_rules`` – the rule's positive guidance.
+            - ``negative_constraints`` – the rule's negative guidance.
+            - ``explanation`` – human-readable multi-line breakdown.
+            - ``suggestions`` – list of actionable improvement tips
+              (only if *include_suggestions* is ``True``).
+
+            If the rule_id doesn't exist or isn't a rule node,
+            returns an error dict.
+        """
+        import re
+
+        # ── Validate rule ──
+        row = self.conn.execute(
+            "SELECT id, label, data FROM nodes WHERE id=? AND kind='rule'",
+            (rule_id,)
+        ).fetchone()
+
+        if row is None:
+            return {
+                "rule_id": rule_id,
+                "query": query,
+                "error": (
+                    f"Node '{rule_id}' is not a rule node "
+                    "or does not exist."
+                ),
+            }
+
+        d = row["data"] if isinstance(row["data"], dict) else {}
+        if isinstance(row["data"], str):
+            try:
+                d = json.loads(row["data"])
+            except Exception:
+                d = {}
+        if not isinstance(d, dict):
+            d = {}
+
+        rule_name = d.get("rule_name", row["label"])
+        positive = d.get("positive_rules", [])
+        negative = d.get("negative_constraints", [])
+
+        # ── Tokenise query (same logic as rule_apply) ──
+        STOPWORDS = {
+            "the", "and", "for", "are", "but", "not",
+            "you", "all", "can", "her", "was", "one",
+            "our", "out", "day", "had", "has", "how",
+            "its", "may", "new", "now", "old", "see",
+            "way", "who", "did", "get", "let", "say",
+            "she", "too", "use",
+        }
+        query_tokens = {
+            w for w in re.findall(r"[a-z]{3,}", query.lower())
+            if w not in STOPWORDS
+        }
+
+        # ── Tokenise rule ──
+        rule_text = " ".join([rule_name] + positive + negative)
+        rule_tokens = {
+            w for w in re.findall(r"[a-z]{3,}", rule_text.lower())
+        }
+
+        # ── Compute overlap ──
+        intersection = query_tokens & rule_tokens
+        union = query_tokens | rule_tokens
+        query_only = query_tokens - rule_tokens
+        rule_only = rule_tokens - query_tokens
+
+        numerator = len(intersection)
+        denominator = len(union)
+        relevance = numerator / denominator if denominator > 0 else 0.0
+
+        # ── Per-keyword contribution ──
+        # Each intersection keyword contributes 1/denominator to Jaccard
+        per_keyword = 1.0 / denominator if denominator > 0 else 0.0
+        contribution_scores = {
+            kw: round(per_keyword, 4) for kw in sorted(intersection)
+        }
+
+        # ── Build explanation ──
+        lines = []
+        lines.append(f"Rule: {rule_name} ({rule_id})")
+        lines.append(f"Query: {query}")
+        lines.append("")
+        lines.append(f"Relevance: {relevance:.4f} ({numerator}/{denominator})")
+        lines.append("")
+        lines.append(f"Query keywords ({len(query_tokens)}): "
+                     f"{', '.join(sorted(query_tokens)) or '(none)'}")
+        lines.append(f"Rule keywords ({len(rule_tokens)}): "
+                     f"{', '.join(sorted(rule_tokens)) or '(none)'}")
+        lines.append("")
+        lines.append(f"Intersection ({numerator}): "
+                     f"{', '.join(sorted(intersection)) or '(none)'}")
+        lines.append(f"Query-only ({len(query_only)}): "
+                     f"{', '.join(sorted(query_only)) or '(none)'}")
+        lines.append(f"Rule-only ({len(rule_only)}): "
+                     f"{', '.join(sorted(rule_only)) or '(none)'}")
+
+        if numerator > 0:
+            lines.append("")
+            lines.append("Per-keyword contribution:")
+            for kw in sorted(intersection):
+                lines.append(f"  {kw}: +{per_keyword:.4f}")
+
+        # ── Suggestions ──
+        suggestions: list[str] = []
+        if include_suggestions:
+            if relevance == 0.0:
+                if not query_tokens:
+                    suggestions.append(
+                        "Query has no extractable keywords. "
+                        "Add more specific terms."
+                    )
+                elif not rule_tokens:
+                    suggestions.append(
+                        "Rule has no extractable keywords. "
+                        "Check rule data integrity."
+                    )
+                else:
+                    suggestions.append(
+                        f"Zero overlap. Consider adding keywords "
+                        f"like: {', '.join(list(sorted(rule_tokens))[:5])} "
+                        f"to the query, or broaden the rule's "
+                        "positive_rules/negative_constraints."
+                    )
+            else:
+                if query_only:
+                    suggestions.append(
+                        f"Uncovered query intent: "
+                        f"{', '.join(sorted(list(query_only)[:5]))}. "
+                        "These keywords may relate to other rules."
+                    )
+                if rule_only:
+                    sample = sorted(list(rule_only)[:5])
+                    suggestions.append(
+                        f"Rule scope not triggered by: "
+                        f"{', '.join(sample)}. "
+                        "These rule keywords weren't in the query."
+                    )
+                if relevance < 0.2:
+                    suggestions.append(
+                        "Low relevance (<0.2). This rule is "
+                        "marginally related to the query."
+                    )
+                elif relevance < 0.5:
+                    suggestions.append(
+                        "Moderate relevance (0.2-0.5). This rule "
+                        "is partially relevant."
+                    )
+                else:
+                    suggestions.append(
+                        "High relevance (≥0.5). This rule is "
+                        "strongly relevant to the query."
+                    )
+
+            if not suggestions:
+                suggestions.append(
+                    "No specific suggestions. Match quality is reasonable."
+                )
+
+        return {
+            "rule_id": rule_id,
+            "rule_name": rule_name,
+            "query": query,
+            "matched": relevance > 0,
+            "relevance": round(relevance, 4),
+            "query_keywords": sorted(query_tokens),
+            "rule_keywords": sorted(rule_tokens),
+            "intersection": sorted(intersection),
+            "union": sorted(union),
+            "query_only": sorted(query_only),
+            "rule_only": sorted(rule_only),
+            "jaccard_numerator": numerator,
+            "jaccard_denominator": denominator,
+            "contribution_scores": contribution_scores,
+            "positive_rules": positive,
+            "negative_constraints": negative,
+            "explanation": "\n".join(lines),
+            "suggestions": suggestions,
+        }
+
     # ── Skill Composition (L1→L2 Meta-Skill) ──────────────────────
 
     def skill_compose(self, skill_ids: list[str], name: str,
