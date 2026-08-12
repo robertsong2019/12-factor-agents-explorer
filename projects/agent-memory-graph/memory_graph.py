@@ -29888,6 +29888,161 @@ class MemoryGraph:
             "recommendations": recs,
         }
 
+    # ── Rule Extraction (L2→L3 Declarative) ──────────────────────
+
+    def extract_rules(self, skill_ids: list[str], *, name: str = "",
+                      min_confidence: float = 0.5) -> Optional[Node]:
+        """Extract declarative rules from procedural skills (L2→L3).
+
+        Implements the highest compression level in the Experience
+        Compression Spectrum (Zhang et al., arXiv:2604.15877):
+
+            L2 (procedural skill, 50-500×) → L3 (declarative rule, 1000×+)
+
+        Given one or more ``kind='skill'`` nodes, this method:
+
+        1. Validates all *skill_ids* exist and are skills.
+        2. Filters out skills below *min_confidence*.
+        3. Collects constraints and steps from qualifying skills.
+        4. Separates negative constraints ("never/ don't") from positive
+           rules ("always/ do"), per RuleShaping finding that negatives
+           outperform positives by +7-14pp (Research #060).
+        5. Detects cross-skill patterns — constraints shared across
+           multiple skills boost confidence.
+        6. Creates a ``kind='rule'`` node with structured metadata.
+        7. Links rule → source skills via ``derived_from`` edges.
+
+        Args:
+            skill_ids: IDs of skill nodes to extract rules from.
+            name: Rule name. Auto-generated if empty.
+            min_confidence: Skills below this confidence are excluded.
+
+        Returns:
+            Rule node, or ``None`` if no qualifying skills.
+
+        Raises:
+            ValueError: If any ID doesn't exist or isn't kind='skill'.
+        """
+        import time
+        from collections import Counter
+
+        if not skill_ids:
+            return None
+
+        # Validate all IDs exist and are skills
+        qualifying = []
+        for sid in skill_ids:
+            row = self.conn.execute(
+                "SELECT id, kind, data FROM nodes WHERE id=?", (sid,)
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Node '{sid}' not found")
+            if row["kind"] != "skill":
+                raise ValueError(
+                    f"Node '{sid}' is kind='{row['kind']}' (expected kind='skill')"
+                )
+            d = json.loads(row["data"])
+            conf = d.get("confidence", 0.5)
+            if conf >= min_confidence:
+                qualifying.append((sid, d))
+
+        if not qualifying:
+            return None
+
+        # Gather constraints and classify
+        negative_keywords = ("never", "don't", "dont", "do not", "avoid", "must not",
+                             "no ", "without")
+        positive_keywords = ("always", "must", "should", "do ", "ensure", "verify",
+                             "check", "validate", "confirm")
+
+        all_constraints = []      # (constraint_text, source_skill_id)
+        all_steps = []            # (step_text, source_skill_id)
+        skill_names = []
+
+        for sid, d in qualifying:
+            skill_names.append(d.get("skill_name", "unknown"))
+            for c in d.get("constraints", []):
+                all_constraints.append((c, sid))
+            for s in d.get("steps", []):
+                all_steps.append((s, sid))
+
+        # Classify constraints into negative vs positive
+        negative_constraints = []
+        positive_rules = []
+
+        for text, _sid in all_constraints:
+            lower = text.lower().strip()
+            if any(lower.startswith(kw) or kw in lower for kw in negative_keywords):
+                if text not in negative_constraints:
+                    negative_constraints.append(text)
+            elif any(lower.startswith(kw) or kw in lower for kw in positive_keywords):
+                if text not in positive_rules:
+                    positive_rules.append(text)
+            else:
+                # Unclassified → treat as positive rule
+                if text not in positive_rules:
+                    positive_rules.append(text)
+
+        # Detect cross-skill patterns (constraints appearing in >1 skill)
+        constraint_sources: dict[str, set[str]] = {}
+        for text, sid in all_constraints:
+            key = text.strip().lower()
+            constraint_sources.setdefault(key, set()).add(sid)
+
+        cross_skill_patterns = [
+            {"constraint": text, "occurrences": len(srcs),
+             "source_skills": sorted(srcs)}
+            for text, srcs in sorted(
+                constraint_sources.items(),
+                key=lambda x: -len(x[1])
+            )
+            if len(srcs) >= 2
+        ]
+
+        # Confidence: average of source skills, boosted by cross-skill patterns
+        base_conf = sum(d.get("confidence", 0.5) for _, d in qualifying) / len(qualifying)
+        boost = min(0.15, len(cross_skill_patterns) * 0.05)
+        rule_confidence = round(min(1.0, base_conf + boost), 4)
+
+        # Compression ratio: estimate based on total source content vs rule
+        total_source_items = len(all_constraints) + len(all_steps)
+        rule_items = len(negative_constraints) + len(positive_rules)
+        compression_ratio = round(total_source_items / max(rule_items, 1), 2) if rule_items else 1.0
+
+        # Auto-generate name if not provided
+        if not name:
+            if len(skill_names) == 1:
+                name = f"{skill_names[0]} Rules"
+            else:
+                name = f"Cross-Skill Rules ({len(skill_names)} sources)"
+
+        rule_data = {
+            "rule_name": name,
+            "description": f"Declarative rules extracted from {len(qualifying)} skill(s)",
+            "source_skills": [sid for sid, _ in qualifying],
+            "source_count": len(qualifying),
+            "compression_type": "L2→L3",
+            "negative_constraints": negative_constraints,
+            "positive_rules": positive_rules,
+            "cross_skill_patterns": cross_skill_patterns,
+            "confidence": rule_confidence,
+            "compression_ratio": compression_ratio,
+            "version": "1.0.0",
+            "created_at": time.time(),
+        }
+
+        rule_node = self.add(
+            rule_data["rule_name"],
+            kind="rule",
+            data=rule_data,
+        )
+
+        # Link rule → source skills with derived_from edges
+        for sid, _ in qualifying:
+            self.add_causal_edge(rule_node.id, sid, relation="derived_from")
+
+        return rule_node
+
     # ── Skill Composition (L1→L2 Meta-Skill) ──────────────────────
 
     def skill_compose(self, skill_ids: list[str], name: str,
