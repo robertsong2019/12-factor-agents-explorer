@@ -2235,3 +2235,219 @@ class Memory:
         if updated > 0:
             self._save()
         return updated
+
+    # F58: Boolean search (AND/OR/NOT)
+    def search_boolean(self, query: str, limit: int = 10) -> List[MemoryEntry]:
+        """Boolean search supporting AND, OR, NOT operators.
+
+        Query syntax:
+        - 'python AND web' — entries containing both terms
+        - 'python OR rust' — entries containing either term
+        - 'python NOT web' — entries with python but not web
+        - 'python AND (web OR api)' — parenthesized grouping
+        - Plain 'python' — same as simple search
+
+        Args:
+            query: Boolean expression string
+            limit: Max results to return
+
+        Returns:
+            List of matching MemoryEntry, sorted by relevance (importance desc)
+        """
+        query_upper = query.upper()
+        has_boolean = any(op in query_upper for op in [' AND ', ' OR ', ' NOT '])
+
+        if not has_boolean:
+            return self.search(query, limit=limit)
+
+        # Parse into tokens and operators
+        tokens = re.findall(r'\(|\)|[^\s()]+', query)
+
+        def _evaluate(expr_tokens, entries):
+            """Evaluate boolean expression against entries. Returns set of indices."""
+            if not expr_tokens:
+                return set()
+
+            result = set()
+            op = 'AND'
+            i = 0
+            while i < len(expr_tokens):
+                tok = expr_tokens[i]
+                tok_upper = tok.upper()
+
+                if tok_upper in ('AND', 'OR', 'NOT'):
+                    op = tok_upper
+                    i += 1
+                    continue
+
+                if tok == '(':
+                    # Find matching close paren
+                    depth = 1
+                    j = i + 1
+                    sub_tokens = []
+                    while j < len(expr_tokens) and depth > 0:
+                        if expr_tokens[j] == '(':
+                            depth += 1
+                        elif expr_tokens[j] == ')':
+                            depth -= 1
+                            if depth == 0:
+                                break
+                        sub_tokens.append(expr_tokens[j])
+                        j += 1
+                    term_set = _evaluate(sub_tokens, entries)
+                    i = j + 1
+                elif tok == ')':
+                    i += 1
+                    continue
+                else:
+                    # Plain term — find entries containing it
+                    tok_lower = tok.lower()
+                    term_set = {idx for idx, e in enumerate(entries)
+                                if tok_lower in e.content.lower()}
+                    i += 1
+
+                if op == 'AND':
+                    result = result & term_set if result else term_set
+                elif op == 'OR':
+                    result = result | term_set
+                elif op == 'NOT':
+                    result = result - term_set
+
+                # Default to AND for next term unless explicit op follows
+                if i < len(expr_tokens) and expr_tokens[i].upper() not in ('AND', 'OR', 'NOT'):
+                    op = 'AND'
+
+            return result
+
+        matching_indices = _evaluate(tokens, self._entries)
+        results = [self._entries[idx] for idx in matching_indices
+                    if idx < len(self._entries)]
+        results.sort(key=lambda e: e.importance, reverse=True)
+        return results[:limit]
+
+    # F59: Condense near-duplicate entries
+    def condense(self, min_similarity: float = 0.8) -> Dict[str, Any]:
+        """Merge near-duplicate entries into consolidated entries.
+
+        Groups entries by similarity, merges each group into a single entry
+        with combined tags, max importance, and earliest timestamp.
+
+        Args:
+            min_similarity: Threshold for considering entries duplicates
+
+        Returns:
+            Dict with 'merged_count', 'removed_count', 'groups' details
+        """
+        if len(self._entries) < 2:
+            return {"merged_count": 0, "removed_count": 0, "groups": []}
+
+        # Build clusters using union-find
+        n = len(self._entries)
+        parent = list(range(n))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(x, y):
+            px, py = find(x), find(y)
+            if px != py:
+                parent[px] = py
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                ratio = SequenceMatcher(None,
+                                        self._entries[i].content,
+                                        self._entries[j].content).ratio()
+                if ratio >= min_similarity:
+                    union(i, j)
+
+        # Group by root
+        groups: Dict[int, List[int]] = {}
+        for i in range(n):
+            root = find(i)
+            groups.setdefault(root, []).append(i)
+
+        merged_groups = []
+        new_entries = []
+        removed_count = 0
+
+        for indices in groups.values():
+            if len(indices) <= 1:
+                # Keep as-is
+                new_entries.append(self._entries[indices[0]])
+                continue
+
+            # Merge the group
+            group_entries = [self._entries[i] for i in indices]
+            merged_tags = list(set(t for e in group_entries for t in e.tags))
+            merged_importance = max(e.importance for e in group_entries)
+            merged_timestamp = min(e.timestamp for e in group_entries)
+            # Use the longest content as the representative
+            best = max(group_entries, key=lambda e: len(e.content))
+
+            merged_entry = MemoryEntry(
+                content=best.content,
+                timestamp=merged_timestamp,
+                metadata=best.metadata,
+                tags=merged_tags,
+                importance=merged_importance
+            )
+            new_entries.append(merged_entry)
+            removed_count += len(indices) - 1
+            merged_groups.append({
+                "indices": indices,
+                "count": len(indices),
+                "representative": best.content[:80]
+            })
+
+        self._entries = new_entries
+        if removed_count > 0:
+            self._save()
+
+        return {
+            "merged_count": len(merged_groups),
+            "removed_count": removed_count,
+            "groups": merged_groups
+        }
+
+    # F60: Export as Markdown table
+    def export_markdown_table(self, tags: Optional[List[str]] = None,
+                              limit: int = 50) -> str:
+        """Export entries as a GitHub-flavored Markdown table.
+
+        Columns: # | Timestamp | Tags | Importance | Content (truncated)
+
+        Args:
+            tags: Optional tag filter
+            limit: Max entries to include
+
+        Returns:
+            Markdown table string
+        """
+        entries = self._entries
+        if tags:
+            tag_set = set(tags)
+            entries = [e for e in entries if tag_set & set(e.tags)]
+
+        # Sort by timestamp descending (newest first)
+        entries = sorted(entries, key=lambda e: e.timestamp, reverse=True)
+        entries = entries[:limit]
+
+        lines = [
+            "| # | Timestamp | Tags | Importance | Content |",
+            "|---|-----------|------|------------|---------|"
+        ]
+
+        for i, e in enumerate(entries, 1):
+            ts = e.timestamp.strftime("%Y-%m-%d %H:%M")
+            tag_str = ", ".join(e.tags) if e.tags else "—"
+            imp_bar = "★" * round(e.importance * 5)
+            content = e.content[:60].replace("|", "\\|").replace("\n", " ")
+            if len(e.content) > 60:
+                content += "…"
+            lines.append(f"| {i} | {ts} | {tag_str} | {imp_bar} ({e.importance:.2f}) | {content} |")
+
+        return "\n".join(lines)

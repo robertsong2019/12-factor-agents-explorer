@@ -88,6 +88,11 @@
 - [x] **F56**: `Memory.search_snippet(query, context_chars)` — Search with context-windowed snippets and highlight markers ✅ 2026-08-11
 - [x] **F57**: `Memory.health_check()` — Comprehensive health report: capacity, duplicates, importance, staleness, tagging ✅ 2026-08-11
 
+### Search, Condense & Export (Round 17 — 2026-08-13)
+- [x] **F58**: `Memory.search_boolean(query)` — Boolean AND/OR/NOT search with parenthesized grouping ✅ 2026-08-13
+- [x] **F59**: `Memory.condense(min_similarity)` — Union-find near-duplicate merge with tag/importance combining ✅ 2026-08-13
+- [x] **F60**: `Memory.export_markdown_table(tags?, limit)` — GitHub-flavored markdown table export ✅ 2026-08-13
+
 ## Priorities
 **Round 1:** F1-F4 — Memory serialization, stats, and tag management ✅
 **Round 2:** F5-F8 — Importance scoring and forgetting ✅
