@@ -52378,61 +52378,168 @@ n            - ``total_rules`` – number of rules scanned.
             "recommendation":      rec,
         }
 
-def demo():
-    print("🧪 Agent Memory Graph Demo\n")
-    print("🧪 Agent Memory Graph Demo\n")
-    mg = MemoryGraph()
+    # ── Knowledge Graph Construction from Text ─────────────────
 
-    # 添加记忆
-    user = mg.add("罗嵩", "person", {"timezone": "Asia/Shanghai"})
-    catalyst = mg.add("Catalyst - 数字精灵", "person", {"vibe": "sharp & fast"})
-    project = mg.add("OpenClaw Agent", "concept", {"lang": "TypeScript"})
-    python_skill = mg.add("Python 快速原型", "skill")
-    rust_interest = mg.add("Rust 嵌入式AI", "concept")
+    def extract_from_text(self, text: str, *, kind: str = "entity",
+                          tags: list[str] = None) -> dict:
+        """Extract entities and relations from raw text, building a KG.
 
-    # 建立关系
-    mg.link(user.id, catalyst.id, "created")
-    mg.link(user.id, project.id, "works_on")
-    mg.link(catalyst.id, project.id, "assists_with")
-    mg.link(user.id, python_skill.id, "skilled_in")
-    mg.link(user.id, rust_interest.id, "interested_in")
-    mg.link(rust_interest.id, project.id, "relevant_to")
+        Rule-based extraction with zero external dependencies:
 
-    # 添加一些事件
-    e1 = mg.add("深夜debug session", "event", {"hours": 3})
-    mg.link(e1.id, project.id, "about")
-    mg.link(user.id, e1.id, "experienced")
+        - Sentence segmentation (``. ! ? ; \n``)
+        - Entity detection: capitalized phrases, quoted terms
+        - Relation detection: pattern-based (``is_a``, ``works_at``,
+          ``created``, ``located_in``, ``has``, ``part_of``)
+        - Deduplication against existing nodes by label
 
-    print(mg.visualize_ascii())
-    print()
+        Args:
+            text: Raw input text to process.
+            kind: Node kind for created entities (default ``"entity"``).
+            tags: Optional tags to attach to all created nodes.
 
-    # 召回
-    print("🔍 Recalling 'Python':")
-    for r in mg.recall("Python"):
-        print(f"  ✓ {r.label} (weight={r.weight:.2f})")
-    print()
+        Returns:
+            Dict with:
+            - ``nodes_created``: count of new nodes added
+            - ``edges_created``: count of new edges added
+            - ``entities``: list of ``{label, node_id, new}`` dicts
+            - ``relations``: list of ``{source, target, relation}`` dicts
+            - ``sentences``: count of sentences processed
+        """
+        import re
 
-    # 关联记忆
-    print(f"🔗 Neighbors of '{user.label}':")
-    for n in mg.neighbors(user.id):
-        print(f"  → {n.label} [{n.kind}]")
-    print()
+        result: dict = {
+            "nodes_created": 0,
+            "edges_created": 0,
+            "entities": [],
+            "relations": [],
+            "sentences": 0,
+        }
 
-    # 统计
-    print(f"📈 Stats: {json.dumps(mg.stats(), ensure_ascii=False, indent=2)}")
+        if not text or not text.strip():
+            return result
 
-    # 模拟遗忘
-    print("\n⏳ Simulating 7-day decay...")
-    # 手动模拟：降低 accessed 时间
-    mg.conn.execute("UPDATE nodes SET accessed = accessed - 604800")
-    mg.conn.commit()
-    mg.decay_all()
-    print(mg.visualize_ascii())
+        tags = tags or []
+
+        # ── Sentence segmentation ──
+        sentences = re.split(r'[.!?;\n]+', text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        result["sentences"] = len(sentences)
+
+        # ── Relation patterns ──
+        # Each pattern: (regex, relation_name, group_for_source, group_for_target)
+        rel_patterns: list[tuple[str, str, int, int]] = [
+            (r'^(.{2,60}?)\s+is\s+an?\s+(.{2,60}?)(?:\.|$)',
+             'is_a', 1, 2),
+            (r'^(.{2,60}?)\s+is\s+located\s+in\s+(.{2,60}?)(?:\.|$)',
+             'located_in', 1, 2),
+            (r'^(.{2,60}?)\s+is\s+part\s+of\s+(.{2,60}?)(?:\.|$)',
+             'part_of', 1, 2),
+            (r'^(.{2,60}?)\s+works\s+at\s+(.{2,60}?)(?:\.|$)',
+             'works_at', 1, 2),
+            (r'^(.{2,60}?)\s+created\s+(.{2,60}?)(?:\.|$)',
+             'created', 1, 2),
+            (r'^(.{2,60}?)\s+has\s+(?:a|an|the)?\s*(.{2,60}?)(?:\.|$)',
+             'has', 1, 2),
+            (r'^(.{2,60}?)\s+built\s+(.{2,60}?)(?:\.|$)',
+             'created', 1, 2),
+        ]
+
+        # ── Helper: resolve or create entity ──
+        def _resolve(label: str) -> str | None:
+            """Find existing node by label or create new one.
+            Returns node_id or None if label is empty/too short.
+            """
+            label = label.strip().strip(chr(46)+chr(44)+chr(59)+chr(58)+chr(33)+chr(63)+chr(34)+chr(39))
+            if len(label) < 2:
+                return None
+
+            # Check existing
+            existing = self.conn.execute(
+                "SELECT id FROM nodes WHERE label=? LIMIT 1", (label,)
+            ).fetchone()
+            if existing:
+                # Record as known entity
+                for ent in result["entities"]:
+                    if ent["label"] == label:
+                        return ent["node_id"]
+                result["entities"].append({
+                    "label": label, "node_id": existing["id"], "new": False,
+                })
+                return existing["id"]
+
+            # Create new
+            node = self.add(label, kind=kind, tags=tags or None)
+            result["entities"].append({
+                "label": label, "node_id": node.id, "new": True,
+            })
+            result["nodes_created"] += 1
+            return node.id
+
+        # ── Helper: extract entities from a sentence ──
+        def _extract_entities(sentence: str) -> list[str]:
+            """Extract capitalized phrases and quoted terms."""
+            entities = []
+
+            # Quoted terms ("..." or '...')
+            for m in re.finditer(r'"([^"]{2,60})"', sentence):
+                entities.append(m.group(1))
+            for m in re.finditer(r"'([^']{2,60})'", sentence):
+                entities.append(m.group(1))
+
+            # Capitalized phrases (1-3 consecutive capitalized words)
+            # Skip sentence-initial if it's a common word
+            cap_pattern = re.compile(
+                r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b'
+            )
+            for m in cap_pattern.finditer(sentence):
+                label = m.group(1).strip()
+                # Filter out common sentence starters that aren't entities
+                if label.lower() in {'the', 'this', 'that', 'these',
+                                      'those', 'there', 'it', 'a',
+                                      'an', 'is', 'was', 'are',
+                                      'were', 'has', 'have', 'had'}:
+                    continue
+                entities.append(label)
+
+            return entities
+
+        # ── Process each sentence ──
+        for sent in sentences:
+            # Try relation patterns first
+            matched = False
+            for pattern, rel_name, src_grp, tgt_grp in rel_patterns:
+                m = re.match(pattern, sent, re.IGNORECASE)
+                if m:
+                    src_label = m.group(src_grp).strip()
+                    tgt_label = m.group(tgt_grp).strip()
+
+                    src_id = _resolve(src_label)
+                    tgt_id = _resolve(tgt_label)
+
+                    if src_id and tgt_id:
+                        try:
+                            self.link(src_id, tgt_id, rel_name)
+                            result["edges_created"] += 1
+                            result["relations"].append({
+                                "source": src_label,
+                                "target": tgt_label,
+                                "relation": rel_name,
+                            })
+                        except Exception:
+                            pass
+                    matched = True
+                    break  # One relation per sentence
+
+            if matched:
+                continue
+
+            # No relation matched — just extract entities
+            for ent_label in _extract_entities(sent):
+                _resolve(ent_label)
+
+        return result
 
 
-# ------------------------------------------------------------------
-# Temporal Entropy Tracker (Cycle 293)
-# ------------------------------------------------------------------
 
 class TemporalEntropyTracker:
     """Track spectral entropy of a MemoryGraph over time to detect
@@ -52885,6 +52992,63 @@ class FastAppendQueue:
             "flush_ratio": (s["total_flushed"] / s["total_appended"]
                              if s["total_appended"] > 0 else 1.0),
         }
+
+
+
+# ------------------------------------------------------------------
+# Temporal Entropy Tracker (Cycle 293)
+# ------------------------------------------------------------------
+
+def demo():
+    print("🧪 Agent Memory Graph Demo\n")
+    print("🧪 Agent Memory Graph Demo\n")
+    mg = MemoryGraph()
+
+    # 添加记忆
+    user = mg.add("罗嵩", "person", {"timezone": "Asia/Shanghai"})
+    catalyst = mg.add("Catalyst - 数字精灵", "person", {"vibe": "sharp & fast"})
+    project = mg.add("OpenClaw Agent", "concept", {"lang": "TypeScript"})
+    python_skill = mg.add("Python 快速原型", "skill")
+    rust_interest = mg.add("Rust 嵌入式AI", "concept")
+
+    # 建立关系
+    mg.link(user.id, catalyst.id, "created")
+    mg.link(user.id, project.id, "works_on")
+    mg.link(catalyst.id, project.id, "assists_with")
+    mg.link(user.id, python_skill.id, "skilled_in")
+    mg.link(user.id, rust_interest.id, "interested_in")
+    mg.link(rust_interest.id, project.id, "relevant_to")
+
+    # 添加一些事件
+    e1 = mg.add("深夜debug session", "event", {"hours": 3})
+    mg.link(e1.id, project.id, "about")
+    mg.link(user.id, e1.id, "experienced")
+
+    print(mg.visualize_ascii())
+    print()
+
+    # 召回
+    print("🔍 Recalling 'Python':")
+    for r in mg.recall("Python"):
+        print(f"  ✓ {r.label} (weight={r.weight:.2f})")
+    print()
+
+    # 关联记忆
+    print(f"🔗 Neighbors of '{user.label}':")
+    for n in mg.neighbors(user.id):
+        print(f"  → {n.label} [{n.kind}]")
+    print()
+
+    # 统计
+    print(f"📈 Stats: {json.dumps(mg.stats(), ensure_ascii=False, indent=2)}")
+
+    # 模拟遗忘
+    print("\n⏳ Simulating 7-day decay...")
+    # 手动模拟：降低 accessed 时间
+    mg.conn.execute("UPDATE nodes SET accessed = accessed - 604800")
+    mg.conn.commit()
+    mg.decay_all()
+    print(mg.visualize_ascii())
 
 
 if __name__ == "__main__":
