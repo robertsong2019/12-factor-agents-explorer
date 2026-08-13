@@ -176,6 +176,37 @@ class Memory:
         """按重要度降序返回前 n 条记忆"""
         return sorted(self._entries, key=lambda e: e.importance, reverse=True)[:n]
 
+    def search_by_importance(self, min_importance: float = 0.5, limit: int = 0) -> List[MemoryEntry]:
+        """按重要度阈值过滤搜索。
+
+        Args:
+            min_importance: 最低重要度阈值 (0-1)
+            limit: 返回条目上限 (0=不限)
+
+        Returns:
+            按重要度降序排列的记忆列表
+        """
+        results = [e for e in self._entries if e.importance >= min_importance]
+        results.sort(key=lambda e: e.importance, reverse=True)
+        if limit > 0:
+            results = results[:limit]
+        return results
+
+    def top_recent(self, minutes: int = 60) -> List[MemoryEntry]:
+        """获取最近 N 分钟内添加的记忆。
+
+        Args:
+            minutes: 时间窗口（分钟），0=不限
+
+        Returns:
+            按时间倒序排列的记忆列表
+        """
+        if minutes <= 0:
+            return list(reversed(self._entries))
+        cutoff = datetime.now() - timedelta(minutes=minutes)
+        results = [e for e in self._entries if e.timestamp >= cutoff]
+        return list(reversed(results))
+
     def export_json(self) -> str:
         """导出所有记忆为JSON字符串（用于备份/迁移）"""
         return json.dumps([entry.to_dict() for entry in self._entries], ensure_ascii=False, indent=2)
@@ -561,6 +592,137 @@ class Memory:
         if limit > 0:
             results = results[:limit]
         return results
+
+    def search_semantic(self, query: str, limit: int = 5, boost_recent: float = 0.1) -> List[Tuple[MemoryEntry, float]]:
+        """TF-IDF 加权语义搜索，基于词频-逆文档频率评分。
+
+        无外部依赖实现：将 query 和每个 entry 分词，计算 TF-IDF 向量余弦相似度。
+        可选的时间衰减因子 boost_recent 提升近期条目。
+
+        Args:
+            query: 搜索查询
+            limit: 返回条目上限
+            boost_recent: 时间衰减因子 (0=无衰减, 越大近期条目权重越高)
+
+        Returns:
+            [(entry, score), ...] 按 score 降序排列
+        """
+        import math
+        if not self._entries or not query:
+            return []
+
+        def tokenize(text: str) -> List[str]:
+            return [w.lower() for w in re.findall(r'\w+', text) if len(w) > 1]
+
+        all_docs = [e.content for e in self._entries]
+        all_docs.append(query)
+        n = len(self._entries)
+
+        # Build vocabulary and IDF
+        vocab = {}
+        for doc in all_docs:
+            seen = set()
+            for word in tokenize(doc):
+                if word not in seen:
+                    vocab[word] = vocab.get(word, 0) + 1
+                    seen.add(word)
+        idf = {w: math.log(n / (1 + df)) for w, df in vocab.items()}
+
+        def tfidf_vector(text: str) -> Dict[str, float]:
+            tokens = tokenize(text)
+            if not tokens:
+                return {}
+            tf = {}
+            for t in tokens:
+                tf[t] = tf.get(t, 0) + 1
+            total = len(tokens)
+            return {t: (tf[t] / total) * idf.get(t, 0) for t in tf}
+
+        query_vec = tfidf_vector(query)
+        if not query_vec:
+            return []
+
+        def cosine(a: Dict[str, float], b: Dict[str, float]) -> float:
+            common = set(a.keys()) & set(b.keys())
+            if not common:
+                return 0.0
+            dot = sum(a[k] * b[k] for k in common)
+            na = math.sqrt(sum(v * v for v in a.values()))
+            nb = math.sqrt(sum(v * v for v in b.values()))
+            if na == 0 or nb == 0:
+                return 0.0
+            return dot / (na * nb)
+
+        scored = []
+        for idx, entry in enumerate(self._entries):
+            doc_vec = tfidf_vector(entry.content)
+            sim = cosine(query_vec, doc_vec)
+            # Time boost
+            if boost_recent > 0 and n > 1:
+                sim += boost_recent * (idx / (n - 1))
+            scored.append((entry, sim))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        if limit > 0:
+            scored = scored[:limit]
+        return scored
+
+    def auto_search(self, query: str, limit: int = 5) -> Dict[str, Any]:
+        """自动选择最佳搜索策略并返回结果。
+
+        依次尝试 tag_search → exact_match → semantic → fuzzy → weighted，
+        返回最高置信度策略的结果，附带策略选择过程。
+
+        Args:
+            query: 搜索查询
+            limit: 返回条目上限
+
+        Returns:
+            {"results": [...], "strategy": str, "score": float, "all_strategies": {...}}
+        """
+        if not self._entries or not query:
+            return {"results": [], "strategy": "none", "score": 0.0, "all_strategies": {}}
+
+        strategies = {}
+
+        # 1. Tag search
+        tag_results = self.search_by_tag(query, limit=limit)
+        strategies["tag"] = {"results": tag_results, "score": len(tag_results) / max(len(self._entries), 1)}
+
+        # 2. Exact match
+        exact = [e for e in self._entries if query.lower() in e.content.lower()]
+        strategies["exact"] = {"results": exact[:limit], "score": len(exact) / max(len(self._entries), 1)}
+
+        # 3. Semantic (TF-IDF)
+        semantic = self.search_semantic(query, limit=limit)
+        sem_score = semantic[0][1] if semantic else 0.0
+        strategies["semantic"] = {"results": [e for e, _ in semantic], "score": sem_score}
+
+        # 4. Fuzzy
+        fuzzy = self.search_fuzzy(query, threshold=0.2, limit=limit)
+        fuzzy_score = max(
+            (SequenceMatcher(None, query.lower(), e.content.lower()).ratio() for e in fuzzy),
+            default=0.0
+        )
+        strategies["fuzzy"] = {"results": fuzzy, "score": fuzzy_score}
+
+        # 5. Weighted multi-factor
+        weighted = self.weighted_search(query, limit=limit)
+        strategies["weighted"] = {"results": weighted, "score": 1.0 if weighted else 0.0}
+
+        # Pick best non-empty strategy by score
+        best_name = max(
+            (name for name, s in strategies.items() if s["results"]),
+            key=lambda name: strategies[name]["score"],
+            default="none"
+        )
+
+        return {
+            "results": strategies.get(best_name, {}).get("results", []),
+            "strategy": best_name,
+            "score": strategies.get(best_name, {}).get("score", 0.0),
+            "all_strategies": {k: {"count": len(v["results"]), "score": v["score"]} for k, v in strategies.items()}
+        }
 
     def paginate(self, page: int = 1, page_size: int = 10, order: str = "asc") -> Dict[str, Any]:
         """分页获取记忆条目。
@@ -1949,3 +2111,127 @@ class Memory:
             },
             "recommendations": recommendations,
         }
+
+    # ---- F49: tag_summary (per-tag analytics) ----
+
+    def tag_summary(self, min_count: int = 0) -> Dict[str, Dict[str, Any]]:
+        """Generate analytics summary per tag.
+
+        For each tag, computes: count, average importance, most recent
+        entry timestamp, and representative content (shortest entry).
+
+        Args:
+            min_count: Only include tags with >= min_count entries.
+
+        Returns:
+            Dict mapping tag name to {count, avg_importance, latest,
+            representative}.
+        """
+        tag_entries: Dict[str, List[MemoryEntry]] = {}
+        for i, entry in enumerate(self._entries):
+            for tag in entry.tags:
+                tag_entries.setdefault(tag, []).append(entry)
+
+        result: Dict[str, Dict[str, Any]] = {}
+        for tag, entries in sorted(tag_entries.items()):
+            if len(entries) < min_count:
+                continue
+            avg_imp = sum(e.importance for e in entries) / len(entries)
+            latest = max(entries, key=lambda e: e.timestamp)
+            representative = min(entries, key=lambda e: len(e.content))
+            result[tag] = {
+                "count": len(entries),
+                "avg_importance": round(avg_imp, 3),
+                "latest": latest.timestamp.isoformat(),
+                "representative": representative.content[:100],
+            }
+        return result
+
+    # ---- F50: export_tsv ----
+
+    def export_tsv(self, tags: Optional[List[str]] = None) -> str:
+        """Export memories as TSV (tab-separated values) string.
+
+        Columns: index, timestamp, content, importance, tags, metadata_json.
+        Useful for data analysis pipelines and spreadsheet import.
+
+        Args:
+            tags: If provided, only export entries matching any of these tags.
+
+        Returns:
+            TSV string with header row.
+        """
+        entries = self._entries if not tags else self._filter_by_tags(tags)
+        entry_indices = {id(e): i for i, e in enumerate(self._entries)}
+        lines = ["index\ttimestamp\tcontent\timportance\ttags\tmetadata"]
+        for entry in entries:
+            idx = entry_indices.get(id(entry), 0)
+            content_safe = entry.content.replace("\t", " ").replace("\n", " ")
+            tags_str = ",".join(entry.tags)
+            meta_str = json.dumps(entry.metadata, ensure_ascii=False)
+            lines.append(f"{idx}\t{entry.timestamp.isoformat()}\t{content_safe}\t{entry.importance}\t{tags_str}\t{meta_str}")
+        return "\n".join(lines)
+
+    # ---- F51: batch_remove / batch_update ----
+
+    def batch_remove(self, indices: List[int]) -> int:
+        """Remove multiple entries by index in a single pass.
+
+        Indices are processed in reverse order to maintain validity
+        of remaining indices.
+
+        Args:
+            indices: List of entry indices to remove.
+
+        Returns:
+            Number of entries successfully removed.
+        """
+        if not isinstance(indices, list):
+            return 0
+        removed = 0
+        valid_indices = [idx for idx in indices if isinstance(idx, int)]
+        for idx in sorted(set(valid_indices), reverse=True):
+            if 0 <= idx < len(self._entries):
+                self._entries.pop(idx)
+                removed += 1
+        if removed > 0:
+            self._save()
+        return removed
+
+    def batch_update(self, updates: List[Dict[str, Any]]) -> int:
+        """Update multiple entries in a single pass.
+
+        Each update dict must contain "index" and at least one of
+        "content", "importance", "tags", or "metadata".
+
+        Args:
+            updates: List of {index, content?, importance?, tags?, metadata?}.
+
+        Returns:
+            Number of entries successfully updated.
+        """
+        if not isinstance(updates, list):
+            return 0
+        updated = 0
+        for u in updates:
+            if not isinstance(u, dict) or "index" not in u:
+                continue
+            idx = u["index"]
+            if not isinstance(idx, int):
+                continue
+            if not (0 <= idx < len(self._entries)):
+                continue
+            entry = self._entries[idx]
+            if "content" in u and isinstance(u["content"], str):
+                entry.content = u["content"]
+                entry.timestamp = datetime.now()
+            if "importance" in u and isinstance(u["importance"], (int, float)):
+                entry.importance = max(0.0, min(1.0, float(u["importance"])))
+            if "tags" in u and isinstance(u["tags"], list):
+                entry.tags = [str(t) for t in u["tags"]]
+            if "metadata" in u and isinstance(u["metadata"], dict):
+                entry.metadata = u["metadata"]
+            updated += 1
+        if updated > 0:
+            self._save()
+        return updated

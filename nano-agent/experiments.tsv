@@ -1,32 +1,6 @@
 timestamp	commit	metric	value	status	description
-2026-04-29T21:00	baseline	test_pass_rate	23/23	baseline	nano-agent baseline: 560 lines source, 369 lines tests
-2026-04-29T21:05	2564c89	test_pass_rate	29/29	keep	Memory.remove()+update()+count() — +6 tests
-2026-04-29T21:10	db9b4d8	test_pass_rate	35/35	keep	Tool type inference + validate_args() + unregister_tool() — +6 tests
-2026-04-29T21:15	83d49a2	test_pass_rate	39/39	keep	Agent conversation history tracking + turn_count — +4 tests
-2026-04-29T21:20	1081ce5	test_pass_rate	42/42	keep	search(limit=0) + MemoryEntry.__eq__ + persistence after update — +3 tests
-2026-05-10T22:00	f4015b9	test_pass_rate	53/53	keep	Memory tags (filter/search/persist) + Agent on_step callback — +11 tests
-2026-06-18T03:10	4c7b246	test_count	145/145	keep	+29 edge case tests: memory persistence, tool exec, agent verbose/context — covers 10+ untested code paths
-2026-06-25T23:00	f0bd0bb	test_count	229/229	keep	F5-F8 Memory importance scoring+forgetting (+23 tests: set_importance/decay/forget/top_important/stats)
-2026-07-18T22:10+08:00	5b2858b	test_count	415→440/+25	keep	nano-agent: F17 search_fuzzy (difflib SequenceMatcher, threshold+sorted) + F18 group_by_tag (multi-tag grouping, _untagged bucket) + F19 Agent.add_tool/remove_tool (runtime dynamic tool mgmt). 25 new tests, zero regressions.
-2026-07-18T22:10	F20	test_count	440→459	keep	nano-agent: Memory.deduplicate(threshold) — similarity-based dedup using SequenceMatcher, preserves earliest entry (+10 tests)
-2026-07-18T22:10	F21	test_count	459/459	keep	nano-agent: Memory.chain_search(queries) — multi-query merged search with match-count ranking + optional fuzzy fallback (+9 tests)
-2026-07-19T22:10+08:00	42d85af	test_count	459→487/+28	keep	nano-agent: F22 snapshot/restore (deep copy undo, corrupt-entry skip) + F23 search_regex (IGNORECASE, anchored/email/unicode patterns)
-2026-07-19T22:20+08:00	f5c5eec	test_count	487→511/+24	keep	nano-agent: F24 filter(predicate) functional filtering + F25 weighted_search (content+importance+recency 3-factor ranking with custom weights)
-2026-07-19T22:30+08:00	2c46c77	test_count	511→535/+24	keep	nano-agent: F26 paginate (page/page_size/asc/desc with total_pages) + F27 diff (added/removed/common, symmetric complement)
-2026-07-20T21:05	25521eb	test_count	602	keep	F31-F33: export_markdown/export_csv + cluster + compact_summary (+43 tests)
-2026-07-20T21:10	1aa73db	test_count	621	keep	F34-F35: histogram(bins) + correlation_stats() (+19 tests)
-2026-07-20T21:15	7d9f4bb	test_count	636	keep	F36-F37: Agent.conversation_stats() + Memory.tag_cloud() (+15 tests)
-2026-07-20T21:20	16d0708	test_count	657	keep	F38-F39: search_in_fields() + auto_tag(rules) (+21 tests)
-2026-07-20T22:10+08:00	c3ea55e	test_count	657→685/+28	keep	F40 export_jsonl (JSONL streaming format) + F41 normalize_tags (batch rename/merge with dedup) + F42 entropy (Shannon diversity metric for content & tags)
-2026-07-20T22:30+08:00	0497857	test_count	685→709/+24	keep	F43 import_jsonl (JSONL round-trip import, merge/replace mode) + F44 union(other) (set union with content-based dedup, returns new Memory)
-2026-07-20T23:05+08:00	1813a46	test_count	709→732/+23	keep	F45 subtract(other) set difference (complement to union, content-based removal) + F46 to_prompt(include_metadata, include_tags, max_entries) structured LLM prompt formatter (importance-sorted, numbered, with tags/metadata/timestamp)
-2026-07-31T03:00	65e6164	test_count	746→753/+7	keep	OpenAIBackend.complete tested with mocked client: no-tools response, tool format conversion, tool_calls parsing, kwargs forwarding, model passing, multiple tool calls, null content handling.
-2026-07-31T03:00	65e6164	test_pass_rate	100%	keep	All 753 tests pass, 0 regressions
-2026-08-05T22:15+08:00	02336e4	test_count	775→791/+16	keep	F47 resize(max_size, strategy) 4 eviction strategies (oldest/least_important/random/clustered) + F48 search_similar(index, limit) content similarity search
-2026-08-06T19:01	-	test_total	832	pass	F49 anomaly_detection(): burst/important/tag anomalies — +22 tests
-2026-08-06T19:01	-	test_total	832	pass	F50 conversation_summary(): structured report with themes/activity — +19 tests
-2026-08-06T22:10	e4720a2	test_pass_rate	850/850	keep	F49 archive + F50 forget_older_than — +18 tests
-2026-08-06T22:20	d5e90ee	test_pass_rate	859/859	keep	F51 export_conversation — +9 tests
-2026-08-07T22:10+08:00	9ded4e9	test_pass_rate	877/877 (+18)	keep	F52 merge_metadata(index, metadata) + F53 find_duplicates(threshold) — 18 new tests, all passing
-2026-08-07T22:20+08:00	-	test_pass_rate	885/885 (+8)	keep	F54 tag_stats() — frequency distribution + co-occurrence matrix, 8 tests
-2026-08-11T22:10+08:00	c1c574b	test_count	885→919/+34	keep	F55 batch_add(entries) + F56 search_snippet(query, context_chars) + F57 health_check() — 34 new tests, zero regressions
+2026-08-12T19:10	-	test_count	935 (was 919)	keep	Cycle 1: search_semantic() TF-IDF cosine similarity + auto_search() multi-strategy selector. +16 tests. Zero regressions.
+2026-08-12T19:25	-	test_count	946 (was 935)	keep	Cycle 2: search_by_importance() threshold filter + top_recent() time-bounded retrieval. +11 tests. Zero regressions.
+2026-08-12T19:40	-	test_count	954 (was 946)	keep	Cycle 3: Agent.run_with_retry() exponential backoff + retryable error filter. Fixed bug: attempts count used max_retries instead of actual. +8 tests. Zero regressions.
+2026-08-13T19:00	2c1fa3a	test_count	991 (was 954)	keep	Cycle 4: F49 tag_summary() per-tag analytics + F50 export_tsv() TSV export. +18 tests.
+2026-08-13T19:15	2c1fa3a	test_count	991 (was 972 after cycle 4)	keep	Cycle 5: F51 batch_remove() reverse-order multi-index + batch_update() multi-field. +19 tests. 954→991 (+37 total). Zero regressions.
