@@ -52266,6 +52266,118 @@ n            - ``total_rules`` – number of rules scanned.
             "recommendations": recommendations,
         }
 
+    # ──────────────────────────────────────────────────────────
+    # Cycle 426: knowledge_freshness_report()
+    # ──────────────────────────────────────────────────────────
+
+    def knowledge_freshness_report(self) -> Optional[dict]:
+        """Graph-level knowledge freshness diagnostic.
+
+        Shows how **fresh** vs **stale** the knowledge in the graph is,
+        broken down by time bucket and kind.  Useful for identifying
+        stale knowledge clusters before they cause retrieval failures
+        (Research #051: FAMA penalizes reliance on outdated info by
+        15-43 points).
+
+        Freshness is measured by ``accessed`` timestamp recency:
+        - **Fresh**: accessed within 24h
+        - **Recent**: within 7 days
+        - **Aging**: within 30 days
+        - **Stale**: within 90 days
+        - **Decayed**: beyond 90 days
+
+        Returns:
+            Dict with freshness analysis, or None if graph is empty.
+        """
+        rows = self.conn.execute(
+            "SELECT id, label, kind, accessed, weight "
+            "FROM nodes ORDER BY accessed DESC"
+        ).fetchall()
+        if not rows:
+            return None
+
+        now = time.time()
+        HOUR = 3600
+
+        boundaries = [
+            ("fresh",   24),
+            ("recent",  168),
+            ("aging",   720),
+            ("stale",   2160),
+            ("decayed", float('inf')),
+        ]
+
+        bucket_counts = {b[0]: 0 for b in boundaries}
+        bucket_weight = {b[0]: 0.0 for b in boundaries}
+        kind_freshness: dict[str, list[float]] = {}
+        node_scores: list[tuple[float, str, str, str]] = []
+
+        for r in rows:
+            age_hours = (now - r["accessed"]) / HOUR
+            weight = r["weight"] or 0.0
+            score = math.exp(-age_hours / 168.0)
+            node_scores.append((score, r["id"], r["label"], r["kind"]))
+
+            for bname, bmax in boundaries:
+                if age_hours < bmax:
+                    bucket_counts[bname] += 1
+                    bucket_weight[bname] += weight
+                    break
+
+            kind = r["kind"] or "unknown"
+            kind_freshness.setdefault(kind, []).append(score)
+
+        total_weight = sum(r["weight"] or 0.0 for r in rows)
+        if total_weight > 0:
+            freshness_score = sum(
+                s * (rows[i]["weight"] or 0.0)
+                for i, (s, _, _, _) in enumerate(node_scores)
+            ) / total_weight
+        else:
+            freshness_score = sum(s for s, _, _, _ in node_scores) / len(node_scores)
+
+        by_kind: dict[str, dict] = {}
+        for kind, scores in kind_freshness.items():
+            by_kind[kind] = {
+                "count":         len(scores),
+                "avg_freshness": round(sum(scores) / len(scores), 4),
+                "min_freshness": round(min(scores), 4),
+                "max_freshness": round(max(scores), 4),
+            }
+
+        node_scores.sort(key=lambda x: x[0])
+        stalest = [
+            {"id": nid, "label": lbl, "kind": knd, "freshness": round(sc, 4)}
+            for sc, nid, lbl, knd in node_scores[:10]
+        ]
+        freshest = [
+            {"id": nid, "label": lbl, "kind": knd, "freshness": round(sc, 4)}
+            for sc, nid, lbl, knd in reversed(node_scores[-10:])
+        ]
+
+        stale_pct = (bucket_counts["stale"] + bucket_counts["decayed"]) / len(rows)
+        if stale_pct < 0.1:
+            rec = ("Graph knowledge is fresh — <10% stale nodes. "
+                   "No action needed.")
+        elif stale_pct < 0.3:
+            rec = (f"{stale_pct:.0%} of nodes are stale. "
+                   "Consider running consolidate() or touch() on important nodes.")
+        else:
+            rec = (f"{stale_pct:.0%} of nodes are stale or decayed. "
+                   "Recommend running decay_all() + consolidate() to clean up.")
+
+        return {
+            "total_nodes":         len(rows),
+            "freshness_score":     round(freshness_score, 4),
+            "bucket_distribution": bucket_counts,
+            "bucket_weight":       {k: round(v, 2) for k, v in bucket_weight.items()},
+            "by_kind":             by_kind,
+            "stalest_nodes":       stalest,
+            "freshest_nodes":      freshest,
+            "stale_percentage":    round(stale_pct, 4),
+            "recommendation":      rec,
+        }
+
 def demo():
     print("🧪 Agent Memory Graph Demo\n")
     print("🧪 Agent Memory Graph Demo\n")
@@ -52682,6 +52794,7 @@ class FastAppendQueue:
         buf = self._buffer.copy()
         self._buffer.clear()
         return buf
+
 
 
 if __name__ == "__main__":
