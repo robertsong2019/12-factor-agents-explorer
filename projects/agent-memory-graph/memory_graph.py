@@ -52809,6 +52809,392 @@ n            - ``total_rules`` – number of rules scanned.
 
         return result
 
+    # ──────────────────────────────────────────────────────────────
+    # GraphRAG Explain — diagnostic companion to graphrag_query
+    # ──────────────────────────────────────────────────────────────
+
+    def graphrag_explain(self, question: str, *, max_hops: int = 2,
+                         top_k: int = 5) -> dict:
+        """Explain **why** :meth:`graphrag_query` returns what it does.
+
+        Diagnostic companion to :meth:`graphrag_query`.  While
+        ``graphrag_query`` returns answer nodes and context edges,
+        ``graphrag_explain`` decomposes the retrieval to show:
+
+        1. **Keyword breakdown** — which keywords found seed nodes
+           and via what match type (exact / prefix / contains / tag)
+        2. **Per-node score decomposition** — keyword_score,
+           degree_centrality, hop_penalty, and final combined score
+           for each answer node
+        3. **Coverage analysis** — matched vs unmatched keywords,
+           coverage percentage, and suggestions for gaps
+        4. **Traversal paths** — shortest hop chain from seed to
+           each answer node
+        5. **Human-readable explanation** — multi-line text suitable
+           for debugging or logging
+
+        Uses the same tokenisation and ranking logic as
+        :meth:`graphrag_query` so results are always consistent.
+
+        Args:
+            question: Natural-language query string.
+            max_hops: Maximum traversal depth (1-5, same as graphrag_query).
+            top_k: Maximum number of answer nodes to explain.
+
+        Returns:
+            Dict with:
+            - ``question``: echo of input
+            - ``keywords``: all extracted keywords
+            - ``matched_keywords``: keywords that found ≥1 seed node
+            - ``unmatched_keywords``: keywords with no seed matches
+            - ``coverage``: float 0-1 (matched / total keywords)
+            - ``keyword_matches``: ``{keyword: [{node_id, label, match_type, score}]}``
+            - ``seed_nodes``: ``{node_id: seed_score}``
+            - ``answer_nodes``: list of ``{node_id, label, kind, keyword_score,
+              degree, hop_penalty, combined_score, hops, path_from_seed}``
+            - ``context_edges``: edges traversed (same as graphrag_query)
+            - ``explanation``: human-readable multi-line string
+            - ``suggestions``: list of actionable improvement suggestions
+        """
+        import re
+        import json as _json
+
+        # ── Same stop words as graphrag_query ──
+        stop_words = {
+            "the", "a", "an", "is", "are", "was", "were", "be", "been",
+            "being", "have", "has", "had", "do", "does", "did", "will",
+            "would", "could", "should", "may", "might", "must", "can",
+            "of", "in", "on", "at", "to", "for", "with", "by", "from",
+            "as", "into", "about", "than", "then", "so", "if", "but",
+            "and", "or", "not", "no", "yes", "this", "that", "these",
+            "those", "it", "its", "they", "them", "their", "there",
+            "what", "which", "who", "whom", "whose", "when", "where",
+            "why", "how", "all", "each", "every", "both", "few",
+            "more", "most", "other", "some", "such", "only", "own",
+            "same", "very", "just", "too", "also", "any",
+        }
+
+        result: dict = {
+            "question": question or "",
+            "keywords": [],
+            "matched_keywords": [],
+            "unmatched_keywords": [],
+            "coverage": 0.0,
+            "keyword_matches": {},
+            "seed_nodes": {},
+            "answer_nodes": [],
+            "context_edges": [],
+            "explanation": "",
+            "suggestions": [],
+        }
+
+        if not question or not question.strip():
+            result["suggestions"] = [
+                "Empty query — provide a natural-language question.",
+                "Try: 'What is X?' or 'Who created Y?'"
+            ]
+            result["explanation"] = "No query provided."
+            return result
+
+        max_hops = max(1, min(5, max_hops))
+
+        # ── Keyword extraction (identical to graphrag_query) ──
+        raw_words = re.findall(r'[A-Za-z][A-Za-z0-9_]+', question)
+        keywords = [w.lower() for w in raw_words
+                     if w.lower() not in stop_words and len(w) > 1]
+        seen_kw: set[str] = set()
+        unique_kw: list[str] = []
+        for kw in keywords:
+            if kw not in seen_kw:
+                seen_kw.add(kw)
+                unique_kw.append(kw)
+        keywords = unique_kw
+        result["keywords"] = keywords
+
+        if not keywords:
+            result["suggestions"] = [
+                "No keywords extracted — query contains only stop words.",
+                "Try using more specific nouns or proper names.",
+            ]
+            result["explanation"] = "No keywords extracted from query."
+            return result
+
+        # ── Phase 1: Keyword → seed matching with match-type tracking ──
+        keyword_matches: dict[str, list[dict]] = {}
+        seed_scores: dict[str, float] = {}
+        # Track which keyword matched which node and how
+        node_match_reasons: dict[str, list[dict]] = {}  # node_id → [{keyword, match_type, score}]
+
+        for kw in keywords:
+            kw_matches: list[dict] = []
+
+            # Label matching
+            rows = self.conn.execute(
+                "SELECT id, label FROM nodes WHERE LOWER(label) LIKE ?",
+                (f"%{kw}%",),
+            ).fetchall()
+            for nid, label in rows:
+                label_lower = (label or "").lower()
+                if label_lower == kw:
+                    m_type = "exact"
+                    score = 1.0
+                elif label_lower.startswith(kw):
+                    m_type = "prefix"
+                    score = 0.8
+                else:
+                    m_type = "contains"
+                    score = 0.5
+                kw_matches.append({
+                    "node_id": nid, "label": label,
+                    "match_type": m_type, "score": score,
+                })
+                seed_scores[nid] = max(seed_scores.get(nid, 0.0), score)
+                node_match_reasons.setdefault(nid, []).append({
+                    "keyword": kw, "match_type": m_type, "score": score,
+                })
+
+            # Tag matching
+            tag_rows = self.conn.execute(
+                "SELECT id, label, tags FROM nodes WHERE tags IS NOT NULL"
+            ).fetchall()
+            for nid, label, tags_json in tag_rows:
+                try:
+                    node_tags = [t.lower() for t in (_json.loads(tags_json) if tags_json else [])]
+                except (ValueError, TypeError):
+                    node_tags = []
+                if kw in node_tags:
+                    # Avoid duplicating label-matched nodes
+                    already = any(m["node_id"] == nid for m in kw_matches)
+                    if not already:
+                        kw_matches.append({
+                            "node_id": nid, "label": label,
+                            "match_type": "tag", "score": 0.6,
+                        })
+                        seed_scores[nid] = max(seed_scores.get(nid, 0.0), 0.6)
+                        node_match_reasons.setdefault(nid, []).append({
+                            "keyword": kw, "match_type": "tag", "score": 0.6,
+                        })
+
+            keyword_matches[kw] = kw_matches
+
+        result["keyword_matches"] = keyword_matches
+        result["seed_nodes"] = {nid: round(s, 4) for nid, s in seed_scores.items()}
+
+        matched_kws = [kw for kw, matches in keyword_matches.items() if matches]
+        unmatched_kws = [kw for kw, matches in keyword_matches.items() if not matches]
+        result["matched_keywords"] = matched_kws
+        result["unmatched_keywords"] = unmatched_kws
+        result["coverage"] = round(len(matched_kws) / len(keywords), 4) if keywords else 0.0
+
+        if not seed_scores:
+            result["suggestions"] = [
+                "No seed nodes found — the graph has no nodes matching any keyword.",
+                f"Try extract_from_text() to build a KG first, or use different keywords.",
+                f"Unmatched keywords: {', '.join(unmatched_kws)}",
+            ]
+            result["explanation"] = (
+                f"Query '{question}' yielded 0 seed nodes from {len(keywords)} keywords. "
+                f"Coverage: 0%. No traversal performed."
+            )
+            return result
+
+        # ── Phase 2: BFS traversal (same as graphrag_query) ──
+        visited: dict[str, int] = {}  # node_id → hops
+        # Track parent for path reconstruction
+        parent: dict[str, str | None] = {}  # node_id → parent node_id
+        edges_collected: list[dict] = []
+        edge_seen: set[tuple[str, str, str]] = set()
+
+        frontier = set(seed_scores.keys())
+        for nid in frontier:
+            visited[nid] = 0
+            parent[nid] = None  # seeds have no parent
+
+        for hop in range(1, max_hops + 1):
+            next_frontier = set()
+            for nid in frontier:
+                edge_rows = self.conn.execute(
+                    "SELECT target, relation FROM edges WHERE source=?",
+                    (nid,),
+                ).fetchall()
+                rev_rows = self.conn.execute(
+                    "SELECT source, relation FROM edges WHERE target=?",
+                    (nid,),
+                ).fetchall()
+
+                for tgt, rel in edge_rows:
+                    edge_key = (nid, tgt, rel)
+                    if edge_key not in edge_seen:
+                        edge_seen.add(edge_key)
+                        edges_collected.append({
+                            "source": nid, "target": tgt, "relation": rel,
+                        })
+                    if tgt not in visited:
+                        visited[tgt] = hop
+                        parent[tgt] = nid
+                        next_frontier.add(tgt)
+
+                for src, rel in rev_rows:
+                    edge_key = (src, nid, rel)
+                    if edge_key not in edge_seen:
+                        edge_seen.add(edge_key)
+                        edges_collected.append({
+                            "source": src, "target": nid, "relation": rel,
+                        })
+                    if src not in visited:
+                        visited[src] = hop
+                        parent[src] = nid
+                        next_frontier.add(src)
+
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        result["context_edges"] = edges_collected
+
+        # ── Phase 3: Rank nodes with score decomposition ──
+        node_scores: list[dict] = []
+        for nid, hops in visited.items():
+            row = self.conn.execute(
+                "SELECT label, kind FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if not row:
+                continue
+            label, kind = row
+
+            kw_score = seed_scores.get(nid, 0.0)
+
+            out_count = self.conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE source=?", (nid,)
+            ).fetchone()[0]
+            in_count = self.conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE target=?", (nid,)
+            ).fetchone()[0]
+            degree = out_count + in_count
+            centrality = 1.0 + degree
+            hop_penalty = 1.0 / (1.0 + hops * 0.3)
+            combined = (kw_score if kw_score > 0 else 0.1) * centrality * hop_penalty
+
+            # Reconstruct path from nearest seed
+            path = []
+            cur = nid
+            seen_path: set[str] = set()
+            while cur is not None and cur not in seen_path:
+                seen_path.add(cur)
+                path.append(cur)
+                cur = parent.get(cur)
+            path.reverse()  # seed → node
+
+            # Get labels for path
+            path_labels = []
+            for pid in path:
+                prow = self.conn.execute(
+                    "SELECT label FROM nodes WHERE id=?", (pid,)
+                ).fetchone()
+                path_labels.append(prow[0] if prow else pid)
+
+            node_scores.append({
+                "node_id": nid,
+                "label": label,
+                "kind": kind,
+                "keyword_score": round(kw_score, 4),
+                "degree": degree,
+                "centrality": round(centrality, 4),
+                "hops": hops,
+                "hop_penalty": round(hop_penalty, 4),
+                "combined_score": round(combined, 4),
+                "match_reasons": node_match_reasons.get(nid, []),
+                "path_from_seed": path_labels,
+            })
+
+        node_scores.sort(key=lambda x: x["combined_score"], reverse=True)
+        result["answer_nodes"] = node_scores[:top_k]
+
+        # ── Phase 4: Build explanation string ──
+        lines = []
+        lines.append(f"Query: '{question}'")
+        lines.append(f"Keywords ({len(keywords)}): {', '.join(keywords)}")
+        lines.append(f"Coverage: {result['coverage']:.0%} "
+                     f"({len(matched_kws)}/{len(keywords)} keywords matched)")
+
+        if unmatched_kws:
+            lines.append(f"Unmatched: {', '.join(unmatched_kws)}")
+
+        lines.append("")
+        lines.append(f"Seed nodes ({len(seed_scores)}):")
+        for nid, score in sorted(seed_scores.items(), key=lambda x: -x[1]):
+            row = self.conn.execute(
+                "SELECT label FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            lbl = row[0] if row else nid
+            reasons = node_match_reasons.get(nid, [])
+            reason_strs = [f"{r['keyword']}({r['match_type']}={r['score']})" for r in reasons]
+            lines.append(f"  • {lbl} [score={score:.2f}] via {', '.join(reason_strs)}")
+
+        lines.append("")
+        lines.append(f"Top {len(result['answer_nodes'])} answer nodes:")
+        for ns in result["answer_nodes"]:
+            lines.append(
+                f"  • {ns['label']} ({ns['kind']}) "
+                f"score={ns['combined_score']:.4f} "
+                f"[kw={ns['keyword_score']:.2f} × cent={ns['centrality']:.1f} "
+                f"× hop_pen={ns['hop_penalty']:.4f}] "
+                f"hops={ns['hops']}"
+            )
+            if len(ns["path_from_seed"]) > 1:
+                lines.append(f"    path: {' → '.join(ns['path_from_seed'])}")
+
+        lines.append("")
+        lines.append(f"Edges traversed: {len(edges_collected)}")
+
+        result["explanation"] = "\n".join(lines)
+
+        # ── Phase 5: Suggestions ──
+        suggestions: list[str] = []
+
+        if result["coverage"] < 1.0:
+            suggestions.append(
+                f"Low keyword coverage ({result['coverage']:.0%}) — "
+                f"unmatched keywords: {', '.join(unmatched_kws)}. "
+                "Consider adding nodes with these labels/tags or rephrasing the query."
+            )
+
+        if len(seed_scores) == 0:
+            suggestions.append(
+                "No seed matches at all — the graph may not contain "
+                "relevant knowledge for this query."
+            )
+        elif len(seed_scores) < len(keywords) / 2:
+            suggestions.append(
+                f"Few seed nodes ({len(seed_scores)}) for many keywords ({len(keywords)}). "
+                "Query may be too broad or graph too sparse."
+            )
+
+        # Check if top answer is a seed or a traversal discovery
+        if result["answer_nodes"]:
+            top = result["answer_nodes"][0]
+            if top["hops"] > 0 and top["keyword_score"] == 0.0:
+                suggestions.append(
+                    f"Top answer '{top['label']}' was found via traversal "
+                    f"({top['hops']} hops), not direct keyword match. "
+                    "It may be related but not exactly what was asked."
+                )
+            if top["keyword_score"] == 0.0 and not any(
+                ns["keyword_score"] > 0 for ns in result["answer_nodes"]
+            ):
+                suggestions.append(
+                    "None of the answer nodes matched keywords directly — "
+                    "all were found via graph traversal. Results may be noisy."
+                )
+
+        if not suggestions:
+            suggestions.append(
+                "Retrieval looks healthy — good keyword coverage and seed matches."
+            )
+
+        result["suggestions"] = suggestions
+        return result
+
 
 class TemporalEntropyTracker:
     """Track spectral entropy of a MemoryGraph over time to detect
