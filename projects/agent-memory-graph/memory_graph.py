@@ -52541,6 +52541,275 @@ n            - ``total_rules`` – number of rules scanned.
 
 
 
+    # ──────────────────────────────────────────────────────────────
+    # GraphRAG Query — retrieve relevant subgraph for a question
+    # ──────────────────────────────────────────────────────────────
+
+    def graphrag_query(self, question: str, *, max_hops: int = 2,
+                       top_k: int = 5, include_context: bool = True) -> dict:
+        """Retrieve a relevant subgraph from the KG to answer *question*.
+
+        The natural read-side companion to :meth:`extract_from_text`.
+        Given a natural-language question, this method:
+
+        1. Extracts keywords (stop-word filtered, lowercased)
+        2. Finds nodes whose ``label`` or ``tags`` match keywords
+        3. For each seed node, traverses up to *max_hops* edges
+        4. Ranks nodes by ``relevance = keyword_score × degree_centrality``
+        5. Returns the top-k subgraph ready for LLM context injection
+
+        Args:
+            question: Natural-language query string.
+            max_hops: Maximum traversal depth from seed nodes (1-5).
+            top_k: Maximum number of answer nodes to return.
+            include_context: If True, include a formatted context string
+                suitable for pasting into an LLM prompt.
+
+        Returns:
+            Dict with:
+            - ``answer_nodes``: list of ``{node_id, label, kind, score, hops}``
+            - ``context_edges``: list of ``{source, target, relation}``
+            - ``context``: formatted context string (if *include_context*)
+            - ``seed_nodes``: node IDs that matched keywords directly
+            - ``keywords``: extracted keywords
+            - """
+
+        import re
+
+        result: dict = {
+            "answer_nodes": [],
+            "context_edges": [],
+            "seed_nodes": [],
+            "keywords": [],
+        }
+
+        if not question or not question.strip():
+            if include_context:
+                result["context"] = ""
+            return result
+
+        max_hops = max(1, min(5, max_hops))
+
+        # ── Stop words ──
+        stop_words = {
+            "the", "a", "an", "is", "are", "was", "were", "be", "been",
+            "being", "have", "has", "had", "do", "does", "did", "will",
+            "would", "could", "should", "may", "might", "must", "can",
+            "of", "in", "on", "at", "to", "for", "with", "by", "from",
+            "as", "into", "about", "than", "then", "so", "if", "but",
+            "and", "or", "not", "no", "yes", "this", "that", "these",
+            "those", "it", "its", "they", "them", "their", "there",
+            "what", "which", "who", "whom", "whose", "when", "where",
+            "why", "how", "all", "each", "every", "both", "few",
+            "more", "most", "other", "some", "such", "only", "own",
+            "same", "very", "just", "too", "also", "any", "each",
+        }
+
+        # ── Keyword extraction ──
+        raw_words = re.findall(r'[A-Za-z][A-Za-z0-9_]+', question)
+        keywords = [w.lower() for w in raw_words if w.lower() not in stop_words and len(w) > 1]
+        # Deduplicate while preserving order
+        seen_kw = set()
+        unique_kw = []
+        for kw in keywords:
+            if kw not in seen_kw:
+                seen_kw.add(kw)
+                unique_kw.append(kw)
+        keywords = unique_kw
+        result["keywords"] = keywords
+
+        if not keywords:
+            if include_context:
+                result["context"] = ""
+            return result
+
+        # ── Phase 1: Find seed nodes (keyword → node match) ──
+        seed_scores: dict[str, float] = {}  # node_id → match score
+
+        for kw in keywords:
+            # Match against labels (case-insensitive)
+            rows = self.conn.execute(
+                "SELECT id, label, kind FROM nodes WHERE LOWER(label) LIKE ?",
+                (f"%{kw}%",),
+            ).fetchall()
+            for nid, label, kind in rows:
+                label_lower = (label or "").lower()
+                # Exact match scores highest
+                if label_lower == kw:
+                    score = 1.0
+                # Startswith match
+                elif label_lower.startswith(kw):
+                    score = 0.8
+                # Contains match
+                else:
+                    score = 0.5
+                # Boost for tag matches (tags stored as JSON in nodes.tags)
+                tag_row = self.conn.execute(
+                    "SELECT tags FROM nodes WHERE id=?", (nid,)
+                ).fetchone()
+                import json as _json
+                try:
+                    tag_list = [t.lower() for t in (_json.loads(tag_row[0]) if tag_row and tag_row[0] else [])]
+                except (ValueError, TypeError):
+                    tag_list = []
+                if kw in tag_list:
+                    score += 0.3
+                seed_scores[nid] = max(seed_scores.get(nid, 0.0), score)
+
+            # Also search nodes by tag (JSON tags column)
+            import json as _json_tag
+            tag_rows = self.conn.execute(
+                "SELECT id, tags FROM nodes WHERE tags IS NOT NULL"
+            ).fetchall()
+            for nid, tags_json in tag_rows:
+                try:
+                    node_tags = [t.lower() for t in (_json_tag.loads(tags_json) if tags_json else [])]
+                except (ValueError, TypeError):
+                    node_tags = []
+                if kw in node_tags:
+                    seed_scores[nid] = max(seed_scores.get(nid, 0.0), 0.6)
+
+        result["seed_nodes"] = list(seed_scores.keys())
+
+        if not seed_scores:
+            if include_context:
+                result["context"] = ""
+            return result
+
+        # ── Phase 2: BFS traversal from seed nodes ──
+        visited: dict[str, int] = {}  # node_id → hops from nearest seed
+        edges_collected: list[dict] = []
+        edge_seen: set[tuple[str, str, str]] = set()
+
+        frontier = set(seed_scores.keys())
+        for nid in frontier:
+            visited[nid] = 0
+
+        for hop in range(1, max_hops + 1):
+            next_frontier = set()
+            for nid in frontier:
+                # Get neighbors
+                edge_rows = self.conn.execute(
+                    "SELECT target, relation FROM edges WHERE source=?",
+                    (nid,),
+                ).fetchall()
+                rev_rows = self.conn.execute(
+                    "SELECT source, relation FROM edges WHERE target=?",
+                    (nid,),
+                ).fetchall()
+
+                for tgt, rel in edge_rows:
+                    edge_key = (nid, tgt, rel)
+                    if edge_key not in edge_seen:
+                        edge_seen.add(edge_key)
+                        edges_collected.append({
+                            "source": nid, "target": tgt, "relation": rel,
+                        })
+                    if tgt not in visited:
+                        visited[tgt] = hop
+                        next_frontier.add(tgt)
+
+                for src, rel in rev_rows:
+                    edge_key = (src, nid, rel)
+                    if edge_key not in edge_seen:
+                        edge_seen.add(edge_key)
+                        edges_collected.append({
+                            "source": src, "target": nid, "relation": rel,
+                        })
+                    if src not in visited:
+                        visited[src] = hop
+                        next_frontier.add(src)
+
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        result["context_edges"] = edges_collected
+
+        # ── Phase 3: Rank nodes ──
+        # relevance = keyword_score × degree_centrality
+        node_scores: list[dict] = []
+        for nid, hops in visited.items():
+            row = self.conn.execute(
+                "SELECT label, kind FROM nodes WHERE id=?", (nid,)
+            ).fetchone()
+            if not row:
+                continue
+            label, kind = row
+
+            # Keyword match score (0 if not a seed)
+            kw_score = seed_scores.get(nid, 0.0)
+
+            # Degree centrality
+            out_count = self.conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE source=?", (nid,)
+            ).fetchone()[0]
+            in_count = self.conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE target=?", (nid,)
+            ).fetchone()[0]
+            degree = out_count + in_count
+            centrality = 1.0 + degree  # min 1.0 so degree-0 nodes aren't zeroed
+
+            # Seed nodes get a hop bonus
+            hop_penalty = 1.0 / (1.0 + hops * 0.3)
+
+            combined = (kw_score if kw_score > 0 else 0.1) * centrality * hop_penalty
+
+            node_scores.append({
+                "node_id": nid,
+                "label": label,
+                "kind": kind,
+                "score": round(combined, 4),
+                "hops": hops,
+                "keyword_match": kw_score,
+                "degree": degree,
+            })
+
+        # Sort by score descending, take top_k
+        node_scores.sort(key=lambda x: x["score"], reverse=True)
+        result["answer_nodes"] = node_scores[:top_k]
+
+        # ── Phase 4: Build context string ──
+        if include_context:
+            lines = []
+            # Entities section
+            ent_lines = []
+            for ns in result["answer_nodes"]:
+                ent_lines.append(f"- {ns['label']} ({ns['kind']})")
+            if ent_lines:
+                lines.append("## Relevant Entities")
+                lines.extend(ent_lines)
+
+            # Relations section
+            rel_lines = []
+            # Build label lookup for edges
+            label_map = {}
+            for ns in result["answer_nodes"]:
+                label_map[ns["node_id"]] = ns["label"]
+            # Also include labels for edge endpoints not in answer_nodes
+            for e in edges_collected:
+                for nid in (e["source"], e["target"]):
+                    if nid not in label_map:
+                        row = self.conn.execute(
+                            "SELECT label FROM nodes WHERE id=?", (nid,)
+                        ).fetchone()
+                        if row:
+                            label_map[nid] = row[0]
+
+            for e in edges_collected:
+                src_label = label_map.get(e["source"], e["source"])
+                tgt_label = label_map.get(e["target"], e["target"])
+                rel_lines.append(f"- {src_label} --{e['relation']}--> {tgt_label}")
+
+            if rel_lines:
+                lines.append("## Relations")
+                lines.extend(rel_lines)
+
+            result["context"] = "\n".join(lines) if lines else ""
+
+        return result
+
+
 class TemporalEntropyTracker:
     """Track spectral entropy of a MemoryGraph over time to detect
     phase transitions in the knowledge graph.
