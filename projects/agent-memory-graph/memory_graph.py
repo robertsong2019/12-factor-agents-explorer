@@ -52795,6 +52795,89 @@ class FastAppendQueue:
         self._buffer.clear()
         return buf
 
+    # ── Extended operations ────────────────────────────────────
+
+    def flush_and_consolidate(self, **consolidate_kwargs) -> dict:
+        """Flush buffer then immediately run graph consolidation.
+
+        Combines System-2 flush with NREM/REM consolidate() in one
+        call.  Useful for scheduled maintenance cycles.
+
+        Args:
+            **consolidate_kwargs: passed through to graph.consolidate().
+
+        Returns:
+            Dict combining flush results and consolidation results.
+        """
+        flush_result = self.flush()
+        consol_result = self.graph.consolidate(**consolidate_kwargs)
+        return {
+            "flush":           flush_result,
+            "consolidation":   consol_result,
+            "combined_nodes":  flush_result["merged"],
+            "consolidated":    consol_result.get("nodes_merged", 0),
+            "pruned":          consol_result.get("edges_pruned", 0),
+        }
+
+    def pending_kinds(self) -> dict[str, int]:
+        """Count pending entries by kind in the buffer."""
+        counts: dict[str, int] = {}
+        for entry in self._buffer:
+            k = entry["kind"]
+            counts[k] = counts.get(k, 0) + 1
+        return counts
+
+    def pending_categories(self) -> dict[str | None, int]:
+        """Count pending entries by category in the buffer."""
+        counts: dict[str | None, int] = {}
+        for entry in self._buffer:
+            c = entry.get("category")
+            counts[c] = counts.get(c, 0) + 1
+        return counts
+
+    def peak_buffer_size(self) -> int:
+        """Return the highest buffer size observed (approximate).
+
+        Since we don't track peak explicitly, we estimate from slot
+        indices.  Useful for capacity planning.
+        """
+        if not self._buffer:
+            return 0
+        return max(e["slot"] for e in self._buffer) + 1
+
+    def is_healthy(self) -> dict:
+        """Quick health check for the queue.
+
+        Returns a dict with:
+        - ``healthy``: True if no issues detected
+        - ``issues``: list of issue strings (empty if healthy)
+        - ``buffer_size``: current buffer size
+        - ``flush_ratio``: flushed/appended ratio
+        """
+        issues: list[str] = []
+        s = self.status()
+
+        # Buffer growing without flush
+        if s["buffer_size"] > self._auto_flush * 2 and self._auto_flush > 0:
+            issues.append("Buffer exceeds 2× auto-flush threshold")
+
+        # Zero flushes despite appends
+        if s["total_appended"] > 0 and s["flush_count"] == 0:
+            issues.append("Items appended but never flushed")
+
+        # Low flush ratio (data accumulating in buffer)
+        if s["total_appended"] > 10:
+            ratio = s["total_flushed"] / s["total_appended"]
+            if ratio < 0.3:
+                issues.append(f"Low flush ratio: {ratio:.1%}")
+
+        return {
+            "healthy":     len(issues) == 0,
+            "issues":      issues,
+            "buffer_size": s["buffer_size"],
+            "flush_ratio": (s["total_flushed"] / s["total_appended"]
+                             if s["total_appended"] > 0 else 1.0),
+        }
 
 
 if __name__ == "__main__":
