@@ -52771,6 +52771,13 @@ class FastAppendQueue:
 
     # ── Status & diagnostics ────────────────────────────────────
 
+    def peek(self, n: int = 5) -> list[dict]:
+        """Preview the next *n* items in the buffer without removing them.
+
+        Useful for inspection before deciding whether to flush.
+        """
+        return [e.copy() for e in self._buffer[:n]]
+
     def status(self) -> dict:
         """Current queue status."""
         return {
