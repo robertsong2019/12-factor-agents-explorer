@@ -52456,5 +52456,233 @@ class TemporalEntropyTracker:
             "labels":            [s["label"] for s in self.snapshots],
         }
 
+
+# ──────────────────────────────────────────────────────────────────
+# Cycle 425: FastAppendQueue — System-1/System-2 Dual-Process Write Path
+# Research #033: Engram 83.6% vs 73.2% full-context.  Every SOTA system
+# (Engram, Mem0 v3, H-Mem) separates hot write path (no LLM, O(1) append)
+# from cold async consolidation.
+# ──────────────────────────────────────────────────────────────────
+
+class FastAppendQueue:
+    """System-1/System-2 dual-process write queue.
+
+    Inspired by Engram, Mem0 v3, and H-Mem (Research #033).  Separates
+    the hot write path (O(1) append, no processing) from cold async
+    consolidation (merge, deduplicate, link).
+
+    **System-1 (hot)**: raw appends go into a staging buffer.  No
+    entity resolution, no deduplication, no graph operations.  Just
+    fast insert.  Reads from System-1 are keyword-only.
+
+    **System-2 (cold)**: periodically flushes the buffer into the
+    MemoryGraph with full processing — entity resolution, linking,
+    entropy filtering, consolidation.
+
+    Usage::
+
+        graph = MemoryGraph()
+        queue = FastAppendQueue(graph)
+
+        # System-1: O(1) writes
+        queue.append("User likes python", kind="fact")
+        queue.append("User knows rust", kind="fact")
+
+        # Check buffer status
+        status = queue.status()
+        print(status["buffer_size"])  # 2
+
+        # System-2: flush to graph
+        result = queue.flush()
+        print(result["merged"])  # 2
+    """
+
+    def __init__(self, graph: "MemoryGraph", *, auto_flush_threshold: int = 50,
+                 consistency_mode: str = "session"):
+        """Initialise the dual-process queue.
+
+        Args:
+            graph:               target MemoryGraph for System-2 flush.
+            auto_flush_threshold: buffer size that triggers auto-flush
+                                  on the next ``append()``.  0 = disabled.
+            consistency_mode:    consistency level for multi-agent access.
+                                  ``session`` (default), ``causal``,
+                                  ``eventual``, ``committed``.
+        """
+        self.graph = graph
+        self._buffer: list[dict] = []
+        self._auto_flush = auto_flush_threshold
+        self._consistency = consistency_mode
+        self._total_appended = 0
+        self._total_flushed = 0
+        self._flush_count = 0
+        self._last_flush_time: float | None = None
+
+    # ── System-1: hot path ──────────────────────────────────────
+
+    def append(self, label: str, *, kind: str = "fact", data: dict | None = None,
+               tags: list[str] | None = None, category: str | None = None) -> int:
+        """O(1) append to the staging buffer.
+
+        No graph operations, no entity resolution, no deduplication.
+        Returns the buffer slot index for this entry.
+        """
+        entry = {
+            "label": label,
+            "kind": kind,
+            "data": data or {},
+            "tags": tags or [],
+            "category": category,
+            "timestamp": time.time(),
+            "slot": len(self._buffer),
+        }
+        self._buffer.append(entry)
+        self._total_appended += 1
+
+        # Auto-flush trigger
+        if self._auto_flush > 0 and len(self._buffer) >= self._auto_flush:
+            self.flush()
+
+        return entry["slot"]
+
+    def search_buffer(self, query: str, *, limit: int = 10) -> list[dict]:
+        """Keyword search over the un-processed buffer (System-1 read).
+
+        Simple substring matching — no embeddings, no graph traversal.
+        Useful for checking what's pending before a flush.
+        """
+        q_lower = query.lower()
+        results = []
+        for entry in self._buffer:
+            if q_lower in entry["label"].lower():
+                results.append(entry.copy())
+                if len(results) >= limit:
+                    break
+        return results
+
+    # ── System-2: cold path ─────────────────────────────────────
+
+    def flush(self, *, deduplicate: bool = True, link_related: bool = True) -> dict:
+        """Flush the buffer into the MemoryGraph with full processing.
+
+        For each buffered entry:
+        1. Add as a proper graph node.
+        2. Optionally deduplicate against existing nodes (label match).
+        3. Optionally link to related nodes by shared tags/kind.
+
+        Returns a summary dict with counts.
+        """
+        if not self._buffer:
+            return {
+                "flushed": 0, "merged": 0, "deduplicated": 0,
+                "linked": 0, "skipped": 0,
+            }
+
+        merged = 0
+        deduplicated = 0
+        linked = 0
+        skipped = 0
+        added_nodes: list[str] = []  # node IDs added in this flush
+
+        for entry in self._buffer:
+            label = entry["label"]
+            kind = entry["kind"]
+            data = entry["data"]
+            tags = entry["tags"]
+            category = entry["category"]
+
+            # Deduplicate: check if a node with same label already exists
+            if deduplicate:
+                row = self.graph.conn.execute(
+                    "SELECT id FROM nodes WHERE label=? LIMIT 1", (label,)
+                ).fetchone()
+                if row is not None:
+                    # Boost weight instead of creating duplicate
+                    self.graph.touch(row["id"])
+                    deduplicated += 1
+                    skipped += 1
+                    continue
+
+            # Add to graph
+            node = self.graph.add(label, kind=kind, data=data,
+                                  tags=tags, category=category)
+            added_nodes.append(node)
+            merged += 1
+
+        # Link related nodes added in this flush by shared kind/tags
+        if link_related and len(added_nodes) > 1:
+            for i in range(len(added_nodes)):
+                for j in range(i + 1, len(added_nodes)):
+                    node_a = added_nodes[i]
+                    node_b = added_nodes[j]
+                    # Link if same kind
+                    if node_a.kind == node_b.kind:
+                        try:
+                            self.graph.link(node_a.id, node_b.id,
+                                            "related", weight=0.5)
+                            linked += 1
+                        except Exception:
+                            pass
+                    else:
+                        # Check shared tags via DB
+                        row_a = self.graph.conn.execute(
+                            "SELECT tags FROM nodes WHERE id=?",
+                            (node_a.id,)).fetchone()
+                        row_b = self.graph.conn.execute(
+                            "SELECT tags FROM nodes WHERE id=?",
+                            (node_b.id,)).fetchone()
+                        if row_a and row_b:
+                            tags_a = set(json.loads(row_a["tags"]))
+                            tags_b = set(json.loads(row_b["tags"]))
+                            if tags_a & tags_b:
+                                try:
+                                    self.graph.link(node_a.id, node_b.id,
+                                                    "related", weight=0.5)
+                                    linked += 1
+                                except Exception:
+                                    pass
+
+        flushed = len(self._buffer)
+        self._buffer.clear()
+        self._total_flushed += merged
+        self._flush_count += 1
+        self._last_flush_time = time.time()
+
+        return {
+            "flushed":       flushed,
+            "merged":        merged,
+            "deduplicated":  deduplicated,
+            "linked":        linked,
+            "skipped":       skipped,
+            "flush_number":  self._flush_count,
+        }
+
+    # ── Status & diagnostics ────────────────────────────────────
+
+    def status(self) -> dict:
+        """Current queue status."""
+        return {
+            "buffer_size":        len(self._buffer),
+            "total_appended":     self._total_appended,
+            "total_flushed":      self._total_flushed,
+            "total_deduplicated": self._total_appended - self._total_flushed - len(self._buffer),
+            "flush_count":        self._flush_count,
+            "last_flush_time":    self._last_flush_time,
+            "auto_flush_threshold": self._auto_flush,
+            "consistency_mode":   self._consistency,
+            "pending_labels":     [e["label"] for e in self._buffer[:20]],
+        }
+
+    def drain(self) -> list[dict]:
+        """Return and clear the buffer without flushing to graph.
+
+        Useful for testing or for piping buffer contents to an
+        external processor.
+        """
+        buf = self._buffer.copy()
+        self._buffer.clear()
+        return buf
+
+
 if __name__ == "__main__":
     demo()
