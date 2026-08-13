@@ -53195,6 +53195,272 @@ n            - ``total_rules`` – number of rules scanned.
         result["suggestions"] = suggestions
         return result
 
+    # ──────────────────────────────────────────────────────────────
+    # GraphRAG Coverage Report — global KG retrieval health diagnostic
+    # ──────────────────────────────────────────────────────────────
+
+    def graphrag_coverage_report(self) -> dict:
+        """Global analysis of keyword coverage and retrieval health.
+
+        While :meth:`graphrag_explain` diagnoses a **single query**,
+        ``coverage_report`` provides a **KG-wide** health check for
+        retrieval readiness.
+
+        Answers questions like:
+
+        * What fraction of nodes are discoverable via keyword search?
+        * How many nodes are orphans (unreachable via traversal)?
+        * What are the most common keywords in the KG?
+        * Where are the sparse areas that need enrichment?
+        * How healthy is the KG for GraphRAG retrieval overall?
+
+        Returns:
+            Dict with:
+            - ``total_nodes`` / ``total_edges``: graph size
+            - ``label_coverage``: nodes with non-empty labels / total
+            - ``tag_coverage``: nodes with ≥1 tag / total
+            - ``avg_tags_per_node``: mean tag count
+            - ``keyword_count``: unique keywords extractable from labels+tags
+            - ``top_keywords``: ``[(keyword, frequency), ...]`` (top 15)
+            - ``orphan_count`` / ``orphan_rate``: nodes with degree=0
+            - ``degree_stats``: ``{min, max, mean, median}``
+            - ``kind_distribution``: ``{kind: count}``
+            - ``matchability``: ``{high, medium, low}`` tier breakdown
+            - ``sparse_nodes``: list of node IDs with degree<2 and no tags
+            - ``health_score``: float 0-1 (composite)
+            - ``suggestions``: list of actionable improvement suggestions
+        """
+        import re
+        import json as _json
+        from statistics import mean, median
+
+        total_nodes = self.conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+        total_edges = self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+
+        result: dict = {
+            "total_nodes": total_nodes,
+            "total_edges": total_edges,
+            "label_coverage": 0.0,
+            "tag_coverage": 0.0,
+            "avg_tags_per_node": 0.0,
+            "keyword_count": 0,
+            "top_keywords": [],
+            "orphan_count": 0,
+            "orphan_rate": 0.0,
+            "degree_stats": {"min": 0, "max": 0, "mean": 0.0, "median": 0.0},
+            "kind_distribution": {},
+            "matchability": {"high": 0, "medium": 0, "low": 0},
+            "sparse_nodes": [],
+            "health_score": 0.0,
+            "suggestions": [],
+        }
+
+        if total_nodes == 0:
+            result["suggestions"] = [
+                "Graph is empty — use extract_from_text() to build a KG first.",
+                "No nodes to analyze.",
+            ]
+            return result
+
+        # ── Stop words (same as graphrag_query/explain) ──
+        stop_words = {
+            "the", "a", "an", "is", "are", "was", "were", "be", "been",
+            "being", "have", "has", "had", "do", "does", "did", "will",
+            "would", "could", "should", "may", "might", "must", "can",
+            "of", "in", "on", "at", "to", "for", "with", "by", "from",
+            "as", "into", "about", "than", "then", "so", "if", "but",
+            "and", "or", "not", "no", "yes", "this", "that", "these",
+            "those", "it", "its", "they", "them", "their", "there",
+            "what", "which", "who", "whom", "whose", "when", "where",
+            "why", "how", "all", "each", "every", "both", "few",
+            "more", "most", "other", "some", "such", "only", "own",
+            "same", "very", "just", "too", "also", "any",
+        }
+
+        # ── Label coverage ──
+        nodes_with_label = self.conn.execute(
+            "SELECT COUNT(*) FROM nodes WHERE label IS NOT NULL AND label != ''"
+        ).fetchone()[0]
+        result["label_coverage"] = round(nodes_with_label / total_nodes, 4)
+
+        # ── Tag coverage ──
+        tag_rows = self.conn.execute(
+            "SELECT id, label, kind, tags FROM nodes"
+        ).fetchall()
+
+        nodes_with_tags = 0
+        total_tag_count = 0
+        keyword_freq: dict[str, int] = {}
+        kind_dist: dict[str, int] = {}
+        sparse_nodes: list[str] = []
+
+        for nid, label, kind, tags_json in tag_rows:
+            # Kind distribution
+            k = kind or "unknown"
+            kind_dist[k] = kind_dist.get(k, 0) + 1
+
+            # Tags
+            try:
+                tags = _json.loads(tags_json) if tags_json else []
+            except (ValueError, TypeError):
+                tags = []
+
+            if tags:
+                nodes_with_tags += 1
+                total_tag_count += len(tags)
+                for t in tags:
+                    tl = t.lower()
+                    if tl not in stop_words and len(tl) > 1:
+                        keyword_freq[tl] = keyword_freq.get(tl, 0) + 1
+
+            # Label keywords
+            if label:
+                raw_words = re.findall(r'[A-Za-z][A-Za-z0-9_]+', label)
+                for w in raw_words:
+                    wl = w.lower()
+                    if wl not in stop_words and len(wl) > 1:
+                        keyword_freq[wl] = keyword_freq.get(wl, 0) + 1
+
+        result["tag_coverage"] = round(nodes_with_tags / total_nodes, 4)
+        result["avg_tags_per_node"] = round(total_tag_count / total_nodes, 4)
+
+        # ── Keyword index ──
+        result["keyword_count"] = len(keyword_freq)
+        sorted_kw = sorted(keyword_freq.items(), key=lambda x: -x[1])
+        result["top_keywords"] = sorted_kw[:15]
+
+        # ── Kind distribution ──
+        result["kind_distribution"] = kind_dist
+
+        # ── Degree stats and orphans ──
+        degree_map: dict[str, int] = {}
+        for nid, *_ in tag_rows:
+            out_c = self.conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE source=?", (nid,)
+            ).fetchone()[0]
+            in_c = self.conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE target=?", (nid,)
+            ).fetchone()[0]
+            degree_map[nid] = out_c + in_c
+
+        degrees = list(degree_map.values())
+        orphan_count = sum(1 for d in degrees if d == 0)
+        result["orphan_count"] = orphan_count
+        result["orphan_rate"] = round(orphan_count / total_nodes, 4)
+        result["degree_stats"] = {
+            "min": min(degrees),
+            "max": max(degrees),
+            "mean": round(mean(degrees), 4),
+            "median": median(degrees),
+        }
+
+        # ── Matchability tiers ──
+        high = 0   # degree ≥ 2 and has tags or descriptive label (≥2 keywords)
+        medium = 0  # degree ≥ 1 (reachable via traversal)
+        low = 0     # degree = 0 and no tags (orphans with no keyword boost)
+
+        for nid, label, kind, tags_json in tag_rows:
+            d = degree_map.get(nid, 0)
+            try:
+                tags = _json.loads(tags_json) if tags_json else []
+            except (ValueError, TypeError):
+                tags = []
+
+            label_kw_count = 0
+            if label:
+                raw_words = re.findall(r'[A-Za-z][A-Za-z0-9_]+', label)
+                label_kw_count = sum(1 for w in raw_words
+                                     if w.lower() not in stop_words and len(w) > 1)
+
+            keyword_rich = len(tags) >= 1 or label_kw_count >= 2
+
+            if d >= 2 and keyword_rich:
+                high += 1
+            elif d >= 1:
+                medium += 1
+            else:
+                low += 1
+
+            # Sparse: degree < 2 and no tags
+            if d < 2 and not tags:
+                sparse_nodes.append(nid)
+
+        result["matchability"] = {"high": high, "medium": medium, "low": low}
+        result["sparse_nodes"] = sparse_nodes[:50]  # cap for sanity
+
+        # ── Health score (composite 0-1) ──
+        # Weighted average of:
+        # - label coverage (20%)
+        # - tag coverage (15%)
+        # - non-orphan rate (25%)
+        # - matchability high tier (25%)
+        # - keyword diversity (15%)
+        non_orphan_rate = 1.0 - result["orphan_rate"]
+        high_match_rate = high / total_nodes
+        # Keyword diversity: unique keywords / total nodes (capped at 1.0)
+        keyword_diversity = min(1.0, result["keyword_count"] / max(1, total_nodes))
+
+        health = (
+            0.20 * result["label_coverage"]
+            + 0.15 * result["tag_coverage"]
+            + 0.25 * non_orphan_rate
+            + 0.25 * high_match_rate
+            + 0.15 * keyword_diversity
+        )
+        result["health_score"] = round(health, 4)
+
+        # ── Suggestions ──
+        suggestions: list[str] = []
+
+        if result["label_coverage"] < 0.8:
+            suggestions.append(
+                f"Label coverage is {result['label_coverage']:.0%} — "
+                f"{total_nodes - nodes_with_label} nodes have empty labels. "
+                "Add descriptive labels to improve keyword discoverability."
+            )
+
+        if result["tag_coverage"] < 0.3:
+            suggestions.append(
+                f"Tag coverage is {result['tag_coverage']:.0%} — "
+                "most nodes have no tags. Adding tags improves GraphRAG "
+                "seed matching (tag matches score 0.6)."
+            )
+
+        if result["orphan_rate"] > 0.3:
+            suggestions.append(
+                f"Orphan rate is {result['orphan_rate']:.0%} ({orphan_count} nodes) — "
+                "these nodes can only be found via direct keyword match, "
+                "never via graph traversal. Link them to related nodes."
+            )
+
+        if high_match_rate < 0.2:
+            suggestions.append(
+                f"Only {high_match_rate:.0%} of nodes are in the high-matchability tier. "
+                "Enrich nodes with tags and connections to improve retrieval."
+            )
+
+        if result["keyword_count"] < total_nodes * 0.3:
+            suggestions.append(
+                f"Keyword diversity is low ({result['keyword_count']} unique keywords "
+                f"for {total_nodes} nodes). Labels may be too generic or similar. "
+                "Diversify vocabulary for better query coverage."
+            )
+
+        if sparse_nodes:
+            suggestions.append(
+                f"{len(sparse_nodes)} nodes are sparse (degree < 2, no tags). "
+                "These are nearly invisible to GraphRAG retrieval. "
+                "Add edges and tags to integrate them."
+            )
+
+        if not suggestions:
+            suggestions.append(
+                "KG retrieval health is good — strong coverage across all metrics."
+            )
+
+        result["suggestions"] = suggestions
+        return result
+
 
 class TemporalEntropyTracker:
     """Track spectral entropy of a MemoryGraph over time to detect
