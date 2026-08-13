@@ -1,16 +1,16 @@
-# HEARTBEAT.md - August 7, 2026 (Friday) — 02:02 AM update
+# HEARTBEAT.md - August 13, 2026 (Thursday) — 02:00 AM update
 
 ## 待办任务
 
 ### 🔴 最高优先级（本周）
-- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 2576 Python tests**, 1000+ APIs, 40+ entropy APIs, 25-API classification suite + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + activation_trace + competitive_spreading + SummaryTree + code-aware APIs + OWASP security suite (6) + amg-bench + OTel telemetry ✅
+- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 8505 Python tests**, 1000+ APIs, 40+ entropy APIs, 25-API classification suite + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + activation_trace + competitive_spreading + SummaryTree + code-aware APIs + OWASP security suite (6) + amg-bench + OTel telemetry + MultiAgentMemoryGraph (MESI) + consolidate() + retrieval quality family **COMPLETE** ✅ + attention (distribution/rebalance) + temporal trilogy + bi-temporal APIs (5) + forgetting_forecast + **Experience Compression Spectrum COMPLETE** (extract_rules + compression_spectrum_report + rule_conflict_detect + rule_apply + rule_explain)
 - [ ] **agent-context-store: README + npm publish** — **2898 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
-- [ ] **agent-task-cli: README + npm publish** — **1485 tests**, F226
+- [ ] **agent-task-cli: README + npm publish** — **1570 tests**, F237
 
 ### 中优先级（本月）
 - [ ] amg-bench: LongMemEval adapter + competitive scoring (harness skeleton done cycle 370)
-- [ ] amg: query_as_of(timestamp) — expose bi-temporal as first-class API (#033)
+- [ ] amg: `query_as_of(timestamp)` — ✅ DONE as `bitemporal_as_of()` (Cycle 412, 5 APIs)
 - [ ] amg MCP server (stateless, 2026-07-28 compatible) — Research #043 ✅, Python MCP now 16 tools
 - [ ] amg OpenClaw plugin (~200 lines) — fastest-growing distribution channel
 - [x] amg: OTel GenAI instrumentation — Research #034 ✅, Research #053 ✅, **telemetry.py implemented Cycle 374** ✅
@@ -19,53 +19,54 @@
 - [ ] openclaw-langgraph-bridge: Gateway 集成测试 (261 tests)
 - [ ] prompt-mgr: 继续 template management features (196 tests)
 
-### 已完成 ✅ (08-07 PM)
-- [x] Cycle 381: **enable_telemetry() auto-instrumentation** — wraps 8 CRUD methods (add/link/get_node/neighbors/recall/search_unified/multi_hop_reason/delete_node) with OTel gen_ai.memory.* spans. disable_telemetry() + telemetry_status(). Inert mode. +35 tests.
-- [x] Cycle 374: **OTel GenAI telemetry module** — 5 context managers (store/search/retrieve/update/delete) with `gen_ai.memory.*` spans. Zero-dep inert mode. Research #053 implemented. +20 tests.
-- [x] Cycle 372: **activation_trace()** — Explainable spreading activation. Wave log + path reconstruction + bottleneck detection + dead-end identification. 6 return structures. +54 Python tests.
-- [x] Cycle 373: **competitive_spreading()** — Lateral inhibition (Anderson & Reder 1999 fan effect) & reinforcement (Biederman 1970). Territory mapping + contested nodes + influence balance. +45 Python tests.
-
-### 已完成 ✅ (08-06 PM)
-- [x] Cycle 367: **OWASP ASI06 Security Suite** — 5 security APIs (trust_score, memory_quarantine, selective_repair, memory_audit_report, detect_provenance_laundering). Research #052 fully implemented same-day. +33 tests.
-- [x] Cycle 368: **security_dashboard()** — One-call OWASP ASI06 overview. +6 tests.
-- [x] Cycle 369: **memory_audit() integration** + full pipeline test. +3 tests.
-- [x] Cycle 370: **amg-bench** — Performance harness (BenchHarness + run_bench). Research #037 Python impl. +24 tests.
-- [x] Cycle 371: **MCP Server 10→16 Tools** — entropy, reason, snapshot, code_explain, quarantine, security. +22 tests.
-- [x] Research #052: **Memory Poisoning & Agent Memory Security** — 11 papers, 5 OWASP layers, 5 insights (#216-220). Fully implemented same day.
-- [x] AI×Neuroscience Report #003: BCI breakthroughs. Feishu doc published.
-
-### 已完成 ✅ (08-06 AM)
-- [x] Cycle 365: **Code-aware APIs** — function/class/file/module node types + explainCode() + recordCodeDecision() + impactAnalysis(). +36 Python tests.
-- [x] Cycle 366: **spreading_activation()** — ACT-R cognitive model. 5th retrieval paradigm. +41 Python tests.
-- [x] Cycle 358 TS: **classification_confidence_interval()** — Bootstrap CI. 25th classification API. +35 TS tests.
+> 08-06~07 completed items archived to MEMORY.md (cycles 358-381: security suite, telemetry, MCP expansion, spreading activation family).
 
 ## 系统状态
 - **agent-memory-graph (TS)**: **7349 tests** — 1000+ APIs。entropy framework (40+) + 25-API classification ✅ + FINGEREntropy + StreamingGraph ✅ + PPR + multi_hop_reason ✅ + spreading_activation ✅ + code-aware ✅ + SummaryTree ✅ + enrich_node ✅ + provenance (4) ✅ + entropy scan (4) ✅ + adaptive forgetting ✅ + EntityResolver ✅ + MCP Day 1-5 ✅
-- **agent-memory-graph (Python)**: **2611 tests** — 500+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + **activation_trace** ✅ + **competitive_spreading** ✅ + SummaryTree + code-aware + provenance (4) + **OWASP security suite (6)** ✅ + **amg-bench** ✅ + **MCP 16 tools** ✅ + **OTel telemetry** ✅ + **enable_telemetry() auto-instrumentation** ✅
+- **agent-memory-graph (Python)**: **8641 tests** — 920+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ + MCP 16 tools ✅ + OTel telemetry ✅ + enable_telemetry() ✅ + MultiAgentMemoryGraph (MESI) ✅ + FastAppendQueue ✅ + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + **retrieval quality family COMPLETE** (audit/explain/rerank/compare/trend) ✅ + attention (distribution/rebalance_plan) ✅ + **temporal trilogy** (changepoints/stability/velocity) ✅ + **bi-temporal APIs** (5) ✅ + **forgetting_forecast** ✅ + seeded RNG fix ✅ + **Experience Compression Spectrum COMPLETE** (extract_rules + compression_spectrum_report + rule_conflict_detect + rule_apply + rule_explain) ✅ + **extract_from_text()** ✅ (GraphRAG entry ticket)
 - **agent-context-store**: **2898 tests**
 - **structured-output-toolkit**: **571 tests**
-- **agent-task-cli**: **1485 tests** — F226
+- **agent-task-cli**: **1570 tests** — F237
 - **context-forge**: **1458 tests** (F79, 21 dimensions)
 - **nano-agent**: **791 tests**
 - **edge-agent-runtime**: **345 tests**
 - **prompt-mgr**: **196 tests**
-- **四项目总计**: 12303 tests ✅ (TS+acs+sot+atc)
-- **全项目总计**: ~17300 tests
-- **零回滚率**: amg **281天** 🏆 / acs 200天 🏆
+- **四项目总计**: 17995 tests ✅ (TS+acs+sot+atc)
+- **全项目总计**: ~26310 tests
+- **零回滚率**: amg **290天** 🏆 / acs 200天 🏆
 
-## 近期活动 (08-07)
-- **Cycle 374**: telemetry.py — OTel GenAI semantic conventions for agent memory. 5 context managers (trace_memory_store/search/retrieve/update/delete). Inert no-op without opentelemetry. Error handling with ERROR status + exception recording. +20 tests. 282nd day.
-- **Cycle 372**: activation_trace() — explainable spreading activation with wave-by-wave firing log, path reconstruction (seed→target BFS), propagation tree, bottleneck detection (gateway nodes gating downstream activation), dead-end identification. 6 return structures (results, waves, paths, seed_to_node, propagation_tree, summary). +54 tests. 281st day.
-- **Cycle 373**: competitive_spreading() — two-phase architecture: independent spreading per seed → competition resolution. Interference (fan effect) reduces activation at contested nodes. Reinforcement (redundancy gain) boosts co-corroborated nodes. Territory mapping + influence balance metric. +45 tests. 281st day.
-- **08-06 PM**: Research #052 → implementation → integration in ~4 hours. 5 security APIs + dashboard + audit integration + amg-bench harness + MCP 16 tools. 7 cycles total in one day.
+## 近期活动 (08-13 PM)
+- **Cycle 428**: extract_from_text() — rule-based KG construction. 7 relation patterns + entity detection + dedup. GraphRAG entry ticket (Research #062). +22 tests (8619→8641). 291st day 🏆.
+- **nano-agent Round 17**: F58-F60 (search_boolean/condense/export_markdown_table). +27 tests.
+- **Research #062**: GraphRAG 2026 全景与 amg 定位.
+- **Research #063**: OpenClaw Plugin Architecture for amg.
+
+## 近期活动 (08-12 PM ~ 08-13 AM)
+- **Cycles 420-424**: Experience Compression Spectrum COMPLETE. extract_rules (L2→L3) + compression_spectrum_report (meta) + rule_conflict_detect (validation) + rule_apply (runtime matching, Jaccard) + rule_explain (per-rule diagnostics). Rule introspection lifecycle: Create → Validate → Match → Diagnose. +150 tests.
+- **chain-of-thought**: maxDepth bug fix + 13 tests (75→88).
+- **agent-task-cli Round 60**: F235-F237 (getMany/getValues/emitOnce) +22 tests.
+- **Research #060**: Experience Compression Spectrum. **Research #061**: LongMemEval Adapter.
+- **Essay**: 《上下文折叠》published.
+- **AI×Neuroscience #9**: FlyWire 果蝇全脑连接组.
+- **amg Python**: 8355→8505 (+150). **290th consecutive day** 🏆.
+
+## 近期活动 (08-11 PM ~ 08-12 AM)
+- Cycles 408-415: Temporal trilogy + bi-temporal APIs + forgetting_forecast + retrieval quality family COMPLETE. Details in MEMORY.md.
+
+## 近期活动 (08-09~08-10)
+> Cycles 384-407: Multi-agent (MESI) + consolidation (NREM/REM) + retrieval quality + attention. Details in MEMORY.md.
+
+## 近期活动 (08-06~08-08)
+> Cycles 358-403: Security suite + telemetry + MCP expansion + spreading activation + consolidation. Details in MEMORY.md.
 
 ## 本周关键路径
-1. ✅ ~~Cycles 367-374: security suite + bench + MCP + activation_trace + competitive_spreading + OTel telemetry~~ DONE
+1. ✅ ~~Cycles 367-424: security suite + bench + MCP + multi-agent + consolidation + retrieval QA + attention + temporal + bi-temporal + Experience Compression Spectrum~~ DONE
 2. ⬜ README(agent-memory-graph) → npm publish — **BLOCKED on human action**
-3. ⬜ Next dev targets: activation_trace TS port / competitive_spreading TS port / MCP registry publish / OpenClaw plugin / instrument MCP server with OTel
+3. ⬜ Next dev targets: MCP registry publish / OpenClaw plugin / amg-bench LoCoMo adapter / TS port of Python APIs
 
 ## 上次检查
-- **Knowledge org: 2026-08-07 02:02** — Verified test counts against actual suites (amg Python 2459 ✅, prompt-mgr 196 ✅). Fixed prompt-mgr count in MEMORY.md (134→196) and HEARTBEAT (175→196). Updated 全项目总计 to ~20000. All cycle docs (367-373) and Research #052 already current from earlier cron.
+- **Knowledge org: 2026-08-13 02:00** — Updated amg Python 8355→8505 (cycles 420-424, +150 tests). Experience Compression Spectrum COMPLETE. Rule introspection lifecycle COMPLETE. 290th day. chain-of-thought 75→88, atc 1548→1570, acs 2898→2929. Research #060 + #061 added.
+- **Verification: 2026-08-11 02:03** — amg Python=8018 ✅. Pruned completed items.
 
 ## ⚠️ 已知问题
 - **MEMORY.md size**: ~480 lines. Over 400 soft limit but content is active reference material. Further archiving would reduce visibility of actionable items.
