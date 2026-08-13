@@ -1,8 +1,8 @@
 # Agent Memory Graph 🧠
 
-> A graph-native memory engine for AI agents — 27,000+ lines, 538 API methods, 2,917 tests, zero dependencies.
+> A graph-native memory engine for AI agents — 53,900+ lines, 565+ API methods, 8,794 tests, zero dependencies.
 >
-> **290th consecutive day of iteration** 🏆
+> **291st consecutive day of iteration** 🏆
 
 **Zero dependencies** — pure Python stdlib + sqlite3. `sqlite-vec` optional for vector search.
 
@@ -20,10 +20,13 @@ Agents wake up fresh each session. Files work, but they're flat. A memory graph 
 - **Secure memory** — OWASP ASI06 security suite (6 APIs: trust score, quarantine, selective repair, audit, laundering detection, dashboard)
 - **Observe operations** — OTel GenAI telemetry with 5 context managers
 - **Serve via MCP** — 16-tool MCP server for any MCP client
-- **Manage retrieval quality** — 4-API family: audit → explain → rerank → compare (complete lifecycle)
+- **Manage retrieval quality** — 5-API family: audit → explain → rerank → compare → trend (complete lifecycle)
 - **Track bi-temporal queries** — 3-mode point-in-time queries (knowledge/truth/certain)
 - **Forecast forgetting** — non-destructive Ebbinghaus decay prediction with risk zones
 - **Analyze temporal dynamics** — changepoints/stability/velocity trilogy
+- **Dual-process writing** — FastAppendQueue: System-1 (hot O(1) append) + System-2 (cold async consolidation)
+- **GraphRAG pipeline** — extract_from_text → graphrag_query → graphrag_explain → coverage_report (zero-dependency KG construction + retrieval)
+- **Track knowledge freshness** — FAMA-aware graph-level diagnostics with 5 time buckets
 
 ---
 
@@ -83,7 +86,7 @@ print(mg.to_markdown())               # human-readable summary
 | **Embedding / Vector** | 19 | `add_embedding`, `search_similar`, `train_kge`, `kge_score` |
 | **Entity Resolution** | 8 | `EntityResolver` — alias detection, merge, split, cluster dedup |
 | **Diagnostics** | 5+ | `graph_health_score`, `entropy_dashboard`, `get_operation_history`, `streaming_health`, `graph_digest` |
-| **Retrieval Quality** | 4 | `retrieval_quality_audit` (diversity/coverage/relevance/redundancy), `retrieval_quality_explain` (per-node diagnostic), `retrieval_quality_rerank` (Greedy Marginal Contribution), `retrieval_quality_compare` (multi-set A/B) |
+| **Retrieval Quality** | 5 | `retrieval_quality_audit` (diversity/coverage/relevance/redundancy), `retrieval_quality_explain` (per-node diagnostic), `retrieval_quality_rerank` (Greedy Marginal Contribution), `retrieval_quality_compare` (multi-set A/B), `retrieval_quality_trend` (N-snapshot regression + change points) |
 | **Attention Management** | 2 | `attention_distribution` (Gini + Shannon + zones + hotspots/blindspots), `attention_rebalance_plan` (refresh/boost/diversify/consolidate/forget + Gini delta) |
 | **Temporal Analysis** | 3 | `temporal_changepoints` (burst detection + outliers), `temporal_stability_score` (growth × retention × changepoint density), `temporal_velocity` (creation/supersession rates + trend slope) |
 | **Bi-Temporal Queries** | 5 | `edge_record`, `edge_supersede`, `bitemporal_as_of` (3-mode: knowledge/truth/certain), `knowledge_diff`, `supersedence_chain` |
@@ -91,6 +94,9 @@ print(mg.to_markdown())               # human-readable summary
 | **Link Prediction** | 1 | `link_prediction` — Adamic-Adar / Preferential Attachment / Common Neighbors |
 | **Serialization** | 24 | `export_json`, `to_markdown`, `serialize_dot`, `serialize_graphml`, `serialize_cytoscape` |
 | **Telemetry** | 5 | `enable_telemetry()` auto-instrumentation + 5 OTel context managers |
+| **Dual-Process Write** | 8 | `FastAppendQueue`: System-1 buffer append/search + System-2 flush/consolidate, peek, health, E2E integration |
+| **GraphRAG** | 4 | `extract_from_text` (rule-based KG construction), `graphrag_query` (subgraph retrieval), `graphrag_explain` (per-query diagnostic), `graphrag_coverage_report` (global health) |
+| **Knowledge Freshness** | 1 | `knowledge_freshness_report` — FAMA-aware 5-bucket distribution + weighted score + recommendations |
 | **MCP Server** | 16 | remember/recall/relate/ask/lookup/neighbors/forget/stats/timeline/health + entropy/reason/snapshot/code_explain/quarantine/security |
 
 ---
@@ -684,6 +690,88 @@ report = mg.compression_spectrum_report()
 # Recommendations: actionable next steps for each compression transition
 ```
 
+### Dual-Process Write Path: FastAppendQueue (Cycles 425-427)
+
+Inspired by Engram's System-1/System-2 split (83.6% vs 73.2% accuracy). Hot path is O(1) append; cold path flushes with full graph integration.
+
+```python
+from memory_graph import FastAppendQueue
+
+faq = FastAppendQueue(mg, auto_flush_threshold=100)
+
+# System-1: hot path — O(1) append, no graph ops
+faq.append("User asked about React hooks", kind="interaction")
+faq.append("Resolved null pointer in auth flow", kind="event")
+
+# System-1: keyword search on buffer (no graph traversal)
+hits = faq.search("React")
+
+# Peek without removal
+recent = faq.peek(5)
+
+# System-2: cold path — flush to graph with dedup + link-by-kind/tags
+faq.flush()  # nodes enter the full graph
+
+# Combined flush + consolidation
+faq.flush_and_consolidate(strategy="nrem")
+
+# Diagnostics
+print(faq.status())         # pending count, capacity, flush history
+print(faq.is_healthy())     # issue detection
+print(faq.peak_buffer_size())
+```
+
+### Knowledge Freshness Report (Cycle 426)
+
+Graph-level freshness analysis based on FAMA research (stale memory penalized 15-43 points).
+
+```python
+report = mg.knowledge_freshness_report()
+# report.buckets: {fresh: 45, recent: 30, aging: 15, stale: 8, decayed: 2}
+# report.weighted_score: 72.3 (0-100)
+# report.per_kind: {"person": 85.2, "project": 60.1, ...}
+# report.stalest_nodes: [(node_id, age_days), ...]
+# report.freshest_nodes: [(node_id, age_days), ...]
+# report.recommendations: ["15 nodes in stale bucket — consider consolidation", ...]
+```
+
+### GraphRAG Pipeline (Cycles 428-431)
+
+Zero-dependency KG construction + retrieval — complete extract → query → explain → diagnose lifecycle.
+
+```python
+# 1. Extract: build a knowledge graph from raw text
+result = mg.extract_from_text(
+    "Alice works_at Acme Corp. She created the auth module. "
+    "Bob is_a developer. The auth module is part_of the backend."
+)
+# result.nodes_created, result.edges_created
+# result.entities: ['Alice', 'Acme Corp', 'auth module', 'Bob', 'backend']
+# result.relations: [('Alice', 'works_at', 'Acme Corp'), ...]
+# 7 relation patterns: is_a, works_at, created, located_in, has, part_of, built
+
+# 2. Query: natural-language subgraph retrieval
+answer = mg.graphrag_query("Who created the auth module?", max_hops=2, top_k=5)
+# answer.answer_nodes: ranked nodes by keyword_score × centrality × hop_penalty
+# answer.context: formatted string for LLM prompt injection
+
+# 3. Explain: per-query diagnostic
+explanation = mg.graphrag_explain("Who created the auth module?", mg.graphrag_query(...))
+# explanation.keyword_breakdown: matched/unmatched keywords with match types
+# explanation.node_scores: per-node score decomposition
+# explanation.traversal_paths: seed → answer node paths
+# explanation.suggestions: human-readable improvement tips
+
+# 4. Coverage Report: global KG retrieval health
+coverage = mg.graphrag_coverage_report()
+# coverage.label_coverage, coverage.tag_coverage, coverage.avg_tags_per_node
+# coverage.orphan_rate, coverage.degree_stats
+# coverage.matchability_tiers: {high: 40, medium: 25, low: 35}
+# coverage.sparse_nodes: nodes nearly invisible to retrieval
+# coverage.health_score: composite weighted score (0-100)
+# coverage.suggestions: context-aware improvement actions
+```
+
 ### MCP Server (16 Tools)
 
 Built-in MCP server for any MCP client (Claude Desktop, mcporter, OpenClaw).
@@ -720,7 +808,7 @@ python3 -m pytest -k "classification" -q  # classification suite
 python3 -m pytest -k "activation" -q  # spreading activation family
 ```
 
-**2,917 test cases** across 40+ test files. **290th consecutive day** 🏆.
+**8,794 test cases** across 40+ test files. **291st consecutive day** 🏆.
 
 ---
 
@@ -734,4 +822,4 @@ python3 -m pytest -k "activation" -q  # spreading activation family
 
 ---
 
-*Part of [Code Lab](../) · 290 days of iteration · Cycle 424+*
+*Part of [Code Lab](../) · 291 days of iteration · Cycle 431+*

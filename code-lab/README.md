@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~52,800 | ⭐ 知识图谱记忆引擎：529 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询、Experience Compression Spectrum L2→L3 规则生命周期（提取/检测/匹配/诊断） |
+| [agent-memory-graph](agent-memory-graph/) | ~53,900 | ⭐ 知识图谱记忆引擎：565+ 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比/趋势）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询、Experience Compression Spectrum L2→L3 规则生命周期（提取/检测/匹配/诊断）、GraphRAG 流水线（文本提取/子图检索/诊断/健康报告）、双进程写入 FastAppendQueue、知识新鲜度诊断 |
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 52,800+ 行的完整图记忆引擎，包含 538 公开 API 和 2,917+ 测试用例。
+该项目已从 300 行的教学示例演化为 53,900+ 行的完整图记忆引擎，包含 565+ 公开 API 和 8,794+ 测试用例。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -79,7 +79,7 @@
 | **衰减与摘要** | 3 | `temporal_decay_impact` — Ebbinghaus 遗忘衰减评分；`edge_weight_entropy` — 边权重熵分布；`node_summary` — 节点一键概览（连通性+角色+熵+中心性+时序+信任）|
 | **多 Agent 一致性** | 4 | `MultiAgentMemoryGraph` — MESI 缓存一致性协议启发的多 Agent 记忆层；`auto_scope_agents` — 社区检测自动划定 Agent 写入范围；`detect_write_conflicts` — 冲突检测；`coherence_dashboard` — 一致性可观测面板 |
 | **一致性 API** | 3 | `commit_snapshot` — 4 级一致性快照（strong/eventual/causal/read-your-writes）；`causal_order_check` — 因果顺序验证；4 级一致性模型选择 |
-| **写入架构** | 1 | `FastAppendQueue` — System-1/System-2 双进程写入路径（热路径 append + 异步巩固）|
+| **写入架构** | 8 | `FastAppendQueue` — System-1/System-2 双进程写入路径（热路径 append/search/peek + 异步巩固 flush/consolidate + 健康诊断）|
 | **离线巩固** | 3 | `consolidate` — NREM/REM 双阶段离线巩固（记忆压缩+重排+强化）；`consolidation_status` — 巩固触发条件仪表盘；`ResidualExtractor` — 压缩残差回收（规则式原子事实提取）|
 | **压缩残差** | 1 | `ResidualExtractor` — 从压缩后残余中提取日期/数量/命名实体/URL/技术术语等原子事实（ProGraph 启发）|
 | **检索质量** | 1 | `retrieval_quality_audit` — 检索后质量评估（多样性/覆盖率/相关性/冗余度→综合 QA 评分）|
@@ -98,14 +98,19 @@
 | **检索质量趋势** | 1 | `retrieval_quality_trend` — N 份快照时序趋势（4 维线性回归 + 变化点 + 波动率）|
 | **知识耐久度** | 2 | `memory_half_life` — 逐节点半衰期；`batch_half_life` — 批量聚合分析 |
 | **群体陈旧度** | 1 | `staleness_report` — fresh/aging/stale/critical 分布 + 分组排名 |
+| **知识新鲜度** | 1 | `knowledge_freshness_report` — FAMA 感知 5 级时间桶（fresh/recent/aging/stale/decayed）+ 加权评分 + 分组分析 |
 | **压缩谱: 规则提取** | 1 | `extract_rules` — L2→L3 声明式规则提取（负向约束分离 + 跨技能模式检测）|
 | **压缩谱: 分布分析** | 1 | `compression_spectrum_report` — L0-L3 全谱分布 + 加权压缩比 + 压缩建议 |
 | **L3 规则治理** | 3 | `rule_conflict_detect` — 矛盾检测；`rule_apply` — 运行时匹配；`rule_explain` — 匹配诊断 |
+| **GraphRAG 构建** | 1 | `extract_from_text` — 零依赖规则式实体/关系提取（7 种关系模式 + 去重）|
+| **GraphRAG 检索** | 1 | `graphrag_query` — 关键词子图检索（BFS 遍历 + 中心性排名 + LLM 上下文输出）|
+| **GraphRAG 诊断** | 1 | `graphrag_explain` — 逐查询诊断（关键词分解 + 得分分解 + 遍历路径 + 建议）|
+| **GraphRAG 健康** | 1 | `graphrag_coverage_report` — 全局 KG 检索健康（覆盖率/孤儿率/可匹配性分级/复合健康分）|
 | **MCP 工具** | 1 | MCP server 16 工具 + 请求指标追踪（延迟、错误率、调用日志）|
 
 ### 📐 信息论进化史（Cycles 306–316 + 326–407）
 
-最新里程碑：**Experience Compression Spectrum L2→L3 规则生命周期完结（extract→detect→apply→explain）+ 检索质量五步流水线完结（audit→explain→rerank→compare→trend）+ 知识耐久度分析** — 从检索质量审计发展为完整的诊断→解释→修正→对比→趋势五步流水线；L2 技能节点可提取为 L3 声明式规则，经冲突检测后运行时匹配并诊断；新增半衰期估算与群体陈旧度分析（Cycles 408-424）。
+最新里程碑：**GraphRAG 全流水线完结（extract→query→explain→coverage）+ 双进程写入路径 FastAppendQueue + 知识新鲜度 FAMA 诊断** — 从零依赖文本提取构建知识图谱，到子图检索、逐查询诊断、全局健康报告；System-1/System-2 双进程写入分离热路径与冷巩固；FAMA 感知的图级新鲜度诊断补全了时效性分析最后一块拼图。在此基础上，Experience Compression Spectrum L2→L3 规则生命周期完结（extract→detect→apply→explain）+ 检索质量五步流水线完结（audit→explain→rerank→compare→trend）+ 知识耐久度分析构成更深层的记忆分析能力（Cycles 408-431）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -190,6 +195,13 @@
 | 规则冲突检测 | 422 | `rule_conflict_detect` | L3 规则集矛盾检测（直接矛盾 + 重叠检测 + 清洁规则计数）|
 | 规则运行时匹配 | 423 | `rule_apply` | 运行时 L3 规则匹配（Jaccard 关键词重叠 + 正/负向引导排序）— **规则生命周期: extract→detect→apply** |
 | 规则诊断 | 424 | `rule_explain` | 逐规则匹配诊断（关键词重叠分解 + Jaccard 贡献评分 + 可读解释 + 建议）— **规则自省生命周期完结: extract→detect→apply→explain** |
+| 双进程写入 | 425 | `FastAppendQueue` | System-1（热路径 O(1) append + 关键词搜索）/ System-2（异步 flush + 图集成 + 去重）— Engram 启发的 83.6% vs 73.2% 精度差异 |
+| 双进程扩展 | 426-427 | `flush_and_consolidate`, `peek`, `is_healthy`, E2E tests | NREM/REM 合并 flush + 缓冲区预览 + 健康检查 + 6 个 E2E Agent 模拟测试 |
+| 知识新鲜度 | 426 | `knowledge_freshness_report` | FAMA 感知图级新鲜度诊断 — 5 级时间桶(fresh/recent/aging/stale/decayed) + 加权评分 + 分组分解 + 建议 |
+| GraphRAG 构建 | 428 | `extract_from_text` | 零依赖规则式 KG 构建（句子分割 + 大写实体检测 + 7 种关系模式 + 去重）|
+| GraphRAG 检索 | 429 | `graphrag_query` | 关键词子图检索（停用词过滤 + BFS 双向遍历 + 关键词×中心性×跳数衰减排名 + LLM 上下文输出）|
+| GraphRAG 诊断 | 430 | `graphrag_explain` | 逐查询诊断（关键词分解 + 得分分解 + 遍历路径重建 + 覆盖率分析 + 建议）— **GraphRAG 诊断生命周期: extract→query→explain** |
+| GraphRAG 健康 | 431 | `graphrag_coverage_report` | 全局 KG 检索健康（标签/标签覆盖率 + 孤儿率 + 度数统计 + 可匹配性分级 + 复合健康分 + 稀疏节点检测）— **GraphRAG 全流水线完结: extract→query→explain→coverage** |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---
