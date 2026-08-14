@@ -15,6 +15,7 @@ import run_amg
 from run_amg import (
     OFFICIAL_SCHEMA_KEYS,
     answer_question,
+    chunk_text,
     index_corpus,
     load_bench_data,
     main,
@@ -315,3 +316,166 @@ class TestCli:
     def test_main_requires_data_dir(self, capsys):
         with pytest.raises(SystemExit):
             main([])
+
+
+# ---------------------------------------------------------------------------
+# chunk_text — Gap #6 sentence-boundary chunking (Cycle 440)
+# ---------------------------------------------------------------------------
+
+NOVEL = " ".join(
+    f"Sentence number {i} mentions Person{i}." for i in range(40))
+
+
+class TestChunkText:
+    def test_empty_text(self):
+        assert chunk_text("") == []
+
+    def test_whitespace_only(self):
+        assert chunk_text("   \n\t  ") == []
+
+    @pytest.mark.parametrize("bad", [0, -1, -100])
+    def test_invalid_max_tokens(self, bad):
+        with pytest.raises(ValueError):
+            chunk_text("Some text.", max_tokens=bad)
+
+    def test_short_text_single_chunk(self):
+        chunks = chunk_text("Alpha is a beta. Gamma works at Delta.",
+                            max_tokens=512)
+        assert len(chunks) == 1
+        assert "Alpha is a beta." in chunks[0]
+        assert "Gamma works at Delta" in chunks[0]
+
+    def test_no_content_loss_roundtrip(self):
+        """Crown invariant: re-segmenting every chunk recovers exactly
+        the original sentence sequence (chunking never merges, drops,
+        or reorders sentences)."""
+        from memory_graph import segment_sentences
+        orig = segment_sentences(NOVEL)
+        for budget in (512, 100, 50, 20, 13):
+            recovered = [s for c in chunk_text(NOVEL, max_tokens=budget)
+                         for s in segment_sentences(c)]
+            assert recovered == orig, f"budget={budget} lost sentences"
+
+    @pytest.mark.parametrize("budget", [512, 100, 50, 20, 13])
+    def test_budget_respected(self, budget):
+        for c in chunk_text(NOVEL, max_tokens=budget):
+            assert run_amg._estimate_tokens(c) <= budget
+
+    def test_order_preserved(self):
+        chunks = chunk_text(NOVEL, max_tokens=50)
+        assert chunks[0].startswith("Sentence number 0 mentions Person0")
+        assert chunks[-1].endswith("Person39.")
+
+    def test_greedy_packing(self):
+        text = "Alpha is a beta. Gamma works at Delta."
+        assert len(chunk_text(text, max_tokens=512)) == 1
+
+    def test_split_on_tight_budget(self):
+        assert len(chunk_text(NOVEL, max_tokens=20)) > 1
+
+    def test_runon_sentence_hard_split(self):
+        runon = " ".join(f"word{i}" for i in range(100))
+        pieces = chunk_text(runon, max_tokens=13)
+        assert len(pieces) > 1
+        for p in pieces:
+            assert run_amg._estimate_tokens(p) <= 13
+        # all words present, in order
+        assert " ".join(pieces).split() == runon.split()
+
+    def test_abbreviation_safe_boundaries(self):
+        """A protected abbreviation must never split a sentence across
+        chunks (Cycle 432 lesson, applied at chunk granularity)."""
+        text = ("Mr. Darcy works at Pemberley. "
+                "Mont St. Michel is located in Normandy. ") * 3
+        chunks = chunk_text(text, max_tokens=20)
+        for c in chunks:
+            for bad in ("Mr\n", "St\n", "Mr .", "St ."):
+                assert bad not in c
+        from memory_graph import segment_sentences
+        recovered = [s for c in chunks for s in segment_sentences(c)]
+        assert any("Mr. Darcy works at Pemberley" in s for s in recovered)
+
+    def test_terminators_restored(self):
+        """Chunks containing multiple sentences carry restored '. '
+        separators so downstream re-segmentation works."""
+        chunks = chunk_text(NOVEL, max_tokens=50)
+        assert any(". " in c for c in chunks)
+
+    def test_deterministic(self):
+        assert (chunk_text(NOVEL, max_tokens=30)
+                == chunk_text(NOVEL, max_tokens=30))
+
+    def test_max_tokens_one(self):
+        chunks = chunk_text("one two three", max_tokens=1)
+        assert all(run_amg._estimate_tokens(c) <= 1 for c in chunks)
+
+
+class TestIndexCorpusChunked:
+    def test_chunks_counter_default_equals_docs(self):
+        g = mg.MemoryGraph()
+        stats = index_corpus(g, CORPUS)
+        assert stats["chunks"] == stats["docs"] == 2
+
+    def test_chunk_size_zero_disabled(self):
+        g = mg.MemoryGraph()
+        stats = index_corpus(g, CORPUS, chunk_size=0)
+        assert stats["chunks"] == 2  # whole-doc behavior
+
+    def test_chunking_lossless_for_extraction(self):
+        """Gap #6 acceptance: at a budget ≥ the longest sentence,
+        chunked indexing produces IDENTICAL extraction results to
+        whole-document indexing (rule mode is per-sentence)."""
+        g1, g2 = mg.MemoryGraph(), mg.MemoryGraph()
+        whole = index_corpus(g1, CORPUS)
+        chunked = index_corpus(g2, CORPUS, chunk_size=32)
+        assert chunked["chunks"] > whole["chunks"]  # actually chunked
+        for key in ("nodes_created", "edges_created", "sentences"):
+            assert chunked[key] == whole[key], key
+
+    def test_tags_survive_chunking(self):
+        g = mg.MemoryGraph()
+        index_corpus(g, CORPUS, chunk_size=16)
+        row = g.conn.execute(
+            "SELECT COUNT(*) FROM nodes WHERE tags LIKE '%Novel-0001%'"
+        ).fetchone()
+        assert row[0] > 0
+
+    def test_tight_budget_still_indexes(self):
+        g = mg.MemoryGraph()
+        stats = index_corpus(g, CORPUS, chunk_size=16)
+        assert stats["chunks"] > 2
+        assert stats["nodes_created"] > 0
+
+
+class TestRunBenchChunked:
+    def test_e2e_chunked_identical_answers(self, bench_dir):
+        """E2E lossless property: with chunking enabled (budget ≥
+        longest sentence), every generated answer is identical to the
+        unchunked run — chunking must not perturb retrieval."""
+        base = run_bench(bench_dir, quiet=True)
+        chunked = run_bench(bench_dir, quiet=True, chunk_size=32)
+        assert chunked["hit_rate"] == base["hit_rate"]
+        assert chunked["extractive_hits"] == base["extractive_hits"]
+        assert ([r["generated_answer"] for r in chunked["predictions"]]
+                == [r["generated_answer"] for r in base["predictions"]])
+        assert chunked["index"]["chunks"] > base["index"]["chunks"]
+
+    def test_summary_carries_chunk_stats(self, bench_dir):
+        s = run_bench(bench_dir, quiet=True, chunk_size=32)
+        assert "chunks" in s["index"]
+
+
+class TestCliChunkSize:
+    def test_chunk_size_flag(self, bench_dir, tmp_path, capsys):
+        out = tmp_path / "cli-chunked.json"
+        rc = main(["--data-dir", str(bench_dir), "--out", str(out),
+                   "--chunk-size", "32"])
+        assert rc == 0
+        assert out.is_file()
+        assert "chunks=" in capsys.readouterr().out
+
+    def test_chunk_size_zero_runs(self, bench_dir, tmp_path):
+        out = tmp_path / "cli-zero.json"
+        rc = main(["--data-dir", str(bench_dir), "--out", str(out),
+                   "--chunk-size", "0"])
+        assert rc == 0 and out.is_file()

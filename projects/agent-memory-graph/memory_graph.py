@@ -14,12 +14,66 @@ Usage:
 import sqlite3
 import json
 import math
+import re
 import time
 import uuid
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Optional
 from collections import defaultdict
+
+# ── 文本工具 ──────────────────────────────────────────────
+
+# Two-tier abbreviation protection (Punkt-style). STRONG titles always
+# protect their trailing period; WEAK abbreviations (months, weekdays,
+# No./Vol./etc.) protect only when followed by a lowercase letter or
+# digit — "Jan. 5" stays one sentence, "Jan. Bob" splits.
+_STRONG_ABBREV_RE = re.compile(
+    r'\b(?:'
+    r'Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof|Rev|Gen|Sen|Rep|Gov|Capt|Lt|Sgt'
+    r'|Col|Maj|Mt|Ph\.D'
+    r')\.', re.IGNORECASE)
+_WEAK_ABBREV_RE = re.compile(
+    r'\b(?:'
+    r'e\.g|i\.e|a\.m|p\.m|etc|vs'
+    r'|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec'
+    r'|Mon|Tue|Wed|Thu|Fri|Sat|Sun'
+    r'|No|Nos|Vol|pp|Fig|Inc|Ltd|Corp|Co'
+    r'|U\.S|U\.K|U\.N'
+    r')\.(?=\s*[a-z0-9])')  # case-sensitive: lookahead must not match uppercase
+
+
+def segment_sentences(text: str) -> list[str]:
+    """Abbreviation-safe sentence segmentation (two-tier Punkt-style).
+
+    Protects abbreviation periods ("Mont St. Michel", "Mr. Darcy",
+    "J. K. Rowling") so they don't split sentences: a NUL placeholder
+    replaces protected periods and is restored after splitting
+    (GraphRAG-Bench Novel-domain lesson from Cycle 432).
+
+    Split set: ``. ! ? ; \n``. Shared by ``extract_from_text`` and
+    external chunkers so chunk boundaries and extraction boundaries
+    always agree.
+
+    Args:
+        text: Raw input text.
+
+    Returns:
+        List of stripped, non-empty sentence strings.
+    """
+    def _protect(m):
+        """Replace every '.' in the match with NUL placeholder."""
+        return m.group(0).replace('.', '\x00')
+
+    protected = _STRONG_ABBREV_RE.sub(_protect, text)
+    protected = _WEAK_ABBREV_RE.sub(_protect, protected)
+    # Single-letter initials: "J. K. Rowling", "John F. Kennedy"
+    protected = re.sub(r'\b([A-Z])\.', lambda m: m.group(1) + '\x00', protected)
+    return [
+        s.strip().replace('\x00', '.')
+        for s in re.split(r'[.!?;\n]+', protected) if s.strip()
+    ]
+
 
 # ── 数据模型 ──────────────────────────────────────────────
 
@@ -52463,39 +52517,10 @@ n            - ``total_rules`` – number of rules scanned.
 
         tags = tags or []
 
-        # ── Sentence segmentation ──
-        # Protect abbreviation periods ("Mont St. Michel", "Mr. Darcy",
-        # "J. K. Rowling") so they don't split sentences. Placeholder \x00
-        # is restored after splitting (GraphRAG-Bench Novel-domain lesson:
-        # Mr./Mrs./St. periods fragment entities and break relation cues).
-        # Two tiers (Punkt-style): STRONG titles always protect; WEAK
-        # abbreviations (months, e.g., No.) protect only when followed by
-        # a lowercase letter or digit — "Jan. 5" stays, "Jan. Bob" splits.
-        strong_abbrev_re = re.compile(
-            r'\b(?:'
-            r'Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof|Rev|Gen|Sen|Rep|Gov|Capt|Lt|Sgt'
-            r'|Col|Maj|Mt|Ph\.D'
-            r')\.', re.IGNORECASE)
-        weak_abbrev_re = re.compile(
-            r'\b(?:'
-            r'e\.g|i\.e|a\.m|p\.m|etc|vs'
-            r'|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec'
-            r'|Mon|Tue|Wed|Thu|Fri|Sat|Sun'
-            r'|No|Nos|Vol|pp|Fig|Inc|Ltd|Corp|Co'
-            r'|U\.S|U\.K|U\.N'
-            r')\.(?=\s*[a-z0-9])')  # case-sensitive: lookahead must not match uppercase
-        def _protect(m):
-            """Replace every '.' in the match with NUL placeholder."""
-            return m.group(0).replace('.', '\x00')
-
-        protected = strong_abbrev_re.sub(_protect, text)
-        protected = weak_abbrev_re.sub(_protect, protected)
-        # Single-letter initials: "J. K. Rowling", "John F. Kennedy"
-        protected = re.sub(r'\b([A-Z])\.', lambda m: m.group(1) + '\x00', protected)
-        sentences = [
-            s.strip().replace('\x00', '.')
-            for s in re.split(r'[.!?;\n]+', protected) if s.strip()
-        ]
+        # ── Sentence segmentation (shared module-level helper,
+        # Cycle 440: also used by run_amg.chunk_text so chunk boundaries
+        # and extraction boundaries always agree) ──
+        sentences = segment_sentences(text)
         result["sentences"] = len(sentences)
 
         # ── Relation patterns ──

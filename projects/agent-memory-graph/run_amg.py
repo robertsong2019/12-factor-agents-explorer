@@ -43,10 +43,11 @@ import random
 import sys
 from pathlib import Path
 
-from memory_graph import MemoryGraph
+from memory_graph import MemoryGraph, segment_sentences
 
 __all__ = [
     "load_bench_data",
+    "chunk_text",
     "index_corpus",
     "answer_question",
     "run_bench",
@@ -123,28 +124,118 @@ def load_bench_data(data_dir, *, corpus_file: str = "novel.json",
     return corpus, questions
 
 
+# Heuristic token estimate for English (GPT-style BPE ≈ 1.3 tokens
+# per word). Deterministic, zero-dependency — avoids tokenizer
+# downloads in the bench pipeline; exact counts are not required,
+# only an upper bound on chunk size.
+TOKENS_PER_WORD = 1.3
+
+
+def _estimate_tokens(text: str) -> int:
+    """Approximate token count (words × 1.3, minimum 1)."""
+    return max(1, round(len(text.split()) * TOKENS_PER_WORD))
+
+
+def _join_sentences(sents: list[str]) -> str:
+    """Join sentences with restored terminators.
+
+    ``segment_sentences`` strips ``. ! ? ; \n`` delimiters, so chunks
+    must re-append ``.`` when joining — otherwise re-segmentation of a
+    chunk would merge everything into one giant sentence and break the
+    extractor's per-sentence relation patterns.
+    """
+    return ". ".join(sents) + ("." if sents else "")
+
+
+def chunk_text(text: str, *, max_tokens: int = 512) -> list[str]:
+    """Split long text into chunks at sentence boundaries (Gap #6).
+
+    GraphRAG-Bench Novel-domain documents are whole novels; rule-based
+    ``extract_from_text`` works per-sentence, so chunks greedily pack
+    whole sentences up to an estimated ``max_tokens`` each. Uses the
+    SAME abbreviation-safe segmentation as the extractor
+    (``segment_sentences``), so chunk boundaries and extraction
+    boundaries always agree — chunking is lossless for rule-mode
+    extraction.
+
+    A single sentence longer than ``max_tokens`` (pathological run-on
+    prose) is hard-split at word boundaries into budget-sized pieces.
+
+    Args:
+        text: Raw input text (may be an entire novel).
+        max_tokens: Maximum estimated tokens per chunk.
+
+    Returns:
+        List of chunk strings (sentences joined by single spaces,
+        whitespace-normalized). Empty/whitespace input → ``[]``.
+
+    Raises:
+        ValueError: If ``max_tokens < 1``.
+    """
+    if max_tokens < 1:
+        raise ValueError(f"max_tokens must be >= 1, got {max_tokens}")
+    if not text or not text.strip():
+        return []
+    # Word-window size whose token estimate is guaranteed ≤ max_tokens:
+    # words × 1.3 ≤ max_tokens (int() floors, rounding adds ≤ 0.5).
+    words_per_piece = max(1, int(max_tokens / TOKENS_PER_WORD))
+
+    chunks: list[str] = []
+    current: list[str] = []
+    for sentence in segment_sentences(text):
+        if _estimate_tokens(sentence) > max_tokens:
+            # Flush pending chunk, then hard-split the run-on sentence.
+            if current:
+                chunks.append(_join_sentences(current))
+                current = []
+            words = sentence.split()
+            for i in range(0, len(words), words_per_piece):
+                chunks.append(" ".join(words[i:i + words_per_piece]))
+        else:
+            # Budget on the JOINED candidate text, not the sum of
+            # per-sentence estimates — rounding is not additive
+            # (round(a·1.3)+round(b·1.3) ≠ round((a+b)·1.3)).
+            candidate = " ".join(current + [sentence])
+            if current and _estimate_tokens(candidate) > max_tokens:
+                chunks.append(_join_sentences(current))
+                current = [sentence]
+            else:
+                current.append(sentence)
+    if current:
+        chunks.append(_join_sentences(current))
+    return chunks
+
+
 # ---------------------------------------------------------------------------
 # Stage 2: indexing
 # ---------------------------------------------------------------------------
 
-def index_corpus(mg: MemoryGraph, corpus: list[dict]):
+def index_corpus(mg: MemoryGraph, corpus: list[dict],
+                 *, chunk_size: int | None = None):
     """Index GraphRAG-Bench corpus documents into the KG (rule mode).
 
-    Each document is indexed via :meth:`MemoryGraph.extract_from_text`
+    Each unit of text is indexed via :meth:`MemoryGraph.extract_from_text`
     with ``tags=[corpus_name]`` so retrieval can trace nodes back to
     their source document.
 
     Args:
         mg: Target MemoryGraph instance.
         corpus: List of ``{"corpus_name", "context"}`` dicts.
+        chunk_size: Optional max estimated tokens per chunk (Gap #6).
+            When set (> 0), each document is split via :func:`chunk_text`
+            and every chunk is indexed separately with the same
+            ``[corpus_name]`` tag — bounded memory per call with
+            lossless results for rule-mode (per-sentence) extraction.
+            ``None`` or 0 = whole-document indexing (legacy behavior).
 
     Returns:
         Aggregate index stats dict:
-        ``{docs, nodes_created, edges_created, sentences, relations,
-        corpus_names}``.
+        ``{docs, chunks, nodes_created, edges_created, sentences,
+        relations, corpus_names}``.
     """
     stats = {
         "docs": 0,
+        "chunks": 0,
         "nodes_created": 0,
         "edges_created": 0,
         "sentences": 0,
@@ -153,12 +244,17 @@ def index_corpus(mg: MemoryGraph, corpus: list[dict]):
     }
     for doc in corpus:
         name = doc.get("corpus_name") or f"doc-{stats['docs']}"
-        r = mg.extract_from_text(doc.get("context", ""), tags=[name])
+        text = doc.get("context", "")
+        pieces = (chunk_text(text, max_tokens=chunk_size)
+                  if chunk_size and chunk_size > 0 else [text])
+        for piece in pieces:
+            r = mg.extract_from_text(piece, tags=[name])
+            stats["chunks"] += 1
+            stats["nodes_created"] += r.get("nodes_created", 0)
+            stats["edges_created"] += r.get("edges_created", 0)
+            stats["sentences"] += r.get("sentences", 0)
+            stats["relations"] += len(r.get("relations", []))
         stats["docs"] += 1
-        stats["nodes_created"] += r.get("nodes_created", 0)
-        stats["edges_created"] += r.get("edges_created", 0)
-        stats["sentences"] += r.get("sentences", 0)
-        stats["relations"] += len(r.get("relations", []))
         stats["corpus_names"].append(name)
     return stats
 
@@ -222,7 +318,7 @@ def run_bench(data_dir, out_path=None, *, sample: int | None = None,
               graphml_path=None, max_hops: int = 2, top_k: int = 5,
               seed: int = 42, corpus_file: str = "novel.json",
               questions_file: str = "novel_questions.json",
-              quiet: bool = False):
+              chunk_size: int | None = None, quiet: bool = False):
     """Run the full GraphRAG-Bench retrieval-only pipeline.
 
     Loads bench data, indexes a fresh MemoryGraph, answers every
@@ -239,6 +335,8 @@ def run_bench(data_dir, out_path=None, *, sample: int | None = None,
         max_hops / top_k: Retrieval parameters.
         seed: Sampling seed.
         corpus_file / questions_file: Bench file names.
+        chunk_size: Optional max estimated tokens per chunk passed to
+            :func:`index_corpus` (Gap #6; ``None`` = whole docs).
         quiet: Suppress progress prints.
 
     Returns:
@@ -251,9 +349,10 @@ def run_bench(data_dir, out_path=None, *, sample: int | None = None,
         sample=sample, seed=seed)
 
     mg = MemoryGraph()
-    index_stats = index_corpus(mg, corpus)
+    index_stats = index_corpus(mg, corpus, chunk_size=chunk_size)
     if not quiet:
         print(f"[index] docs={index_stats['docs']} "
+              f"chunks={index_stats['chunks']} "
               f"nodes={index_stats['nodes_created']} "
               f"edges={index_stats['edges_created']}")
 
@@ -330,12 +429,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-hops", type=int, default=2)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--chunk-size", type=int, default=None,
+                        help="max estimated tokens per chunk before "
+                             "indexing (Gap #6; default: whole docs)")
     args = parser.parse_args(argv)
 
     summary = run_bench(
         args.data_dir, args.out, sample=args.sample,
         graphml_path=args.graphml, max_hops=args.max_hops,
-        top_k=args.top_k, seed=args.seed)
+        top_k=args.top_k, seed=args.seed, chunk_size=args.chunk_size)
     print(f"[summary] {summary['questions']} questions, "
           f"hit_rate={summary['hit_rate']:.2%}")
     return 0
