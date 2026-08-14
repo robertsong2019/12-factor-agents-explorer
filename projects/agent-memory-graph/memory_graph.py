@@ -52616,9 +52616,95 @@ n            - ``total_rules`` – number of rules scanned.
         if not question or not question.strip():
             if include_context:
                 result["context"] = ""
+            result["fact_answer"] = {"matched": False}
             return result
 
         max_hops = max(1, min(5, max_hops))
+
+        # ── Phase 0: Fact-answer extraction (edge objects, not top-1 node) ──
+        # GraphRAG-Bench lesson (Research #064): for fact questions ("Where is
+        # X located?") ranking returns the SEED node as top-1 — useless as an
+        # answer. The answer lives on the edge object: X -located_in→ Y.
+        fact_answer: dict = {"matched": False}
+        fact_cues: list[tuple[str, str, str]] = [
+            (r'where\s+is\s+(.+?)\s+located', 'located_in', 'forward'),
+            (r'where\s+does\s+(.+?)\s+work', 'works_at', 'forward'),
+            (r'who\s+(?:works|worked)\s+at\s+(.+)', 'works_at', 'reverse'),
+            (r'what\s+did\s+(.+?)\s+(?:create|build|make)', 'created', 'forward'),
+            (r'who\s+(?:created|built)\s+(.+)', 'created', 'reverse'),
+            (r'what\s+is\s+(.+?)\s+part\s+of', 'part_of', 'forward'),
+            (r'what\s+does\s+(.+?)\s+have', 'has', 'forward'),
+        ]
+        for cue_re, rel_name, direction in fact_cues:
+            cue_match = re.search(cue_re, question, re.IGNORECASE)
+            if not cue_match:
+                continue
+            subject_frag = cue_match.group(1).strip().rstrip('?').strip()
+            # Strip leading articles: "Who built the Monster?" → "Monster"
+            subject_frag = re.sub(
+                r'^(?:the|a|an)\s+', '', subject_frag, flags=re.IGNORECASE
+            ).strip()
+            # Exact label match first, then forward contains, then reverse
+            # contains (label embedded in the fragment, longest wins)
+            row = self.conn.execute(
+                "SELECT id, label FROM nodes WHERE LOWER(label)=LOWER(?) LIMIT 1",
+                (subject_frag,),
+            ).fetchone()
+            if not row:
+                row = self.conn.execute(
+                    "SELECT id, label FROM nodes WHERE LOWER(label) LIKE ? "
+                    "ORDER BY LENGTH(label) LIMIT 1",
+                    (f"%{subject_frag}%",),
+                ).fetchone()
+            if not row:
+                row = self.conn.execute(
+                    "SELECT id, label FROM nodes "
+                    "WHERE ? LIKE '%' || LOWER(label) || '%' "
+                    "ORDER BY LENGTH(label) DESC LIMIT 1",
+                    (subject_frag.lower(),),
+                ).fetchone()
+            if not row:
+                fact_answer = {"matched": False, "reason": "subject_not_found",
+                               "subject_fragment": subject_frag}
+                break
+            subj_id, subj_label = row
+            if direction == "forward":
+                edge_rows = self.conn.execute(
+                    "SELECT e.target, n.label FROM edges e "
+                    "JOIN nodes n ON n.id = e.target "
+                    "WHERE e.source=? AND e.relation=?",
+                    (subj_id, rel_name),
+                ).fetchall()
+                answers = [lbl for _, lbl in edge_rows]
+                answer_edges = [
+                    {"source": subj_label, "target": lbl, "relation": rel_name}
+                    for lbl in answers
+                ]
+            else:
+                edge_rows = self.conn.execute(
+                    "SELECT e.source, n.label FROM edges e "
+                    "JOIN nodes n ON n.id = e.source "
+                    "WHERE e.target=? AND e.relation=?",
+                    (subj_id, rel_name),
+                ).fetchall()
+                answers = [lbl for _, lbl in edge_rows]
+                answer_edges = [
+                    {"source": lbl, "target": subj_label, "relation": rel_name}
+                    for lbl in answers
+                ]
+            fact_answer = {
+                "matched": bool(answers),
+                "question_type": f"{rel_name}_{direction}",
+                "relation": rel_name,
+                "direction": direction,
+                "subject": subj_label,
+                "answers": answers,
+                "answer_edges": answer_edges,
+            }
+            if not answers:
+                fact_answer["reason"] = "no_matching_edges"
+            break
+        result["fact_answer"] = fact_answer
 
         # ── Stop words ──
         stop_words = {
@@ -52802,6 +52888,11 @@ n            - ``total_rules`` – number of rules scanned.
         # ── Phase 4: Build context string ──
         if include_context:
             lines = []
+            # Fact-answer section first (direct answer beats ranked entities)
+            if fact_answer.get("matched"):
+                lines.append("## Fact Answer")
+                for fa in fact_answer["answers"]:
+                    lines.append(f"- {fa}")
             # Entities section
             ent_lines = []
             for ns in result["answer_nodes"]:
