@@ -48480,6 +48480,18 @@ n            - ``total_rules`` – number of rules scanned.
             result["triggered"] = True
             result["reason"] = "forced"
 
+        # Deterministic tie-break: equal importance → label ASC.
+        # Node ids are random hex, so sorting on id alone would make the
+        # working region (and thus merge outcomes) differ run-to-run for
+        # identical logical graphs — observed as a ~13% flaky test.
+        _label_of: dict[str, str] = {
+            r["id"]: r["label"]
+            for r in self.conn.execute("SELECT id, label FROM nodes").fetchall()
+        }
+
+        def _region_key(nid: str) -> tuple[float, str]:
+            return (-_node_importance(nid), _label_of.get(nid, ""))
+
         # ── Select working region ─────────────────────────────────
         recent_set = set(recent_nodes or [])
         retrieved_set = set(retrieved_nodes or [])
@@ -48496,12 +48508,12 @@ n            - ``total_rules`` – number of rules scanned.
         if max_size < 2:
             max_size = min(10, len(all_ids))
         if len(region) > max_size:
-            ranked = sorted(region, key=_node_importance, reverse=True)
+            ranked = sorted(region, key=_region_key)
             region = set(ranked[:max_size])
 
         # If region too small, add high-importance nodes
         if len(region) < 2:
-            ranked = sorted(all_ids, key=_node_importance, reverse=True)
+            ranked = sorted(all_ids, key=_region_key)
             region = set(ranked[:max_size])
 
         result["working_region_size"] = len(region)
