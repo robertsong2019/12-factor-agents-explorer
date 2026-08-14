@@ -4931,6 +4931,37 @@ class MemoryGraph:
         lines.append('</graphml>')
         return '\n'.join(lines)
 
+    def export_graphml(self, path, *, overwrite: bool = False) -> dict:
+        """导出图为 GraphML 文件，供 GraphRAG-Bench indexing_eval 等外部工具消费。
+
+        Writes serialize_graphml() output to ``path``. Refuses to
+        clobber an existing file unless ``overwrite=True``.
+
+        Args:
+            path: 目标文件路径
+            overwrite: 允许覆盖已存在文件
+
+        Returns:
+            {"written": bool, "path": str, "nodes": N, "edges": M,
+             "bytes": B, "reason": str(未写入时)}
+        """
+        import os
+        path = os.fspath(path)
+        counts = {
+            "nodes": self.conn.execute(
+                "SELECT COUNT(*) FROM nodes").fetchone()[0],
+            "edges": self.conn.execute(
+                "SELECT COUNT(*) FROM edges").fetchone()[0],
+        }
+        if os.path.exists(path) and not overwrite:
+            return {"written": False, "path": path, **counts,
+                    "bytes": 0, "reason": "file exists (overwrite=False)"}
+        xml = self.serialize_graphml()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(xml)
+        return {"written": True, "path": path, **counts,
+                "bytes": len(xml.encode("utf-8"))}
+
     def serialize_cytoscape(self) -> dict:
         """导出为 Cytoscape.js JSON 格式，兼容 cytoscape.js 前端可视化。"""
         nodes = self.conn.execute("SELECT * FROM nodes").fetchall()
