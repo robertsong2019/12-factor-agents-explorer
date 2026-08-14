@@ -154,3 +154,8 @@ date	project	baseline_tests	baseline_pass	after_tests	after_pass	delta_tests	del
 2026-07-27T22:45:00+08:00	cd36149	test_pass_rate	100%	keep	All 5109 passing.
 2026-07-28T00:30:00+08:00	461848a	test_count	5109→5147	keep	Cycle 298: cross_entropy_graph() — first asymmetric inter-graph measure H(P,Q). Gibbs inequality verified. 7 indices. Disjoint support clamped. +38 tests. 262nd day.
 2026-07-28T00:30:00+08:00	461848a	test_pass_rate	100%	keep	All 5147 passing, 35.14s.
+2026-08-10	edge-ai-agent	Fix load() to handle corrupted/empty JSON gracefully	Add try/except + type check in load(); unskip 2 tests; add 13 new tests	78	76	2	89	89	0	SUCCESS +13 tests, +0 skips
+2026-08-12	chain-of-thought	fix+tests	75 tests, 75 pass	88 tests, 88 pass	+13 tests, +1 bug fixed	maxDepth config was never enforced in dive()/branch(); added getDepth() helper + depth checks; 13 new test cases
+2026-08-13T22:00:00+08:00	nano-agent	test_count	991	1018	+27	R17: F58 search_boolean + F59 condense + F60 export_markdown_table (backfill 08-15 from daily log)
+2026-08-14T19:00:00+08:00	nano-agent	test_count	1018	1042	+24	range_query + annotate/most_annotated + inspect_tools. commit 915306c (backfill 08-15)
+2026-08-14T22:05:00+08:00	nano-agent	test_count	1042	1076	+34	F61 pin + F62 search_prefix + F63 partition (backfill 08-15)

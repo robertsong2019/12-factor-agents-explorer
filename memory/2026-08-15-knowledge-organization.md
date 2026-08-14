@@ -26,8 +26,9 @@ Past 24h (since 08-14 02:00): **9 new cycles (432-440) — GraphRAG-Bench 差距
 10. "上次检查"滚动更新
 
 ## experiments.tsv 检查
-- 239 行。末条 08-14T22:05 nano-agent Round 18 (1042→1076)。全部 keep/正向，无异常。
-- 注：amg cycles C410+ 实验条目记录在项目仓内（git log 确认 C439/C440 entry commits），workspace tsv 为外部项目+汇总日志——已在 HEARTBEAT 标注，非阻塞。
+- 原实际 158 行，末条 08-12 chain-of-thought（上方"239 行/末条 08-14T22:05" 为笔误——该 nano 条目当时并未写入 workspace tsv）。
+- 08-15 02:04 验证轮已回填 3 行：nano-agent R17 (991→1018, 08-13) + 08-14 两场 (1018→1042→1076)。现 161 行。
+- amg cycles C410+ 条目记录在项目仓内（git log 确认 C439/C440 entry commits），workspace tsv 为外部项目+汇总日志——已在 HEARTBEAT 标注，非阻塞。
 
 ## Quality Assessment
 - **MEMORY.md 反映真实状态** ✅：8942/292天/18432 与 git log (58eb418 C440) 及 cron 记录一致；差距清单 5/6 关闭与 key-dev 笔记一致
@@ -39,3 +40,19 @@ Past 24h (since 08-14 02:00): **9 new cycles (432-440) — GraphRAG-Bench 差距
 2. **C440 crown property**: chunking 对 rule 抽取无损（三层不变量），整本小说可分块索引
 3. **竞争态势**: TencentDB-Agent-Memory 21.5k★ 持续增长；semantica (PROV-O/bi-temporal 可审计) 与 amg 叙事重叠——amg 的差异化需在 README 中先手定位
 4. **教训沉淀**: flaky≠噪声（13% 失败率=真实确定性 bug，C437）；共享切分权威避免边界分歧（C440）
+
+---
+
+## 02:04 验证轮（重复触发补丁）
+
+02:00 run 已完成全部核心更新并提交（508ea02），本轮为重复触发的验证轮：
+
+**验证**: git log 确认 58eb418 (C440) 及 508ea02 knowledge-org commit 属实；MEMORY/HEARTBEAT 计数与 git 一致。
+
+**发现并修复 4 处残留问题**:
+1. MEMORY.md 过时计数 ×3：atc "1548/F234"→1570/F237；amg Py "2294"→8942；npm-ready 总数 "12223"→18432
+2. HEARTBEAT "18284"→18432
+3. **experiments.tsv 遗漏回填**: 02:00 run 的 summary 误称 tsv 239 行/末条 08-14 nano R18——实际 158 行、末条 08-12，nano 三场会话均未记录。已回填 3 行（991→1018→1042→1076），现 161 行
+4. 修正 summary 本身的 tsv 段落
+
+**防复发**: cron 日志类任务声称"已更新某文件"时，验证轮应以文件 mtime/wc 为准而非轻信 summary 文本。

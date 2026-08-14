@@ -362,10 +362,10 @@ Autoresearch 方法论实践 — amg **连续292天零回滚率** 🏆。Entropy
 - [ ] **amg: SummaryTree class** — 5-level temporal hierarchy (segment→session→day→week→profile). Co-extract summary + residuals (ProGraph pattern). Best-effort recall with level descent (HiMem pattern). ~150 lines + ~60 tests. Research #045 ✅. Cycles 353+.
 - [ ] **amg: Wire entropy_guided_query_route → SummaryTree recall** — High entropy→segment, low entropy→profile. ~10 lines. Research #045 ✅.
 - [ ] **amg: Compression residuals in consolidation** — consolidate() outputs (summary, residuals[]) tuple. ~20 lines. Research #045 ✅.
-- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 2294 Python tests**, 1000+ APIs
+- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 8942 Python tests**, 1000+ APIs
 - [ ] **agent-context-store: README + npm publish** — **2929 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
-- [ ] **agent-task-cli: README + npm publish** — **1548 tests**, F234
+- [ ] **agent-task-cli: README + npm publish** — **1570 tests**, F237
 
 ### 🟡 研究驱动 — 待实现 (Research #051: amg-bench 新增)
 - [ ] **amg-bench: Implement four-layer harness skeleton** — L1 (task effectiveness) + L2 (memory quality w/ FAMA) + L3 (efficiency) + L4 (governance). ~200 lines Python. Plug into existing 2294 Python tests. Research #051 ✅.
@@ -374,7 +374,7 @@ Autoresearch 方法论实践 — amg **连续292天零回滚率** 🏆。Entropy
 - [ ] **amg-bench: Run amg vs Mem0/LangMem/A-Mem on LoCoMo** — Competitive positioning. amg's entropy + classification + streaming + provenance should show measurable advantages on specific question types.
 - [ ] **amg-bench: Submit to Awesome-Agent-Memory list** (TeleAI-UAGI) — De facto benchmark registry. Getting listed = visibility.
 
-> ⚠️ Mandol (ISCAS+MSRA) 已发 paper+PyPI+GitHub，LoCoMo SOTA 92.21%。PlugMem 已有 OpenClaw plugin。竞争窗口收紧。**12223 tests across 4 projects, all npm ready.**
+> ⚠️ Mandol (ISCAS+MSRA) 已发 paper+PyPI+GitHub，LoCoMo SOTA 92.21%。PlugMem 已有 OpenClaw plugin。竞争窗口收紧。**18432 tests across 4 projects, all npm ready.**
 
 ### 🟡 研究驱动 — 待实现 (Research #059: MCP Distribution 新增)
 - [ ] **amg-mcp: Upgrade to SDK v2** — `npm install @modelcontextprotocol/server@beta`, run codemod (`npx @modelcontextprotocol/codemod@beta v1-to-v2 .`), remove session management from http-server.ts. Verify 122 tests pass.
