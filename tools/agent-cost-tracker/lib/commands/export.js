@@ -3,7 +3,7 @@
  */
 
 import chalk from 'chalk';
-import { getLogs, calculateCost, getBudgetStart } from '../storage.js';
+import { getLogs, calculateCost } from '../storage.js';
 import { writeFileSync } from 'fs';
 import { format } from 'date-fns';
 
@@ -55,7 +55,7 @@ export default async function exportCommand(options) {
   }
 }
 
-function exportToJSON(logs) {
+export function exportToJSON(logs) {
   const data = logs.map(log => ({
     id: log.id,
     timestamp: log.timestamp,
@@ -82,7 +82,7 @@ function exportToJSON(logs) {
   }, null, 2);
 }
 
-function exportToCSV(logs) {
+export function exportToCSV(logs) {
   const headers = ['ID', 'Timestamp', 'Model', 'Prompt Tokens', 'Completion Tokens', 'Total Tokens', 'Cost', 'Session', 'Note'];
 
   const rows = logs.map(log => [
@@ -102,7 +102,7 @@ function exportToCSV(logs) {
     .join('\n');
 }
 
-function exportToMarkdown(logs, period) {
+export function exportToMarkdown(logs, period) {
   const totalCost = logs.reduce((sum, log) => sum + calculateCost(log), 0);
   const totalTokens = logs.reduce((sum, log) => sum + (log.promptTokens || 0) + (log.completionTokens || 0), 0);
 
