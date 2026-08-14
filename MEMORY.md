@@ -14,26 +14,26 @@
 
 ---
 
-## Current Focus (2026-08-12)
+## Current Focus (2026-08-15)
 
 ### Active Theme
-Autoresearch 方法论实践 — amg **连续287天零回滚率** 🏆。Entropy framework **40+ APIs**: 7 degree-based Shannon + 3 spectral (von Neumann, QJSD, spectral_divergence) + 1 dashboard + 2 generalized (Tsallis, Rényi) + 4 inter-graph (JSD, cross-entropy, KL divergence, QJSD) + TemporalEntropyTracker + **entropy_contribution** (leave-one-out) + **entropy_stability** (Monte Carlo) + **spectral_divergence_scan** (multi-resolution) + **entropy_fingerprint** (12+ dim) + **fingerprint_distance** (L2) + **entropy_explain** (5-layer human-readable) + **entropy_scan/scan_compare/depth_profile/scan_summary** (4-API multi-scale suite) + **25-API classification suite** ✅ + **three_layer_router_cascade** + **conditioned_traverse** + **project_graph** + **multi_perspective_analysis** ✅ + **4-API provenance/lineage suite** ✅ + **topology stats** + **graph_digest** (SHA-256) + **copy_graph** + **FINGEREntropy** + **StreamingGraph** + **PPR** + **multi_hop_reason** + **spreading_activation** + **activation_trace** (explainable SA with wave log + bottleneck detection) + **competitive_spreading** (lateral inhibition & reinforcement) + **SummaryTree** (5-level temporal hierarchy) + **enrich_node** + **code-aware APIs** (explainCode + recordCodeDecision + impactAnalysis) + **5-API OWASP ASI06 security suite** (trust_score + memory_quarantine + selective_repair + memory_audit_report + detect_provenance_laundering + security_dashboard) + **amg-bench** (performance harness) + **retrieval_quality_explain()** (per-node diagnostic, Cycle 406b) + **attention_rebalance_plan()** (action-oriented plan with Gini delta, Cycle 407)。Adaptive forgetting suite complete。EntityResolver + entropy-weighted retrieval。Triple-loop quality system complete。acs **200天** 🏆。context-forge **1458 tests** / 11000+ lines (F79, 21 dimensions)。MCP server expanded to **16 tools**. **Multi-agent coherence** (MESI 4-state, Cycle 396) + **FastAppendQueue** (System-1/System-2, Cycle 399) + **consolidate()** NREM/REM (Cycle 401) + **retrieval_quality_audit()** (Cycle 404) + **attention_distribution()** (Cycle 405) + **retrieval_quality_explain()** (Cycle 406b) + **attention_rebalance_plan()** (Cycle 407) + **temporal changepoint/stability/velocity trilogy** (Cycles 408-410) + **bi-temporal query APIs** (Cycle 412: edge_record/edge_supersede/bitemporal_as_of/knowledge_diff/supersedence_chain) + **forgetting_forecast()** (Cycle 413) + **retrieval_quality_rerank()** GMC (Cycle 414) + **retrieval_quality_compare()** multi-set A/B (Cycle 415)。Retrieval quality family **COMPLETE**: audit → explain → rerank → compare (4 APIs)。Bi-temporal query_as_of action item **RESOLVED** (Research #033/#057)。Research #031-#060: #031-#059 fully implemented ✅. #060 (Experience Compression Spectrum) informs compress_to_skill() roadmap.
+Autoresearch 方法论实践 — amg **连续292天零回滚率** 🏆。Entropy framework **40+ APIs**: 7 degree-based Shannon + 3 spectral (von Neumann, QJSD, spectral_divergence) + 1 dashboard + 2 generalized (Tsallis, Rényi) + 4 inter-graph (JSD, cross-entropy, KL divergence, QJSD) + TemporalEntropyTracker + **entropy_contribution** (leave-one-out) + **entropy_stability** (Monte Carlo) + **spectral_divergence_scan** (multi-resolution) + **entropy_fingerprint** (12+ dim) + **fingerprint_distance** (L2) + **entropy_explain** (5-layer human-readable) + **entropy_scan/scan_compare/depth_profile/scan_summary** (4-API multi-scale suite) + **25-API classification suite** ✅ + **three_layer_router_cascade** + **conditioned_traverse** + **project_graph** + **multi_perspective_analysis** ✅ + **4-API provenance/lineage suite** ✅ + **topology stats** + **graph_digest** (SHA-256) + **copy_graph** + **FINGEREntropy** + **StreamingGraph** + **PPR** + **multi_hop_reason** + **spreading_activation** + **activation_trace** (explainable SA with wave log + bottleneck detection) + **competitive_spreading** (lateral inhibition & reinforcement) + **SummaryTree** (5-level temporal hierarchy) + **enrich_node** + **code-aware APIs** (explainCode + recordCodeDecision + impactAnalysis) + **5-API OWASP ASI06 security suite** (trust_score + memory_quarantine + selective_repair + memory_audit_report + detect_provenance_laundering + security_dashboard) + **amg-bench** (performance harness) + **retrieval_quality_explain()** (per-node diagnostic, Cycle 406b) + **attention_rebalance_plan()** (action-oriented plan with Gini delta, Cycle 407)。Adaptive forgetting suite complete。EntityResolver + entropy-weighted retrieval。Triple-loop quality system complete。acs **200天** 🏆。context-forge **1458 tests** / 11000+ lines (F79, 21 dimensions)。MCP server expanded to **16 tools**. **Multi-agent coherence** (MESI 4-state, Cycle 396) + **FastAppendQueue** (System-1/System-2, Cycle 399) + **consolidate()** NREM/REM (Cycle 401) + **retrieval_quality_audit()** (Cycle 404) + **attention_distribution()** (Cycle 405) + **retrieval_quality_explain()** (Cycle 406b) + **attention_rebalance_plan()** (Cycle 407) + **temporal changepoint/stability/velocity trilogy** (Cycles 408-410) + **bi-temporal query APIs** (Cycle 412: edge_record/edge_supersede/bitemporal_as_of/knowledge_diff/supersedence_chain) + **forgetting_forecast()** (Cycle 413) + **retrieval_quality_rerank()** GMC (Cycle 414) + **retrieval_quality_compare()** multi-set A/B (Cycle 415)。Retrieval quality family **COMPLETE**: audit → explain → rerank → compare (4 APIs)。Bi-temporal query_as_of action item **RESOLVED** (Research #033/#057)。Research #031-#061: #031-#061 fully implemented ✅. Experience Compression Spectrum (Research #060) **fully implemented**: compress_to_skill + extract_rules + compression_spectrum_report + rule_conflict_detect + rule_apply + rule_explain = complete L0-L3 lifecycle. Rule introspection family **COMPLETE**: extract → conflict_detect → apply → explain. **GraphRAG API family COMPLETE**: extract_from_text → graphrag_query → graphrag_explain → graphrag_coverage_report (Ingest → Retrieve → Diagnose-Query → Diagnose-KG). **FastAppendQueue** (System-1/System-2 dual-process) + knowledge_freshness_report (FAMA-aware). **GraphRAG-Bench 适配器 COMPLETE (C438-440)**: run_amg.py (load_bench_data/index_corpus/answer_question/run_bench, 严格官方 schema) + export_graphml + chunk_text 无损分块。
 
-### 项目测试总量 (08-12 快照)
+### 项目测试总量 (08-15 快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
 | agent-memory-graph (TS) | **7349** | 1000+ | entropy framework (40+) + **25-API classification suite** ✅ + FINGEREntropy + StreamingGraph + PPR + multi_hop_reason + spreading_activation + SummaryTree + enrich_node + code-aware APIs + provenance/lineage (4) + entropy scan (4) + adaptive forgetting (6) + EntityResolver (8) + MCP Day 1-5 |
-| agent-memory-graph (Python) | **8355** | 893+ | entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace + competitive_spreading + SummaryTree + enrich_node + code-aware + provenance (4) + OWASP security (6) + amg-bench + MCP 16 tools + OTel telemetry + MultiAgentMemoryGraph (MESI) + FastAppendQueue + ResidualExtractor + consolidate() NREM/REM + retrieval quality family **COMPLETE** (audit/explain/rerank/compare/**trend**) + attention (distribution/rebalance_plan) + **temporal trilogy** (changepoints/stability/velocity) + **bi-temporal query APIs** (5) + **forgetting_forecast** + **memory_half_life** + **staleness_report** + **batch_half_life** + seeded RNG fix |
+| agent-memory-graph (Python) | **8942** | 940+ | entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace + competitive_spreading + SummaryTree + enrich_node + code-aware + provenance (4) + OWASP security (6) + amg-bench + MCP 16 tools + OTel telemetry + MultiAgentMemoryGraph (MESI) + FastAppendQueue + ResidualExtractor + consolidate() NREM/REM + retrieval quality family **COMPLETE** (audit/explain/rerank/compare/**trend**) + attention (distribution/rebalance_plan) + **temporal trilogy** (changepoints/stability/velocity) + **bi-temporal query APIs** (5) + **forgetting_forecast** + **memory_half_life** + **staleness_report** + **batch_half_life** + seeded RNG fix + **GraphRAG-Bench 适配器 run_amg.py** (C439) + export_graphml (C438) + chunk_text 无损分块 (C440) |
 | structured-output-toolkit | **571** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
-| agent-task-cli | **1548** | 234 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F234** |
-| **四项目总计** | **17823** | — | 7349+8355+571+1548. Python +125 from cycles 416-419 |
+| agent-task-cli | **1570** | 237 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F234** |
+| **四项目总计** | **18432** | — | 7349+8942+571+1570. Python +148 from cycles 432-440 (GraphRAG-Bench 差距冲刺) |
 
-其他: context-forge **1458** / nano-agent **791** / amg-mcp **122** / prompt-weaver 223 / openclaw-langgraph-bridge 261 / better-ralph-core **391** / lab/agent-observability 166 / AMS 645 / prompt-router 72 / edge-agent-runtime **345** / agent-mesh-network **505** / prompt-mgr **196** / session-archiver 44 / agent-cost-tracker 11
+其他: context-forge **1458** / nano-agent **1076** / amg-mcp **122** / chain-of-thought **88** / prompt-weaver 223 / openclaw-langgraph-bridge 261 / better-ralph-core **391** / lab/agent-observability 166 / AMS 645 / prompt-router 123 / edge-agent-runtime **345** / agent-mesh-network **505** / prompt-mgr **196** / session-archiver 44 / agent-cost-tracker 11 / agent-context-store **2929**
 
-**全项目总计**: ~26067 tests (amg Python 8230 ✅, better-ralph 391, catalyst-agent-mesh 522)
+**全项目总计**: ~27050 tests (amg Python 8942 ✅, acs 2929, nano-agent 1076, better-ralph 391, catalyst-agent-mesh 522, chain-of-thought 88)
 
 ### 最高优先级
-**README → npm publish** (四项目)。12303 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 竞争窗口收紧。**25-API classification suite** = full pipeline (single-match → ensemble → meta → evaluation → optimization → **explainability** + **uncertainty quantification**, incl. LOOCV + calibration + reference optimization + noise-adaptive + confusion_explain + counterfactual + **confidence_interval**)。**Provenance/lineage suite** = first npm library with cascading correction。**Entropy scan suite** = multi-scale Rényi sweep。**Three-layer router cascade** = MemFlow production pattern。
+**README → npm publish** (四项目)。18432 tests across 4 projects, 全部 npm ready。⚠️ Mandol (LoCoMo SOTA 92.21%) 竞争窗口收紧。**25-API classification suite** = full pipeline (single-match → ensemble → meta → evaluation → optimization → **explainability** + **uncertainty quantification**, incl. LOOCV + calibration + reference optimization + noise-adaptive + confusion_explain + counterfactual + **confidence_interval**)。**Provenance/lineage suite** = first npm library with cascading correction。**Entropy scan suite** = multi-scale Rényi sweep。**Three-layer router cascade** = MemFlow production pattern。
 
 ### 早期 Cycle 归档 (07-01 ~ 07-16)
 > 详细记录已归档至 [memory/archive-2026-07-early.md](memory/archive-2026-07-early.md)。以下仅保留里程碑摘要：
@@ -41,7 +41,52 @@ Autoresearch 方法论实践 — amg **连续287天零回滚率** 🏆。Entropy
 - **07-14 cycles 239-242**: immutable_store + compact_node + serialize + RelationIntegrityChecker. Context Engineering Layer 3/4 ✅. +145 tests
 - **07-14 Research #008**: Memory Security — ShadowMerge 93.8% ASR, amg positioning 
 
-### 08-11 PM ~ 08-12 AM 开发 (cycles 408-415 Python) — LATEST
+### 08-14 PM ~ 08-15 AM 开发 (cycles 432-440 Python) — LATEST
+> 9 cycles, GraphRAG-Bench 差距清单 6 关 5。amg Python 8794→8942 (+148)。**292nd consecutive day** 🏆
+> - **Cycle 432**: extract_from_text 两级缩写安全句切分（STRONG titles / WEAK months）— 关闭差距#1（Mont St. Michel 地雷）。+16
+> - **Cycle 433**: graphrag_query fact-answer — Fact 型答案取**边宾语**而非 top-1 节点；7 种问句 cue + 三级主语解析（exact/forward/reverse contains）。关闭差距#2。+21
+> - **Cycle 434**: _fact_answer_lookup() 共享助手重构 + graphrag_explain fact 诊断。+9
+> - **Cycle 435-436**: graphrag_coverage_report relation 维度（distribution/diversity）+ relation monoculture 告警。+26
+> - **Cycle 437**: consolidate() 确定性 tie-break（(-imp, label ASC)）— 修复 13% flaky（根因：随机 id × covering-index 字典序 × importance 并列 → 随机 region）。+3
+> - **Cycle 438**: export_graphml() — 关闭差距#3。networkx 往返验证 + E2E extract→export→nx。+12
+> - **Cycle 439**: **run_amg.py 全量适配器** — 关闭差距#4。load_bench_data（seed 采样）/index_corpus/answer_question（fact-first）/run_bench（predictions JSON + hit-rate）/CLI。严格 8-key 官方 schema。+32
+> - **Cycle 440**: chunk_text() + segment_sentences() 共享切分权威 — 关闭差距#6。**分块对 rule 抽取无损**（预算≥最长句时单元/句子/E2E 三层不变量一致）。+29
+> - **nano-agent Round 17+18**: 1018→1076 (+58)。range_query/annotate/inspect_tools + F61 pin/F62 search_prefix/F63 partition
+> - **教训**: ①flaky≠噪声（13% 失败率背后是真实确定性 bug）②budget on joined text 而非 sum(round(x)) ③segment_sentences 剥分隔符→join 须还原句号（否则句子 round-trip 失败）④edit 锚点替换必须在 newText 保留锚点后缀
+> - **Research #064 差距清单**: #1✅(C432) #2✅(C433/434) #3✅(C438) #4✅(C439) #6✅(C440)，仅剩 #5 EntityResolver 配置（可选）。**下一步: 8月底 HF Novel sample_100 retrieval_eval 首个公开分数（零 API 成本）**
+> - 博客《Agent 记忆的快与慢：双系统写入模型的工程实践》发布；AI×Neuroscience #16 信息瓶颈完成（Tavily 配额耗尽→AnySearch 替代）；GitHub 周报：prime-agent (RLM, +12.5k/周)、TencentDB-Agent-Memory 21.5k★、semantica (PROV-O 可审计图基础设施)
+
+### 08-13 PM ~ 08-14 AM 开发 (cycles 425-431 Python)
+> 7 cycles in one session. GraphRAG lifecycle COMPLETE + FastAppendQueue + knowledge freshness + nano-agent Round 17.
+> - **Cycle 425**: FastAppendQueue — System-1/System-2 dual-process write path (Research #033). System-1: O(1) buffer append + keyword search. System-2: flush with dedup + link-by-kind/tags + full graph integration. Auto-flush threshold (50). 4 consistency modes. drain(). +55 tests.
+> - **Cycle 426**: knowledge_freshness_report() — FAMA-aware graph diagnostic (Research #051). 5 time buckets. Per-kind freshness breakdown. Weighted freshness score. Stalest/freshest nodes. Actionable recommendations. +21 tests.
+> - **Cycle 426b**: FastAppendQueue Extended — flush_and_consolidate() (flush+NREM/REM), pending_kinds/categories(), peak_buffer_size(), is_healthy(). +22 tests.
+> - **Cycle 427**: peek() + E2E Integration — preview buffer + 6 agent simulation tests + 4 performance edge cases. +16 tests.
+> - **Cycle 428**: extract_from_text() — rule-based KG construction from raw text (Research #062). 7 relation patterns + entity detection + dedup. GraphRAG entry ticket. +22 tests.
+> - **Cycle 429**: graphrag_query() — GraphRAG read-side retrieval. Keyword extraction + seed matching + bidirectional BFS + node ranking (keyword_score × degree_centrality × hop_penalty). +42 tests.
+> - **Cycle 430**: graphrag_explain() — diagnostic companion. Per-keyword match types (exact/prefix/contains/tag), score decomposition, traversal path reconstruction, coverage analysis, suggestions. +60 tests.
+> - **Cycle 431**: graphrag_coverage_report() — global KG health. Label/tag coverage, keyword index, orphan rate, degree stats, matchability tiers, sparse nodes, composite health score, suggestions. +51 tests.
+> - **amg Python**: 8505→8794 (+289). **291st consecutive day** 🏆.
+> - **nano-agent Round 17**: F58 search_boolean (AND/OR/NOT) + F59 condense (near-dup merge) + F60 export_markdown_table. 991→1018 (+27).
+> - **Research #062**: GraphRAG 2026 全景 — amg's gap is narrative, not technical. extract_from_text is the entry ticket.
+> - **Research #063**: OpenClaw Plugin Architecture — MCP is distribution nuke. Path B: Skill Extension (~60 lines) as intermediate.
+> - **AI×Neuroscience #10**: Neuromorphic Hardware (Intel Hala Point, IBM NorthPole, memristor breakthroughs).
+
+### 08-12 PM ~ 08-13 AM 开发 (cycles 420-424 Python)
+> 5 cycles completing the Experience Compression Spectrum (Research #060). Rule introspection lifecycle COMPLETE.
+> - **Cycle 420**: extract_rules() — L2→L3 declarative rule extraction. Separates negative constraints from positive rules (RuleShaping). Cross-skill pattern detection. Auto-generated names. derived_from edges. +19 tests.
+> - **Cycle 421**: compression_spectrum_report() — L0-L3 distribution analysis. Classifies nodes by kind, weighted compression ratio, actionable recommendations. +17 tests.
+> - **Cycle 422**: rule_conflict_detect() — direct contradiction + overlap detection. Keyword extraction strips negation. Clean rule counting. +20 tests.
+> - **Cycle 423**: rule_apply(query) — runtime L3 rule matching via Jaccard keyword overlap. Ranked matches with DO/DON'T guidance. +37 tests.
+> - **Cycle 424**: rule_explain(rule_id, query) — per-rule match diagnostics. Per-keyword Jaccard contribution scores, 6-view keyword breakdown, human-readable explanation, context-aware suggestions. Completes rule introspection lifecycle: extract → conflict_detect → apply → **explain**. +57 tests.
+> - **amg Python**: 8355→8505 (+150). **290th consecutive day** 🏆.
+> - **Supporting**: chain-of-thought +13 (maxDepth bug fix, 75→88), agent-task-cli +22 (F235-F237: getValues/getMany/emitOnce), acs +31 (2929).
+> - **Research #060**: Experience Compression Spectrum — L0-L3 unifying framework. <1% cross-citation between memory + skill communities. AFTER: diverse multi-model traces 73.1%. Skill library drift = primary failure mode.
+> - **Research #061**: LongMemEval Adapter — benchmark quality gap. Full Python adapter (~250 lines) verified ✅.
+> - **Essay**: 《上下文折叠》published to GitHub Pages.
+> - **AI×Neuroscience #9**: FlyWire 果蝇全脑连接组.
+
+### 08-11 PM ~ 08-12 AM 开发 (cycles 408-415 Python)
 > 8 cycles in one evening session. Retrieval quality family **COMPLETE** + bi-temporal APIs + temporal trilogy + predictive forgetting.
 > - **Cycles 408-410**: Temporal analysis trilogy — temporal_changepoints() (burst-detection, mean+2σ outliers, merge adjacent), temporal_stability_score() (growth consistency × retention × changepoint density, geometric mean, 5-tier), temporal_velocity() (per-bucket creation/supersession rates, trend slope, recent-vs-historical). +72 tests.
 > - **Cycle 411**: Flaky test fix — community_detect() now uses seeded RNG (random.Random(seed=42)). Deterministic label propagation. 99.987%→100% pass rate.
@@ -119,6 +164,9 @@ Autoresearch 方法论实践 — amg **连续287天零回滚率** 🏆。Entropy
 ### 近期研究一览 (详细笔记在 catalyst-research/exploration-notes/)
 | 日期 | 主题 | 核心洞察 |
 |------|------|----------|
+| 08-14 | **GraphRAG-Bench (ICLR 2026) 参赛路径 (#064)** ✅ | amg 进入主流 GraphRAG 评测的最短路径：HF 数据集公开 + 官方 leaderboard 收第三方提交（FalkorDB 先例）。ACC = 0.75×事实F1 + 0.25×语义相似。三段评测独立可跑 → 分阶段策略：先零 LLM 成本刷 retrieval/indexing_eval。适配器雏形已实测（rule 索引 10 nodes/4 edges + 官方 schema 兼容）。发现两个真实地雷：①缩写句点切分（Mont St. Michel→两个实体，Novel 域满地 Mr./Mrs./St.）②Fact 型答案应取边宾语而非 top-1 节点。榜首配方（FalkorDB 63.73）与 amg 现有组件映射度高：EntityResolver≈4层resolution链、PPR≈MultiPath 2-hop。差距清单 6 项已关 5（C432-440），仅剩 #5 EntityResolver 配置（可选）。|
+| 08-13 | **GraphRAG 2026 全景与 amg 定位 (#062)** ✅ | amg 的差距是叙事差距，不是技术差距。PPR/community/spreading activation 已覆盖 HippoRAG2/MS GraphRAG，但没有用 GraphRAG 框架定位自己。extract_from_text() 是入场券 — 没有自动KG构建，amg 只是图算法库。GraphRAG 市场爆发：$6.27B (2026) → $28.45B (2030)。7 项独有优势（时序/遗忘/consolidation/compression/entropy/security/multi-agent），4 项缺失（自动KG构建✅/Passage Nodes/Recognition Filter/RL优化检索）。3 可运行示例。|
+| 08-13 | **OpenClaw Plugin Architecture for amg (#063)** ✅ | MCP 协议是分发核武器 — amg 已有的 17-tool MCP server 零代码即可集成。Skill 是给AI的“营销材料”。三层分发漏斗: MCP Server(基座✅) → Skill Extension(包装) → ClawHub(市场)。推荐 Path B: Skill Extension (~60行) 作为中间态。完整 openclaw.plugin.json + SKILL.md + package.json 原型。|
 | 08-11 | **MCP Server Registry & Distribution Strategy (#059)** ✅ | MCP 2026-07-28 spec went fully stateless (no handshake, no session ID). SDK v2 split: `@modelcontextprotocol/server@beta` + `@modelcontextprotocol/client@beta`. SSE deprecated → Streamable HTTP (59% adoption). Registry has ~2000 servers, npm has ~1200 with `mcp` keyword. OpenClaw plugin landscape: 10+ memory plugins, amg absent. AgentAudit: 118 security findings across 68 packages. Distribution gap = opportunity: amg's OWASP suite is unique differentiator. 3 runnable code examples (stateless Python server, npm package.json, OpenClaw plugin skeleton). 4 insights. Path: SDK v2 upgrade → npm publish → registry PR → OpenClaw plugin (~200 lines). Estimated 2-3 days. |
 | 08-11 | **Agent Memory Benchmark Landscape 2026 (#058)** ✅ | LoCoMo saturating (92%+ commodity). MemoryArena (ICML'26): retrieval≠agentic memory, 90%+ LoCoMo systems fail at multi-session tasks. Write-Manage gap = where production fails. MemoryAgentBench 4 competencies: no system masters all. MCP registry hit 10K+ servers — amg's 16 MCP tools = distribution channel. amg positioning: compete on Write-Manage (graph + quality mgmt), not Read (retrieval). Code: LoCoMo adapter scaffold ~200 lines. |
 |------|------|----------|
@@ -315,7 +363,7 @@ Autoresearch 方法论实践 — amg **连续287天零回滚率** 🏆。Entropy
 - [ ] **amg: Wire entropy_guided_query_route → SummaryTree recall** — High entropy→segment, low entropy→profile. ~10 lines. Research #045 ✅.
 - [ ] **amg: Compression residuals in consolidation** — consolidate() outputs (summary, residuals[]) tuple. ~20 lines. Research #045 ✅.
 - [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 2294 Python tests**, 1000+ APIs
-- [ ] **agent-context-store: README + npm publish** — **2898 tests**, 600+ APIs
+- [ ] **agent-context-store: README + npm publish** — **2929 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
 - [ ] **agent-task-cli: README + npm publish** — **1548 tests**, F234
 
@@ -367,7 +415,7 @@ Autoresearch 方法论实践 — amg **连续287天零回滚率** 🏆。Entropy
 
 ### 🟡 研究驱动 — 待实现 (Research #033)
 - [x] ✅ amg: Bi-temporal query APIs — Cycle 412. edge_record/edge_supersede/bitemporal_as_of/knowledge_diff/supersedence_chain. Research #033/#057 **RESOLVED**. +22 tests.
-- [ ] amg: `FastAppendQueue` — System-1/System-2 split. Hot append + async consolidate. ~200 lines + ~80 tests.
+- [x] ✅ amg: `FastAppendQueue` — DONE (Cycle 425, +55 tests). System-1/System-2 split. Hot append + async consolidate. Extended in Cycles 426b+427.
 - [ ] amg: `SummaryTree` layer — Periodic consolidation nodes (H-Mem pattern). Temporal abstraction hierarchy. ~150 lines + ~60 tests.
 - [ ] amg: Benchmark harness — Neutral, reproducible LongMemEval harness in-repo. Ship alongside npm. Ecosystem play.
 
@@ -409,7 +457,7 @@ Autoresearch 方法论实践 — amg **连续287天零回滚率** 🏆。Entropy
 - [ ] amg: cross-modal leak detection in write_governance_check — MemLeak-inspired. Scan image_derived/correlated_inference edges before forget(). ~60 lines + ~80 tests.
 
 ### 🟡 研究驱动 — 待实现 (existing)
-- [ ] amg: compress_to_skill() + retrieve_skills() + evolve_skill() + skill_bank_health() — Read-Write-Assess-Govern lifecycle. **Research #039 blueprint ready** (2026-07-31): SkillRL hierarchical distillation (success→strategy, failure→counterfactual), CODESKILL learnable management (GRPO + hybrid reward), AEL domain stability gate (extraction degrades -15% in noisy domains), EvoMemBench structure-matching req. Two granularities: task-level + event-driven. ~+150 tests, 4 APIs. Cycles 331-334. **No npm library has skill extraction/evolution/health.**
+- [x] ✅ **amg: Experience Compression Spectrum — COMPLETE** (Research #060). compress_to_skill() + extract_rules() + compression_spectrum_report() + rule_conflict_detect() + rule_apply() + rule_explain(). Full L0-L3 lifecycle: Create → Validate → Match → Diagnose. Cycles 420-424. +150 tests. **No npm library has skill extraction/evolution/health/rule lifecycle.**
 - [ ] amg: EvoMemBench adapter — 4-setting benchmark (in-ep/cross-ep × knowledge/exec). **Priority over LoCoMo** (#014)
 - [x] ✅ amg: three_layer_router_cascade — DONE (c317, 36 tests). MemFlow production pattern. rules→entropy→fallback.
 - [ ] amg: intent_aware_edge_cost() — PRISM intent routing (#010). ~+40 tests
@@ -419,6 +467,8 @@ Autoresearch 方法论实践 — amg **连续287天零回滚率** 🏆。Entropy
 - [ ] **amg README: 竞品对比表** — Mem0/Zep/Mandol/PlugMem/PRISM/Hippocampus + **GraphRAG/LightRAG positioning: security-first agent-native GraphRAG**
 
 ### 🟣 Deep Research (detailed notes in catalyst-research/exploration-notes/)
+- **#063 (08-13)** ✅: OpenClaw Plugin Architecture for amg. MCP 协议是分发核武器 — amg 已有的 17-tool MCP server 零代码即可集成。Skill 是给AI的“营销材料” — SKILL.md = prompt engineering, 不是代码。三层分发漏斗: MCP Server(基座✅) → Skill Extension(包装) → ClawHub(市场)。OpenClaw memory-core 是竞品分析对象 — amg 每个维度严格升级。推荐 Path B: Skill Extension (~60行) 作为中间态。完整 openclaw.plugin.json + SKILL.md + package.json + Python 安装脚本原型。5 insights。Maps to amg OpenClaw plugin action item。
+- **#062 (08-13)** ✅: GraphRAG 2026 全景与 amg 定位。系统调研了 2025-2026 GraphRAG 生态：MS GraphRAG, HippoRAG2 (ICML 2025), Graph-R1 (ICML 2026), AutoGraph-R1 (ACL 2026), LinearRAG (ICLR 2026), LazyGraphRAG。建立了 amg vs 主流 GraphRAG 系统的能力对标矩阵（16个维度）。7 项独有优势（时序/遗忘/consolidation/compression/entropy/security/multi-agent），4 项关键缺失（自动KG构建✅/Passage Nodes/Recognition Filter/RL优化检索）。3个可运行代码示例。GraphRAG 市场爆发：$6.27B (2026) → $28.45B (2030)，多跳准确率 86% vs 32%。Maps to extract_from_text() + graphrag_query() + graphrag_explain() + graphrag_coverage_report() = complete GraphRAG lifecycle。[笔记](catalyst-research/exploration-notes/2026-08-13-graphrag-2026-landscape-amg-positioning.md)
 - **#061 (08-12)** ✅: LongMemEval Adapter Design for amg-bench. Memory quality benchmark gap identified: amg has performance benchmarks (throughput/latency) but no recall quality benchmarks. LongMemEval structure: 500 questions × 6 categories (single-session user/assistant/preference, knowledge-update, multi-session, temporal-reasoning). Competitive landscape: Mem0 94.4%, Supermemory 95% Recall@15, Backboard 93.4%, Exabase M-1 96.4% Recall@50. Production-benchmark gap: 20-30 points (RankSquire formula: Production ≈ Benchmark − 0.22×Staleness − 0.15×log₁₀(Entities)). amg theoretical advantages: PPR+spreading activation for multi-session, bi-temporal for knowledge updates, temporal trilogy for temporal reasoning, entropy for abstention. LongMemEval-V2 introduces AgentRunbook paradigm (coding agents manage file-based memory). Full Python LongMemEvalAdapter class (~250 lines) + smoke test verified ✅. 5 insights (#231-235). Maps to amg-bench quality harness + 2 dev cycles. [笔记](catalyst-research/exploration-notes/2026-08-12-longmemeval-adapter-amg-bench-quality.md)
 - **#060 (08-12)** ✅: Experience Compression Spectrum — From Traces to Procedural Skills. Unifying L0-L3 framework (arXiv:2604.15877): L0 Raw Trace → L1 Episodic (5-20×) → L2 Procedural Skill (50-500×) → L3 Declarative Rule (1000×+). The "missing diagonal": no system supports adaptive cross-level compression. <1% cross-citation between memory + skill communities. AFTER benchmark (382 tasks, 22 skills): diverse multi-model traces 73.1% vs 36-59% single-model. RuleShaping: negative constraints +7-14pp, positive directives hurt. SkillRL +68.5pp ALFWorld (RL co-evolution). Trace2Skill +21.5pp (parallel fleet distillation). MemSkill: learnable memory skills (controller-executor-designer). Lifecycle management is primary failure mode — skill library drift degrades below baseline without retirement. 2 runnable code examples (TypeScript Compression Spectrum prototype + Python AFTER-style Evolution Cycle) verified ✅. 5 insights. Maps to compress_to_skill() + retrieve_skills() + evolve_skill() + skill_bank_health() + extract_rules() = ~230 lines, 2-3 cycles. amg already has 90% infrastructure (bi-temporal, provenance, community_detect, entropy route, forgetting_forecast, attention, consolidate, MultiAgentMemoryGraph). Novel contribution: entropy-guided compression level selection. [笔记](catalyst-research/exploration-notes/2026-08-12-experience-compression-spectrum-skill-extraction.md)
 - **#059 (08-11)** ✅: MCP Server Registry & Distribution Strategy. MCP 2026-07-28 spec = fully stateless (handshake removed, `_meta` inline, no session pinning). SSE deprecated → Streamable HTTP (59% adoption, single endpoint). MCP Registry ~2000 servers, npm ~1200 via `mcp` keyword. SDK v2 split packages (`@modelcontextprotocol/server@beta`). OpenClaw plugin landscape: 10+ memory plugins, amg absent. AgentAudit: 118 security findings / 68 packages — amg's OWASP suite = unique differentiator. Distribution path: SDK v2 upgrade → npm publish → registry PR → OpenClaw plugin (~200 lines). 3 runnable code examples (Python stateless server, npm package.json, TS OpenClaw plugin skeleton). 4 insights (#227-230). [笔记](catalyst-research/exploration-notes/2026-08-11-mcp-server-registry-distribution-strategy.md)
@@ -470,7 +520,7 @@ Autoresearch 方法论实践 — amg **连续287天零回滚率** 🏆。Entropy
 |---|------|-------|------|
 | 1 | agent-task-cli | 1548 | ✅ npm ready, F234 (234 features) |
 | 2 | agent-memory-graph | **7349** | ✅ npm ready, entropy framework (40+) + **25-API classification suite** (+ confidence_interval) + FINGEREntropy + StreamingGraph + PPR + multi_hop_reason + spreading_activation + SummaryTree + enrich_node + code-aware APIs + provenance/lineage (4) + entropy scan (4) + adaptive forgetting (6) + EntityResolver (8) + MCP Day 1-5 |
-| 3 | agent-context-store | 2898 | ✅ npm ready, 二十六层: detect→configure→recommend→validate→correlate complete |
+| 3 | agent-context-store | 2929 | ✅ npm ready, 二十六层: detect→configure→recommend→validate→correlate complete |
 | 4 | structured-output-toolkit | 571 | ✅ npm ready |
 | 5 | openclaw-langgraph-bridge | 261 | 🔄 Supervisor 完善 |
 | 6 | context-forge | **1458** | ✅ F79 dead code detection (11000+ lines, 21 dimensions) |
@@ -535,7 +585,7 @@ curl -X POST "https://api.tavily.com/search" \
 - [ ] README(amg) → npm publish — **#1 priority**. 7349 TS + 2294 Python tests. **25-API classification suite** + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + SummaryTree + code-aware APIs = unique differentiators.
 - [x] ✅ **amg: Code-aware node types** — Cycle 365. function/class/file/module + explainCode() + recordCodeDecision() + impactAnalysis(). +36 Python tests.
 - [x] ✅ **amg: explainCode(nodeId) API** — Cycle 365.
-- [ ] README(acs) → npm publish — 2898 tests.
+- [ ] README(acs) → npm publish — 2929 tests.
 - [ ] **amg MCP server (stateless, 2026-07-28 compatible)** — 8 tools: remember/recall/classify/trace_provenance/entropy_scan/health/forget/merge. ~300 lines + ~100 tests. Research #043 ✅. Register on MCP Registry.
 - [ ] **amg OpenClaw plugin** — Lifecycle hooks: SessionStart→inject, PostToolUse→capture, SessionEnd→consolidate. + slash commands: /remember, /recall, /entropy, /pending. ~200 lines. Research #043 ✅. Publish to ClawHub.
 - [ ] MCP Registry publish (SDK v2 stable July 28)
@@ -552,7 +602,7 @@ curl -X POST "https://api.tavily.com/search" \
 - [ ] amg: security_purge() — ✅ DONE (c286)
 - [ ] amg: get_operation_history() (MemOps-compatible)
 - [ ] EvoMemBench InEp-Know setting vs amg
-- [ ] amg OpenClaw plugin (~200 lines)
+- [ ] amg OpenClaw plugin (~200 lines) — Research #063 ✅ (08-13). 三条路径已明确：(A) MCP注册零代码 (B) Skill Extension ~60行 (C) ClawHub发布。next: 创建 extensions/amg-memory/ + SKILL.md + 注册 mcporter.json. [笔记](catalyst-research/exploration-notes/2026-08-13-openclaw-plugin-architecture-amg-distribution.md)
 - [ ] **amg-bench: LongMemEval adapter** — Research #061 complete ✅ (08-12). Adapter skeleton + smoke test verified. Next: download HF dataset, run retrieval-only baseline, integrate LLM judge. Target: multi-session 95%+, token efficiency <2K. [笔记](catalyst-research/exploration-notes/2026-08-12-longmemeval-adapter-amg-bench-quality.md)
 - [ ] amg-bench: LongMemEval S baseline run (full-context vs entropy-weighted retrieval)
 
@@ -569,9 +619,23 @@ curl -X POST "https://api.tavily.com/search" \
 - [ ] **amg: `retrieve_skills()`** — Skill retrieval by query similarity + entropy-weighted ranking. ~30 lines + ~40 tests. Research #060.
 - [ ] **amg: `skill_bank_health()`** — Wrap attention_distribution + forgetting_forecast for skill artifacts. Bounded active cap + LRU eviction. ~30 lines + ~30 tests. Research #060.
 - [ ] **amg: `evolve_skill()`** — Collect-Diagnose-Revise-Promote cycle (AFTER pattern). ~50 lines + ~50 tests. Research #060.
-- [ ] **amg: `extract_rules()`** — L2→L3 cross-domain generalization. Negative constraints > positive directives (RuleShaping). ~40 lines + ~30 tests. Research #060.
+- [x] ✅ **amg: `extract_rules()`** — Cycle 420. L2→L3 complete. Research #060.
+
+### GraphRAG 生态定位 (Research #062, 08-13)
+- [x] ✅ **amg: `extract_from_text()`** — Cycle 428 实现 + C432 缩写安全切分强化。GraphRAG 入场券已到手。
+- [ ] **amg: Passage Nodes** — `node_type="passage"` + `mentions` edges。Dense-sparse integration (HippoRAG2)。让PPR能从概念到达原始文本。~40 lines + ~30 tests.
+- [ ] **amg: GraphRAG Benchmark 参赛** — 在 GraphRAG-Bench (ICLR 2026, 厦大, HF数据集公开) 上运行 amg。直接影响 npm/PyPI 发布后采用率。Research #064：**差距清单 5/6 已关闭 (C432-440)**：缩写保护✅ 边宾语✅ export_graphml✅ run_amg.py✅ chunking✅，仅剩 #5 EntityResolver 配置（可选）。**下一步: 8月底 HF Novel sample_100 retrieval_eval 首跑**（chunking 已解锁 whole-novel 文档，零 API 成本）→ 提交 retrieval-only 分数。9月: LLM 生成层 + leaderboard PR（"first memory-native GraphRAG" 叙事）。[笔记](catalyst-research/exploration-notes/2026-08-14-graphrag-bench-iclr2026-amg-entry.md)
+- [ ] **amg: README GraphRAG定位** — 加入对比矩阵，提交 Awesome-GraphRAG PR。叙事差距 > 技术差距。
+- **Key insight**: amg 的 PPR + community detection + spreading activation 已覆盖 HippoRAG2/MS GraphRAG 核心机制，但缺少自动KG构建和passage nodes。2026 GraphRAG市场 $6.27B→$28.45B (2030)。
 
 ### 重要框架
 - **A2A协议** — Agent间"HTTP", 150+组织, Linux Foundation AAIF
 - **MCP协议** — Agent的"USB接口", 97M+下载, 工具访问标准
 - **memorywire** — 5 ops × 4 types, 计划 MCP-WG + IETF at v0.5
+
+### OpenClaw 插件分发策略 (Research #063, 08-13)
+- **三层漏斗**: MCP Server(技术基座✅) → Skill Extension(产品包装,~60行) → ClawHub Package(市场分发)
+- **核心洞察**: Skill 是给AI的"营销材料"不是代码; MCP协议是分发的核武器(零代码17工具)
+- **vs memory-core**: OpenClaw内置memory-core是扁平文档+LanceDB; amg每个维度严格升级(图结构+PPR+entropy+OWASP)
+- **定位策略**: 不与memory-core竞争,定位为"高级分析层"; 叙事 = "First graph-based memory MCP server"
+- Action: 创建 extensions/amg-memory/ 目录, 写 SKILL.md + openclaw.plugin.json
