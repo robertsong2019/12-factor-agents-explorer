@@ -52575,6 +52575,108 @@ n            - ``total_rules`` – number of rules scanned.
     # GraphRAG Query — retrieve relevant subgraph for a question
     # ──────────────────────────────────────────────────────────────
 
+
+    def _fact_answer_lookup(self, question: str) -> dict:
+        """Fact-question cue matching + edge-object answer lookup (shared by
+        graphrag_query and graphrag_explain).
+
+        GraphRAG-Bench lesson (Research #064): for fact questions ("Where is
+        X located?") ranking returns the SEED node as top-1 — useless as an
+        answer. The answer lives on the edge object: X -located_in→ Y.
+        """
+        import re
+
+        fact_answer: dict = {"matched": False}
+        if not question or not question.strip():
+            return fact_answer
+
+        fact_cues: list[tuple[str, str, str]] = [
+            (r'where\s+is\s+(.+?)\s+located', 'located_in', 'forward'),
+            (r'where\s+does\s+(.+?)\s+work', 'works_at', 'forward'),
+            (r'who\s+(?:works|worked)\s+at\s+(.+)', 'works_at', 'reverse'),
+            (r'what\s+did\s+(.+?)\s+(?:create|build|make)', 'created', 'forward'),
+            (r'who\s+(?:created|built)\s+(.+)', 'created', 'reverse'),
+            (r'what\s+is\s+(.+?)\s+part\s+of', 'part_of', 'forward'),
+            (r'what\s+does\s+(.+?)\s+have', 'has', 'forward'),
+        ]
+        for cue_re, rel_name, direction in fact_cues:
+            cue_match = re.search(cue_re, question, re.IGNORECASE)
+            if not cue_match:
+                continue
+            subject_frag = cue_match.group(1).strip().rstrip('?').strip()
+            # Strip leading articles: "Who built the Monster?" → "Monster"
+            subject_frag = re.sub(
+                r'^(?:the|a|an)\s+', '', subject_frag, flags=re.IGNORECASE
+            ).strip()
+            # 3-tier subject resolution: exact → forward-contains →
+            # reverse-contains (longest label embedded in fragment wins)
+            resolution = None
+            row = self.conn.execute(
+                "SELECT id, label FROM nodes WHERE LOWER(label)=LOWER(?) LIMIT 1",
+                (subject_frag,),
+            ).fetchone()
+            if row:
+                resolution = "exact"
+            if not row:
+                row = self.conn.execute(
+                    "SELECT id, label FROM nodes WHERE LOWER(label) LIKE ? "
+                    "ORDER BY LENGTH(label) LIMIT 1",
+                    (f"%{subject_frag}%",),
+                ).fetchone()
+                if row:
+                    resolution = "forward_contains"
+            if not row:
+                row = self.conn.execute(
+                    "SELECT id, label FROM nodes "
+                    "WHERE ? LIKE '%' || LOWER(label) || '%' "
+                    "ORDER BY LENGTH(label) DESC LIMIT 1",
+                    (subject_frag.lower(),),
+                ).fetchone()
+                if row:
+                    resolution = "reverse_contains"
+            if not row:
+                return {"matched": False, "reason": "subject_not_found",
+                        "subject_fragment": subject_frag}
+            subj_id, subj_label = row
+            if direction == "forward":
+                edge_rows = self.conn.execute(
+                    "SELECT e.target, n.label FROM edges e "
+                    "JOIN nodes n ON n.id = e.target "
+                    "WHERE e.source=? AND e.relation=?",
+                    (subj_id, rel_name),
+                ).fetchall()
+                answers = [lbl for _, lbl in edge_rows]
+                answer_edges = [
+                    {"source": subj_label, "target": lbl, "relation": rel_name}
+                    for lbl in answers
+                ]
+            else:
+                edge_rows = self.conn.execute(
+                    "SELECT e.source, n.label FROM edges e "
+                    "JOIN nodes n ON n.id = e.source "
+                    "WHERE e.target=? AND e.relation=?",
+                    (subj_id, rel_name),
+                ).fetchall()
+                answers = [lbl for _, lbl in edge_rows]
+                answer_edges = [
+                    {"source": lbl, "target": subj_label, "relation": rel_name}
+                    for lbl in answers
+                ]
+            fact_answer = {
+                "matched": bool(answers),
+                "question_type": f"{rel_name}_{direction}",
+                "relation": rel_name,
+                "direction": direction,
+                "subject": subj_label,
+                "subject_resolution": resolution,
+                "answers": answers,
+                "answer_edges": answer_edges,
+            }
+            if not answers:
+                fact_answer["reason"] = "no_matching_edges"
+            return fact_answer
+        return fact_answer
+
     def graphrag_query(self, question: str, *, max_hops: int = 2,
                        top_k: int = 5, include_context: bool = True) -> dict:
         """Retrieve a relevant subgraph from the KG to answer *question*.
@@ -52622,89 +52724,8 @@ n            - ``total_rules`` – number of rules scanned.
         max_hops = max(1, min(5, max_hops))
 
         # ── Phase 0: Fact-answer extraction (edge objects, not top-1 node) ──
-        # GraphRAG-Bench lesson (Research #064): for fact questions ("Where is
-        # X located?") ranking returns the SEED node as top-1 — useless as an
-        # answer. The answer lives on the edge object: X -located_in→ Y.
-        fact_answer: dict = {"matched": False}
-        fact_cues: list[tuple[str, str, str]] = [
-            (r'where\s+is\s+(.+?)\s+located', 'located_in', 'forward'),
-            (r'where\s+does\s+(.+?)\s+work', 'works_at', 'forward'),
-            (r'who\s+(?:works|worked)\s+at\s+(.+)', 'works_at', 'reverse'),
-            (r'what\s+did\s+(.+?)\s+(?:create|build|make)', 'created', 'forward'),
-            (r'who\s+(?:created|built)\s+(.+)', 'created', 'reverse'),
-            (r'what\s+is\s+(.+?)\s+part\s+of', 'part_of', 'forward'),
-            (r'what\s+does\s+(.+?)\s+have', 'has', 'forward'),
-        ]
-        for cue_re, rel_name, direction in fact_cues:
-            cue_match = re.search(cue_re, question, re.IGNORECASE)
-            if not cue_match:
-                continue
-            subject_frag = cue_match.group(1).strip().rstrip('?').strip()
-            # Strip leading articles: "Who built the Monster?" → "Monster"
-            subject_frag = re.sub(
-                r'^(?:the|a|an)\s+', '', subject_frag, flags=re.IGNORECASE
-            ).strip()
-            # Exact label match first, then forward contains, then reverse
-            # contains (label embedded in the fragment, longest wins)
-            row = self.conn.execute(
-                "SELECT id, label FROM nodes WHERE LOWER(label)=LOWER(?) LIMIT 1",
-                (subject_frag,),
-            ).fetchone()
-            if not row:
-                row = self.conn.execute(
-                    "SELECT id, label FROM nodes WHERE LOWER(label) LIKE ? "
-                    "ORDER BY LENGTH(label) LIMIT 1",
-                    (f"%{subject_frag}%",),
-                ).fetchone()
-            if not row:
-                row = self.conn.execute(
-                    "SELECT id, label FROM nodes "
-                    "WHERE ? LIKE '%' || LOWER(label) || '%' "
-                    "ORDER BY LENGTH(label) DESC LIMIT 1",
-                    (subject_frag.lower(),),
-                ).fetchone()
-            if not row:
-                fact_answer = {"matched": False, "reason": "subject_not_found",
-                               "subject_fragment": subject_frag}
-                break
-            subj_id, subj_label = row
-            if direction == "forward":
-                edge_rows = self.conn.execute(
-                    "SELECT e.target, n.label FROM edges e "
-                    "JOIN nodes n ON n.id = e.target "
-                    "WHERE e.source=? AND e.relation=?",
-                    (subj_id, rel_name),
-                ).fetchall()
-                answers = [lbl for _, lbl in edge_rows]
-                answer_edges = [
-                    {"source": subj_label, "target": lbl, "relation": rel_name}
-                    for lbl in answers
-                ]
-            else:
-                edge_rows = self.conn.execute(
-                    "SELECT e.source, n.label FROM edges e "
-                    "JOIN nodes n ON n.id = e.source "
-                    "WHERE e.target=? AND e.relation=?",
-                    (subj_id, rel_name),
-                ).fetchall()
-                answers = [lbl for _, lbl in edge_rows]
-                answer_edges = [
-                    {"source": lbl, "target": subj_label, "relation": rel_name}
-                    for lbl in answers
-                ]
-            fact_answer = {
-                "matched": bool(answers),
-                "question_type": f"{rel_name}_{direction}",
-                "relation": rel_name,
-                "direction": direction,
-                "subject": subj_label,
-                "answers": answers,
-                "answer_edges": answer_edges,
-            }
-            if not answers:
-                fact_answer["reason"] = "no_matching_edges"
-            break
-        result["fact_answer"] = fact_answer
+        # See _fact_answer_lookup: GraphRAG-Bench lesson (Research #064).
+        result["fact_answer"] = self._fact_answer_lookup(question)
 
         # ── Stop words ──
         stop_words = {
@@ -52889,9 +52910,9 @@ n            - ``total_rules`` – number of rules scanned.
         if include_context:
             lines = []
             # Fact-answer section first (direct answer beats ranked entities)
-            if fact_answer.get("matched"):
+            if result["fact_answer"].get("matched"):
                 lines.append("## Fact Answer")
-                for fa in fact_answer["answers"]:
+                for fa in result["fact_answer"]["answers"]:
                     lines.append(f"- {fa}")
             # Entities section
             ent_lines = []
@@ -53108,15 +53129,34 @@ n            - ``total_rules`` – number of rules scanned.
         result["coverage"] = round(len(matched_kws) / len(keywords), 4) if keywords else 0.0
 
         if not seed_scores:
-            result["suggestions"] = [
+            # Attach fact diagnostics even on early exit (Cycle 434)
+            fa_early = self._fact_answer_lookup(question)
+            result["fact_answer"] = fa_early
+            sugg = [
                 "No seed nodes found — the graph has no nodes matching any keyword.",
                 f"Try extract_from_text() to build a KG first, or use different keywords.",
                 f"Unmatched keywords: {', '.join(unmatched_kws)}",
             ]
-            result["explanation"] = (
+            expl = (
                 f"Query '{question}' yielded 0 seed nodes from {len(keywords)} keywords. "
                 f"Coverage: 0%. No traversal performed."
             )
+            if fa_early.get("reason") == "subject_not_found":
+                sugg.append(
+                    f"Fact question subject '{fa_early['subject_fragment']}' "
+                    "is not in the graph — extract or add it first."
+                )
+                expl += (f"\nFact question detected but subject "
+                         f"'{fa_early['subject_fragment']}' not found in graph.")
+            elif fa_early.get("matched"):
+                sugg.append(
+                    f"Fact answered from edge {fa_early['subject']} "
+                    f"-{fa_early['relation']}→ {', '.join(fa_early['answers'])}."
+                )
+                expl += (f"\nFact answer: {fa_early['subject']} -"
+                         f"{fa_early['relation']}→ {', '.join(fa_early['answers'])}")
+            result["suggestions"] = sugg
+            result["explanation"] = expl
             return result
 
         # ── Phase 2: BFS traversal (same as graphrag_query) ──
@@ -53268,6 +53308,29 @@ n            - ``total_rules`` – number of rules scanned.
         lines.append("")
         lines.append(f"Edges traversed: {len(edges_collected)}")
 
+        # ── Phase 4.5: Fact-answer diagnostics (Cycle 434) ──
+        fa = self._fact_answer_lookup(question)
+        result["fact_answer"] = fa
+        if fa.get("matched"):
+            lines.append("")
+            lines.append(
+                f"Fact answer: {fa['subject']} -{fa['relation']}→ "
+                f"{', '.join(fa['answers'])} "
+                f"(resolution: {fa.get('subject_resolution')})"
+            )
+        elif fa.get("reason") == "subject_not_found":
+            lines.append("")
+            lines.append(
+                f"Fact question detected but subject "
+                f"'{fa['subject_fragment']}' not found in graph."
+            )
+        elif fa.get("reason") == "no_matching_edges":
+            lines.append("")
+            lines.append(
+                f"Fact question detected; subject '{fa['subject']}' found "
+                f"but no '{fa['relation']}' edges exist."
+            )
+
         result["explanation"] = "\n".join(lines)
 
         # ── Phase 5: Suggestions ──
@@ -53307,6 +53370,25 @@ n            - ``total_rules`` – number of rules scanned.
                     "None of the answer nodes matched keywords directly — "
                     "all were found via graph traversal. Results may be noisy."
                 )
+
+        # Fact-answer suggestions (Cycle 434)
+        if fa.get("reason") == "subject_not_found":
+            suggestions.append(
+                f"Fact question subject '{fa['subject_fragment']}' is not in "
+                "the graph — extract or add it first (extract_from_text or add)."
+            )
+        elif fa.get("reason") == "no_matching_edges":
+            suggestions.append(
+                f"Subject '{fa['subject']}' lacks '{fa['relation']}' edges — "
+                "relation extraction may have missed it; check "
+                "graphrag_coverage_report() for KG gaps."
+            )
+        elif fa.get("matched"):
+            suggestions.append(
+                f"Fact answered directly from edge {fa['subject']} "
+                f"-{fa['relation']}→ {fa['answers'][0]} — ranked nodes are "
+                "supporting context, not the answer."
+            )
 
         if not suggestions:
             suggestions.append(
