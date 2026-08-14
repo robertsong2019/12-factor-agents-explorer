@@ -291,6 +291,53 @@ class Agent:
             "est_tokens": total_chars // 4,  # rough estimate
         }
 
+    def run_with_retry(self, user_input: str, max_retries: int = 3,
+                        backoff: float = 1.0, retryable_errors: Optional[List[str]] = None) -> Dict[str, Any]:
+        """带自动重试的对话执行。
+
+        Args:
+            user_input: 用户输入
+            max_retries: 最大重试次数
+            backoff: 退避基数（秒）
+            retryable_errors: 可重试的错误关键词列表 (None=全部可重试)
+
+        Returns:
+            {"response": str, "success": bool, "attempts": int, "errors": [str]}
+        """
+        import time
+        errors = []
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self.run(user_input)
+                return {
+                    "response": response,
+                    "success": True,
+                    "attempts": attempt,
+                    "errors": errors
+                }
+            except Exception as e:
+                err_str = str(e)
+                errors.append(f"attempt {attempt}: {err_str}")
+                if retryable_errors and not any(kw in err_str for kw in retryable_errors):
+                    break
+                if attempt < max_retries:
+                    wait = backoff * (2 ** (attempt - 1))
+                    time.sleep(wait)
+        return {
+            "response": None,
+            "success": False,
+            "attempts": len(errors),
+            "errors": errors
+        }
+
+    def inspect_tools(self) -> List[Dict[str, Any]]:
+        """List all registered tools with their schemas.
+
+        Returns:
+            List of {"name": str, "description": str, "parameters": dict} dicts.
+        """
+        return [tool.to_dict() for tool in self.tools]
+
     def export_conversation(self, format: str = "markdown") -> str:
         """Export full conversation history.
 

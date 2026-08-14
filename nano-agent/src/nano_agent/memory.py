@@ -2451,3 +2451,90 @@ class Memory:
             lines.append(f"| {i} | {ts} | {tag_str} | {imp_bar} ({e.importance:.2f}) | {content} |")
 
         return "\n".join(lines)
+
+    def range_query(self, start_time: datetime, end_time: Optional[datetime] = None,
+                    tags: Optional[List[str]] = None, content_filter: Optional[str] = None,
+                    limit: int = 50, sort_desc: bool = True) -> List[MemoryEntry]:
+        """Time-bounded memory search with optional tag and content filters.
+
+        Args:
+            start_time: Inclusive start of time range
+            end_time: Exclusive end (defaults to now)
+            tags: Optional tag filter (entries must have ANY of these tags)
+            content_filter: Optional substring match on content
+            limit: Max results
+            sort_desc: True=newest first, False=oldest first
+
+        Returns:
+            Matching entries within the time window
+        """
+        if end_time is None:
+            end_time = datetime.now()
+
+        results = [
+            e for e in self._entries
+            if start_time <= e.timestamp < end_time
+        ]
+
+        if tags:
+            tag_set = set(tags)
+            results = [e for e in results if tag_set & set(e.tags)]
+
+        if content_filter:
+            results = [e for e in results if content_filter.lower() in e.content.lower()]
+
+        results.sort(key=lambda e: e.timestamp, reverse=sort_desc)
+        return results[:limit]
+
+    def annotate(self, index: int, note: str) -> bool:
+        """Attach a human-readable annotation to a memory entry.
+
+        Annotations are stored in metadata["_annotations"] as a list of
+        {"note": str, "timestamp": str} dicts.
+
+        Args:
+            index: Entry index
+            note: Annotation text
+
+        Returns:
+            True if entry exists and was annotated
+        """
+        if index < 0 or index >= len(self._entries):
+            return False
+        entry = self._entries[index]
+        anns = entry.metadata.setdefault("_annotations", [])
+        anns.append({"note": note, "timestamp": datetime.now().isoformat()})
+        self._save()
+        return True
+
+    def annotations(self, index: int) -> List[Dict[str, str]]:
+        """Retrieve all annotations for a memory entry.
+
+        Args:
+            index: Entry index
+
+        Returns:
+            List of {"note": str, "timestamp": str} dicts, empty if not found
+        """
+        if index < 0 or index >= len(self._entries):
+            return []
+        return list(self._entries[index].metadata.get("_annotations", []))
+
+    def most_annotated(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """Return entries with the most annotations, sorted by count descending.
+
+        Returns:
+            List of {"index": int, "content_preview": str, "annotation_count": int, "annotations": list}
+        """
+        scored = []
+        for i, e in enumerate(self._entries):
+            count = len(e.metadata.get("_annotations", []))
+            if count > 0:
+                scored.append({
+                    "index": i,
+                    "content_preview": e.content[:80],
+                    "annotation_count": count,
+                    "annotations": e.metadata["_annotations"],
+                })
+        scored.sort(key=lambda x: x["annotation_count"], reverse=True)
+        return scored[:limit]
