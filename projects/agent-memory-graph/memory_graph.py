@@ -52421,8 +52421,38 @@ n            - ``total_rules`` – number of rules scanned.
         tags = tags or []
 
         # ── Sentence segmentation ──
-        sentences = re.split(r'[.!?;\n]+', text)
-        sentences = [s.strip() for s in sentences if s.strip()]
+        # Protect abbreviation periods ("Mont St. Michel", "Mr. Darcy",
+        # "J. K. Rowling") so they don't split sentences. Placeholder \x00
+        # is restored after splitting (GraphRAG-Bench Novel-domain lesson:
+        # Mr./Mrs./St. periods fragment entities and break relation cues).
+        # Two tiers (Punkt-style): STRONG titles always protect; WEAK
+        # abbreviations (months, e.g., No.) protect only when followed by
+        # a lowercase letter or digit — "Jan. 5" stays, "Jan. Bob" splits.
+        strong_abbrev_re = re.compile(
+            r'\b(?:'
+            r'Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof|Rev|Gen|Sen|Rep|Gov|Capt|Lt|Sgt'
+            r'|Col|Maj|Mt|Ph\.D'
+            r')\.', re.IGNORECASE)
+        weak_abbrev_re = re.compile(
+            r'\b(?:'
+            r'e\.g|i\.e|a\.m|p\.m|etc|vs'
+            r'|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec'
+            r'|Mon|Tue|Wed|Thu|Fri|Sat|Sun'
+            r'|No|Nos|Vol|pp|Fig|Inc|Ltd|Corp|Co'
+            r'|U\.S|U\.K|U\.N'
+            r')\.(?=\s*[a-z0-9])')  # case-sensitive: lookahead must not match uppercase
+        def _protect(m):
+            """Replace every '.' in the match with NUL placeholder."""
+            return m.group(0).replace('.', '\x00')
+
+        protected = strong_abbrev_re.sub(_protect, text)
+        protected = weak_abbrev_re.sub(_protect, protected)
+        # Single-letter initials: "J. K. Rowling", "John F. Kennedy"
+        protected = re.sub(r'\b([A-Z])\.', lambda m: m.group(1) + '\x00', protected)
+        sentences = [
+            s.strip().replace('\x00', '.')
+            for s in re.split(r'[.!?;\n]+', protected) if s.strip()
+        ]
         result["sentences"] = len(sentences)
 
         # ── Relation patterns ──
