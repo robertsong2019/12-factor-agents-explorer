@@ -166,7 +166,11 @@ class Memory:
     def forget(self, threshold: float = 0.1) -> int:
         """删除重要度低于阈值的记忆，返回删除条目数。"""
         before = len(self._entries)
-        self._entries = [e for e in self._entries if e.importance >= threshold]
+        # F61: pinned entries always survive forget()
+        self._entries = [
+            e for e in self._entries
+            if e.importance >= threshold or e.metadata.get("_pinned")
+        ]
         removed = before - len(self._entries)
         if removed > 0:
             self._save()
@@ -1467,26 +1471,38 @@ class Memory:
           - ``clustered``: greedily keep cluster centroids (via similarity),
             removing near-duplicates first.
 
-        Returns a dict with removed_count, remaining_count, and strategy.
+        Returns a dict with removed_count, remaining_count, strategy, and
+        pinned_count (F61). Pinned entries are never evicted — if too many
+        entries are pinned, the result may exceed *max_size*.
         """
         import random as _random
 
         n = len(self._entries)
+        # F61: pinned entries are never eviction candidates
+        pinned_indices = {
+            i for i, e in enumerate(self._entries) if e.metadata.get("_pinned")
+        }
         if n <= max_size:
-            return {"removed_count": 0, "remaining_count": n, "strategy": strategy}
+            return {"removed_count": 0, "remaining_count": n,
+                    "strategy": strategy, "pinned_count": len(pinned_indices)}
 
         to_remove = n - max_size
 
         if strategy == "oldest":
-            # Sort by timestamp ascending, remove oldest first
-            indexed = sorted(enumerate(self._entries), key=lambda x: x[1].timestamp)
+            # Sort by timestamp ascending, remove oldest first (skip pinned)
+            indexed = sorted(
+                [(i, e) for i, e in enumerate(self._entries) if i not in pinned_indices],
+                key=lambda x: x[1].timestamp)
             remove_indices = {idx for idx, _ in indexed[:to_remove]}
         elif strategy == "least_important":
-            # Sort by importance ascending, remove least important first
-            indexed = sorted(enumerate(self._entries), key=lambda x: x[1].importance)
+            # Sort by importance ascending, remove least important first (skip pinned)
+            indexed = sorted(
+                [(i, e) for i, e in enumerate(self._entries) if i not in pinned_indices],
+                key=lambda x: x[1].importance)
             remove_indices = {idx for idx, _ in indexed[:to_remove]}
         elif strategy == "random":
-            remove_indices = set(_random.sample(range(n), to_remove))
+            candidates = [i for i in range(n) if i not in pinned_indices]
+            remove_indices = set(_random.sample(candidates, min(to_remove, len(candidates))))
         elif strategy == "clustered":
             # Greedily mark near-duplicates for removal
             remove_indices = set()
@@ -1500,17 +1516,26 @@ class Memory:
                     ratio = SequenceMatcher(None, self._entries[i].content,
                                             self._entries[j].content).ratio()
                     if ratio >= 0.7:
-                        # Keep the one with higher importance
+                        # Keep the one with higher importance;
+                        # F61: never remove a pinned entry — flip to its
+                        # near-duplicate twin instead (same content anyway)
                         if self._entries[i].importance >= self._entries[j].importance:
-                            remove_indices.add(j)
+                            victim, keeper = j, i
                         else:
-                            remove_indices.add(i)
+                            victim, keeper = i, j
+                        if victim in pinned_indices and keeper not in pinned_indices:
+                            victim = keeper
+                        if victim not in pinned_indices:
+                            remove_indices.add(victim)
                         break
                 if len(remove_indices) >= to_remove:
                     break
             # If clustered didn't remove enough, fall back to least_important
             if len(remove_indices) < to_remove:
-                remaining_candidates = [i for i in range(n) if i not in remove_indices]
+                remaining_candidates = [
+                    i for i in range(n)
+                    if i not in remove_indices and i not in pinned_indices
+                ]
                 remaining_candidates.sort(key=lambda i: self._entries[i].importance)
                 still_need = to_remove - len(remove_indices)
                 for idx in remaining_candidates[:still_need]:
@@ -1524,6 +1549,9 @@ class Memory:
             raise ValueError(f"Unknown strategy: {strategy}. "
                              "Use 'oldest', 'least_important', 'random', or 'clustered'.")
 
+        # F61: safety net — nothing pinned should ever be in remove_indices
+        remove_indices -= pinned_indices
+
         # Apply removal in reverse order to preserve indices
         new_entries = [e for i, e in enumerate(self._entries) if i not in remove_indices]
         removed = len(self._entries) - len(new_entries)
@@ -1533,6 +1561,7 @@ class Memory:
             "removed_count": removed,
             "remaining_count": len(self._entries),
             "strategy": strategy,
+            "pinned_count": len(pinned_indices),
         }
 
     # F48: search_similar — find memories similar to a specific entry
@@ -2538,3 +2567,85 @@ class Memory:
                 })
         scored.sort(key=lambda x: x["annotation_count"], reverse=True)
         return scored[:limit]
+
+    # ---- F61: Pin system (eviction protection) ----
+
+    def pin(self, index: int) -> bool:
+        """Pin the entry at *index* — protects it from ``resize()`` eviction
+        and ``forget()`` removal.
+
+        Uses the reserved ``metadata["_pinned"]`` flag (same pattern as
+        ``_annotations``), so pins survive persistence and snapshot/restore.
+        Returns True on success, False for out-of-range index.
+        """
+        if 0 <= index < len(self._entries):
+            self._entries[index].metadata["_pinned"] = True
+            self._save()
+            return True
+        return False
+
+    def unpin(self, index: int) -> bool:
+        """Remove the pin flag from the entry at *index*.
+
+        Returns True on success, False for out-of-range index.
+        Unpinning an unpinned entry is a no-op that still returns True.
+        """
+        if 0 <= index < len(self._entries):
+            self._entries[index].metadata.pop("_pinned", None)
+            self._save()
+            return True
+        return False
+
+    def is_pinned(self, index: int) -> bool:
+        """Return True if the entry at *index* is pinned (False if not or
+        out of range)."""
+        if 0 <= index < len(self._entries):
+            return bool(self._entries[index].metadata.get("_pinned"))
+        return False
+
+    def pinned(self) -> List[int]:
+        """Return the indices of all pinned entries in insertion order."""
+        return [
+            i for i, e in enumerate(self._entries)
+            if e.metadata.get("_pinned")
+        ]
+
+    # F62: search_prefix — fast prefix matching
+    def search_prefix(self, prefix: str, limit: int = 5) -> List[MemoryEntry]:
+        """Return entries whose content *starts with* ``prefix``
+        (case-insensitive).
+
+        Complements substring ``search()``, regex, fuzzy and boolean search
+        with an O(n) startswith scan. An empty prefix returns ``[]`` (a bare
+        prefix would trivially match everything). Like ``search()``, returns
+        the most recent ``limit`` matches in chronological order
+        (``limit <= 0`` means unlimited).
+        """
+        if not prefix:
+            return []
+        p = prefix.lower()
+        matched = [
+            e for e in self._entries if e.content.lower().startswith(p)
+        ]
+        return matched if limit <= 0 else matched[-limit:]
+
+    # F63: partition — predicate-based split into two Memory instances
+    def partition(self, predicate: Callable[[MemoryEntry], bool]) -> Tuple["Memory", "Memory"]:
+        """Split entries into two new Memory instances using *predicate*.
+
+        Returns ``(matching, rest)``. Unlike ``filter()`` (which returns a
+        plain list), both halves are fully functional Memory objects that can
+        be chained with any other Memory operation. Entries are shared
+        references (same policy as ``filter()``); the new instances have no
+        persistence path. Original memory is left untouched.
+
+        Raises:
+            TypeError: if *predicate* is not callable.
+        """
+        if not callable(predicate):
+            raise TypeError("predicate must be callable")
+        matching = Memory()
+        matching._entries = [e for e in self._entries if predicate(e)]
+        rest = Memory()
+        rest._entries = [e for e in self._entries if not predicate(e)]
+        return matching, rest

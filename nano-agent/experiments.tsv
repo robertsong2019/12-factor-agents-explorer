@@ -5,3 +5,4 @@ timestamp	commit	metric	value	status	description
 2026-08-13T19:00	2c1fa3a	test_count	991 (was 954)	keep	Cycle 4: F49 tag_summary() per-tag analytics + F50 export_tsv() TSV export. +18 tests.
 2026-08-13T19:15	2c1fa3a	test_count	991 (was 972 after cycle 4)	keep	Cycle 5: F51 batch_remove() reverse-order multi-index + batch_update() multi-field. +19 tests. 954→991 (+37 total). Zero regressions.
 2026-08-13T22:15	f58f59f60	test_count	991→1018 (+27)	keep	Round 17: F58 search_boolean (AND/OR/NOT with parenthesized grouping) + F59 condense (union-find near-dup merge) + F60 export_markdown_table (GitHub-flavored table). 27 new tests (9+8+10). Zero regressions.
+2026-08-14T19:00	915306c	test_count	1042 (was 1018)	keep	Cycles 1-3: Memory.range_query() time-bounded search + Memory.annotate/annotations/most_annotated human annotations + Agent.inspect_tools() schema listing. +24 tests (9+10+5). Zero regressions.

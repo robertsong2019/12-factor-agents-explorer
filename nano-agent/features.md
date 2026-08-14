@@ -108,3 +108,8 @@
 **Round 12:** F34-F35 — Histogram, correlation_stats ✅ 2026-07-20
 **Round 13:** F36-F37 — Conversation_stats, tag_cloud ✅ 2026-07-20
 **Round 14:** F38-F39 — Search_in_fields, auto_tag ✅ 2026-07-20
+
+### Pin, Prefix & Partition (Round 18 — 2026-08-14)
+- [x] **F61**: `Memory.pin(index)` / `unpin(index)` / `is_pinned(index)` / `pinned()` — Pin system with eviction protection: pinned entries survive `resize()` (all 4 strategies, candidate-exclusion not post-filter) and `forget()`. Flag lives in reserved `metadata["_pinned"]` (same pattern as `_annotations`), surviving persistence & snapshot/restore ✅ 2026-08-14
+- [x] **F62**: `Memory.search_prefix(prefix, limit)` — Case-insensitive content prefix scan; complements substring/regex/fuzzy/boolean search; empty prefix → `[]` ✅ 2026-08-14
+- [x] **F63**: `Memory.partition(predicate)` — Predicate split into two fully-functional Memory instances (vs `filter()`'s plain list); composable with any chained Memory op ✅ 2026-08-14
