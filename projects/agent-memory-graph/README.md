@@ -2,10 +2,12 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-8505-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-8942-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
+
+> 📚 教程：[基础入门](TUTORIAL.md) · [GraphRAG 端到端（Cycles 425-440）](TUTORIAL-GRAPHRAG.md)
 
 ## 🎯 概述
 
@@ -2293,7 +2295,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-8505 个测试覆盖所有 API（424 个 cycle，290 天零回滚）。
+8505 → **8942 个测试**覆盖所有 API（**440 个 cycle，292 天零回滚**）。
 
 ## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
 
@@ -3830,6 +3832,80 @@ result = mg.classification_noise_test(
 - 选择分类方法 — 在噪声环境下应选择 robustness_score 最高的方法
 - 质量门槛 — 设定 breakpoint 作为可接受的噪声上限
 - 拓扑脆弱性诊断 — 识别哪些图结构对噪声最敏感
+
+---
+
+## Cycles 425-440: 双进程写入 + GraphRAG 全流水线 + GraphRAG-Bench 适配器
+
+> 端到端教程见 [TUTORIAL-GRAPHRAG.md](TUTORIAL-GRAPHRAG.md)——本文档为 API 参考摘要。
+
+### 架构里程碑
+
+```
+双进程写入 (425-427)          GraphRAG 全流水线 (428-433)         基准接入 (432-440)
+System-1 O(1) 热路径           extract → query → explain           segment_sentences 缩写安全
+System-2 flush 巩固            + fact-answer 直接作答               chunk_text / export_graphml
+知识新鲜度 FAMA 诊断           coverage_report 全局健康            run_amg.py (ICLR 2026)
+```
+
+### 写入架构 (Cycles 425-427)
+
+#### `FastAppendQueue(mg, *, capacity=..., auto_flush_threshold=...)`
+
+双进程写路径，灵感来自 Engram 的 System-1/System-2 分离（准确率 83.6% vs 73.2%）：
+
+- **热路径（System-1）**：`append()` O(1) 入缓冲、`search()` 缓冲区关键词搜索、`peek(n)` 预览
+- **冷路径（System-2）**：`flush()` 去重 + link-by-kind/tags 入图、`flush_and_consolidate(strategy="nrem"|"rem")` NREM/REM 巩固
+- **诊断**：`status()` / `is_healthy()` / `peak_buffer_size()`
+
+#### `knowledge_freshness_report() -> dict | None` (Cycle 426)
+
+FAMA 感知的知识新鲜度诊断（过时知识惩罚 15-43 分）：5 级时间桶 + 加权评分 + per_kind 细分 + 新鲜度排序 + 建议。
+
+### GraphRAG 全流水线 (Cycles 428-433)
+
+#### `segment_sentences(text) -> list[str]` (Cycle 432, 模块级)
+
+缩写安全句切分（两级 Punkt 式）：保护 `Mr.`、`J. K. Rowling`、`St. Louis` 等缩写句点不被切分。切分集 `. ! ? ; \n`。`extract_from_text` 与 `chunk_text` 共享，保证块边界与提取边界一致。
+
+#### `extract_from_text(text, *, kind="entity", tags=None) -> dict` (Cycle 428)
+
+规则式 KG 构建，零外部依赖：大写短语/引号术语实体检测 + 7 种关系模式（`is_a`、`works_at`、`created`、`located_in`、`has`、`part_of`、`built`）+ 按 label 去重复用。返回 `nodes_created / edges_created / entities / relations / sentences`。幂等，可增量调用。
+
+#### `graphrag_query(question, *, max_hops=2, top_k=5, include_context=True) -> dict` (Cycle 429, 433)
+
+关键词提取 → 种子匹配（label/tags）→ 双向 BFS → 排名（`keyword_score × degree_centrality × hop_penalty`）→ top-k 子图。返回 `answer_nodes / context_edges / context / keywords / seed_nodes / fact_answer`。
+
+**fact-answer 路径 (Cycle 433)**：7 种问句 cue + 三级主语解析（精确/正向包含/反向包含取最长内嵌 label），事实型问题（Who created X?）直接返回边宾语 `answers`。
+
+#### `graphrag_explain(question, *, max_hops=2, top_k=5) -> dict` (Cycle 430)
+
+逐查询诊断：`keyword_matches`（exact/prefix/contains/tag 四种命中类型）、`unmatched_keywords`、`coverage`、逐节点得分分解、`fact_answer` 诊断、`suggestions`。
+
+#### `graphrag_coverage_report() -> dict` (Cycle 431, 435, 436)
+
+全局检索健康：`health_score`、`label_coverage`、`tag_coverage`、`orphan_count/rate`、`matchability` 分级、`sparse_nodes`、`suggestions`；关系维度 (435)：`relation_distribution`、`typed_edge_rate`、`relation_diversity`、`top_relations`；单一化告警 (436)：`dominant_relation`，typed_edges ≥ 5 且 top share ≥ 80% 时触发 diversify 建议。
+
+### 基准接入 (Cycles 438-440)
+
+#### `export_graphml(path, *, overwrite=False) -> dict` (Cycle 438)
+
+文件级 GraphML 导出（GraphRAG-Bench indexing_eval 消费路径）。拒绝覆盖已有文件除非 `overwrite=True`。label/kind/relation/weight 全保留，networkx `read_graphml` 往返验证通过。
+
+#### `run_amg.py` (Cycle 439, Gap #4)
+
+GraphRAG-Bench (ICLR 2026) 完整适配器，零 LLM/零 API 成本的检索式分阶段入口：
+
+```bash
+python run_amg.py --data-dir data/ --out results/amg.json \
+    --sample 100 --graphml results/amg.graphml
+```
+
+`load_bench_data → index_corpus (chunk + extract) → answer_question (query + fact_answer) → 官方 prediction schema（8 键严格对齐）→ 可选 export_graphml`。
+
+#### `chunk_text(text, *, max_tokens=512) -> list[str]` (Cycle 440, `run_amg.py` 内)
+
+长文档分块：贪婪打包整句到 token 预算内，与提取器共享 `segment_sentences`，块边界与提取边界永远一致。
 
 ---
 

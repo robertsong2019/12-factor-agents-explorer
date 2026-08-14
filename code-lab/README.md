@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~53,900 | ⭐ 知识图谱记忆引擎：565+ 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比/趋势）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询、Experience Compression Spectrum L2→L3 规则生命周期（提取/检测/匹配/诊断）、GraphRAG 流水线（文本提取/子图检索/诊断/健康报告）、双进程写入 FastAppendQueue、知识新鲜度诊断 |
+| [agent-memory-graph](agent-memory-graph/) | ~53,900 | ⭐ 知识图谱记忆引擎：565+ 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比/趋势）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询、Experience Compression Spectrum L2→L3 规则生命周期（提取/检测/匹配/诊断）、GraphRAG 流水线（文本提取/子图检索/诊断/健康报告）、双进程写入 FastAppendQueue、知识新鲜度诊断、GraphRAG-Bench (ICLR 2026) 完整适配器（缩写安全切分/事实作答/关系维度/GraphML 导出/长文分块）|
 
 ### 代码分析与可视化
 
@@ -44,7 +44,7 @@
 
 ## 📊 agent-memory-graph 功能全景
 
-该项目已从 300 行的教学示例演化为 53,900+ 行的完整图记忆引擎，包含 565+ 公开 API 和 8,794+ 测试用例。
+该项目已从 300 行的教学示例演化为 53,900+ 行的完整图记忆引擎，包含 565+ 公开 API 和 8,942+ 测试用例。
 
 | 功能域 | 方法数 | 代表 API |
 |--------|--------|----------|
@@ -103,14 +103,15 @@
 | **压缩谱: 分布分析** | 1 | `compression_spectrum_report` — L0-L3 全谱分布 + 加权压缩比 + 压缩建议 |
 | **L3 规则治理** | 3 | `rule_conflict_detect` — 矛盾检测；`rule_apply` — 运行时匹配；`rule_explain` — 匹配诊断 |
 | **GraphRAG 构建** | 1 | `extract_from_text` — 零依赖规则式实体/关系提取（7 种关系模式 + 去重）|
-| **GraphRAG 检索** | 1 | `graphrag_query` — 关键词子图检索（BFS 遍历 + 中心性排名 + LLM 上下文输出）|
+| **GraphRAG 检索** | 1 | `graphrag_query` — 关键词子图检索（BFS 遍历 + 中心性排名 + LLM 上下文输出 + fact-answer 事实型直接作答）|
 | **GraphRAG 诊断** | 1 | `graphrag_explain` — 逐查询诊断（关键词分解 + 得分分解 + 遍历路径 + 建议）|
-| **GraphRAG 健康** | 1 | `graphrag_coverage_report` — 全局 KG 检索健康（覆盖率/孤儿率/可匹配性分级/复合健康分）|
+| **GraphRAG 健康** | 1 | `graphrag_coverage_report` — 全局 KG 检索健康（覆盖率/孤儿率/可匹配性分级/复合健康分 + 关系分布/单一化告警）|
+| **GraphRAG-Bench 适配** | 4 | `segment_sentences`（缩写安全切分）、`chunk_text`（长文分块）、`export_graphml`（外部互操作）、`run_amg.py`（ICLR 2026 完整基准适配器，零 LLM 成本）|
 | **MCP 工具** | 1 | MCP server 16 工具 + 请求指标追踪（延迟、错误率、调用日志）|
 
 ### 📐 信息论进化史（Cycles 306–316 + 326–407）
 
-最新里程碑：**GraphRAG 全流水线完结（extract→query→explain→coverage）+ 双进程写入路径 FastAppendQueue + 知识新鲜度 FAMA 诊断** — 从零依赖文本提取构建知识图谱，到子图检索、逐查询诊断、全局健康报告；System-1/System-2 双进程写入分离热路径与冷巩固；FAMA 感知的图级新鲜度诊断补全了时效性分析最后一块拼图。在此基础上，Experience Compression Spectrum L2→L3 规则生命周期完结（extract→detect→apply→explain）+ 检索质量五步流水线完结（audit→explain→rerank→compare→trend）+ 知识耐久度分析构成更深层的记忆分析能力（Cycles 408-431）。
+最新里程碑：**GraphRAG-Bench 差距清单全部清零（Cycles 432-440）** — 缩写安全句切分修复小说域实体撕裂，fact-answer 让事实型问题直接取边宾语，关系覆盖维度 + 单一化告警补全全局健康，export_graphml 打通外部工具互操作，run_amg.py 成为 ICLR 2026 GraphRAG-Bench 的完整适配器（零 LLM/零 API 成本）。此前：GraphRAG 全流水线完结（extract→query→explain→coverage）+ 双进程写入 FastAppendQueue + 知识新鲜度 FAMA 诊断 + Experience Compression L2→L3 规则生命周期（Cycles 408-431）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -202,6 +203,14 @@
 | GraphRAG 检索 | 429 | `graphrag_query` | 关键词子图检索（停用词过滤 + BFS 双向遍历 + 关键词×中心性×跳数衰减排名 + LLM 上下文输出）|
 | GraphRAG 诊断 | 430 | `graphrag_explain` | 逐查询诊断（关键词分解 + 得分分解 + 遍历路径重建 + 覆盖率分析 + 建议）— **GraphRAG 诊断生命周期: extract→query→explain** |
 | GraphRAG 健康 | 431 | `graphrag_coverage_report` | 全局 KG 检索健康（标签/标签覆盖率 + 孤儿率 + 度数统计 + 可匹配性分级 + 复合健康分 + 稀疏节点检测）— **GraphRAG 全流水线完结: extract→query→explain→coverage** |
+| 缩写安全切分 | 432 | `segment_sentences` | 两级 Punkt 式保护（Mr./J. K. Rowling/St. Louis 不拆句）— GraphRAG-Bench 小说域教训 |
+| 事实型直接作答 | 433 | `graphrag_query` fact-answer | 7 种问句 cue + 三级主语解析（精确/正包含/反包含取最长内嵌 label），Fact 型答案取边宾语而非 top-1 节点 |
+| 关系覆盖维度 | 435 | `graphrag_coverage_report` 扩展 | relation_distribution / typed_edge_rate / relation_diversity / top_relations + 低 typing 建议词 |
+| 关系单一化告警 | 436 | `dominant_relation` | typed_edges ≥ 5 且 top share ≥ 80% 触发 diversify 建议 |
+| 确定性巩固 | 437 | `consolidate()` tie-break | 工作区确定性排序（-importance, label ASC），修复 13% flaky（同逻辑图不同 run 合并结果不同）|
+| GraphML 导出 | 438 | `export_graphml` | 文件级导出（indexing_eval 消费路径），networkx 往返验证通过 |
+| 基准适配器 | 439 | `run_amg.py` | GraphRAG-Bench (ICLR 2026) 完整适配器（index_corpus → answer_question → 官方 8 键 schema）— **Gap #4 关闭** |
+| 长文档分块 | 440 | `chunk_text` + `segment_sentences` | 整句贪婪打包到 token 预算，与提取器共享句边界 — **Gap #6 关闭，GraphRAG-Bench 差距清单全部清零** |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---

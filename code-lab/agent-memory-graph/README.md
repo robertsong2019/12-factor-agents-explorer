@@ -1,6 +1,6 @@
 # Agent Memory Graph 🧠
 
-> A graph-native memory engine for AI agents — 53,900+ lines, 565+ API methods, 8,794 tests, zero dependencies.
+> A graph-native memory engine for AI agents — 53,900+ lines, 565+ API methods, 8,942 tests, zero dependencies.
 >
 > **291st consecutive day of iteration** 🏆
 
@@ -739,6 +739,8 @@ report = mg.knowledge_freshness_report()
 
 Zero-dependency KG construction + retrieval — complete extract → query → explain → diagnose lifecycle.
 
+> 📚 **End-to-end tutorial**: [TUTORIAL-GRAPHRAG.md](../../projects/agent-memory-graph/TUTORIAL-GRAPHRAG.md) — every step from raw text to benchmark runs, with verified snippets.
+
 ```python
 # 1. Extract: build a knowledge graph from raw text
 result = mg.extract_from_text(
@@ -770,6 +772,45 @@ coverage = mg.graphrag_coverage_report()
 # coverage.sparse_nodes: nodes nearly invisible to retrieval
 # coverage.health_score: composite weighted score (0-100)
 # coverage.suggestions: context-aware improvement actions
+```
+
+### GraphRAG-Bench Integration (Cycles 432-440)
+
+Benchmark-grade hardening of the GraphRAG pipeline — all 6 gaps from Research #064 closed.
+
+```python
+from memory_graph import segment_sentences
+from run_amg import chunk_text
+
+# Abbreviation-safe sentence segmentation (Novel-domain lesson):
+# "Mr. Darcy", "J. K. Rowling", "St. Louis" periods no longer split sentences.
+segment_sentences("Dr. Smith met J. K. Rowling at Mr. Darcy's; it rained.")
+
+# Fact-answer fast path in graphrag_query (Cycle 433):
+q = mg.graphrag_query("Who created Neo4j?")
+q["fact_answer"]  # {'matched': True, 'relation': 'created', 'answers': ['Alice'], ...}
+
+# Relation dimensions in coverage report (Cycles 435-436):
+c = mg.graphrag_coverage_report()
+c["relation_distribution"]  # {'works_at': 2, 'is_a': 2, 'created': 2}
+c["typed_edge_rate"]        # 1.0
+
+c["dominant_relation"]      # monoculture warning when top share >= 80%
+
+# GraphML export for external tooling (Cycle 438):
+mg.export_graphml("kg.graphml", overwrite=True)
+
+# Long-document chunking (Cycle 440) — shares sentence boundaries with the extractor:
+chunks = chunk_text(novel_text, max_tokens=512)
+```
+
+Full benchmark runner (zero LLM / zero API cost):
+
+```bash
+huggingface-cli download GraphRAG-Bench/GraphRAG-Bench \
+    --repo-type dataset --include "Novel/*" --local-dir data/
+python run_amg.py --data-dir data/ --out results/amg.json \
+    --sample 100 --graphml results/amg.graphml
 ```
 
 ### MCP Server (16 Tools)
@@ -808,7 +849,7 @@ python3 -m pytest -k "classification" -q  # classification suite
 python3 -m pytest -k "activation" -q  # spreading activation family
 ```
 
-**8,794 test cases** across 40+ test files. **291st consecutive day** 🏆.
+**8,942 test cases** across 40+ test files. **292nd consecutive day** 🏆.
 
 ---
 
