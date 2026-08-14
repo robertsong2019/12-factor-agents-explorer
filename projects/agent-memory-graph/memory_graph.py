@@ -53454,6 +53454,11 @@ n            - ``total_rules`` – number of rules scanned.
             "kind_distribution": {},
             "matchability": {"high": 0, "medium": 0, "low": 0},
             "sparse_nodes": [],
+            "relation_distribution": {},
+            "typed_edge_rate": 0.0,
+            "untyped_edge_count": 0,
+            "relation_diversity": 0.0,
+            "top_relations": [],
             "health_score": 0.0,
             "suggestions": [],
         }
@@ -53557,6 +53562,30 @@ n            - ``total_rules`` – number of rules scanned.
             "median": median(degrees),
         }
 
+        # ── Relation coverage (edge typing) ──
+        relation_freq: dict[str, int] = {}
+        untyped_edges = 0
+        for (rel,) in self.conn.execute(
+            "SELECT relation FROM edges"
+        ).fetchall():
+            if rel:
+                relation_freq[rel] = relation_freq.get(rel, 0) + 1
+            else:
+                untyped_edges += 1
+
+        result["relation_distribution"] = relation_freq
+        result["untyped_edge_count"] = untyped_edges
+        if total_edges > 0:
+            result["typed_edge_rate"] = round(
+                (total_edges - untyped_edges) / total_edges, 4
+            )
+            result["relation_diversity"] = round(
+                min(1.0, len(relation_freq) / total_edges), 4
+            )
+        sorted_rels = sorted(relation_freq.items(), key=lambda x: -x[1])
+        result["top_relations"] = sorted_rels[:10]
+        result["dominant_relation"] = sorted_rels[0][0] if sorted_rels else None
+
         # ── Matchability tiers ──
         high = 0   # degree ≥ 2 and has tags or descriptive label (≥2 keywords)
         medium = 0  # degree ≥ 1 (reachable via traversal)
@@ -53648,6 +53677,23 @@ n            - ``total_rules`` – number of rules scanned.
                 f"for {total_nodes} nodes). Labels may be too generic or similar. "
                 "Diversify vocabulary for better query coverage."
             )
+
+        if total_edges > 0 and result["typed_edge_rate"] < 0.6:            suggestions.append(
+                f"Only {result['typed_edge_rate']:.0%} of edges carry a "
+                f"relation type ({untyped_edges} untyped). Typed relations "
+                "make fact-style answers and traversal filtering possible."
+            )
+
+        typed_total = total_edges - untyped_edges
+        if sorted_rels and typed_total >= 5:
+            dom_rel, dom_count = sorted_rels[0]
+            if dom_count / typed_total >= 0.8:
+                suggestions.append(
+                    f"Relation '{dom_rel}' dominates ({dom_count}/{typed_total} "
+                    f"typed edges, {dom_count / typed_total:.0%}). Monoculture "
+                    "relations weaken fact-style answers — diversify relation "
+                    "types (e.g. created / part_of / depends_on)."
+                )
 
         if sparse_nodes:
             suggestions.append(
