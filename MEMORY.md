@@ -41,6 +41,12 @@ Autoresearch 方法论实践 — amg **连续292天零回滚率** 🏆。Entropy
 - **07-14 cycles 239-242**: immutable_store + compact_node + serialize + RelationIntegrityChecker. Context Engineering Layer 3/4 ✅. +145 tests
 - **07-14 Research #008**: Memory Security — ShadowMerge 93.8% ASR, amg positioning 
 
+### 08-15 PM Research #066 — amg PyPI 首发打包全绿 ✅
+> deep-exploration-evening 产出。**PyPI 技术前置 100% 完成**：`agent-memory-graph` 包名实测可用（404）；projects/ 仓库 6月过期 pyproject 已现代化（PEP 639 SPDX / setuptools≥77 / 0.9.0 / `[mcp]` extra 含 mcp_server.py）；54k 行模块 wheel 564KB 构建通过 twine check；新 venv 安装冒烟 GraphRAG 全家族 API 存活。已 commit。
+> **发布只剩人工三步**: ① 建独立 GitHub 仓 `agent-memory-graph`（Homepage 指向处尚不存在）② PyPI 账号 2FA + Trusted Publisher 登记 ③ 定夺 0.9.0/1.0.0 后 twine upload（或 TestPyPI 演练）
+> ⚠️ **新发现: workspace amg Python 三副本漂移** — `code-lab/agent-memory-graph`(22.5k行/C424 过期，含独有 telemetry.py+amg_bench.py) vs `projects/agent-memory-graph`(54k行/C440 真身)。首轮差点打包过期代码，冒烟签名对不上才暴露。已记 error-patterns。行动项: diff 后决定合并/归档方向。
+> 竞争情报: TencentDB-Agent-Memory GitHub 21.5k★ 但不在 PyPI — Python 生态入口真空，first-mover 窗口在。
+
 ### 08-14 PM ~ 08-15 AM 开发 (cycles 432-440 Python) — LATEST
 > 9 cycles, GraphRAG-Bench 差距清单 6 关 5。amg Python 8794→8942 (+148)。**292nd consecutive day** 🏆
 > - **Cycle 432**: extract_from_text 两级缩写安全句切分（STRONG titles / WEAK months）— 关闭差距#1（Mont St. Michel 地雷）。+16
@@ -53,7 +59,7 @@ Autoresearch 方法论实践 — amg **连续292天零回滚率** 🏆。Entropy
 > - **Cycle 440**: chunk_text() + segment_sentences() 共享切分权威 — 关闭差距#6。**分块对 rule 抽取无损**（预算≥最长句时单元/句子/E2E 三层不变量一致）。+29
 > - **nano-agent Round 17+18**: 1018→1076 (+58)。range_query/annotate/inspect_tools + F61 pin/F62 search_prefix/F63 partition
 > - **教训**: ①flaky≠噪声（13% 失败率背后是真实确定性 bug）②budget on joined text 而非 sum(round(x)) ③segment_sentences 剥分隔符→join 须还原句号（否则句子 round-trip 失败）④edit 锚点替换必须在 newText 保留锚点后缀
-> - **Research #064 差距清单**: #1✅(C432) #2✅(C433/434) #3✅(C438) #4✅(C439) #6✅(C440)，仅剩 #5 EntityResolver 配置（可选）。**下一步: 8月底 HF Novel sample_100 retrieval_eval 首个公开分数（零 API 成本）**
+> - **Research #064 差距清单**: #1✅(C432) #2✅(C433/434) #3✅(C438) #4✅(C439) #6✅(C440)，仅剩 #5 EntityResolver 配置（可选）。**Research #065 (08-15) ✅: retrieval_eval 机制全部解析+真实数据冒烟通过，首跑执行就绪（唯一阻塞=装 ollama + qwen2.5:7b）**
 > - 博客《Agent 记忆的快与慢：双系统写入模型的工程实践》发布；AI×Neuroscience #16 信息瓶颈完成（Tavily 配额耗尽→AnySearch 替代）；GitHub 周报：prime-agent (RLM, +12.5k/周)、TencentDB-Agent-Memory 21.5k★、semantica (PROV-O 可审计图基础设施)
 
 ### 08-13 PM ~ 08-14 AM 开发 (cycles 425-431 Python)
@@ -624,7 +630,7 @@ curl -X POST "https://api.tavily.com/search" \
 ### GraphRAG 生态定位 (Research #062, 08-13)
 - [x] ✅ **amg: `extract_from_text()`** — Cycle 428 实现 + C432 缩写安全切分强化。GraphRAG 入场券已到手。
 - [ ] **amg: Passage Nodes** — `node_type="passage"` + `mentions` edges。Dense-sparse integration (HippoRAG2)。让PPR能从概念到达原始文本。~40 lines + ~30 tests.
-- [ ] **amg: GraphRAG Benchmark 参赛** — 在 GraphRAG-Bench (ICLR 2026, 厦大, HF数据集公开) 上运行 amg。直接影响 npm/PyPI 发布后采用率。Research #064：**差距清单 5/6 已关闭 (C432-440)**：缩写保护✅ 边宾语✅ export_graphml✅ run_amg.py✅ chunking✅，仅剩 #5 EntityResolver 配置（可选）。**下一步: 8月底 HF Novel sample_100 retrieval_eval 首跑**（chunking 已解锁 whole-novel 文档，零 API 成本）→ 提交 retrieval-only 分数。9月: LLM 生成层 + leaderboard PR（"first memory-native GraphRAG" 叙事）。[笔记](catalyst-research/exploration-notes/2026-08-14-graphrag-bench-iclr2026-amg-entry.md)
+- [ ] **amg: GraphRAG Benchmark 参赛** — 在 GraphRAG-Bench (ICLR 2026, 厦大, HF数据集公开) 上运行 amg。直接影响 npm/PyPI 发布后采用率。Research #064：**差距清单 5/6 已关闭 (C432-440)**。**Research #065 (08-15)：retrieval_eval 源码逐行解析完毕 + 真实数据冒烟通过**（官方 `--mode ollama` 零API、retrieval 双指标只用 LLM judge 不用 embedding、3 novels→2946节点/2.2s、10题→官方schema/0.6s）。**首跑执行就绪，唯一阻塞=本机未装 ollama**：`ollama pull qwen2.5:7b` → run_amg sample=100 → 官方 retrieval_eval ollama 模式 → experiments.tsv 基线。提交前换 gpt-4o-mini 复测一次（~$1）。9月: LLM 生成层 + leaderboard PR（"first memory-native GraphRAG" 叙事）。[笔记#064](catalyst-research/exploration-notes/2026-08-14-graphrag-bench-iclr2026-amg-entry.md) · [笔记#065](catalyst-research/exploration-notes/2026-08-15-graphrag-bench-retrieval-eval-first-run.md)
 - [ ] **amg: README GraphRAG定位** — 加入对比矩阵，提交 Awesome-GraphRAG PR。叙事差距 > 技术差距。
 - **Key insight**: amg 的 PPR + community detection + spreading activation 已覆盖 HippoRAG2/MS GraphRAG 核心机制，但缺少自动KG构建和passage nodes。2026 GraphRAG市场 $6.27B→$28.45B (2030)。
 
