@@ -15,11 +15,15 @@ Pipeline (zero LLM / zero API cost — retrieval-only quality mode):
 
     LongMemEval JSON  [{"question", "answer", "haystack_sessions", ...}]
         → ingest_sessions()    [session/message/entity nodes + edges]
-        → retrieve_context()   [keyword seeds → PPR → budgeted context]
-        → answer_extractive()  [top message, entropy-free confidence
-                                gate → "I don't know" abstention]
+        → retrieve_context()   [keyword seeds → PPR → budgeted context
+                                + entropy confidence over evidence]
+        → answer_extractive()  [top message, dual confidence gate
+                                (score + entropy) → "I don't know"
+                                abstention on weak scattered evidence]
         → evaluate()           [per-category accuracy + abstention +
                                 retrieval-hit rate + tokens/query]
+        → sweep_abstention()   [entropy-threshold sweep, one retrieval
+                                per question — abstention tuning]
 
 The abstention path is amg's differentiation angle (Research #061
 Insight #3): LongMemEval ``_abs`` questions test events that never
@@ -45,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -56,6 +61,8 @@ __all__ = [
     "QuestionResult",
     "CategorySummary",
     "LongMemEvalAdapter",
+    "score_confidence",
+    "entropy_gate_fires",
     "exact_judge",
     "load_longmemeval_data",
     "main",
@@ -157,6 +164,85 @@ def _keyword_hits(label: str, keywords: list[str]) -> int:
                if any(_token_matches(t, kw) for t in tokens))
 
 
+# ── Entropy confidence (Cycle 448 — Research #061 Insight #3/#4) ─────
+
+def score_confidence(scores: list[int]) -> dict:
+    """Entropy confidence over candidate keyword-hit scores.
+
+    Treats the hit counts of retrieved message candidates as an
+    evidence distribution ``p_i = hits_i / Σhits`` and measures how
+    *flat* it is:
+
+    * ``norm_entropy`` — Shannon entropy normalized by ``log2(n)``;
+      1.0 = perfectly flat (every candidate equally "evident"),
+      → 0 = one dominant candidate.
+    * ``margin`` — relative gap between the top-2 scores (1.0 when
+      a single candidate holds all the evidence).
+
+    Args:
+        scores: keyword-hit counts of the ranked message candidates
+            (zero/negative entries are ignored — only actual hits
+            count as evidence).
+
+    Returns:
+        ``{best, evidence, entropy, norm_entropy, margin}``.
+    """
+    s = sorted((x for x in scores if x > 0), reverse=True)
+    n = len(s)
+    if n == 0:
+        return {"best": 0, "evidence": 0, "entropy": 0.0,
+                "norm_entropy": 0.0, "margin": 0.0}
+    if n == 1:
+        return {"best": s[0], "evidence": 1, "entropy": 0.0,
+                "norm_entropy": 0.0, "margin": 1.0}
+    total = float(sum(s))
+    ps = [x / total for x in s]
+    entropy = -sum(p * math.log2(p) for p in ps)
+    return {
+        "best": s[0],
+        "evidence": n,
+        "entropy": entropy,
+        "norm_entropy": entropy / math.log2(n),
+        "margin": (s[0] - s[1]) / s[0],
+    }
+
+
+def entropy_gate_fires(conf: dict, abstain_entropy: float | None,
+                       weak_score: int) -> bool:
+    """Whether the entropy abstention gate fires for *conf*.
+
+    The gate targets **weak scattered evidence** — the regime where
+    the extractive answer is a guess:
+
+    * ``best <= weak_score`` — no candidate holds strong keyword
+      evidence;
+    * ``norm_entropy >= abstain_entropy`` — the weak evidence is
+      spread flat over the candidates;
+    * ``evidence >= 3`` — with exactly TWO equally-scored candidates
+      amg has a principled disambiguator (bitemporal recency: the
+      ``-seq`` tie-break makes the LATEST value win, the designed
+      knowledge-update semantics, C437/C447). Scattered ≥ 3-way
+      weakness has no such resolution — latest-of-many-unrelated is
+      uniform guessing.
+
+    Strong ties (``best > weak_score``) never fire: a co-scoring old/
+    new pair is the knowledge-update signature, resolved by recency.
+
+    Args:
+        conf: ``score_confidence()`` output for the retrieval.
+        abstain_entropy: entropy threshold in ``[0, 1]``; ``None``
+            disables the gate entirely (Cycle 447 behavior).
+        weak_score: max keyword-hit count still considered weak.
+
+    Returns:
+        True → abstain ("I don't know").
+    """
+    if abstain_entropy is None or conf["evidence"] < 3:
+        return False
+    return (conf["best"] <= weak_score
+            and conf["norm_entropy"] >= abstain_entropy)
+
+
 def _normalize(text: str) -> str:
     """Lowercase + strip punctuation + collapse whitespace."""
     return re.sub(r"\s+", " ",
@@ -236,6 +322,8 @@ class LongMemEvalAdapter:
                  use_ppr: bool = True,
                  max_context_tokens: int = 4000,
                  abstain_score: float = 1.0,
+                 abstain_entropy: float | None = 0.95,
+                 entropy_weak_score: int = 1,
                  ppr_top: int = 15,
                  seed_recall_k: int = 5):
         """Args:
@@ -244,7 +332,15 @@ class LongMemEvalAdapter:
             max_context_tokens: Token budget for retrieved context.
             abstain_score: Minimum keyword-hit count of the best
                 candidate below which the adapter abstains ("I don't
-                know"). ``0`` disables abstention.
+                know"). ``0`` disables this gate.
+            abstain_entropy: Entropy-gate threshold (Cycle 448): when
+                the best candidate is weak (``<= entropy_weak_score``)
+                and its evidence distribution is flat
+                (``norm_entropy >= abstain_entropy`` over ≥3
+                candidates), abstain instead of guessing.
+                ``None`` disables (Cycle 447 behavior).
+            entropy_weak_score: Max keyword hits still counted as
+                "weak" for the entropy gate.
             ppr_top: Extra candidates taken from the PPR tail.
             seed_recall_k: Per-keyword recall limit for seed building.
         """
@@ -252,6 +348,8 @@ class LongMemEvalAdapter:
         self.use_ppr = use_ppr
         self.max_context_tokens = max_context_tokens
         self.abstain_score = abstain_score
+        self.abstain_entropy = abstain_entropy
+        self.entropy_weak_score = entropy_weak_score
         self.ppr_top = ppr_top
         self.seed_recall_k = seed_recall_k
         # Adapter-side bookkeeping (avoids depending on repo getter
@@ -361,8 +459,8 @@ class LongMemEvalAdapter:
 
         Returns:
             ``(context_text, metadata)`` with ``candidates_found``,
-            ``messages_retrieved``, ``best_score``, ``latency_ms``,
-            ``tokens_est``.
+            ``messages_retrieved``, ``best_score``, ``confidence``
+            (entropy evidence report), ``latency_ms``, ``tokens_est``.
         """
         start = time.perf_counter()
         keywords = _keywords(question)
@@ -415,12 +513,17 @@ class LongMemEvalAdapter:
             tokens += _estimate_tokens(line)
             best_score = max(best_score, -neg_hits)
 
+        # Entropy confidence over the full candidate evidence —
+        # gate telemetry + sweep_abstention input (Cycle 448).
+        confidence = score_confidence([-neg for neg, _, _ in ranked])
+
         context = "\n".join(lines)
         latency = (time.perf_counter() - start) * 1000
         meta = {
             "candidates_found": len(candidate_ids),
             "messages_retrieved": len(lines),
             "best_score": best_score,
+            "confidence": confidence,
             "latency_ms": latency,
             "tokens_est": tokens,
             "keywords": keywords,
@@ -431,16 +534,21 @@ class LongMemEvalAdapter:
 
     def answer_extractive(self, question: str,
                           question_date: str = "") -> tuple[str, dict]:
-        """Extractive answer with abstention gate (no LLM).
+        """Extractive answer with the dual confidence gate (no LLM).
+        The best-ranked message is the answer; the adapter abstains
+        with ``"I don't know"`` when confidence is low — the correct
+        behavior on LongMemEval ``_abs`` questions (Research #061
+        Insight #3). Gate order:
 
-        The best-ranked message is the answer; if its keyword-hit
-        score is below ``abstain_score`` (or nothing was retrieved),
-        abstain with ``"I don't know"`` — the correct behavior on
-        LongMemEval ``_abs`` questions (Research #061 Insight #3).
+        1. ``empty`` — nothing retrieved;
+        2. ``score`` — best keyword-hit count < ``abstain_score``;
+        3. ``entropy`` — weak scattered evidence (best <= weak,
+           flat distribution over ≥3 candidates, Cycle 448);
+        else ``answer``.
 
         Returns:
             ``(answer, metadata)`` — metadata is the retrieval dict
-            plus ``abstained``.
+            plus ``abstained`` and ``gate`` (the firing reason).
         Also when abstaining the retrieval context is stashed into the
         metadata (``meta["context"]``) so ``evaluate`` can still score
         ``retrieval_hit`` — abstention and retrieval quality are
@@ -449,8 +557,18 @@ class LongMemEvalAdapter:
         """
         context, meta = self.retrieve_context(question, question_date)
         meta["context"] = context
-        if (not meta["messages_retrieved"]
-                or meta["best_score"] < self.abstain_score):
+        conf = meta["confidence"]
+        if not meta["messages_retrieved"]:
+            gate = "empty"
+        elif meta["best_score"] < self.abstain_score:
+            gate = "score"
+        elif entropy_gate_fires(conf, self.abstain_entropy,
+                                self.entropy_weak_score):
+            gate = "entropy"
+        else:
+            gate = "answer"
+        meta["gate"] = gate
+        if gate != "answer":
             meta["abstained"] = True
             return ABSTAIN_ANSWER, meta
         meta["abstained"] = False
@@ -549,7 +667,10 @@ class LongMemEvalAdapter:
                 latency_ms=meta["latency_ms"], tokens_est=meta["tokens_est"],
                 retrieval={"best_score": meta["best_score"],
                            "candidates_found": meta["candidates_found"],
-                           "messages_retrieved": meta["messages_retrieved"]})
+                           "messages_retrieved": meta["messages_retrieved"],
+                           "norm_entropy": meta["confidence"]["norm_entropy"],
+                           "margin": meta["confidence"]["margin"],
+                           "gate": meta["gate"]})
             results.append(res)
 
             summary = cat.setdefault(category,
@@ -575,8 +696,78 @@ class LongMemEvalAdapter:
             "results": [r.to_dict() for r in results],
             "config": {"use_ppr": self.use_ppr,
                        "max_context_tokens": self.max_context_tokens,
-                       "abstain_score": self.abstain_score},
+                       "abstain_score": self.abstain_score,
+                       "abstain_entropy": self.abstain_entropy,
+                       "entropy_weak_score": self.entropy_weak_score},
         }
+
+    def sweep_abstention(self, dataset: list[dict], *,
+                         entropies: list[float | None],
+                         limit: int = 0) -> dict:
+        """Entropy-threshold sweep — one retrieval per question.
+
+        Retrieval is the expensive stage; the entropy gate is a pure
+        post-retrieval decision over the cached evidence report, so
+        every question is retrieved ONCE and then gated at each
+        threshold (Cycle 448 — C447 Next Step #2, abstention
+        threshold tuning without re-retrieval cost).
+
+        Args:
+            dataset: LongMemEval items (``id``/``question``/
+                ``answer``; ``_abs`` suffix = abstention-scored).
+            entropies: thresholds to evaluate (each in ``[0, 1]``;
+                ``None`` = gate off — the Cycle 447 baseline).
+            limit: Sweep at most this many questions (0 = all).
+
+        Returns:
+            ``{"thresholds": [labels], "summary": {label: {accuracy,
+            abstention_rate, total}}, "rows": [{"id", "abstained":
+            {label: bool}, "correct": {label: bool}}]}`` — labels are
+            ``str(threshold)`` (``"None"`` for the off-baseline).
+            Scoring matches ``evaluate``: ``_abs`` correct iff
+            abstained, else ``exact_judge`` containment.
+        """
+        items = dataset[:limit] if limit and limit > 0 else dataset
+        labels = ["None" if e is None else str(e) for e in entropies]
+
+        rows: list[dict] = []
+        totals = {lab: [0, 0] for lab in labels}  # correct, abstained
+
+        for i, item in enumerate(items):
+            qid = str(item.get("id", i))
+            question = str(item.get("question", ""))
+            truth = str(item.get("answer", ""))
+            is_abs = qid.endswith("_abs") or bool(item.get("abstention"))
+
+            context, meta = self.retrieve_context(
+                question, item.get("question_date", ""))
+            conf = meta["confidence"]
+            best_line = context.split("\n", 1)[0] if context else ""
+            extracted = best_line.split("] ", 1)[-1] if best_line else ""
+
+            row = {"id": qid, "abstained": {}, "correct": {}}
+            for entropy, lab in zip(entropies, labels):
+                abstained = (
+                    not meta["messages_retrieved"]
+                    or meta["best_score"] < self.abstain_score
+                    or entropy_gate_fires(conf, entropy,
+                                          self.entropy_weak_score))
+                correct = (abstained if is_abs else
+                           exact_judge(question, truth,
+                                       ABSTAIN_ANSWER if abstained
+                                       else extracted))
+                row["abstained"][lab] = abstained
+                row["correct"][lab] = correct
+                totals[lab][0] += int(correct)
+                totals[lab][1] += int(abstained)
+            rows.append(row)
+
+        n = len(rows)
+        summary = {lab: {"accuracy": (c / n if n else 0.0),
+                         "abstention_rate": (a / n if n else 0.0),
+                         "total": n}
+                   for lab, (c, a) in totals.items()}
+        return {"thresholds": labels, "summary": summary, "rows": rows}
 
     @staticmethod
     def _classify_question(question: str, qid: str) -> str:
@@ -651,6 +842,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="Context token budget")
     parser.add_argument("--abstain-score", type=float, default=1.0,
                         help="Min keyword hits to answer (else abstain)")
+    parser.add_argument("--abstain-entropy", type=float, default=0.95,
+                        help="Entropy-gate threshold for abstention "
+                             "on weak scattered evidence "
+                             "(<0 disables — Cycle 447 behavior)")
+    parser.add_argument("--entropy-weak", type=int, default=1,
+                        help="Max keyword hits still counted as weak "
+                             "evidence for the entropy gate")
     parser.add_argument("--output", default="amg_longmemeval_results.json",
                         help="Output report path")
     args = parser.parse_args(argv)
@@ -658,9 +856,15 @@ def main(argv: list[str] | None = None) -> int:
     dataset = load_longmemeval_data(args.data, limit=args.limit)
     print(f"Loaded {len(dataset)} questions from {args.data}")
 
+    # Negative --abstain-entropy disables the entropy gate (None).
+    abstain_entropy = (args.abstain_entropy
+                       if args.abstain_entropy >= 0 else None)
+
     adapter = LongMemEvalAdapter(
         use_ppr=not args.no_ppr, max_context_tokens=args.max_tokens,
-        abstain_score=args.abstain_score)
+        abstain_score=args.abstain_score,
+        abstain_entropy=abstain_entropy,
+        entropy_weak_score=args.entropy_weak)
 
     # LongMemEval-cleaned ships one shared haystack per question; ingest
     # the first non-empty one (all-question mode) or per-question.
@@ -673,7 +877,9 @@ def main(argv: list[str] | None = None) -> int:
             adapter = LongMemEvalAdapter(
                 use_ppr=not args.no_ppr,
                 max_context_tokens=args.max_tokens,
-                abstain_score=args.abstain_score)
+                abstain_score=args.abstain_score,
+                abstain_entropy=abstain_entropy,
+                entropy_weak_score=args.entropy_weak)
             adapter.ingest_sessions(haystack if isinstance(haystack, list)
                                     else [haystack])
         answer, meta = adapter.answer_extractive(
@@ -685,7 +891,9 @@ def main(argv: list[str] | None = None) -> int:
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump({"rows": report_rows,
                    "config": {"use_ppr": not args.no_ppr,
-                              "max_context_tokens": args.max_tokens}},
+                              "max_context_tokens": args.max_tokens,
+                              "abstain_entropy": abstain_entropy,
+                              "entropy_weak_score": args.entropy_weak}},
                   f, indent=2)
     abst = sum(1 for r in report_rows if r["abstained"])
     avg_tok = (sum(r["tokens_est"] for r in report_rows) / len(report_rows)
