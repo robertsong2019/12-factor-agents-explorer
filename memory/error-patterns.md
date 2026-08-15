@@ -26,3 +26,10 @@
 - **根因:** workspace 有三处同名项目目录，未先按 mtime/内容认主就动手
 - **修正:** `find -name <file> -printf "%T@ %p\n" | sort -rn` 认主后重建；两副本 API 面已漂移（类导出、chunk_text 位置）
 - **出现次数:** 1（关联既有教训: 2026-08-13 GitHub 周报文档源目录误判）
+
+### [2026-08-15] 大文件类边界盲插（"选仓先验真身"家族变体）
+- **场景:** amg Cycle 446，向 55k 行 memory_graph.py 的 MemoryGraph 类插入 telemetry 方法
+- **错误:** 锚点选文件尾部 is_healthy 之后插入，但 is_healthy 属于 FastAppendQueue 类。`grep "class.*Graph"` 只匹配含 "Graph" 的类名，漏掉 TemporalEntropyTracker/FastAppendQueue
+- **根因:** 假设"文件尾=目标类尾"；grep 模式过窄（只搜 Graph 类名）
+- **修正:** git restore 回退；`grep -n "^class "` 列全类边界后插到 graphrag_coverage_report（MemoryGraph 真正末方法）之后
+- **出现次数:** 1（同家族: 选仓先验真身 ×N，nano-agent 嵌套 git ×1）

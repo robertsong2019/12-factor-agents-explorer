@@ -22,7 +22,7 @@
 
 ## 系统状态
 - **agent-memory-graph (TS)**: **7349 tests** — 1000+ APIs。entropy framework (40+) + 25-API classification ✅ + FINGEREntropy + StreamingGraph ✅ + PPR + multi_hop_reason ✅ + spreading_activation ✅ + code-aware ✅ + SummaryTree ✅ + enrich_node ✅ + provenance (4) ✅ + entropy scan (4) ✅ + adaptive forgetting ✅ + EntityResolver ✅ + MCP Day 1-5 ✅
-- **agent-memory-graph (Python)**: **8942 tests** — 940+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ + MCP 16 tools ✅ + OTel telemetry ✅ + enable_telemetry() ✅ + MultiAgentMemoryGraph (MESI) ✅ + **FastAppendQueue ✅** + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + **retrieval quality family COMPLETE** (audit/explain/rerank/compare/trend) ✅ + attention (distribution/rebalance_plan) ✅ + **temporal trilogy** (changepoints/stability/velocity) ✅ + **bi-temporal APIs** (5) ✅ + **forgetting_forecast** ✅ + seeded RNG fix ✅ + **Experience Compression Spectrum COMPLETE** (extract_rules + compression_spectrum_report + rule_conflict_detect + rule_apply + rule_explain) ✅ + **GraphRAG API family COMPLETE** (extract_from_text + graphrag_query + graphrag_explain + graphrag_coverage_report) ✅ + **export_graphml ✅ (C438)** + **run_amg.py GraphRAG-Bench 适配器 ✅ (C439, 严格官方 schema)** + **chunk_text 无损分块 ✅ (C440)**
+- **agent-memory-graph (Python)**: **9158 tests** — 940+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ **(C446 repatriated into real repo)** + MCP 16 tools ✅ + OTel telemetry ✅ **(C446 repatriated: telemetry.py + enable/disable/telemetry_status on MemoryGraph, 8 methods incl search_graphrag)** + MultiAgentMemoryGraph (MESI) ✅ + **FastAppendQueue ✅** + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + **retrieval quality family COMPLETE** (audit/explain/rerank/compare/trend) ✅ + attention (distribution/rebalance_plan) ✅ + **temporal trilogy** (changepoints/stability/velocity) ✅ + **bi-temporal APIs** (5) ✅ + **forgetting_forecast** ✅ + seeded RNG fix ✅ + **Experience Compression Spectrum COMPLETE** (extract_rules + compression_spectrum_report + rule_conflict_detect + rule_apply + rule_explain) ✅ + **GraphRAG API family COMPLETE** (extract_from_text + graphrag_query + graphrag_explain + graphrag_coverage_report) ✅ + **export_graphml ✅ (C438)** + **run_amg.py GraphRAG-Bench 适配器 ✅ (C439, 严格官方 schema)** + **chunk_text 无损分块 ✅ (C440)**
 - **agent-context-store**: **2929 tests**
 - **structured-output-toolkit**: **571 tests**
 - **agent-task-cli**: **1570 tests** — F237
@@ -30,9 +30,12 @@
 - **nano-agent**: **1076 tests** — F63
 - **edge-agent-runtime**: **345 tests**
 - **prompt-mgr**: **196 tests**
-- **四项目总计**: 18432 tests ✅ (amg TS+Py + sot + atc = 7349+8942+571+1570)
+- **四项目总计**: 18511 tests ✅ (amg TS+Py + sot + atc = 7349+9158+571+1570)
 - **全项目总计**: ~27050 tests
 - **零回滚率**: amg **292天** 🏆 / acs 200天 🏆
+
+## 近期活动 (08-15 晚 cron 23:00)
+- **Cycle 446 (key-development-1)**: repatriate telemetry.py (C374) + amg_bench.py (C370) + 3 测试文件 + MemoryGraph enable/disable/telemetry_status() 集成层，从过期 C424 code-lab 副本回迁真身仓。适配：multi_hop_reason→search_graphrag（真身谱系无前者）；StreamingGraph 测试→子类测试；pyproject py-modules 登记（PyPI 路径）。+79 (9079→**9158**)，全量 120s 100%，零回归，**294 天** 🏆 commit 40bbc44。**修复结构性滞留**：HEARTBEAT 曾声称两者 ✅ 但真身仓实缺——功能清单与真身谱系存在谱系漂移（FINGEREntropy/StreamingGraph/multi_hop_reason 仅存在于 code-lab 谱系）。**解锁 amg-bench LongMemEval/LoCoMo adapter 路径**
 
 ## 近期活动 (08-15 晚 cron)
 - **Cycle 445**: resolve_entity_variants() + run_amg resolve_entities 配置 — **GraphRAG-Bench 差距清单 6/6 全部关闭**（Gap #5 最后一项）。3 模式：case / title（任意位置敬称剥离+尾缀缩写）/ containment（词边界前缀，min_len 守卫，默认关）。canonical=最长规范化核心，平局→先添加；merge_entities+alias 注册；dry_run。+26 tests (9053→**9079**)，**294 天** 🏆
