@@ -111,7 +111,7 @@
 
 ### 📐 信息论进化史（Cycles 306–316 + 326–407）
 
-最新里程碑：**GraphRAG-Bench 差距清单全部清零（Cycles 432-440）** — 缩写安全句切分修复小说域实体撕裂，fact-answer 让事实型问题直接取边宾语，关系覆盖维度 + 单一化告警补全全局健康，export_graphml 打通外部工具互操作，run_amg.py 成为 ICLR 2026 GraphRAG-Bench 的完整适配器（零 LLM/零 API 成本）。此前：GraphRAG 全流水线完结（extract→query→explain→coverage）+ 双进程写入 FastAppendQueue + 知识新鲜度 FAMA 诊断 + Experience Compression L2→L3 规则生命周期（Cycles 408-431）。
+最新里程碑：**安全遗忘 + 记忆质量双轴基准（Cycles 441-448，9241 tests）** — 搜索树物化（图即搜索树）、跨模态泄漏扫描与安全遗忘（遗忘前检查派生物敏感 token）、前瞻修复记忆、safety_purge 泄漏闸门、实体变体归一（GraphRAG-Bench 差距清单 6/6 全部清零）、OTel 遥测遣返、LongMemEval 记忆质量适配器与熵置信度弃权闸门。此前：GraphRAG-Bench 基准接入完结（Cycles 432-440，run_amg.py 成为 ICLR 2026 完整适配器，零 LLM/零 API 成本）+ GraphRAG 全流水线完结（extract→query→explain→coverage）+ 双进程写入 FastAppendQueue + 知识新鲜度 FAMA 诊断 + Experience Compression L2→L3 规则生命周期（Cycles 408-431）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -210,7 +210,15 @@
 | 确定性巩固 | 437 | `consolidate()` tie-break | 工作区确定性排序（-importance, label ASC），修复 13% flaky（同逻辑图不同 run 合并结果不同）|
 | GraphML 导出 | 438 | `export_graphml` | 文件级导出（indexing_eval 消费路径），networkx 往返验证通过 |
 | 基准适配器 | 439 | `run_amg.py` | GraphRAG-Bench (ICLR 2026) 完整适配器（index_corpus → answer_question → 官方 8 键 schema）— **Gap #4 关闭** |
-| 长文档分块 | 440 | `chunk_text` + `segment_sentences` | 整句贪婪打包到 token 预算，与提取器共享句边界 — **Gap #6 关闭，GraphRAG-Bench 差距清单全部清零** |
+| 长文档分块 | 440 | `chunk_text` + `segment_sentences` | 整句贪婪打包到 token 预算，与提取器共享句边界 — **Gap #6 关闭** |
+| 搜索树 | 441 | `expand_search_tree` / `prune_search_tree` / `search_tree_report` | Arbor 模式 #029：图即搜索树，扩展物化评分分支，非破坏剪枝保审计，报告最佳累计得分路径 |
+| 跨模态泄漏扫描 | 442 | `cross_modal_leak_scan` / `safe_forget` | MemLeak #018：遗忘前扫派生边泄漏 token，high 风险阻断除非 force |
+| 前瞻修复记忆 | 443 | `record_repair` / `recall_repairs` / `repair_stats` | AgentTether #018：(failure→fix) 对为一等节点，Jaccard 召回 + 命中追踪 |
+| 泄漏闸门集成 | 444 | `apply_decay(exclude_ids)` × `safety_purge` | 修复时序缺陷：safety_purge 曾删可审计源、留泄漏 derivative；dry-run 预览 + blocked_by_leak |
+| 实体变体归一 | 445 | `resolve_entity_variants` | case/title/containment 三模式归一 — **Gap #5 关闭，GraphRAG-Bench 差距清单 6/6 真正清零** |
+| 遥测遣返 | 446 | `enable_telemetry` / `disable_telemetry` / `telemetry_status` | OTel `gen_ai.memory.*` span 插桩；telemetry.py + amg_bench.py 从过期 C424 副本遭返真身仓（79 tests）|
+| LongMemEval 质量适配器 | 447 | `amg_bench_quality.py` | ingest→retrieve→extractive answer（双置信度门控）→judge，CategorySummary 四指标 |
+| 熵置信度闸门 | 448 | `score_confidence` + `sweep_abstention` | Shannon 熵 over 关键词命中分数：低熵可答/高熵弃权；阈值扫描出 accuracy-coverage 曲线 |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---

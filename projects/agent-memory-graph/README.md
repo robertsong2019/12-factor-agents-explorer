@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-8942-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-9241-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -2295,7 +2295,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-8505 → **8942 个测试**覆盖所有 API（**440 个 cycle，292 天零回滚**）。
+8505 → **9241 个测试**覆盖所有 API（**448 个 cycle，294 天零回滚**）。
 
 ## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
 
@@ -3906,6 +3906,52 @@ python run_amg.py --data-dir data/ --out results/amg.json \
 #### `chunk_text(text, *, max_tokens=512) -> list[str]` (Cycle 440, `run_amg.py` 内)
 
 长文档分块：贪婪打包整句到 token 预算内，与提取器共享 `segment_sentences`，块边界与提取边界永远一致。
+
+### 搜索树、泄漏安全与记忆质量 (Cycles 441-448)
+
+#### `expand_search_tree(node_id, query=None, *, branching_factor=2, max_depth=3) -> dict` (Cycle 441)
+
+Arbor 模式 #029：图即搜索树。每次扩展把评分的 `search_tree` 子节点经 `search_child` 边物化到图中——多个 agent 能直接看到哪些分支被探索过、得分如何。
+
+#### `prune_search_tree(node_id, *, min_score) -> dict` (Cycle 441)
+
+非破坏性剪枝：标记 `status="pruned"` 而非删除，探索历史保持可审计。对已展开节点剪枝会级联整个子树。
+
+#### `search_tree_report(root_id) -> dict` (Cycle 441)
+
+搜索树摘要：状态分布、深度、最佳路径（根到叶累计得分最高的路线，即树搜索的主输出“哪个分支赢了”）。
+
+#### `cross_modal_leak_scan(node_id) -> dict` (Cycle 442)
+
+MemLeak 研究 #018：沿 `image_derived` / `correlated_inference` / `derived_from` 类派生边扫描——遗忘/清除一个节点不安全，当其他模态的派生物（图像标题、推断摘要、压缩副本）仍携带源的敏感 token。风险分级：`high`（≥3 个泄漏 token 或任何邮箱/数字串）、`medium`、`low`/`none`。
+
+#### `safe_forget(node_id, *, force=False) -> dict` (Cycle 442)
+
+带泄漏闸门的遗忘：`cross_modal_leak_scan → 闸门 → 删除`。`high` 风险默认阻断（`force=True` 可覆盖并留审计 verdict），`medium` 记录警告后放行。
+
+#### `record_repair(failure_signature, fix, ...) / recall_repairs(failure_signature, ...) / repair_stats() -> dict` (Cycle 443)
+
+AgentTether #018：前瞻式修复记忆。(failure→fix) 对为一等节点，去重 + Jaccard 相似度召回 + 命中追踪——同样的失败签名再次出现时能召回上次的修复。
+
+#### `apply_decay(..., exclude_ids=None)` × `forget_policy("safety_purge")` 泄漏闸门 (Cycle 444)
+
+真实集成缺口修复：`safety_purge` 曾默默删除敏感源节点却留下泄漏的派生物。现在 `apply_decay` 新增 `exclude_ids` 保护集，`forget_policy` 的 safety_purge 路径接入 C442 泄漏扫描（dry-run 预览 + `blocked_by_leak`）。
+
+#### `resolve_entity_variants(*, modes=("case", "title"), min_len=4, dry_run=False) -> dict` (Cycle 445, Gap #5)
+
+实体标签变体归一为规范节点（GraphRAG-Bench Gap #5 收官，差距清单 6/6 清零）。三模式依序执行：`case`（大小写不敏感精确匹配）、`title`（剥离敬称+尾部首缩写后匹配）、`containment`（短标签是长标签的全词前缀，默认关闭，`len(short) >= min_len`）。规范节点取归一化核心最长者；`dry_run` 先预览。
+
+#### `enable_telemetry(*, store="agent_memory_graph", wrap=None) / disable_telemetry() / telemetry_status()` (Cycle 446)
+
+OTel `gen_ai.memory.*` span 自动插桩核心 CRUD（`add`/`link`/`get_node`/`neighbors`/`recall` 等，可经 `wrap` 选择子集）。同 cycle 从过期 C424 code-lab 副本遣返 `telemetry.py` + `amg_bench.py`（79 tests）到真身仓，pyproject py-modules 登记。
+
+#### `amg_bench_quality.py` — LongMemEvalAdapter (Cycle 447)
+
+LongMemEval 记忆质量适配器（Research #061）：`ingest_sessions`（会话→图）→ `retrieve_context` → `answer_extractive`（双置信度门控）→ `evaluate`（judge_fn 可注入）→ `CategorySummary`（accuracy / abstention_rate / retrieval_hit_rate / avg_tokens）。
+
+#### `score_confidence(scores) -> dict` + `sweep_abstention(dataset, ...)` (Cycle 448)
+
+熵置信度闸门（Research #061 洞察 #3/#4）：`score_confidence` 计算候选关键词命中分数的 Shannon 熵——低熵=证据集中=可作答，高熵=证据分散=应弃权。`sweep_abstention` 在 LongMemEval 数据集上扫描弃权阈值，输出 accuracy-vs-coverage 曲线（诚实契约：宁可弃权不可胡答）。
 
 ---
 
