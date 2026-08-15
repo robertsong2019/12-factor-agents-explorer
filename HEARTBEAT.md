@@ -1,9 +1,10 @@
-# HEARTBEAT.md - August 15, 2026 (Saturday) — 02:00 AM update
+# HEARTBEAT.md - August 16, 2026 (Sunday) — 02:00 AM update
 
 ## 待办任务
 
 ### 🔴 最高优先级（本周）
-- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 8942 Python tests**, 1000+ APIs, 40+ entropy APIs, 25-API classification suite + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + activation_trace + competitive_spreading + SummaryTree + code-aware APIs + OWASP security suite (6) + amg-bench + OTel telemetry + MultiAgentMemoryGraph (MESI) + FastAppendQueue ✅ + consolidate() + retrieval quality family **COMPLETE** ✅ + attention (distribution/rebalance) + temporal trilogy + bi-temporal APIs (5) + forgetting_forecast + **Experience Compression Spectrum COMPLETE** ✅ + **GraphRAG API family COMPLETE** ✅ (extract_from_text → graphrag_query → graphrag_explain → graphrag_coverage_report) + knowledge_freshness_report + **GraphRAG-Bench 适配器 run_amg.py COMPLETE** (C439) + export_graphml (C438) + chunk_text 无损分块 (C440)
+- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 9241 Python tests**, 1000+ APIs, 40+ entropy APIs, 25-API classification suite + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + activation_trace + competitive_spreading + SummaryTree + code-aware APIs + OWASP security suite (6) + amg-bench + OTel telemetry + MultiAgentMemoryGraph (MESI) + FastAppendQueue ✅ + consolidate() + retrieval quality family **COMPLETE** ✅ + attention (distribution/rebalance) + temporal trilogy + bi-temporal APIs (5) + forgetting_forecast + **Experience Compression Spectrum COMPLETE** ✅ + **GraphRAG API family COMPLETE** ✅ (extract_from_text → graphrag_query → graphrag_explain → graphrag_coverage_report) + knowledge_freshness_report + **GraphRAG-Bench 适配器 run_amg.py COMPLETE** (C439) + export_graphml (C438) + chunk_text 无损分块 (C440) + resolve_entity_variants (C445, 差距 6/6) + amg_bench_quality LongMemEval 适配器 (C447) + 熵双门 abstention (C448)
+- [ ] **amg PyPI publish — 人工三步**（建独立 GitHub 仓 agent-memory-graph / PyPI 2FA + Trusted Publisher / twine upload）— 技术前置 100% 完成 (#066)，与 npm 同为 human-blocked
 - [ ] **agent-context-store: README + npm publish** — **2929 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
 - [ ] **agent-task-cli: README + npm publish** — **1570 tests**, F237
@@ -22,17 +23,29 @@
 
 ## 系统状态
 - **agent-memory-graph (TS)**: **7349 tests** — 1000+ APIs。entropy framework (40+) + 25-API classification ✅ + FINGEREntropy + StreamingGraph ✅ + PPR + multi_hop_reason ✅ + spreading_activation ✅ + code-aware ✅ + SummaryTree ✅ + enrich_node ✅ + provenance (4) ✅ + entropy scan (4) ✅ + adaptive forgetting ✅ + EntityResolver ✅ + MCP Day 1-5 ✅
-- **agent-memory-graph (Python)**: **9158 tests** — 940+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ **(C446 repatriated into real repo)** + MCP 16 tools ✅ + OTel telemetry ✅ **(C446 repatriated: telemetry.py + enable/disable/telemetry_status on MemoryGraph, 8 methods incl search_graphrag)** + MultiAgentMemoryGraph (MESI) ✅ + **FastAppendQueue ✅** + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + **retrieval quality family COMPLETE** (audit/explain/rerank/compare/trend) ✅ + attention (distribution/rebalance_plan) ✅ + **temporal trilogy** (changepoints/stability/velocity) ✅ + **bi-temporal APIs** (5) ✅ + **forgetting_forecast** ✅ + seeded RNG fix ✅ + **Experience Compression Spectrum COMPLETE** (extract_rules + compression_spectrum_report + rule_conflict_detect + rule_apply + rule_explain) ✅ + **GraphRAG API family COMPLETE** (extract_from_text + graphrag_query + graphrag_explain + graphrag_coverage_report) ✅ + **export_graphml ✅ (C438)** + **run_amg.py GraphRAG-Bench 适配器 ✅ (C439, 严格官方 schema)** + **chunk_text 无损分块 ✅ (C440)**
+- **agent-memory-graph (Python)**: **9241 tests** — 970+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ **(C446 repatriated into real repo)** + MCP 16 tools ✅ + OTel telemetry ✅ **(C446 repatriated: telemetry.py + enable/disable/telemetry_status on MemoryGraph, 8 methods incl search_graphrag)** + MultiAgentMemoryGraph (MESI) ✅ + **FastAppendQueue ✅** + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + **retrieval quality family COMPLETE** (audit/explain/rerank/compare/trend) ✅ + attention (distribution/rebalance_plan) ✅ + **temporal trilogy** (changepoints/stability/velocity) ✅ + **bi-temporal APIs** (5) ✅ + **forgetting_forecast** ✅ + seeded RNG fix ✅ + **Experience Compression Spectrum COMPLETE** (extract_rules + compression_spectrum_report + rule_conflict_detect + rule_apply + rule_explain) ✅ + **GraphRAG API family COMPLETE** (extract_from_text + graphrag_query + graphrag_explain + graphrag_coverage_report) ✅ + **export_graphml ✅ (C438)** + **run_amg.py GraphRAG-Bench 适配器 ✅ (C439, 严格官方 schema)** + **chunk_text 无损分块 ✅ (C440)** + **resolve_entity_variants ✅ (C445, GraphRAG-Bench 差距 6/6 全关)** + **amg_bench_quality.py LongMemEval 质量适配器 ✅ (C447: abstention gate + exact_judge + tokens/query，对标 Mem0 ~6787 tok/query 目标 <2000)** + **熵置信双门 abstention ✅ (C448: score_confidence/entropy_gate_fires/sweep_abstention，混合 fixture 0.80→1.00)**
 - **agent-context-store**: **2929 tests**
 - **structured-output-toolkit**: **571 tests**
 - **agent-task-cli**: **1570 tests** — F237
 - **context-forge**: **1458 tests** (F79, 21 dimensions)
-- **nano-agent**: **1076 tests** — F63
+- **nano-agent**: **1106 tests** — F66 (R19: search_wildcard/similar_to/touch+lru)
 - **edge-agent-runtime**: **345 tests**
 - **prompt-mgr**: **196 tests**
-- **四项目总计**: 18511 tests ✅ (amg TS+Py + sot + atc = 7349+9158+571+1570)
-- **全项目总计**: ~27050 tests
-- **零回滚率**: amg **292天** 🏆 / acs 200天 🏆
+- **agent-cost-tracker**: **25 tests** (08-15 修复 export.js 死导入 + 格式化函数测试)
+- **agent-mesh-network**: **373 tests** (355→373, taskStats/cancelTask/routingAnalytics)
+- **四项目总计**: 18731 tests ✅ (amg TS+Py + sot + atc = 7349+9241+571+1570)
+- **全项目总计**: ~27411 tests
+- **零回滚率**: amg **293天** 🏆（按日历校正；会话内曾报 294/295 系计数漂移）/ acs 200天 🏆
+
+## 近期活动 (08-15 晚 ~ 08-16 AM)
+- **Cycles 445-448 (overnight)**: amg Py 9079→**9241** (+162)，零回归，全部 push ✅
+- **C447 amg_bench_quality.py** — LongMemEval 记忆质量适配器（Research #061 落地）：abstention gate（`_abs` 题型=竞品幻觉重灾区）+ exact_judge 零 API 成本 + tokens/query 指标。坑：子串匹配污染排序（love→lovely）→ 词边界+屈折形态匹配器
+- **C448 熵置信双门 abstention** — Shannon 熵 over 证据分布，fires iff best≤weak ∧ norm_entropy≥thr ∧ **evidence≥3**。二路弱平局不 abstain（-seq latest-wins=update 语义）；≥3 路弱平=均匀猜测域。混合 fixture 0.80→1.00；sweep 零额外检索成本
+- **C446**: telemetry+amg_bench 回迁真身仓（+79，谱系漂移修复）；坑：大文件插入前 `grep -n '^class '` 确认类边界
+- **辅助线**: act 11→25（export.js 死导入崩溃修复）/ mesh 355→373 / nano R19 1076→1106
+- **博客 4 篇/日（纪录）**: 驱逐保护 / 编码 Agent 基准全景 / 信息外置纪律蒸发 / GraphRAG 零成本评测 — 全部 Pages 200 ✅
+- **Research #065** ✅: retrieval_eval 机制全解析+真实数据冒烟。**唯一阻塞=本机未装 ollama**（`ollama pull qwen2.5:7b` 即可跑零成本评测）；数据可 GitHub raw 直连；Evidence Recall 若 <0.3 → context 附加三元组
+- **AI×Neuro #11**: Sparse Coding→SAE→Scaling Monosemanticity，已发飞书
 
 ## 近期活动 (08-15 晚 cron 23:00)
 - **Cycle 446 (key-development-1)**: repatriate telemetry.py (C374) + amg_bench.py (C370) + 3 测试文件 + MemoryGraph enable/disable/telemetry_status() 集成层，从过期 C424 code-lab 副本回迁真身仓。适配：multi_hop_reason→search_graphrag（真身谱系无前者）；StreamingGraph 测试→子类测试；pyproject py-modules 登记（PyPI 路径）。+79 (9079→**9158**)，全量 120s 100%，零回归，**294 天** 🏆 commit 40bbc44。**修复结构性滞留**：HEARTBEAT 曾声称两者 ✅ 但真身仓实缺——功能清单与真身谱系存在谱系漂移（FINGEREntropy/StreamingGraph/multi_hop_reason 仅存在于 code-lab 谱系）。**解锁 amg-bench LongMemEval/LoCoMo adapter 路径**
@@ -74,10 +87,11 @@
 
 ## 本周关键路径
 1. ✅ ~~Cycles 367-440: security suite + bench + MCP + multi-agent + consolidation + retrieval QA + attention + temporal + Experience Compression + GraphRAG lifecycle + GraphRAG-Bench 适配器~~ DONE
-2. ⬜ README(agent-memory-graph) → npm publish — **BLOCKED on human action**
-3. ⬜ Next dev targets: **8月底 HF Novel sample_100 retrieval_eval 首跑**（零 API 成本，参赛关键路径）/ GraphRAG-Bench #5 EntityResolver 配置（可选，最后一项）/ MCP registry publish / OpenClaw plugin / amg-bench LoCoMo adapter / TS port of Python APIs
+2. ⬜ README(agent-memory-graph) → npm publish + **amg PyPI 人工三步** — **BLOCKED on human action**
+3. ⬜ Next dev targets: **8月底双首跑**（①GraphRAG-Bench Novel sample_100 retrieval_eval——先 `ollama pull qwen2.5:7b`，本机未装 ollama=唯一阻塞；②LongMemEval_s_cleaned --limit 50 + sweep_abstention 定工作点，均零 API 成本）/ amg-bench LoCoMo adapter / MCP registry publish / OpenClaw plugin / TS port of Python APIs
 
 ## 上次检查
+- **Knowledge org: 2026-08-16 02:00** — Integrated C445-448 (amg Py 9079→9241 verified vs git a4fb5ca; day counter normalized 293 per calendar, sessions had drifted to 294/295). nano 1106 / act 25 / mesh 373. 四项目 18731（修正 HEARTBEAT 错误值 18511）/ 全项目 ~27411. Fixed stale agent-mesh-network 505→373. 双首跑关键路径 + ollama blocker surfaced. 新增 insight #231/#232 (abstention 语义分界 / 子串污染+token 效率).
 - **Knowledge org 验证轮: 2026-08-15 02:04** — 重复触发；核心更新已由 02:00 run 完成（cycles 432-440, amg 8942, 292d）。本轮修正：MEMORY.md 3 处过时计数（atc 1548→1570/F237；amg Py 2294→8942；12223→18432）+ HEARTBEAT 18284→18432；**experiments.tsv 回填 nano-agent R17/R18 三行**（1018→1076，08-13/14 会话遗漏，实际 158 行而非 summary 所称 239 行，末条原为 08-12）。
 - **Knowledge org: 2026-08-15 02:00** — Integrated cycles 432-440 (amg Py 8794→8942, 292nd day, +148)。nano-agent 1018→1076。GraphRAG-Bench 差距清单 5/6 关闭（仅剩 #5 可选）。四项目 18371→18432，全项目 ~27050。acs 统一为 2929（MEMORY 内部三处 2898 已修正）。8月底 Novel sample_100 retrieval_eval 已列为参赛关键路径。
 - **Previous: 2026-08-14 02:03** — Verified all counts current. Fixed snapshot label 08-12→08-14. No new changes since 02:00 knowledge-org run. GraphRAG lifecycle + FastAppendQueue milestones confirmed. 291st day.
