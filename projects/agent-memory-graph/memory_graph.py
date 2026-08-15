@@ -13733,7 +13733,8 @@ class MemoryGraph:
                     kinds: list[str] | None = None,
                     dry_run: bool = False,
                     archive_threshold: float = 0.25,
-                    delete_threshold: float = 0.1) -> dict:
+                    delete_threshold: float = 0.1,
+                    exclude_ids: set | list | None = None) -> dict:
         """Apply entropy-weighted decay to all (or filtered) nodes.
 
         Unlike ``memory_decay()`` (pure time-based), this uses
@@ -13751,6 +13752,8 @@ class MemoryGraph:
             dry_run: Preview without modifying.
             archive_threshold: Below this = significant weight cut.
             delete_threshold: Below this = node deletion.
+            exclude_ids: Node ids to skip entirely (used by the
+                safety_purge leak gate to protect blocked nodes).
 
         Returns:
             {scanned, kept, archived, deleted, activations}
@@ -13758,6 +13761,8 @@ class MemoryGraph:
         rows = self.conn.execute(
             "SELECT id, kind, weight FROM nodes"
         ).fetchall()
+
+        exclude = set(exclude_ids) if exclude_ids else set()
 
         scanned = 0
         kept = 0
@@ -13771,6 +13776,8 @@ class MemoryGraph:
 
         for r in rows:
             if kinds and r["kind"] not in kinds:
+                continue
+            if r["id"] in exclude:
                 continue
 
             scanned += 1
@@ -13921,15 +13928,44 @@ class MemoryGraph:
                 archive_threshold=config.get("archive_threshold", 0.3),
             )
 
+        # Cycle 444: safety_purge leak gate — sensitive nodes whose
+        # derivatives still carry their tokens are blocked from purge
+        # (cross-modal leak, Research #018). Blocked nodes survive for
+        # derivative scrubbing; scan results ride along in the result.
+        blocked_by_leak = []
+        exclude_ids = None
+        if policy == "safety_purge" and not dry_run:
+            preview = self.apply_decay(
+                half_life_days=config.get("half_life_days", 1.0),
+                kinds=effective_kinds,
+                dry_run=True,
+                archive_threshold=config.get("archive_threshold", 0.7),
+                delete_threshold=config.get("delete_threshold", 0.5),
+            )
+            exclude_ids = set()
+            for d in preview.get("details_deleted", []):
+                scan = self.cross_modal_leak_scan(d["id"])
+                if scan["risk_level"] == "high":
+                    exclude_ids.add(d["id"])
+                    blocked_by_leak.append({
+                        "id": d["id"],
+                        "leak_token_count": scan["leak_token_count"],
+                        "derivatives": scan["derivations"],
+                    })
+            exclude_ids = exclude_ids or None
+
         result = self.apply_decay(
             half_life_days=config.get("half_life_days", 7.0),
             kinds=effective_kinds,
             dry_run=dry_run,
             archive_threshold=config.get("archive_threshold", 0.25),
             delete_threshold=config.get("delete_threshold", 0.1),
+            exclude_ids=exclude_ids,
         )
         result["policy"] = policy
         result["policy_description"] = config_desc
+        if blocked_by_leak:
+            result["blocked_by_leak"] = blocked_by_leak
         return result
 
     def _forget_active_deletion(self, dry_run: bool = False,
