@@ -45,7 +45,7 @@ Homepage = "https://github.com/robertsong2019/agent-memory-graph"
 Documentation = "https://github.com/robertsong2019/agent-memory-graph#readme"
 
 [tool.setuptools]
-py-modules = ["memory_graph", "mcp_server"]
+py-modules = ["memory_graph", "mcp_server", "telemetry", "amg_bench"]
 
 [tool.pytest.ini_options]
 testpaths = ["."]
