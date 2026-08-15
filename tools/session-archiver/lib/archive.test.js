@@ -243,3 +243,193 @@ test("diffArchives identical sessions", () => {
 test("diffArchives throws for missing archive", () => {
   assert.throws(() => diffArchives("nope", "diff-c"), /not found/);
 });
+
+// === Edge-case coverage boost (2026-08-16 morning cycle) ===
+
+test("exportSession throws for missing archive", () => {
+  assert.throws(() => exportSession("totally-absent-id"), /Archive not found/);
+});
+
+test("exportSession resolves partial ID prefix", () => {
+  archiveSession({
+    id: "zz-part-42",
+    label: "Partial Resolve",
+    history: [{ role: "user", content: "resolve me by prefix" }],
+  });
+  const md = exportSession("zz-part");
+  assert.ok(md.includes("Partial Resolve"));
+});
+
+test("exportSession html escapes dangerous content (XSS)", () => {
+  archiveSession({
+    id: "xss-check",
+    label: "XSS Probe",
+    history: [{ role: "user", content: "<script>alert('xss')</script> & <b>bold</b>" }],
+  });
+  const html = exportSession("xss-check", "html");
+  assert.ok(html.includes("&lt;script&gt;"));
+  assert.ok(html.includes("&amp;"));
+  assert.ok(!html.includes("<script>"));
+});
+
+test("archiveSession auto-generates id when omitted", () => {
+  const result = archiveSession({
+    label: "Auto ID",
+    history: [{ role: "user", content: "no id given" }],
+  });
+  assert.ok(result.id.startsWith("session-"));
+  assert.equal(result.messageCount, 1);
+});
+
+test("archiveSession tolerates non-array history", () => {
+  const result = archiveSession({ id: "hist-string", label: "str", history: "not-an-array" });
+  assert.equal(result.messageCount, 0);
+  const json = JSON.parse(exportSession("hist-string", "json"));
+  assert.deepEqual(json.history, []);
+});
+
+test("archiveSession tolerates undefined history and persists meta", () => {
+  const result = archiveSession({ id: "hist-undef", label: "undef", meta: { agent: "catalyst" } });
+  assert.equal(result.messageCount, 0);
+  const json = JSON.parse(exportSession("hist-undef", "json"));
+  assert.deepEqual(json.meta, { agent: "catalyst" });
+});
+
+test("archiveSession builds token index (frequency + punctuation stripping)", () => {
+  archiveSession({
+    id: "idx-check",
+    label: "Index",
+    history: [{ role: "user", content: "catalyst catalyst research! don't stop" }],
+  });
+  const json = JSON.parse(exportSession("idx-check", "json"));
+  assert.equal(json.index.catalyst, 2);
+  assert.equal(json.index.research, 1);
+  assert.equal(json.index.don, 1); // apostrophe stripped -> "don"
+  assert.equal(json.index.stop, 1);
+  assert.ok(!("t" in json.index)); // 1-char tokens dropped
+});
+
+test("listArchives respects limit", () => {
+  assert.equal(listArchives({ limit: 2 }).length, 2);
+});
+
+test("listArchives skips corrupt JSON files without crashing", () => {
+  const corrupt = path.join(TMP_DIR, "corrupt-file.json");
+  fs.writeFileSync(corrupt, "{invalid json!!", "utf-8");
+  const archives = listArchives();
+  assert.ok(!archives.some((a) => a.id === "corrupt-file"));
+  fs.rmSync(corrupt, { force: true });
+});
+
+test("searchArchives respects limit", () => {
+  for (let i = 1; i <= 3; i++) {
+    archiveSession({ id: `limq-${i}`, label: `LimQ ${i}`, history: [
+      { role: "user", content: `uniquewordlimq number ${i}` },
+    ] });
+  }
+  const results = searchArchives("uniquewordlimq", { limit: 2 });
+  assert.equal(results.length, 2);
+});
+
+test("searchArchives combines substring and token scores", () => {
+  archiveSession({ id: "score-check", label: "Score", history: [
+    { role: "user", content: "the quick brown fox jumps" },
+  ] });
+  const results = searchArchives("quick brown fox");
+  const hit = results.find((r) => r.archiveId === "score-check");
+  assert.ok(hit);
+  assert.ok(hit.score >= 13); // substring +10, each of 3 tokens in index +1
+  assert.equal(hit.matches.length, 1);
+});
+
+test("searchArchives caps match previews at 5", () => {
+  const history = [];
+  for (let i = 0; i < 6; i++) history.push({ role: "user", content: `capmatch line ${i}` });
+  archiveSession({ id: "cap-match", label: "Cap", history });
+  const results = searchArchives("capmatch");
+  const hit = results.find((r) => r.archiveId === "cap-match");
+  assert.equal(hit.matches.length, 5); // capped from 6
+});
+
+test("getStats reports oldest/newest when archives exist", () => {
+  const stats = getStats();
+  assert.ok(stats.totalArchives >= 1);
+  assert.ok(typeof stats.oldest === "string");
+  assert.ok(typeof stats.newest === "string");
+  assert.ok(/(KB|MB)$/.test(stats.diskUsage));
+});
+
+test("cleanOldArchives with future threshold removes nothing", () => {
+  const before = listArchives().length;
+  const result = cleanOldArchives(36500, false); // 100 years
+  assert.equal(result.count, 0);
+  assert.equal(listArchives().length, before);
+});
+
+test("addTags with empty array reports added 0", () => {
+  archiveSession({ id: "empty-tags", label: "Empty", history: [] });
+  const result = addTags("empty-tags", []);
+  assert.equal(result.added, 0);
+  assert.deepEqual(result.tags, []);
+});
+
+test("removeTags with non-existent tag reports removed 0", () => {
+  const result = removeTags("tag-test", ["ghost-tag"]);
+  assert.equal(result.removed, 0);
+  assert.deepEqual(result.tags, ["important", "new-tag"]); // unchanged
+});
+
+test("removeTags throws for missing archive", () => {
+  assert.throws(() => removeTags("no-such-archive", ["x"]), /not found/);
+});
+
+test("diffArchives matching is role-sensitive", () => {
+  archiveSession({ id: "diff-role-a", label: "RA", history: [
+    { role: "user", content: "same words here" },
+  ] });
+  archiveSession({ id: "diff-role-b", label: "RB", history: [
+    { role: "assistant", content: "same words here" },
+  ] });
+  const diff = diffArchives("diff-role-a", "diff-role-b");
+  assert.equal(diff.commonCount, 0);
+  assert.equal(diff.onlyInA.length, 1);
+  assert.equal(diff.onlyInB.length, 1);
+});
+
+test("diffArchives similarity reflects partial overlap", () => {
+  archiveSession({ id: "diff-g", label: "G", history: [
+    { role: "user", content: "common line" },
+    { role: "user", content: "g only line" },
+  ] });
+  archiveSession({ id: "diff-h", label: "H", history: [
+    { role: "user", content: "common line" },
+  ] });
+  const diff = diffArchives("diff-g", "diff-h");
+  assert.equal(diff.commonCount, 1);
+  assert.equal(diff.similarity, "0.67"); // 2*1/(2+1)
+});
+
+test("toMarkdown falls back to msg.text and unknown role", () => {
+  archiveSession({ id: "md-fallback", label: "Fallback", history: [
+    { text: "via text field only" },
+  ] });
+  const md = exportSession("md-fallback", "markdown");
+  assert.ok(md.includes("UNKNOWN"));
+  assert.ok(md.includes("via text field only"));
+});
+
+test("mergeArchives orders sources chronologically by archivedAt", async () => {
+  archiveSession({ id: "merge-first", label: "First", history: [
+    { role: "user", content: "earlier message" },
+  ] });
+  await new Promise((r) => setTimeout(r, 15)); // ensure distinct archivedAt
+  archiveSession({ id: "merge-second", label: "Second", history: [
+    { role: "assistant", content: "later message" },
+  ] });
+  const result = mergeArchives(["merge-second", "merge-first"], { id: "merge-ordered" }); // reversed input order
+  const json = JSON.parse(exportSession("merge-ordered", "json"));
+  assert.equal(json.history[0]._source, "merge-first");
+  assert.equal(json.history[1]._source, "merge-second");
+  assert.equal(json.meta.sources[0].id, "merge-first");
+  assert.equal(result.totalMessages, 2);
+});
