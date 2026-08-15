@@ -41680,6 +41680,327 @@ n            - ``total_rules`` – number of rules scanned.
         return dashboard
 
     # ------------------------------------------------------------------
+    # Cycle 441: SearchTree suite — graph-as-search-tree (Arbor pattern,
+    # Research #029 + entropy-guided branching #028)
+    # ------------------------------------------------------------------
+
+    SEARCH_TREE_KIND = "search_tree"
+    SEARCH_CHILD_REL = "search_child"
+
+    def _stree_query_tokens(self, query):
+        """Lowercased stop-word-filtered query tokens."""
+        if not query:
+            return []
+        stop = {"the", "a", "an", "of", "to", "in", "is", "are", "for",
+                "and", "or", "on", "at", "by", "with", "what", "which"}
+        return [t for t in query.lower().split() if t not in stop and len(t) > 1]
+
+    def _stree_score(self, node, tokens):
+        """Score = 0.7 * query relevance + 0.3 * node weight.
+
+        Relevance = Jaccard overlap between query tokens and the
+        node's label+tag tokens. Without a query, weight only.
+        """
+        w = max(float(node.weight or 1.0), 0.0)
+        if not tokens:
+            return round(w, 4)
+        label_tokens = set(node.label.lower().split())
+        try:
+            tags = set(t.lower() for t in json.loads(
+                self.conn.execute("SELECT tags FROM nodes WHERE id=?",
+                                   (node.id,)).fetchone()["tags"] or "[]"))
+        except Exception:
+            tags = set()
+        target = label_tokens | tags
+        if not target:
+            return 0.0
+        overlap = len(set(tokens) & target)
+        relevance = overlap / (len(tokens) + len(target) - overlap) if overlap else 0.0
+        return round(0.7 * relevance + 0.3 * w, 4)
+
+    def _stree_fetch(self, node_id):
+        """Fetch one search_tree node row or None."""
+        row = self.conn.execute(
+            "SELECT * FROM nodes WHERE id=? AND kind=?",
+            (node_id, self.SEARCH_TREE_KIND)).fetchone()
+        return row
+
+    def _stree_children(self, node_id):
+        """Direct search_child children (node rows)."""
+        return self.conn.execute(
+            "SELECT n.* FROM nodes n JOIN edges e ON n.id=e.target "
+            "WHERE e.source=? AND e.relation=?",
+            (node_id, self.SEARCH_CHILD_REL)).fetchall()
+
+    def _stree_members(self, root_id):
+        """All tree node ids reachable from root via search_child."""
+        members, stack = {root_id}, [root_id]
+        while stack:
+            cur = stack.pop()
+            for r in self._stree_children(cur):
+                if r["id"] not in members:
+                    members.add(r["id"])
+                    stack.append(r["id"])
+        return members
+
+    def expand_search_tree(self, node_id, query=None, *,
+                           branching_factor=2, max_depth=3) -> dict:
+        """Expand one frontier node into scored child branches (Arbor).
+
+        The graph doubles as a shared search tree: each expansion
+        materializes scored ``search_tree`` child nodes linked via
+        ``search_child`` edges, so multiple agents can see which
+        branches were explored and how they scored.
+
+        If ``node_id`` is a non-tree node, a root wrapper is created
+        first (status="root", depth=0).
+
+        Scoring: 0.7 x Jaccard(query, label+tags) + 0.3 x weight.
+
+        Args:
+            node_id: Frontier tree node to expand (or any node to root).
+            query: Optional query steering branch selection.
+            branching_factor: Max children created per expansion.
+            max_depth: Depth cap — expansions beyond it are refused.
+
+        Returns:
+            ``{root_id, expanded_from, depth, children: [...],
+               frontier_count, reason}``
+        """
+        row = self._stree_fetch(node_id)
+        if row is None:
+            src = self.get_node(node_id)
+            if src is None:
+                raise ValueError(f"node not found: {node_id}")
+            root = self.add(src.label, kind=self.SEARCH_TREE_KIND,
+                            data={"query": query, "score": 1.0, "depth": 0,
+                                  "status": "root", "root_id": None,
+                                  "ref_node_id": src.id},
+                            tags=["search_tree"])
+            node_id = root.id
+            row = self._stree_fetch(node_id)
+
+        meta = json.loads(row["data"]) if row["data"] else {}
+        depth = int(meta.get("depth", 0))
+        root_id = meta.get("root_id") or node_id
+        if meta.get("status") == "pruned":
+            return {"root_id": root_id, "expanded_from": node_id,
+                    "depth": depth, "children": [],
+                    "frontier_count": 0, "reason": "pruned"}
+        if depth + 1 > max_depth:
+            return {"root_id": root_id, "expanded_from": node_id,
+                    "depth": depth, "children": [],
+                    "frontier_count": 0, "reason": "max_depth"}
+
+        members = self._stree_members(root_id)
+        # Excluded from candidacy: tree node ids AND the original-graph
+        # nodes they reference (ref_node_id) — no revisiting.
+        ref_ids = {node_id}
+        for mid in members:
+            mrow = self._stree_fetch(mid)
+            mmeta = json.loads(mrow["data"]) if mrow["data"] else {}
+            ref_ids.add(mmeta.get("ref_node_id") or mid)
+        ref_src = meta.get("ref_node_id", node_id)
+        rows = self.conn.execute(
+            "SELECT n.* FROM nodes n JOIN edges e ON "
+            "(n.id=e.target AND e.source=?) OR (n.id=e.source AND e.target=?)",
+            (ref_src, ref_src)).fetchall()
+        tokens = self._stree_query_tokens(query or meta.get("query"))
+
+        class _N:  # lightweight scorer shim over a row
+            def __init__(self, r):
+                self.id, self.label, self.weight = r["id"], r["label"], r["weight"]
+
+        candidates = []
+        for r in rows:
+            if r["id"] in ref_ids or r["kind"] == self.SEARCH_TREE_KIND:
+                continue
+            candidates.append((self._stree_score(_N(r), tokens), r))
+        candidates.sort(key=lambda cr: (-cr[0], cr[1]["label"]))
+
+        children = []
+        for score, r in candidates[:max(0, branching_factor)]:
+            child = self.add(
+                r["label"], kind=self.SEARCH_TREE_KIND,
+                data={"query": query or meta.get("query"), "score": score,
+                      "depth": depth + 1, "status": "frontier",
+                      "root_id": root_id, "ref_node_id": r["id"]},
+                tags=["search_tree"])
+            self.link(node_id, child.id, self.SEARCH_CHILD_REL)
+            children.append({"id": child.id, "label": child.label,
+                             "ref_node_id": r["id"], "score": score,
+                             "depth": depth + 1, "status": "frontier"})
+
+        if meta.get("status") == "frontier":
+            meta["status"] = "expanded"
+            self.conn.execute("UPDATE nodes SET data=? WHERE id=?",
+                              (json.dumps(meta), node_id))
+
+        frontier_count = self.conn.execute(
+            "SELECT COUNT(*) c FROM nodes WHERE kind=? AND "
+            "json_extract(data, '$.status')='frontier' AND "
+            "json_extract(data, '$.root_id')=?",
+            (self.SEARCH_TREE_KIND, root_id)).fetchone()["c"]
+
+        reason = "expanded" if children else "no_candidates"
+        return {"root_id": root_id, "expanded_from": node_id,
+                "depth": depth, "children": children,
+                "frontier_count": frontier_count, "reason": reason}
+
+    def prune_search_tree(self, node_id, *, min_score) -> dict:
+        """Prune subtrees scoring below ``min_score`` (non-destructive).
+
+        Marks nodes ``status="pruned"`` instead of deleting — the
+        exploration history stays auditable (provenance-first).
+        Pruning an expanded node cascades to its whole subtree.
+
+        Args:
+            node_id: Tree node whose subtree to prune.
+            min_score: Score threshold — children scoring below it
+                are pruned. The node itself is pruned only when it
+                is a frontier/expanded node (roots survive).
+
+        Returns:
+            ``{pruned_count, pruned_ids, remaining_frontier, subtree_size}``
+        """
+        row = self._stree_fetch(node_id)
+        if row is None:
+            raise ValueError(f"not a search tree node: {node_id}")
+        meta = json.loads(row["data"]) if row["data"] else {}
+        root_id = meta.get("root_id") or node_id
+
+        # Collect subtree in parent-before-child order
+        order, stack = [], [node_id]
+        seen = {node_id}
+        while stack:
+            cur = stack.pop(0)
+            order.append(cur)
+            for r in self._stree_children(cur):
+                if r["id"] not in seen:
+                    seen.add(r["id"])
+                    stack.append(r["id"])
+
+        pruned_ids = []
+        already = set()
+        for nid in order:
+            if nid in already:
+                continue
+            r2 = self._stree_fetch(nid)
+            m2 = json.loads(r2["data"]) if r2["data"] else {}
+            if m2.get("status") == "pruned":
+                already.add(nid)
+                continue
+            is_self = nid == node_id
+            self_prune = (is_self and meta.get("status") != "root")
+            child_prune = (not is_self and m2.get("score", 1.0) < min_score)
+            if self_prune or child_prune:
+                # cascade: everything below a pruned ancestor dies too
+                q, seen2 = [nid], {nid}
+                while q:
+                    c = q.pop(0)
+                    if c not in pruned_ids:
+                        pruned_ids.append(c)
+                        already.add(c)
+                    for r3 in self._stree_children(c):
+                        if r3["id"] not in seen2:
+                            seen2.add(r3["id"])
+                            q.append(r3["id"])
+
+        for pid in pruned_ids:
+            r4 = self._stree_fetch(pid)
+            m4 = json.loads(r4["data"]) if r4["data"] else {}
+            m4["status"] = "pruned"
+            self.conn.execute("UPDATE nodes SET data=? WHERE id=?",
+                              (json.dumps(m4), pid))
+
+        remaining_frontier = self.conn.execute(
+            "SELECT COUNT(*) c FROM nodes WHERE kind=? AND "
+            "json_extract(data, '$.status')='frontier' AND "
+            "json_extract(data, '$.root_id')=?",
+            (self.SEARCH_TREE_KIND, root_id)).fetchone()["c"]
+
+        return {"pruned_count": len(pruned_ids), "pruned_ids": pruned_ids,
+                "remaining_frontier": remaining_frontier,
+                "subtree_size": len(order)}
+
+    def search_tree_report(self, root_id) -> dict:
+        """Summarize a search tree: status, depth, best path.
+
+        The best path is the root-to-leaf route with the highest
+        cumulative score — the primary output of tree search: "which
+        branch won".
+
+        Args:
+            root_id: Tree root node id.
+
+        Returns:
+            ``{root_id, total, by_status, max_depth, avg_score,
+               best_path: [...], tree_text}``
+        """
+        row = self._stree_fetch(root_id)
+        if row is None:
+            raise ValueError(f"not a search tree node: {root_id}")
+
+        def fetch_meta(nid):
+            r = self._stree_fetch(nid)
+            m = json.loads(r["data"]) if r["data"] else {}
+            return m
+
+        members = self._stree_members(root_id)
+        nodes = {}
+        for nid in members:
+            m = fetch_meta(nid)
+            nodes[nid] = {"id": nid, "label": self._stree_fetch(nid)["label"],
+                          "score": m.get("score", 1.0),
+                          "depth": m.get("depth", 0),
+                          "status": m.get("status", "frontier")}
+
+        by_status = {}
+        for info in nodes.values():
+            by_status[info["status"]] = by_status.get(info["status"], 0) + 1
+
+        max_depth = max((i["depth"] for i in nodes.values()), default=0)
+        scores = [i["score"] for i in nodes.values() if i["depth"] > 0]
+        avg_score = round(sum(scores) / len(scores), 4) if scores else 0.0
+
+        # Best path: DFS maximizing cumulative score, pruned nodes excluded
+        def best_from(nid):
+            kids = [r["id"] for r in self._stree_children(nid)
+                    if nodes.get(r["id"], {}).get("status") != "pruned"]
+            if not kids:
+                return [nodes[nid]], nodes[nid]["score"]
+            best_chain, best_total = None, float("-inf")
+            for k in kids:
+                chain, total = best_from(k)
+                if total > best_total:
+                    best_total, best_chain = total, chain
+            return [nodes[nid]] + best_chain, best_total + nodes[nid]["score"]
+
+        chain, _total = best_from(root_id)
+        best_path = [{"id": c["id"], "label": c["label"],
+                      "score": c["score"], "depth": c["depth"]}
+                     for c in chain]
+
+        lines = []
+
+        def render(nid, indent):
+            info = nodes[nid]
+            marker = " [pruned]" if info["status"] == "pruned" else ""
+            lines.append(f"{'  ' * indent}{info['label']} "
+                         f"(score={info['score']}, depth={info['depth']})"
+                         f"{marker}")
+            for r in sorted(self._stree_children(nid),
+                            key=lambda x: x["label"]):
+                render(r["id"], indent + 1)
+
+        render(root_id, 0)
+
+        return {"root_id": root_id, "total": len(members),
+                "by_status": by_status, "max_depth": max_depth,
+                "avg_score": avg_score, "best_path": best_path,
+                "tree_text": "\n".join(lines)}
+
+    # ------------------------------------------------------------------
     # Cycle 331: conditioned_traverse() — query-conditioned BFS (Research #040)
     # ------------------------------------------------------------------
 
