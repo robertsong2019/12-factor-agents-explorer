@@ -1,34 +1,51 @@
+# pyproject.toml — agent-memory-graph (modernized Research #066, 2026-08-15)
+# Changelog vs June version:
+#   - PEP 639 SPDX license expression (replaces deprecated {text=...} + license classifier), setuptools>=77
+#   - mcp_server.py included as optional module; [mcp] extra pulls the `mcp` dependency
+#   - version 1.0.0 → 0.9.0 (first-ever publish; pre-1.0 honestly signals evolving 940+ API surface.
+#     Flip back to 1.0.0 before upload if you prefer — see Research #066 note for the tradeoff.)
+#   - description updated to current API surface (GraphRAG lifecycle, entropy, bi-temporal)
+# Verified 2026-08-15: PyPI name free (HTTP 404) · stdlib-only imports · 54,293 lines ·
+#   build+twine check PASSED · fresh-venv install smoke PASSED (GraphRAG + spreading + BM25)
+
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-memory-graph"
-version = "1.0.0"
-description = "Lightweight knowledge graph for AI agent long-term memory, powered by SQLite"
+version = "0.9.0"
+description = "SQLite-backed knowledge graph for AI agent long-term memory — zero dependencies, 940+ APIs: GraphRAG lifecycle, 40+ entropy measures, bi-temporal provenance, sleep consolidation, competitive spreading activation"
 readme = "README.md"
-license = {text = "MIT"}
 requires-python = ">=3.10"
-authors = [
-    {name = "Catalyst", email = "catalyst@openclaw.dev"},
-]
-keywords = ["knowledge-graph", "agent", "memory", "sqlite", "ai"]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["agent", "memory", "knowledge-graph", "graphrag", "sqlite", "llm", "long-term-memory", "retrieval"]
+authors = [{ name = "robertsong2019" }]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]
 
 [project.urls]
 Homepage = "https://github.com/robertsong2019/agent-memory-graph"
+Documentation = "https://github.com/robertsong2019/agent-memory-graph#readme"
 
 [tool.setuptools]
-py-modules = ["memory_graph"]
+py-modules = ["memory_graph", "mcp_server"]
 
 [tool.pytest.ini_options]
 testpaths = ["."]

@@ -1,7 +1,10 @@
+LICENSE
 README.md
+mcp_server.py
 memory_graph.py
 pyproject.toml
 agent_memory_graph.egg-info/PKG-INFO
 agent_memory_graph.egg-info/SOURCES.txt
 agent_memory_graph.egg-info/dependency_links.txt
+agent_memory_graph.egg-info/requires.txt
 agent_memory_graph.egg-info/top_level.txt
