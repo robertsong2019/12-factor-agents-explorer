@@ -32436,6 +32436,173 @@ n            - ``total_rules`` – number of rules scanned.
             ),
         }
 
+    # ------------------------------------------------------------------
+    # Cycle 442: cross-modal leak detection (Research #018, MemLeak)
+    # ------------------------------------------------------------------
+
+    DERIVATION_RELATIONS = frozenset({
+        "image_derived", "correlated_inference", "derived_from",
+        "compressed_into", "summarized_into", "extracted_from",
+    })
+
+    _LEAK_EMAIL_RE = None  # compiled lazily
+
+    def _leak_tokens(self, node) -> set[str]:
+        """Extract sensitive-looking tokens from a node.
+
+        Signals: capitalized entities, digit runs (years/phones/amounts),
+        emails, plus any data keys listed in ``data['sensitive_keys']``.
+        """
+        import re
+        tokens = set()
+        text = f"{node.label or ''} {' '.join(str(v) for v in (node.data or {}).values() if isinstance(v, (str, int, float)))}"
+        # Capitalized entities (require uppercase start AND length >= 3
+        # to cut noise)
+        for word in (node.label or "").split():
+            w = word.strip(",.;:!?")
+            if len(w) >= 3 and w[0].isupper():
+                tokens.add(w)
+        # Digit runs from label+data
+        for m in re.findall(r"\b\d[\d.,-]{2,}\b", text):
+            tokens.add(m)
+        # Emails
+        if MemoryGraph._LEAK_EMAIL_RE is None:
+            MemoryGraph._LEAK_EMAIL_RE = re.compile(
+                r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+        for m in MemoryGraph._LEAK_EMAIL_RE.findall(text):
+            tokens.add(m)
+        # Declared sensitive values
+        for key in (node.data or {}).get("sensitive_keys", []):
+            val = (node.data or {}).get(key)
+            if val is not None:
+                tokens.add(str(val))
+        return tokens
+
+    def cross_modal_leak_scan(self, node_id: str) -> dict:
+        """Scan derivation edges for cross-modal content leakage.
+
+        MemLeak-inspired (Research #018): forgetting or purging a node
+        is unsafe when other-modal derivatives (image captions, inferred
+        summaries, compressed copies) still carry the source's sensitive
+        tokens. This scan walks ``image_derived`` / ``correlated_inference``
+        / ``derived_from`` style edges OUT of the node and checks each
+        derivative's text for overlap with the source's leak tokens.
+
+        Risk levels:
+
+        - ``high``   — ≥3 leaking tokens, or any email/digit-run leak
+        - ``medium`` — 1-2 leaking tokens on some derivative
+        - ``low``    — derivation edges exist, no token overlap
+        - ``none``   — no derivation edges at all
+
+        Args:
+            node_id: Node whose outgoing derivations to audit.
+
+        Returns:
+            ``{node_id, risk_level, derivations: [...], leak_token_count,
+               recommendation}``
+        """
+        node = self.get_node(node_id)
+        if not node:
+            return {"node_id": node_id, "risk_level": "error",
+                    "derivations": [], "leak_token_count": 0,
+                    "recommendation": "Node not found"}
+
+        src_tokens = self._leak_tokens(node)
+        rows = self.conn.execute(
+            "SELECT e.relation, n.id, n.label, n.data FROM edges e "
+            "JOIN nodes n ON n.id=e.target WHERE e.source=?",
+            (node_id,)).fetchall()
+
+        derivations, leak_count = [], 0
+        for r in rows:
+            if r["relation"] not in self.DERIVATION_RELATIONS:
+                continue
+            d_label = r["label"] or ""
+            try:
+                d_data = json.loads(r["data"]) if r["data"] else {}
+            except Exception:
+                d_data = {}
+            d_text = d_label + " " + " ".join(
+                str(v) for v in d_data.values()
+                if isinstance(v, (str, int, float)))
+            leaked = sorted(
+                t for t in src_tokens if t in d_text)
+            has_email = any("@" in t for t in leaked)
+            has_digits = any(any(c.isdigit() for c in t) for t in leaked)
+            derivations.append({
+                "derived_id": r["id"], "derived_label": d_label,
+                "relation": r["relation"],
+                "leak_tokens": leaked,
+                "leak_count": len(leaked),
+            })
+            leak_count += len(leaked)
+            if has_email or has_digits or len(leaked) >= 3:
+                derivations[-1]["severity"] = "high"
+            elif leaked:
+                derivations[-1]["severity"] = "medium"
+            else:
+                derivations[-1]["severity"] = "none"
+
+        if not derivations:
+            risk, rec = "none", "No derivation edges — safe to forget."
+        else:
+            sev_rank = {"none": 0, "medium": 1, "high": 2}
+            worst = max(sev_rank[d["severity"]] for d in derivations)
+            if worst == 2:
+                risk = "high"
+                rec = ("BLOCKED: derivatives carry sensitive tokens "
+                       f"({leak_count} total). Scrub or remove derivatives "
+                       "before forgetting this node.")
+            elif worst == 1:
+                risk = "medium"
+                rec = ("CAUTION: mild token overlap in derivatives. "
+                       "Review before forgetting.")
+            else:
+                risk = "low"
+                rec = ("Derivations exist but carry no sensitive tokens — "
+                       "forget is safe.")
+
+        return {"node_id": node_id, "risk_level": risk,
+                "derivations": derivations,
+                "leak_token_count": leak_count,
+                "recommendation": rec}
+
+    def safe_forget(self, node_id: str, *, force: bool = False) -> dict:
+        """Forget a node gated by cross-modal leak scan.
+
+        Pipeline: :meth:`cross_modal_leak_scan` → gate → delete.
+
+        - ``high`` risk   — blocked unless ``force=True``
+        - ``medium``      — warning recorded, deletion proceeds
+        - ``low``/``none`` — deleted normally
+
+        Args:
+            node_id: Node to forget.
+            force: Override high-risk block (audited via verdict).
+
+        Returns:
+            ``{verdict, risk_level, removed, derivations, recommendation}``
+            verdict is one of ``deleted``, ``blocked``, ``not_found``.
+        """
+        scan = self.cross_modal_leak_scan(node_id)
+        if scan["risk_level"] == "error":
+            return {"verdict": "not_found", "risk_level": "error",
+                    "removed": False, "derivations": [],
+                    "recommendation": "Node not found"}
+        if scan["risk_level"] == "high" and not force:
+            return {"verdict": "blocked", "risk_level": "high",
+                    "removed": False,
+                    "derivations": scan["derivations"],
+                    "recommendation": scan["recommendation"] +
+                    " Pass force=True to override."}
+        removed = self.delete_node(node_id)
+        verdict = "deleted" if removed else "not_found"
+        return {"verdict": verdict, "risk_level": scan["risk_level"],
+                "removed": removed,
+                "derivations": scan["derivations"],
+                "recommendation": scan["recommendation"]}
+
     def write_governance_check(self, node_id: str, *,
                                new_label: str = None,
                                new_data: dict = None) -> dict:
