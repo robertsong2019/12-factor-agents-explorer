@@ -32478,6 +32478,157 @@ n            - ``total_rules`` – number of rules scanned.
                 tokens.add(str(val))
         return tokens
 
+    # ------------------------------------------------------------------
+    # Cycle 443: repair_pattern nodes — AgentTether prospective repair
+    # memory (Research #018). Cross-iteration: "when failure X recurs,
+    # apply fix Y". Completes the prospective-memory pair with
+    # foresight_signals() (EverMemOS).
+    # ------------------------------------------------------------------
+
+    REPAIR_KIND = "repair_pattern"
+
+    def record_repair(self, failure_signature: str, fix: str, *,
+                      context: str = None, tags: list[str] = None) -> dict:
+        """Record a cross-iteration repair pattern (AgentTether).
+
+        When an agent fails and repairs, persist the (failure → fix)
+        pair as a ``repair_pattern`` node so future iterations — or
+        other agents sharing the graph — can recall the fix instead
+        of rediscovering it.
+
+        Dedup: an identical failure_signature updates the existing
+        pattern (fix refresh + occurrences++) instead of duplicating.
+
+        Args:
+            failure_signature: Compact description of the failure mode
+                (e.g. ``"ImportError: optional dep missing"``).
+            fix: What resolved it.
+            context: Optional situation in which the fix applies.
+            tags: Optional extra tags.
+
+        Returns:
+            ``{pattern_id, signature, fix, occurrences, created_new}``
+        """
+        existing = self.conn.execute(
+            "SELECT * FROM nodes WHERE kind=? AND label=?",
+            (self.REPAIR_KIND, failure_signature)).fetchone()
+        if existing:
+            data = json.loads(existing["data"]) if existing["data"] else {}
+            data["occurrences"] = int(data.get("occurrences", 1)) + 1
+            data["fix"] = fix
+            if context:
+                data["context"] = context
+            data["last_repaired"] = time.time()
+            self.conn.execute("UPDATE nodes SET data=? WHERE id=?",
+                              (json.dumps(data), existing["id"]))
+            self.conn.commit()
+            return {"pattern_id": existing["id"],
+                    "signature": failure_signature, "fix": fix,
+                    "occurrences": data["occurrences"],
+                    "created_new": False}
+
+        node = self.add(
+            failure_signature, kind=self.REPAIR_KIND,
+            data={"fix": fix, "context": context,
+                  "occurrences": 1, "times_recalled": 0,
+                  "created": time.time(), "last_repaired": time.time()},
+            tags=(tags or []) + ["repair"])
+        return {"pattern_id": node.id, "signature": failure_signature,
+                "fix": fix, "occurrences": 1, "created_new": True}
+
+    def recall_repairs(self, failure_signature: str, *,
+                       limit: int = 3) -> list[dict]:
+        """Recall repairs matching a failure signature.
+
+        Matching = token-set overlap (Jaccard) between the query
+        signature and stored signatures. Recalled patterns get
+        ``times_recalled`` bumped (prospective hit tracking).
+
+        Args:
+            failure_signature: The failure now being experienced.
+            limit: Max patterns returned.
+
+        Returns:
+            Sorted list of ``{pattern_id, signature, fix, context,
+            occurrences, times_recalled, match_score}`` best first.
+        """
+        q_tokens = set(failure_signature.lower().split())
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE kind=?", (self.REPAIR_KIND,)).fetchall()
+
+        scored = []
+        for r in rows:
+            s_tokens = set((r["label"] or "").lower().split())
+            if not q_tokens or not s_tokens:
+                continue
+            inter = len(q_tokens & s_tokens)
+            union = len(q_tokens | s_tokens)
+            score = inter / union if union else 0.0
+            if score <= 0.0:
+                continue
+            data = json.loads(r["data"]) if r["data"] else {}
+            scored.append((score, r, data))
+
+        scored.sort(key=lambda sr: (-sr[0], -sr[2].get("occurrences", 1)))
+
+        results = []
+        for score, r, data in scored[:max(0, limit)]:
+            data["times_recalled"] = int(data.get("times_recalled", 0)) + 1
+            self.conn.execute("UPDATE nodes SET data=? WHERE id=?",
+                              (json.dumps(data), r["id"]))
+            results.append({
+                "pattern_id": r["id"], "signature": r["label"],
+                "fix": data.get("fix"), "context": data.get("context"),
+                "occurrences": data.get("occurrences", 1),
+                "times_recalled": data["times_recalled"],
+                "match_score": round(score, 4),
+            })
+        self.conn.commit()
+        return results
+
+    def repair_stats(self) -> dict:
+        """Health summary of the repair-pattern bank.
+
+        Returns:
+            ``{total_patterns, total_occurrences, total_recalls,
+               top_pattern, never_recalled}``
+        """
+        rows = self.conn.execute(
+            "SELECT * FROM nodes WHERE kind=?", (self.REPAIR_KIND,)).fetchall()
+        if not rows:
+            return {"total_patterns": 0, "total_occurrences": 0,
+                    "total_recalls": 0, "top_pattern": None,
+                    "never_recalled": 0,
+                    "recommendation": "No repairs recorded yet. Use "
+                    "record_repair() when a failure gets fixed."}
+
+        total_occ = total_rec = 0
+        top = None
+        never = 0
+        for r in rows:
+            data = json.loads(r["data"]) if r["data"] else {}
+            occ = int(data.get("occurrences", 1))
+            rec = int(data.get("times_recalled", 0))
+            total_occ += occ
+            total_rec += rec
+            if rec == 0:
+                never += 1
+            if top is None or occ > json.loads(
+                    self.conn.execute("SELECT data FROM nodes WHERE id=?",
+                                       (top,)).fetchone()["data"] or "{}").get("occurrences", 1):
+                top = r["id"]
+
+        top_row = self.conn.execute(
+            "SELECT label FROM nodes WHERE id=?", (top,)).fetchone()
+        return {
+            "total_patterns": len(rows),
+            "total_occurrences": total_occ,
+            "total_recalls": total_rec,
+            "top_pattern": {"pattern_id": top,
+                            "signature": top_row["label"]} if top else None,
+            "never_recalled": never,
+        }
+
     def cross_modal_leak_scan(self, node_id: str) -> dict:
         """Scan derivation edges for cross-modal content leakage.
 
