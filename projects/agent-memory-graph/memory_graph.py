@@ -37718,6 +37718,134 @@ n            - ``total_rules`` – number of rules scanned.
             "recommended_action": "merge_entities() on each duplicate group" if dupes else "none",
         }
 
+    # ── Entity Variant Resolution (GraphRAG-Bench Gap #5, Research #064) ────
+    # Top GraphRAG-Bench configs use multi-layer entity-resolution chains.
+    # KG indexing fragments entities into variants ("Claire" / "Claire
+    # Bennett" / "Dr. Alice Chen"); resolve_entity_variants() collapses them
+    # so graphrag_query() sees one node per real-world entity.
+
+    _HONORIFICS = {"mr", "mrs", "ms", "dr", "prof", "sir", "dame",
+                   "lord", "lady", "st"}
+
+    def _norm_title(self, label: str) -> str:
+        """Normalise a label for title/honorific matching.
+
+        Strips honorifics (``Mr.``/``Dr.``/``St.``/…) anywhere in the label
+        and trailing single-letter initials (``Claire P.`` → ``claire``), then
+        lower-cases.
+        NOTE: aggressive — "Mont St. Michel" → "mont michel". Use dry_run
+        to inspect before applying, or omit "title" from modes.
+        """
+        words = [w for w in re.split(r"\s+", label.strip()) if w]
+        # Honorifics are titles, not names — strip them anywhere in the label
+        words = [w for w in words
+                 if w.rstrip(".").lower() not in self._HONORIFICS]
+        if len(words) > 1 and re.fullmatch(r"[A-Za-z]\.?", words[-1]):
+            words.pop()
+        return " ".join(w.rstrip(".").lower() for w in words)
+
+    def resolve_entity_variants(self, *, modes: tuple = ("case", "title"),
+                                min_len: int = 4,
+                                dry_run: bool = False) -> dict:
+        """Resolve entity label variants into canonical nodes (Gap #5).
+
+        Modes (applied in order, a node absorbed by an earlier mode is
+        skipped by later ones):
+
+        - ``"case"`` — case-insensitive exact label match (same kind)
+        - ``"title"`` — strip honorifics + trailing initials, then match
+        - ``"containment"`` — short label is a full-word prefix of a longer
+          label (same kind, ``len(short) >= min_len``); OFF by default
+
+        Canonical = member with the longest normalised core (for containment,
+        the longest raw label); ties broken by first-added (rowid order).
+        Absorbed nodes are merged via :meth:`merge_entities` and registered
+        as aliases of the canonical label.
+
+        Args:
+            modes: Subset of ``("case", "title", "containment")``.
+            min_len: Minimum short-label length for containment mode.
+            dry_run: Report only — no merge, no alias registration.
+
+        Returns:
+            ``{dry_run, modes, groups_found, variants_merged,
+            aliases_registered, details: [{canonical, canonical_id,
+            absorbed: [(id, label)], mode}]}``
+        """
+        valid = {"case", "title", "containment"}
+        unknown = set(modes) - valid
+        if unknown:
+            raise ValueError(f"unknown modes: {sorted(unknown)}")
+
+        rows = self.conn.execute(
+            "SELECT rowid, id, label, kind FROM nodes ORDER BY rowid"
+        ).fetchall()
+        entries = [(r["id"], r["label"], r["kind"] or "fact") for r in rows]
+
+        def _core_len(label: str, mode: str) -> int:
+            if mode == "title":
+                return len(self._norm_title(label))
+            return len(label.strip())
+
+        groups: list[tuple[str, list, str]] = []  # (key, members, mode)
+
+        def _group_by(keyfn, mode):
+            seen = {}
+            for nid, label, kind in entries:
+                key = (kind, keyfn(label))
+                seen.setdefault(key, []).append((nid, label))
+            for (kind, key), members in seen.items():
+                if len(members) > 1 and key:
+                    groups.append((key, members, mode))
+
+        if "case" in modes:
+            _group_by(lambda l: l.strip().lower(), "case")
+        if "title" in modes:
+            _group_by(self._norm_title, "title")
+        if "containment" in modes:
+            by_kind = {}
+            for nid, label, kind in entries:
+                by_kind.setdefault(kind, []).append((nid, label))
+            for kind, members in by_kind.items():
+                lows = [(nid, label, label.strip().lower())
+                        for nid, label in members]
+                for nid, label, low in lows:
+                    if len(low) < min_len:
+                        continue
+                    longer = [(nid2, l2) for nid2, l2, lo2 in lows
+                              if lo2 != low and lo2.startswith(low + " ")]
+                    if longer:
+                        groups.append((low, [(nid, label)] + longer,
+                                       "containment"))
+
+        report = {"dry_run": bool(dry_run), "modes": list(modes),
+                  "groups_found": 0, "variants_merged": 0,
+                  "aliases_registered": 0, "details": []}
+        absorbed_ids: set = set()
+        for key, members, mode in groups:
+            candidates = [(nid, label) for nid, label in members
+                          if nid not in absorbed_ids]
+            if len(candidates) < 2:
+                continue
+            # canonical: longest normalised core; tie → first-added
+            best = candidates[0]
+            for cand in candidates[1:]:
+                if _core_len(cand[1], mode) > _core_len(best[1], mode):
+                    best = cand
+            absorbed = [c for c in candidates if c[0] != best[0]]
+            report["groups_found"] += 1
+            report["details"].append({
+                "canonical": best[1], "canonical_id": best[0],
+                "absorbed": absorbed, "mode": mode})
+            if not dry_run:
+                for nid, label in absorbed:
+                    self.merge_entities(nid, best[0])
+                    self.register_alias(best[1], label)
+                    report["aliases_registered"] += 1
+                report["variants_merged"] += len(absorbed)
+            absorbed_ids.update(nid for nid, _ in absorbed)
+        return report
+
     # ── Entropy-Weighted Retrieval ───────────────────────────────────────────
     # Research #032: amg's unique advantage — entropy as retrieval signal.
     # While Mem0 uses vector similarity and Graphiti uses graph traversal,

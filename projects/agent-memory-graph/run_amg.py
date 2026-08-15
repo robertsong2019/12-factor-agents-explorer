@@ -211,7 +211,8 @@ def chunk_text(text: str, *, max_tokens: int = 512) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def index_corpus(mg: MemoryGraph, corpus: list[dict],
-                 *, chunk_size: int | None = None):
+                 *, chunk_size: int | None = None,
+                 resolve_entities: bool | dict = False):
     """Index GraphRAG-Bench corpus documents into the KG (rule mode).
 
     Each unit of text is indexed via :meth:`MemoryGraph.extract_from_text`
@@ -231,7 +232,8 @@ def index_corpus(mg: MemoryGraph, corpus: list[dict],
     Returns:
         Aggregate index stats dict:
         ``{docs, chunks, nodes_created, edges_created, sentences,
-        relations, corpus_names}``.
+        relations, corpus_names, [entity_resolution]}`` — the last key is
+        present only when ``resolve_entities`` is enabled (Gap #5).
     """
     stats = {
         "docs": 0,
@@ -256,6 +258,12 @@ def index_corpus(mg: MemoryGraph, corpus: list[dict],
             stats["relations"] += len(r.get("relations", []))
         stats["docs"] += 1
         stats["corpus_names"].append(name)
+    if resolve_entities:
+        # Gap #5 (Research #064): multi-layer entity resolution after
+        # indexing — collapse label variants (case / honorifics / word-prefix
+        # containment) so retrieval sees one node per real-world entity.
+        cfg = dict(resolve_entities) if isinstance(resolve_entities, dict) else {}
+        stats["entity_resolution"] = mg.resolve_entity_variants(**cfg)
     return stats
 
 
