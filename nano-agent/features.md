@@ -113,3 +113,8 @@
 - [x] **F61**: `Memory.pin(index)` / `unpin(index)` / `is_pinned(index)` / `pinned()` — Pin system with eviction protection: pinned entries survive `resize()` (all 4 strategies, candidate-exclusion not post-filter) and `forget()`. Flag lives in reserved `metadata["_pinned"]` (same pattern as `_annotations`), surviving persistence & snapshot/restore ✅ 2026-08-14
 - [x] **F62**: `Memory.search_prefix(prefix, limit)` — Case-insensitive content prefix scan; complements substring/regex/fuzzy/boolean search; empty prefix → `[]` ✅ 2026-08-14
 - [x] **F63**: `Memory.partition(predicate)` — Predicate split into two fully-functional Memory instances (vs `filter()`'s plain list); composable with any chained Memory op ✅ 2026-08-14
+
+### Wildcard, Anchor-Similar & LRU (Round 19 — 2026-08-15)
+- [x] **F64**: `Memory.search_wildcard(pattern, limit)` — Case-insensitive glob search (`*`/`?`/`[seq]`) via fnmatch; friendly middle ground between `search_prefix` (anchored) and `search_regex` (escaping burden); empty pattern → `[]` ✅ 2026-08-15
+- [x] **F65**: `Memory.similar_to(index, threshold, limit)` — Anchor-based similarity retrieval: entries most similar to entry at `index` (SequenceMatcher, same metric as `find_duplicates`/`condense`), self-excluded, sorted desc; out-of-range → `ValueError` ✅ 2026-08-15
+- [x] **F66**: `Memory.touch(index)` / `Memory.lru(n)` — Access-time tracking: touch stamps reserved `metadata["_last_accessed"]` (survives persistence); lru returns stalest-first (never-touched rank by creation time); composable with `remove()` for LRU eviction ✅ 2026-08-15

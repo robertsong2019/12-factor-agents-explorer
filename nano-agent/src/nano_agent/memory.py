@@ -6,6 +6,7 @@ import json
 import re
 import copy
 from difflib import SequenceMatcher
+from fnmatch import fnmatchcase
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -2649,3 +2650,81 @@ class Memory:
         rest = Memory()
         rest._entries = [e for e in self._entries if not predicate(e)]
         return matching, rest
+
+    # F64: search_wildcard — glob-style search complementing substring/regex/prefix
+    def search_wildcard(self, pattern: str, limit: int = 5) -> List[MemoryEntry]:
+        """Return entries whose content matches a glob ``pattern``
+        (case-insensitive).
+
+        Supports ``*`` (any chars), ``?`` (single char) and ``[seq]`` char
+        classes via :func:`fnmatch.fnmatchcase` on lowercased text — a
+        friendlier middle ground between ``search_prefix`` (anchored start)
+        and ``search_regex`` (full power, escaping burden). An empty pattern
+        returns ``[]`` (a bare ``*``-free glob would only match empty
+        content). Like ``search()``, returns the most recent ``limit``
+        matches in chronological order (``limit <= 0`` means unlimited).
+        """
+        if not pattern:
+            return []
+        p = pattern.lower()
+        matched = [
+            e for e in self._entries if fnmatchcase(e.content.lower(), p)
+        ]
+        return matched if limit <= 0 else matched[-limit:]
+
+    # F65: similar_to — anchor-based similarity retrieval
+    def similar_to(self, index: int, threshold: float = 0.5,
+                   limit: int = 5) -> List[MemoryEntry]:
+        """Return entries most similar to the entry at *index*.
+
+        Uses :class:`difflib.SequenceMatcher` on lowercased content (same
+        metric as ``find_duplicates()`` / ``condense()``). The anchor itself
+        is excluded; results are sorted by descending similarity ratio and
+        truncated to ``limit`` (``limit <= 0`` means unlimited). Entries
+        below *threshold* are dropped.
+
+        Raises:
+            ValueError: if *index* is out of range.
+        """
+        if not (0 <= index < len(self._entries)):
+            raise ValueError(f"index {index} out of range "
+                             f"(0..{len(self._entries) - 1})")
+        anchor = self._entries[index].content.lower()
+        scored = [
+            (SequenceMatcher(None, anchor, e.content.lower()).ratio(), e)
+            for i, e in enumerate(self._entries) if i != index
+        ]
+        scored = [(r, e) for r, e in scored if r >= threshold]
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        entries = [e for _, e in scored]
+        return entries if limit <= 0 else entries[:limit]
+
+    # F66: touch / lru — access-time tracking for LRU-style eviction
+    def touch(self, index: int) -> bool:
+        """Stamp entry at *index* as accessed now.
+
+        Records an ISO timestamp in reserved ``metadata["_last_accessed"]``
+        (same reserved-key pattern as ``_pinned`` / ``_annotations``), so it
+        survives persistence and snapshot/restore. Returns ``True`` on
+        success, ``False`` for out-of-range indices (mirrors ``pin()``).
+        """
+        if not (0 <= index < len(self._entries)):
+            return False
+        self._entries[index].metadata["_last_accessed"] = \
+            datetime.now().isoformat()
+        self._save()
+        return True
+
+    def lru(self, n: int = 5) -> List[MemoryEntry]:
+        """Return the *n* least-recently-used entries (stalest first).
+
+        Ranking key is ``metadata["_last_accessed"]`` when present,
+        otherwise the entry's creation timestamp — so never-touched entries
+        rank by age. Composable with ``remove()`` / ``batch_remove()`` for
+        LRU eviction pipelines. ``n <= 0`` returns ``[]``.
+        """
+        if n <= 0:
+            return []
+        def _access_time(e: MemoryEntry) -> str:
+            return e.metadata.get("_last_accessed", e.timestamp.isoformat())
+        return sorted(self._entries, key=_access_time)[:n]
