@@ -386,6 +386,86 @@ class TestRunLoop:
 
 
 # ---------------------------------------------------------------------------
+# sweep_abstention (Cycle 452)
+# ---------------------------------------------------------------------------
+
+class TestSweepAbstention:
+    ENTROPIES = [None, 0.9, 0.5]
+
+    def test_shape_and_labels(self):
+        ad = fresh_adapter()
+        sample = make_sample()
+        ad.ingest_sample(sample)
+        r = ad.sweep_abstention(sample["qa"], entropies=self.ENTROPIES)
+        assert r["thresholds"] == ["None", "0.9", "0.5"]
+        assert set(r["summary"]) == set(r["thresholds"])
+        for lab in r["thresholds"]:
+            for key in ("accuracy", "abstention_rate",
+                        "adversarial_accuracy", "accuracy_non_adv",
+                        "total"):
+                assert key in r["summary"][lab]
+        assert len(r["rows"]) == 6
+
+    def test_one_retrieval_per_question(self):
+        """The gate is post-retrieval: N questions → N retrievals,
+        regardless of threshold count."""
+        ad = fresh_adapter()
+        sample = make_sample()
+        ad.ingest_sample(sample)
+        r = ad.sweep_abstention(sample["qa"], entropies=self.ENTROPIES)
+        assert r["retrievals"] == len(sample["qa"])
+
+    def test_adversarial_scores_by_abstention(self):
+        ad = fresh_adapter()
+        sample = make_sample()
+        ad.ingest_sample(sample)
+        r = ad.sweep_abstention(sample["qa"], entropies=[None])
+        adv_rows = [row for row in r["rows"]
+                    if row["category"] == "adversarial"]
+        for row in adv_rows:
+            assert row["correct"]["None"] == row["abstained"]["None"]
+
+    def test_entropy_gate_helps_adversarial(self):
+        """Fixture: 'skydiving in Dubai' never happened — weak
+        scattered evidence (only 'Caroline' hits) → gate abstains."""
+        ad = fresh_adapter(abstain_entropy=None)   # control via sweep
+        sample = make_sample()
+        ad.ingest_sample(sample)
+        r = ad.sweep_abstention(sample["qa"], entropies=self.ENTROPIES)
+        s = r["summary"]
+        assert s["0.9"]["adversarial_accuracy"] >= \
+            s["None"]["adversarial_accuracy"]
+
+    def test_lower_threshold_abstains_more(self):
+        ad = fresh_adapter()
+        sample = make_sample()
+        ad.ingest_sample(sample)
+        r = ad.sweep_abstention(sample["qa"], entropies=self.ENTROPIES)
+        rates = [r["summary"][lab]["abstention_rate"]
+                 for lab in r["thresholds"]]
+        # None → 0.9 → 0.5: monotonic non-decreasing abstention
+        assert rates[0] <= rates[1] <= rates[2]
+
+    def test_gate_cost_visible_on_non_adversarial(self):
+        """accuracy_non_adv present per threshold — the tradeoff
+        axis for working-point selection."""
+        ad = fresh_adapter()
+        sample = make_sample()
+        ad.ingest_sample(sample)
+        r = ad.sweep_abstention(sample["qa"], entropies=self.ENTROPIES)
+        for lab in r["thresholds"]:
+            assert 0.0 <= r["summary"][lab]["accuracy_non_adv"] <= 1.0
+
+    def test_limit(self):
+        ad = fresh_adapter()
+        sample = make_sample()
+        ad.ingest_sample(sample)
+        r = ad.sweep_abstention(sample["qa"], entropies=[None], limit=2)
+        assert len(r["rows"]) == 2
+        assert r["retrievals"] == 2
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 

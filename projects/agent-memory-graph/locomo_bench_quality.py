@@ -40,6 +40,7 @@ from amg_bench_quality import (
     ABSTAIN_ANSWER,
     LongMemEvalAdapter,
     _normalize,
+    entropy_gate_fires,
     exact_judge,
 )
 
@@ -151,6 +152,95 @@ class LoCoMoAdapter(LongMemEvalAdapter):
                 for nid in retrieved_ids if nid in self._messages}
 
     # ── Evaluation ─────────────────────────────────────────────────
+
+    def sweep_abstention(self, qa: list[dict], *,
+                         entropies: list[float | None],
+                         limit: int = 0) -> dict:
+        """Entropy-threshold sweep — one retrieval per question.
+
+        Cycle 452 (C448 pattern ported to LoCoMo): the entropy gate
+        is a pure post-retrieval decision, so each question is
+        retrieved ONCE and gated at every threshold. Scoring follows
+        ``evaluate_sample``: adversarial (cat 5) correct iff
+        abstained, others ``exact_judge`` containment. Non-adversarial
+        accuracy per threshold exposes the cost side of the tradeoff
+        (a gate firing on answerable questions loses points).
+
+        Args:
+            qa: LoCoMo question list (``question``/``answer``/
+                ``category``).
+            entropies: Thresholds in ``[0, 1]``; ``None`` = gate off
+                (the Cycle 447 baseline).
+            limit: Sweep at most this many questions (0 = all).
+
+        Returns:
+            ``{"thresholds": [labels], "summary": {label:
+            {accuracy, accuracy_non_adv, adversarial_accuracy,
+            abstention_rate, total}}, "rows": [{"qid", "category",
+            "abstained": {label: bool}, "correct": {label: bool}}]}``.
+        """
+        items = qa[:limit] if limit and limit > 0 else qa
+        labels = ["None" if e is None else str(e) for e in entropies]
+
+        retrievals = 0
+        rows: list[dict] = []
+        totals = {lab: [0, 0, 0, 0, 0] for lab in labels}
+        #           correct, abstained, correct_adv, correct_na, na
+
+        for i, item in enumerate(items):
+            qid = str(item.get("qid", i))
+            question = str(item.get("question", ""))
+            truth = str(item.get("answer", ""))
+            category = CATEGORY_NAMES.get(int(item.get("category", 0)),
+                                          "unknown")
+            is_adv = category == "adversarial"
+
+            context, meta = self.retrieve_context(question)
+            retrievals += 1
+            conf = meta["confidence"]
+            best_line = context.split("\n", 1)[0] if context else ""
+            extracted = (best_line.split("] ", 1)[-1]
+                         if best_line else "")
+
+            row = {"qid": qid, "category": category,
+                   "abstained": {}, "correct": {}}
+            for entropy, lab in zip(entropies, labels):
+                abstained = (
+                    not meta["messages_retrieved"]
+                    or meta["best_score"] < self.abstain_score
+                    or entropy_gate_fires(conf, entropy,
+                                          self.entropy_weak_score))
+                correct = (
+                    abstained if is_adv
+                    else exact_judge(question, truth,
+                                     ABSTAIN_ANSWER if abstained
+                                     else extracted))
+                row["abstained"][lab] = abstained
+                row["correct"][lab] = correct
+                t = totals[lab]
+                t[0] += int(correct)
+                t[1] += int(abstained)
+                if is_adv:
+                    t[2] += int(correct)
+                else:
+                    t[3] += int(correct)
+                    t[4] += 1
+            rows.append(row)
+
+        n = len(rows)
+        n_adv = sum(1 for r in rows if r["category"] == "adversarial")
+        summary = {}
+        for lab, (c, a, c_adv, c_na, na) in totals.items():
+            summary[lab] = {
+                "accuracy": c / n if n else 0.0,
+                "abstention_rate": a / n if n else 0.0,
+                "adversarial_accuracy": (c_adv / n_adv
+                                          if n_adv else 0.0),
+                "accuracy_non_adv": c_na / na if na else 0.0,
+                "total": n,
+            }
+        return {"thresholds": labels, "summary": summary,
+                "rows": rows, "retrievals": retrievals}
 
     def evaluate_sample(self, qa: list[dict], *, judge_fn=None,
                         limit: int = 0) -> dict:
