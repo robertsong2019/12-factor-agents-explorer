@@ -1,3 +1,4 @@
 timestamp	commit	metric	value	status	description
 2026-05-14T22:10	162a6f3	test_pass_rate	26/26=100%	keep	skill-doctor: --fix auto-fix mode (7 tests)
 2026-05-16T22:10	3332893	test_pass_rate	33/33=100%	keep	skill-doctor: custom checks + --quiet mode (7 tests)
+2026-08-16T22:40+08:00	4bbd28a	test_pass_rate	53→64=100%	keep	skill-doctor: + --format github (::error/::warning workflow commands from diagnoseJSON, 2026-08-16T22:40+08:00	4bbd28a	test_pass_rate	53→64=100%	keep	skill-doctor: + --format github (::error/::warning workflow commands from diagnoseJSON, pct/newline escaping, pass/skip silent, --json precedence, ANSI-free) 11 tests
