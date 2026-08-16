@@ -1,6 +1,6 @@
 {
-  "lastUpdated": "2026-08-15T22:00:00Z",
-  "generatedAt": "2026-08-16 06:00 CST",
+  "lastUpdated": "2026-08-16T22:00:00Z",
+  "generatedAt": "2026-08-17 06:00 CST",
   "system": {
     "gateway": {
       "status": "running",
@@ -11,34 +11,32 @@
     "host": {
       "os": "Linux 6.8.0-71-generic (x64)",
       "hostname": "VM-0-5-ubuntu",
-      "uptime": "115 days, 16:41",
-      "loadAverage": "0.58, 0.39, 0.28",
+      "uptime": "116 days, 16:41",
+      "loadAverage": "0.89, 0.26, 0.13",
       "disk": {
         "total": "50G",
-        "used": "31G",
-        "available": "17G",
-        "usage": "66%"
+        "used": "32G",
+        "available": "16G",
+        "usage": "67%"
       },
       "memory": {
         "totalMB": 1935,
-        "usedMB": 1029,
-        "freeMB": 348,
-        "availableMB": 905,
+        "usedMB": 1016,
+        "freeMB": 442,
+        "availableMB": 918,
         "swapTotalMB": 10179,
-        "swapUsedMB": 459
+        "swapUsedMB": 853
       }
     },
     "model": "zai/glm-5.1"
   },
   "cronSummary": {
     "total": 21,
-    "ok": 17,
-    "error": 3,
+    "ok": 19,
+    "error": 1,
     "running": 1,
     "errorJobs": [
-      "62bf7f3b (tool-development-evening)",
-      "84707ade (ai-neuroscience-research)",
-      "686ec55c (essay-generation-morning)"
+      "84707ade (ai-neuroscience-research)"
     ]
   },
   "cronJobs": [
@@ -51,9 +49,9 @@
     { "id": "a4bf5e2a", "name": "deep-exploration-evening", "schedule": "0 20 * * *", "status": "ok", "lastRun": "10h ago" },
     { "id": "bb46cb70", "name": "deep-exploration-evening", "schedule": "0 12 * * UTC", "status": "ok", "lastRun": "10h ago" },
     { "id": "13a2f284", "name": "code-lab-evening", "schedule": "0 21 * * *", "status": "ok", "lastRun": "9h ago" },
-    { "id": "62bf7f3b", "name": "tool-development-evening", "schedule": "0 22 * * *", "status": "error", "lastRun": "8h ago" },
+    { "id": "62bf7f3b", "name": "tool-development-evening", "schedule": "0 22 * * *", "status": "ok", "lastRun": "8h ago" },
     { "id": "ce2fb615", "name": "tool-development-evening", "schedule": "0 22 * * *", "status": "ok", "lastRun": "8h ago" },
-    { "id": "84707ade", "name": "ai-neuroscience-research", "schedule": "30 22 * * *", "status": "error", "lastRun": "8h ago" },
+    { "id": "84707ade", "name": "ai-neuroscience-research", "schedule": "30 22 * * *", "status": "error", "lastRun": "7h ago" },
     { "id": "78eac6fc", "name": "key-development-1", "schedule": "0 23 * * *", "status": "ok", "lastRun": "7h ago" },
     { "id": "88679f9e", "name": "key-development-2", "schedule": "0 0 * * *", "status": "ok", "lastRun": "6h ago" },
     { "id": "b0fd7e8d", "name": "key-development-3", "schedule": "0 1 * * *", "status": "ok", "lastRun": "5h ago" },
@@ -61,28 +59,28 @@
     { "id": "fd0515b0", "name": "knowledge-organization", "schedule": "0 2 * * *", "status": "ok", "lastRun": "4h ago" },
     { "id": "f7510f1f", "name": "project-testing-morning", "schedule": "0 3 * * *", "status": "ok", "lastRun": "3h ago" },
     { "id": "77a5bcc6", "name": "documentation-morning", "schedule": "0 4 * * *", "status": "ok", "lastRun": "2h ago" },
-    { "id": "686ec55c", "name": "essay-generation-morning", "schedule": "0 5 * * *", "status": "error", "lastRun": "1h ago" },
-    { "id": "f0362050", "name": "essay-generation-morning", "schedule": "0 5 * * *", "status": "ok", "lastRun": "54m ago" }
+    { "id": "686ec55c", "name": "essay-generation-morning", "schedule": "0 5 * * *", "status": "ok", "lastRun": "1h ago" },
+    { "id": "f0362050", "name": "essay-generation-morning", "schedule": "0 5 * * *", "status": "ok", "lastRun": "56m ago" }
   ],
   "sessions": {
     "total": 61,
-    "active24h": 44,
+    "active24h": 43,
     "notable": [
-      { "type": "main", "lastActive": "13m ago", "model": "glm-5-turbo", "context": "67k/205k (33%)" },
-      { "type": "cron (dashboard)", "lastActive": "just now", "model": "glm-5.1", "context": "35k/205k (17%)" },
-      { "type": "cron (essay-gen)", "lastActive": "48m ago", "model": "glm-5.1", "context": "58k/205k (28%)" },
-      { "type": "cron (documentation)", "lastActive": "55m ago", "model": "glm-5.1", "context": "89k/205k (43%)" },
-      { "type": "cron (project-testing)", "lastActive": "2h ago", "model": "glm-5.1", "context": "-" }
+      { "type": "main", "lastActive": "13m ago", "model": "glm-5-turbo", "context": "77k/205k (38%)" },
+      { "type": "cron (dashboard)", "lastActive": "just now", "model": "glm-5.1", "context": "40k/205k (19%)" },
+      { "type": "cron (essay-gen)", "lastActive": "51m ago", "model": "glm-5.1", "context": "49k/205k (24%)" },
+      { "type": "cron (documentation)", "lastActive": "2h ago", "model": "glm-5.1", "context": "42k/205k (21%)" },
+      { "type": "cron (project-testing)", "lastActive": "3h ago", "model": "glm-5.1", "context": "62k/205k (30%)" }
     ]
   },
   "git": {
     "repo": "robertsong2019/openclaw-workspace",
     "recentCommits": [
-      "aa35098 memory: 2026-08-16 documentation-morning entry",
-      "19ffc01 docs: 2026-08-16 documentation improvement report",
-      "997a92e docs: amg README catch-up Cycles 440→448 (9241 tests) + code-lab milestone fix",
-      "c76dde1 tests: +21 edge-case coverage for archive.js (export partial/404, XSS escaping, auto-id, corrupt-file resilience, limits, role-sensitive diff, merge chronology)",
-      "5ba272e knowledge-org: integrate C445-448 (amg 9241, dual-axis bench), fix count drift + stale values"
+      "2e36e56 docs: 2026-08-17 documentation improvement report",
+      "4228629 docs: amg README catch-up Cycles 449-457 (9406 tests) + code-lab evolution table",
+      "1d57ec2 memory: Cycle 457 — temporal-arithmetic cross-dataset generalization (4.0x LME_s temporal slice)",
+      "5a7421f experiments: Cycle 457 records — temporal-arithmetic 4.0x on LME_s temporal slice",
+      "ff02a43 Cycle 457: temporal-arithmetic answer path — LME_s duration/ordering via session-date calendar math"
     ]
   }
 }
