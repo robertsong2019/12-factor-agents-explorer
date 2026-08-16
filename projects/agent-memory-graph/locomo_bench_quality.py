@@ -49,6 +49,7 @@ __all__ = [
     "LoCoMoAdapter",
     "load_locomo",
     "run_locomo",
+    "subject_support_gate",
     "main",
 ]
 
@@ -69,6 +70,158 @@ def _dia_session(dia_id: str) -> str:
     return f"S{m.group(1)}" if m else ""
 
 
+# ── Subject-support gate (Cycle 455 — answer-side verification) ─────
+
+# Capitalized function words that must never count as question
+# subjects (question-initial position is excluded separately).
+_QUESTION_CAP_STOP = {
+    "what", "why", "how", "where", "when", "who", "whose", "whom",
+    "which", "did", "does", "do", "is", "was", "were", "are", "will",
+    "would", "can", "could", "the", "in", "on", "at", "for", "to",
+    "about", "after", "before", "during", "summer", "winter",
+}
+
+_NAME_TOKEN_RE = re.compile(r"[A-Z][a-z]+")
+
+# Capitalized tokens that are NOT person names: pronouns /
+# interjections at sentence start, months, weekdays, holidays.
+# "She's a nurse." must yield ZERO names, "starts in June" must not
+# read "June" as a foreign person.
+_NON_NAME_CAPS = {
+    "she", "he", "it", "they", "we", "you", "i", "her", "his", "him",
+    "them", "their", "this", "that", "these", "those", "there",
+    "here", "what", "why", "how", "when", "where", "who", "whose",
+    "yes", "no", "yeah", "yep", "nope", "wow", "oh", "okay", "ok",
+    "well", "so", "and", "but", "or", "the", "a", "an", "my", "me",
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+    "monday", "tuesday", "wednesday", "thursday", "friday",
+    "saturday", "sunday", "christmas", "easter", "halloween",
+    "thanksgiving", "new", "god", "google", "amazon", "netflix",
+}
+
+
+def _question_subjects(question: str) -> list[str]:
+    """Named subjects of a question (lowercased, possessives stripped).
+
+    Heuristic: any capitalized alphabetic token AFTER the first word
+    that is not a function word — LoCoMo questions are dominated by
+    speaker names ("What are Melanie's plans ...?"). First-word
+    tokens are excluded ("What ...") because questions virtually
+    always open with the question word.
+    """
+    tokens = re.findall(r"[A-Za-z]+(?:'[a-z]+)?", question)
+    out: list[str] = []
+    for i, tok in enumerate(tokens):
+        if i == 0 or not tok[0].isupper():
+            continue
+        tok = tok.removesuffix("'s").lower()
+        if tok not in _QUESTION_CAP_STOP and tok not in out:
+            out.append(tok)
+    return out
+
+
+def _same_name(a: str, b: str) -> bool:
+    """Same-name test with diminutive tolerance (prefix ≥ 4 chars).
+
+    ``carol``/``caroline`` → same; ``mel``/``melanie`` → same (4);
+    ``ali``/``alice`` → different (3 < 4, too aggressive to merge).
+    """
+    if a == b:
+        return True
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    return len(shorter) >= 4 and longer.startswith(shorter)
+
+
+def _context_speaker(context: str) -> str | None:
+    """Speaker of the FIRST (best-ranked) context line.
+
+    Context lines look like ``"[Caroline] Thanks, Melanie! ..."``;
+    returns ``"Caroline"`` (or ``None`` for unexpected shapes).
+    """
+    first = context.split("\n", 1)[0] if context else ""
+    if first.startswith("[") and "]" in first:
+        return first[1:first.index("]")]
+    return None
+
+
+def _answer_names(text: str) -> list[str]:
+    """Person-name candidates in an answer line (generic fallback).
+
+    Sentence-INITIAL capitalized tokens are skipped ("Adoption
+    paperwork starts in June." → no names): capitalization there is
+    grammatical, not nominal. Mid-sentence capitals are the genuine
+    proper-noun signal ("Wow, Caroline! Adoption ..." → caroline).
+    """
+    names: list[str] = []
+    for sent in re.split(r"(?<=[.!?])\s+", text):
+        for m in _NAME_TOKEN_RE.finditer(sent):
+            if m.start() == 0:
+                continue          # sentence-initial: grammatical cap
+            tok = m.group(0).lower()
+            if tok not in _NON_NAME_CAPS and tok not in names:
+                names.append(tok)
+    return names
+
+
+def subject_support_gate(question: str, answer_text: str,
+                         known_names: list[str] | set[str] | None = None,
+                         speaker: str | None = None) -> bool:
+    """Answer-side semantic verification (zero-LLM) — Cycle 455.
+
+    LoCoMo adversarial questions (cat 5) are subject-swap
+    fabrications: they ask about person X, while the conversation
+    only contains the asked event for person Y ("What are Melanie's
+    plans for adoption?" over "Wow, Caroline! ... adoption ...").
+    Lexical overlap is therefore HIGH (C452 negative finding:
+    confidence gates and novelty counting cannot separate cat 5).
+
+    The answer-side signal: when the question names a subject, but
+    the best-matching answer line mentions a DIFFERENT person and
+    never the asked subject, the question's presupposition
+    ("subject did X") is unsupported by the very evidence being
+    cited → abstain.
+
+    Args:
+        question: The question text (original case).
+        answer_text: The extracted answer line WITHOUT the
+            ``[Speaker]`` prefix (``answer_extractive`` output).
+        known_names: When provided (adapter mode — the sample's
+            speaker names), name detection uses exactly these
+            (case-insensitive word-boundary); otherwise a generic
+            mid-sentence capitalized-token fallback applies.
+        speaker: The SPEAKER of the cited answer line. When the
+            speaker IS a question subject, the subject is narrating
+            the topic themselves (foreign names in the line are
+            vocatives / third parties they mention — "Thanks,
+            Melanie! ... my grandma ... Sweden") → supported, no
+            fire.
+
+    Returns:
+        True when the gate fires (abstain recommended).
+    """
+    subjects = _question_subjects(question)
+    if not subjects:
+        return False
+    if speaker:
+        spk = speaker.strip().lower()
+        if any(_same_name(spk, s) for s in subjects):
+            return False       # subject speaks: presupposition holds
+    if known_names:
+        names = [n.lower() for n in known_names
+                 if re.search(rf"\b{re.escape(n)}\b", answer_text,
+                              re.IGNORECASE)]
+    else:
+        names = _answer_names(answer_text)
+    if not names:
+        return False
+    subject_present = any(
+        _same_name(n, s) for n in names for s in subjects)
+    foreign = any(
+        not any(_same_name(n, s) for s in subjects) for n in names)
+    return foreign and not subject_present
+
+
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
@@ -83,9 +236,12 @@ class LoCoMoAdapter(LongMemEvalAdapter):
     abstention-scored adversarial questions).
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, subject_gate: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
         self._dia_nodes: dict[str, str] = {}   # "D<n>:<t>" → node id
+        # Cycle 455: answer-side subject-support gate (cat 5).
+        self.subject_gate = subject_gate
+        self._speakers: set[str] = set()        # sample speaker names
 
     # ── Ingestion ──────────────────────────────────────────────────
 
@@ -103,6 +259,11 @@ class LoCoMoAdapter(LongMemEvalAdapter):
         conv = sample.get("conversation", {})
         sessions: list[dict] = []
         flat_dias: list[str] = []
+
+        for key in ("speaker_a", "speaker_b"):
+            name = str(conv.get(key, "")).strip()
+            if name:
+                self._speakers.add(name)
 
         n = 1
         while f"session_{n}" in conv:
@@ -133,6 +294,27 @@ class LoCoMoAdapter(LongMemEvalAdapter):
             if dia_id:
                 self._dia_nodes[dia_id] = nid
         return stats
+
+    def answer_extractive(self, question: str,
+                          question_date: str = "") -> tuple[str, dict]:
+        """Base extractive answer + the Cycle 455 subject gate.
+
+        When ``subject_gate`` is on and the base pipeline produced an
+        answer whose evidence line names a foreign person while the
+        question's subject never appears, abstain instead (gate
+        reason ``"subject"``). The gate is post-retrieval and purely
+        answer-side — retrieval metrics are unaffected.
+        """
+        answer, meta = super().answer_extractive(question, question_date)
+        if self.subject_gate and not meta.get("abstained"):
+            speaker = _context_speaker(meta.get("context", ""))
+            if subject_support_gate(question, answer,
+                                    known_names=self._speakers or None,
+                                    speaker=speaker):
+                meta["abstained"] = True
+                meta["gate"] = "subject"
+                return ABSTAIN_ANSWER, meta
+        return answer, meta
 
     # ── Evidence helpers ───────────────────────────────────────────
 
@@ -241,6 +423,83 @@ class LoCoMoAdapter(LongMemEvalAdapter):
             }
         return {"thresholds": labels, "summary": summary,
                 "rows": rows, "retrievals": retrievals}
+
+    def sweep_subject_gate(self, qa: list[dict], *,
+                           limit: int = 0) -> dict:
+        """Off/on comparison of the subject-support gate (Cycle 455).
+
+        C452 pattern: ONE retrieval per question — the gate is purely
+        answer-side (post-retrieval), so both modes share the same
+        retrieved context and the delta is attributable to the gate
+        alone. Scoring per category mirrors ``evaluate_sample``:
+        adversarial correct iff abstained; others ``exact_judge``.
+
+        Returns:
+            ``{"modes": {"off": {...}, "on": {...}}, "rows": [...],
+            "retrievals": n}`` — per mode: ``accuracy``,
+            ``adversarial_accuracy``, ``accuracy_non_adv``,
+            "abstention_rate", "total"``.
+        """
+        items = qa[:limit] if limit and limit > 0 else qa
+        rows: list[dict] = []
+        totals = {m: [0, 0, 0, 0, 0, 0] for m in ("off", "on")}
+        #          correct, abstained, correct_adv, correct_na, na, n
+
+        saved, self.subject_gate = self.subject_gate, False
+        try:
+            for i, item in enumerate(items):
+                question = str(item.get("question", ""))
+                truth = str(item.get("answer", ""))
+                category = CATEGORY_NAMES.get(int(item.get("category", 0)),
+                                              "unknown")
+                is_adv = category == "adversarial"
+
+                base_answer, meta = super(LoCoMoAdapter,
+                                          self).answer_extractive(question)
+                base_abstained = bool(meta.get("abstained"))
+                gate_fires = (not base_abstained
+                              and subject_support_gate(
+                                  question, base_answer,
+                                  known_names=self._speakers or None,
+                                  speaker=_context_speaker(
+                                      meta.get("context", ""))))
+
+                row = {"qid": str(item.get("qid", i)),
+                       "category": category, "gate_fired": gate_fires}
+                for mode in ("off", "on"):
+                    abstained = base_abstained or (mode == "on"
+                                                   and gate_fires)
+                    predicted = (ABSTAIN_ANSWER if abstained
+                                 else base_answer)
+                    correct = (abstained if is_adv else
+                               exact_judge(question, truth, predicted))
+                    row[f"abstained_{mode}"] = abstained
+                    row[f"correct_{mode}"] = correct
+                    t = totals[mode]
+                    t[0] += int(correct)
+                    t[1] += int(abstained)
+                    t[5] += 1
+                    if is_adv:
+                        t[2] += int(correct)
+                    else:
+                        t[3] += int(correct)
+                        t[4] += 1
+                rows.append(row)
+        finally:
+            self.subject_gate = saved
+
+        n = len(rows)
+        n_adv = sum(1 for r in rows if r["category"] == "adversarial")
+        modes = {}
+        for mode, (c, a, c_adv, c_na, na, tot) in totals.items():
+            modes[mode] = {
+                "accuracy": c / tot if tot else 0.0,
+                "abstention_rate": a / tot if tot else 0.0,
+                "adversarial_accuracy": (c_adv / n_adv if n_adv else 0.0),
+                "accuracy_non_adv": c_na / na if na else 0.0,
+                "total": tot,
+            }
+        return {"modes": modes, "rows": rows, "retrievals": n}
 
     def evaluate_sample(self, qa: list[dict], *, judge_fn=None,
                         limit: int = 0) -> dict:
@@ -515,6 +774,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Entropy-gate threshold (<0 disables)")
     parser.add_argument("--entropy-weak", type=int, default=1,
                         help="Max keyword hits counted as weak evidence")
+    parser.add_argument("--subject-gate", action="store_true",
+                        help="Enable Cycle 455 answer-side subject "
+                             "support gate (adversarial abstention)")
     parser.add_argument("--output", default="amg_locomo_results.json",
                         help="Output report path")
     args = parser.parse_args(argv)
@@ -528,7 +790,8 @@ def main(argv: list[str] | None = None) -> int:
         max_context_tokens=args.max_tokens,
         abstain_score=args.abstain_score,
         abstain_entropy=abstain_entropy,
-        entropy_weak_score=args.entropy_weak)
+        entropy_weak_score=args.entropy_weak,
+        subject_gate=args.subject_gate)
 
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)

@@ -490,3 +490,221 @@ class TestCli:
         assert rc == 0
         report = json.loads(out.read_text(encoding="utf-8"))
         assert report["config"]["abstain_entropy"] is None
+
+
+# ---------------------------------------------------------------------------
+# Cycle 455 — subject-support gate (answer-side verification, cat 5)
+# ---------------------------------------------------------------------------
+
+from locomo_bench_quality import (
+    _question_subjects,
+    _same_name,
+    subject_support_gate,
+)
+
+
+class TestQuestionSubjects:
+    def test_mid_question_capitalized_names(self):
+        assert _question_subjects(
+            "What are Melanie's plans for the summer?") == ["melanie"]
+
+    def test_multiple_subjects_and_stop_words(self):
+        subjects = _question_subjects(
+            "What did Caroline tell Melanie about Dubai?")
+        assert "caroline" in subjects and "melanie" in subjects
+        assert "dubai" in subjects
+        assert "what" not in subjects and "the" not in subjects
+
+    def test_first_word_excluded(self):
+        assert _question_subjects("Melanie loves pottery.") == []
+
+    def test_no_subjects(self):
+        assert _question_subjects(
+            "where is the pottery class held?") == []
+
+
+class TestSameName:
+    def test_diminutive_prefix(self):
+        assert _same_name("carol", "caroline")
+        assert _same_name("sarah", "sarahs")
+
+    def test_short_prefix_not_merged(self):
+        assert not _same_name("ali", "alice")
+        assert not _same_name("mel", "melanie")  # 3 < 4
+
+    def test_unrelated(self):
+        assert not _same_name("melanie", "caroline")
+
+    def test_equal(self):
+        assert _same_name("mel", "mel")
+
+
+class TestSubjectSupportGate:
+    def test_fires_on_subject_swap(self):
+        # LoCoMo cat-5 shape: ask about Melanie, evidence is about
+        # Caroline ("Wow, Caroline! ..." with no Melanie in text).
+        assert subject_support_gate(
+            "What are Melanie's plans for adoption?",
+            "Wow, Caroline! Adoption is amazing, you're so kind.")
+
+    def test_no_fire_when_subject_present(self):
+        assert not subject_support_gate(
+            "What did Caroline say about adoption?",
+            "Wow, Caroline! Adoption is amazing, you're so kind.")
+
+    def test_no_fire_without_names_in_answer(self):
+        # Third-person pronoun answer: no names → cannot conclude
+        # subject mismatch → conservative pass.
+        assert not subject_support_gate(
+            "What is Melanie's job?", "She's a nurse.")
+
+    def test_no_fire_without_question_subject(self):
+        assert not subject_support_gate(
+            "where is the pottery class held?",
+            "Wow, Caroline! Adoption is amazing.")
+
+    def test_diminutive_tolerance(self):
+        # "Carol" ≈ "Caroline" (prefix ≥4): not foreign → no fire.
+        assert not subject_support_gate(
+            "What did Caroline research?",
+            "Carol found some adoption agencies.")
+
+    def test_speaker_is_subject_no_fire(self):
+        # "[Caroline] Thanks, Melanie! ... my grandma ... Sweden" —
+        # the subject herself is the SPEAKER; "Melanie" is a
+        # vocative, not foreign-subject evidence.
+        assert not subject_support_gate(
+            "What country is Caroline's grandma from?",
+            "Thanks, Melanie! This necklace is a gift from my grandma "
+            "in Sweden.",
+            known_names=["Melanie", "Caroline"],
+            speaker="Caroline")
+
+    def test_speaker_differs_from_subject_still_fires(self):
+        assert subject_support_gate(
+            "What are Melanie's plans for adoption?",
+            "Wow, Caroline! Adoption plans sound amazing.",
+            known_names=["Melanie", "Caroline"],
+            speaker="Caroline")
+
+    def test_month_not_foreign_name(self):
+        # "June" is a month, not a person — must not read as foreign
+        # subject evidence (factual "starts in June" answer).
+        assert not subject_support_gate(
+            "What are Melanie's plans for adoption?",
+            "Adoption paperwork starts in June.")
+        # Speaker mode: only known speakers count as names.
+        assert not subject_support_gate(
+            "What are Melanie's plans for adoption?",
+            "Adoption paperwork starts in June.",
+            known_names=["Melanie", "Caroline"])
+
+    def test_no_fire_when_only_foreign_but_subject_named_too(self):
+        # Subject named anywhere in the answer → supported. Uses
+        # known_names mode (speaker名单) — the generic fallback skips
+        # sentence-initial capitals, a documented limitation.
+        assert not subject_support_gate(
+            "What are Melanie's plans for adoption?",
+            "Melanie said Caroline should handle the adoption paperwork.",
+            known_names=["Melanie", "Caroline"])
+
+
+def make_swap_sample():
+    """Mini fixture whose adversarial question is a subject swap."""
+    conv = {
+        "speaker_a": "Caroline", "speaker_b": "Mel",
+        "session_1_date_time": "1:00 pm on 1 May, 2024",
+        "session_1": [
+            {"speaker": "Caroline", "dia_id": "D1:1",
+             "text": "I researched adoption agencies for my summer."},
+            {"speaker": "Mel", "dia_id": "D1:2",
+             "text": "Wow, Caroline! Adoption plans sound amazing, "
+                     "you're so kind."},
+            {"speaker": "Caroline", "dia_id": "D1:3",
+             "text": "Yes, adoption paperwork starts in June."},
+        ],
+    }
+    qa = [
+        # factual: subject Caroline named in answer line → no fire
+        {"question": "What did Caroline research?",
+         "answer": "adoption agencies",
+         "evidence": ["D1:1"], "category": 1},
+        # adversarial subject swap: top-1 hit is Mel's Caroline line
+        {"question": "What are Melanie's plans for adoption?",
+         "adversarial_answer": "adoption paperwork",
+         "evidence": ["D1:2"], "category": 5},
+    ]
+    return {"conversation": conv, "qa": qa}
+
+
+class TestSubjectGateIntegration:
+    def test_gate_off_answers_both(self):
+        ad = LoCoMoAdapter(use_ppr=False)
+        ad.ingest_sample(make_swap_sample())
+        _, meta = ad.answer_extractive(
+            "What are Melanie's plans for adoption?")
+        assert meta["abstained"] is False
+
+    def test_gate_on_abstains_with_subject_reason(self):
+        ad = LoCoMoAdapter(use_ppr=False, subject_gate=True)
+        ad.ingest_sample(make_swap_sample())
+        answer, meta = ad.answer_extractive(
+            "What are Melanie's plans for adoption?")
+        assert meta["abstained"] is True
+        assert meta["gate"] == "subject"
+        assert answer == lbq.ABSTAIN_ANSWER
+
+    def test_gate_on_factual_untouched(self):
+        ad = LoCoMoAdapter(use_ppr=False, subject_gate=True)
+        ad.ingest_sample(make_swap_sample())
+        answer, meta = ad.answer_extractive(
+            "What did Caroline research?")
+        assert meta["abstained"] is False
+        assert "adoption" in answer.lower()
+
+    def test_evaluate_sample_scores_swap_correct(self):
+        ad = LoCoMoAdapter(use_ppr=False, subject_gate=True)
+        sample = make_swap_sample()
+        ad.ingest_sample(sample)
+        r = ad.evaluate_sample(sample["qa"])
+        adv = next(q for q in r["questions"]
+                   if q["category"] == "adversarial")
+        assert adv["correct"] is True and adv["abstained"] is True
+
+
+class TestSweepSubjectGate:
+    def test_off_on_modes_and_aggregation(self):
+        ad = LoCoMoAdapter(use_ppr=False, subject_gate=True)
+        sample = make_swap_sample()
+        ad.ingest_sample(sample)
+        r = ad.sweep_subject_gate(sample["qa"])
+        assert r["retrievals"] == 2 and len(r["rows"]) == 2
+        assert set(r["modes"]) == {"off", "on"}
+        # gate lifts adversarial accuracy without touching factual
+        assert (r["modes"]["on"]["adversarial_accuracy"]
+                > r["modes"]["off"]["adversarial_accuracy"])
+        assert (r["modes"]["on"]["accuracy_non_adv"]
+                == r["modes"]["off"]["accuracy_non_adv"])
+
+    def test_restores_subject_gate_flag(self):
+        ad = LoCoMoAdapter(use_ppr=False, subject_gate=True)
+        ad.ingest_sample(make_swap_sample())
+        ad.sweep_subject_gate(make_swap_sample()["qa"])
+        assert ad.subject_gate is True
+
+    def test_run_locomo_config_passthrough(self, tmp_path):
+        data = [make_swap_sample()]
+        p = tmp_path / "swap.json"
+        p.write_text(json.dumps(data), encoding="utf-8")
+        r = run_locomo(str(p), use_ppr=False, subject_gate=True)
+        assert r["config"]["subject_gate"] is True
+        cat5 = r["categories"]["adversarial"]
+        assert cat5["total"] == 1 and cat5["correct"] == 1
+
+    def test_cli_subject_gate(self, data_file, tmp_path):
+        out = tmp_path / "r3.json"
+        rc = main(["--data", str(data_file), "--no-ppr",
+                   "--subject-gate", "--output", str(out)])
+        assert rc == 0
+        report = json.loads(out.read_text(encoding="utf-8"))
+        assert report["config"]["subject_gate"] is True
