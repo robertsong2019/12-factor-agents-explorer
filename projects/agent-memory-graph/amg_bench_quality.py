@@ -53,6 +53,7 @@ import math
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from memory_graph import MemoryGraph
@@ -64,6 +65,11 @@ __all__ = [
     "score_confidence",
     "entropy_gate_fires",
     "exact_judge",
+    "parse_lme_date",
+    "temporal_arith_form",
+    "duration_units",
+    "answer_temporal_arith",
+    "temporal_arith_judge",
     "load_longmemeval_data",
     "run_eval",
     "main",
@@ -325,6 +331,7 @@ class LongMemEvalAdapter:
                  abstain_score: float = 1.0,
                  abstain_entropy: float | None = 0.95,
                  entropy_weak_score: int = 1,
+                 temporal_arith: bool = True,
                  ppr_top: int = 15,
                  seed_recall_k: int = 5):
         """Args:
@@ -342,6 +349,10 @@ class LongMemEvalAdapter:
                 ``None`` disables (Cycle 447 behavior).
             entropy_weak_score: Max keyword hits still counted as
                 "weak" for the entropy gate.
+            temporal_arith: Enable the Cycle 457 temporal-arithmetic
+                answer path (duration/ordering questions resolved by
+                calendar arithmetic on session dates; falls through
+                to the extractive path when anchors don't resolve).
             ppr_top: Extra candidates taken from the PPR tail.
             seed_recall_k: Per-keyword recall limit for seed building.
         """
@@ -351,6 +362,7 @@ class LongMemEvalAdapter:
         self.abstain_score = abstain_score
         self.abstain_entropy = abstain_entropy
         self.entropy_weak_score = entropy_weak_score
+        self.temporal_arith = temporal_arith
         self.ppr_top = ppr_top
         self.seed_recall_k = seed_recall_k
         # Adapter-side bookkeeping (avoids depending on repo getter
@@ -358,11 +370,13 @@ class LongMemEvalAdapter:
         self._nodes: dict[str, dict] = {}
         self._messages: dict[str, dict] = {}       # message nodes only
         self._entities: dict[str, str] = {}        # entity name → node id
+        self._session_dates: dict[str, str] = {}   # session id → YYYY-MM-DD
         self._seq = 0                               # deterministic order
 
     # ── Phase 1: ingestion ─────────────────────────────────────────
 
-    def ingest_sessions(self, sessions: list[dict]) -> dict:
+    def ingest_sessions(self, sessions: list[dict],
+                        session_dates: dict[str, str] | None = None) -> dict:
         """Ingest conversation sessions into the memory graph.
 
         Each session: ``{"session_id", "timestamp"?, "messages":
@@ -371,10 +385,22 @@ class LongMemEvalAdapter:
         entity nodes for capitalized non-stopwords
         (``mentioned_in`` edges, deduplicated across sessions).
 
+        Args:
+            sessions: Sessions to ingest.
+            session_dates: Optional ``session_id → date`` map
+                (Cycle 457) — canonicalized via ``parse_lme_date``;
+                unparsable entries skipped. Powers the
+                temporal-arithmetic answer path.
+
         Returns:
             Stats dict ``{sessions, messages, entities, edges}``.
         """
         stats = {"sessions": 0, "messages": 0, "entities": 0, "edges": 0}
+        if session_dates:
+            for sid, dt in session_dates.items():
+                canon = parse_lme_date(str(dt))
+                if canon:
+                    self._session_dates[str(sid)] = canon
 
         for session in sessions:
             sid = session.get("session_id",
@@ -561,6 +587,30 @@ class LongMemEvalAdapter:
         """
         context, meta = self.retrieve_context(question, question_date)
         meta["context"] = context
+
+        # Cycle 457: temporal-arithmetic path — duration/ordering
+        # questions answered by calendar arithmetic on session dates
+        # (node→session map from ingest wiring). Runs BEFORE the gate
+        # chain: an unresolvable form falls through untouched (the
+        # gates still own abstention); a resolved form bypasses them
+        # (arithmetic on two distinct dated sessions is not a guess).
+        if (self.temporal_arith and self._session_dates
+                and temporal_arith_form(question)):
+            dated_lines = [
+                (f"[{self._nodes[nid]['role'] or '?'}] "
+                 f"{self._nodes[nid]['label']}",
+                 self._session_dates.get(
+                     self._nodes[nid]["session_id"], ""))
+                for nid in meta.get("retrieved_ids", [])
+                if nid in self._nodes]
+            t_ans, t_detail = answer_temporal_arith(
+                question, dated_lines, question_date)
+            meta["temporal"] = t_detail
+            if t_ans is not None:
+                meta["gate"] = "temporal_arith"
+                meta["abstained"] = False
+                return t_ans, meta
+
         conf = meta["confidence"]
         if not meta["messages_retrieved"]:
             gate = "empty"
@@ -651,6 +701,9 @@ class LongMemEvalAdapter:
 
             if is_abs:
                 correct = meta["abstained"]
+            elif meta.get("gate") == "temporal_arith":
+                correct = temporal_arith_judge(question, truth,
+                                               predicted)
             elif judge_fn is not None:
                 correct = bool(judge_fn(question, truth, predicted))
             else:
@@ -699,6 +752,7 @@ class LongMemEvalAdapter:
             "categories": {k: v.to_dict() for k, v in cat.items()},
             "results": [r.to_dict() for r in results],
             "config": {"use_ppr": self.use_ppr,
+                       "temporal_arith": self.temporal_arith,
                        "max_context_tokens": self.max_context_tokens,
                        "abstain_score": self.abstain_score,
                        "abstain_entropy": self.abstain_entropy,
@@ -805,6 +859,224 @@ def exact_judge(question: str, truth: str, predicted: str) -> bool:
     return nt == np_ or nt in np_
 
 
+# ── Temporal arithmetic (Cycle 457 — LME_s temporal-reasoning) ──────
+#
+# LongMemEval temporal-reasoning questions are NOT when-questions
+# (the C456 LoCoMo discovery): they are duration arithmetic ("how many
+# days passed between X and Y", "how many weeks ago did I X") and
+# event ordering ("which happened first, X or Y?"). The dataset gives
+# structured grounding — ``question_date`` plus ``haystack_dates``
+# (one date per session) — so the answer side can do calendar
+# arithmetic over session dates, zero LLM. Mirrors C456's philosophy:
+# trigger on question FORM (category-agnostic), resolve on RETRIEVED
+# context only, fall through (no fabrication) when anchors don't
+# resolve to distinct dated sessions.
+
+_LME_DATE_RE = re.compile(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})")
+
+# Generic event-words stripped from anchor phrases so "the day I
+# visited the MoMA" scores on "moma", not on "day/visited".
+_ANCHOR_GENERIC = frozenset({
+    "event", "day", "days", "time", "one", "thing",
+    "visit", "visited", "went", "go", "started", "start",
+    "attended", "attend", "met", "meet", "participated",
+    "participate", "receive", "received", "helped", "help",
+    "prepare", "played", "play", "made", "make", "finished",
+    "finish", "completed", "complete", "bought", "buy",
+    "sold", "sell", "get", "got",
+})
+
+_TA_BETWEEN_RE = re.compile(
+    r"how many (days?|weeks?|months?|years?)\s+"
+    r"(?:have\s+|had\s+)?passed\s+between\s+(.+?)\s+and\s+(.+?)\s*[?.!]*$",
+    re.I | re.S)
+_TA_AGO_RE = re.compile(
+    r"how many (days?|weeks?|months?|years?)\s+ago\s+"
+    r"(?:did\s+)?(?:i\s+)?(.+?)\s*[?.!]*$",
+    re.I | re.S)
+_TA_SINCE_RE = re.compile(
+    r"how many (days?|weeks?|months?|years?)\s+have\s+passed\s+since\s+"
+    r"(?:i\s+)?(.+?)\s*[?.!]*$",
+    re.I | re.S)
+_TA_FIRST_RE = re.compile(
+    r"^(?:who|which\b[^,?]*)\b.*?\bfirst\s*,\s*(.+?)\s+or\s+(.+?)\s*[?.!]*$",
+    re.I | re.S)
+
+
+def parse_lme_date(text: str) -> str:
+    """Parse an LME date (``2023/02/01 (Wed) 10:20`` / ISO-ish) to
+    canonical ``YYYY-MM-DD`` (``""`` when unparseable)."""
+    m = _LME_DATE_RE.match((text or "").strip())
+    if not m:
+        return ""
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        return f"{y:04d}-{mo:02d}-{d:02d}"
+    except Exception:
+        return ""
+
+
+def temporal_arith_form(question: str) -> tuple | None:
+    """Classify a temporal-arithmetic question form.
+
+    Returns ``(kind, unit, anchor_a, anchor_b)`` — kind ``"between"``/
+    ``"ago"``/``"since"`` carry a duration unit and two/one anchors;
+    ``"first"`` carries two event anchors and unit ``""``.
+    ``None`` = not a temporal-arithmetic form (leave to the normal
+    answer path; category labels are NOT trusted — C456 lesson 4).
+    """
+    q = question.strip()
+    m = _TA_BETWEEN_RE.match(q)
+    if m:
+        return ("between", m.group(1).rstrip("s") or "day",
+                m.group(2).strip(), m.group(3).strip())
+    m = _TA_AGO_RE.match(q)
+    if m:
+        return ("ago", m.group(1).rstrip("s") or "day",
+                m.group(2).strip(), None)
+    m = _TA_SINCE_RE.match(q)
+    if m:
+        return ("since", m.group(1).rstrip("s") or "day",
+                m.group(2).strip(), None)
+    m = _TA_FIRST_RE.match(q)
+    if m:
+        return ("first", "", m.group(1).strip(), m.group(2).strip())
+    return None
+
+
+def _anchor_keywords(anchor: str) -> list[str]:
+    """Distinctive content keywords for an event anchor phrase."""
+    ks = [w for w in _keywords(anchor) if w not in _ANCHOR_GENERIC]
+    return ks or _keywords(anchor)
+
+
+def duration_units(date_a: str, date_b: str, unit: str) -> int:
+    """Calendar distance between canonical dates in *unit*.
+
+    Days/weeks are exact; months use calendar-month arithmetic with
+    half-month rounding; years round on 365.25 days.
+    """
+    da = date.fromisoformat(date_a)
+    db = date.fromisoformat(date_b)
+    days = abs((da - db).days)
+    if unit == "week":
+        return days // 7
+    if unit == "month":
+        months = (da.year - db.year) * 12 + (da.month - db.month)
+        if (da.day - db.day) > 15:
+            months += 1
+        elif (db.day - da.day) > 15:
+            months -= 1
+        return abs(months)
+    if unit == "year":
+        return round(days / 365.25)
+    return days
+
+
+def answer_temporal_arith(question: str,
+                          dated_lines: list[tuple[str, str]],
+                          question_date: str = "") -> tuple[str | None, dict]:
+    """Answer a temporal-arithmetic question from dated evidence.
+
+    Args:
+        question: The raw question.
+        dated_lines: Retrieved context as ``(line_text,
+            session_date)`` pairs — session dates come from the
+            node→session graph path (ingest wiring).
+        question_date: Canonical ``YYYY-MM-DD`` ask date (ago/since
+            reference point).
+
+    Returns:
+        ``(answer, detail)`` — answer ``None`` means the form didn't
+        resolve (anchors unresolved / same session / impossible
+        geometry); the caller falls through to the extractive path
+        instead of fabricating. ``detail`` always describes the
+        resolution for telemetry.
+    """
+    form = temporal_arith_form(question)
+    detail: dict = {"form": None}
+    if form is None:
+        return None, detail
+    kind, unit, a, b = form
+    detail = {"form": kind, "unit": unit}
+
+    def best_line(anchor: str) -> tuple[int, str] | None:
+        """Best-scoring dated line for *anchor* (≥1 keyword hit)."""
+        ks = _anchor_keywords(anchor)
+        if not ks:
+            return None
+        best, best_hits = None, 0
+        for line, sdate in dated_lines:
+            hits = _keyword_hits(line, ks)
+            if hits > best_hits:
+                best, best_hits = (hits, sdate), hits
+        return best
+
+    if kind == "first":
+        ra, rb = best_line(a), best_line(b)
+        detail["anchors"] = [bool(ra), bool(rb)]
+        if not ra or not rb:
+            return None, detail
+        if ra[1] == rb[1]:          # same session — day granularity
+            return None, detail    # cannot order within a session
+        earlier = a if ra[1] < rb[1] else b
+        detail["dates"] = [ra[1], rb[1]]
+        return earlier, detail
+
+    if kind in ("ago", "since"):
+        qd = parse_lme_date(question_date)
+        ra = best_line(a)
+        detail["anchors"] = [bool(ra)]
+        if not qd or not ra:
+            return None, detail
+        if ra[1] > qd:              # anchor resolves AFTER the ask —
+            return None, detail    # wrong session; don't fabricate
+        n = duration_units(qd, ra[1], unit)
+        detail["dates"] = [ra[1], qd]
+        detail["value"] = n
+        return f"{n} {unit}{'' if n == 1 else 's'}", detail
+
+    # between
+    ra, rb = best_line(a), best_line(b)
+    detail["anchors"] = [bool(ra), bool(rb)]
+    if not ra or not rb:
+        return None, detail
+    if ra[1] == rb[1]:
+        return None, detail
+    n = duration_units(ra[1], rb[1], unit)
+    detail["dates"] = [ra[1], rb[1]]
+    detail["value"] = n
+    return f"{n} {unit}{'' if n == 1 else 's'}", detail
+
+
+def temporal_arith_judge(question: str, truth: str,
+                         predicted: str) -> bool:
+    """Judge temporal-arithmetic answers (zero cost).
+
+    Duration forms: every integer of the ground truth is an accepted
+    value (the dataset itself accepts "7 days. 8 days (including the
+    last day) is also acceptable") — the predicted integer must be
+    one of them. First-form: distinctive-keyword containment in
+    EITHER direction (question anchors and gold answers name the
+    same event with different word counts).
+    """
+    if not truth or not predicted:
+        return False
+    form = temporal_arith_form(question)
+    if form is None:
+        return exact_judge(question, truth, predicted)
+    kind = form[0]
+    if kind == "first":
+        gold_ks = _anchor_keywords(truth)
+        pred_ks = _anchor_keywords(predicted)
+        return bool(pred_ks and gold_ks
+                    and (pred_ks[0] in _normalize(truth)
+                         or gold_ks[0] in _normalize(predicted)))
+    golds = [int(x) for x in re.findall(r"\d+", str(truth))]
+    preds = [int(x) for x in re.findall(r"\d+", str(predicted))]
+    return bool(preds and golds and any(p in golds for p in preds))
+
+
 def load_longmemeval_data(path, *, limit: int = 0) -> list[dict]:
     """Load a LongMemEval JSON dataset (list of question dicts).
 
@@ -837,7 +1109,8 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              entropies: list[float | None] | None = None,
              use_ppr: bool = True, max_context_tokens: int = 4000,
              abstain_score: float = 1.0, abstain_entropy: float | None = 0.95,
-             entropy_weak_score: int = 1) -> dict:
+             entropy_weak_score: int = 1,
+             temporal_arith: bool = True) -> dict:
     """Per-question-haystack evaluation (Cycle 454).
 
     LongMemEval-cleaned ships one haystack per question; this builds a
@@ -861,7 +1134,8 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
     kwargs = dict(use_ppr=use_ppr, max_context_tokens=max_context_tokens,
                   abstain_score=abstain_score,
                   abstain_entropy=abstain_entropy,
-                  entropy_weak_score=entropy_weak_score)
+                  entropy_weak_score=entropy_weak_score,
+                  temporal_arith=temporal_arith)
     all_results: list[dict] = []
     sweep_rows: list[dict] = []
     for i, item in enumerate(items):
@@ -875,7 +1149,21 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
             sessions = [{"session_id": f"session_{j + 1}", "messages": s}
                         if isinstance(s, list) else s
                         for j, s in enumerate(sessions)]
-            adapter.ingest_sessions(sessions)
+            # Cycle 457: positional haystack_dates[j] ↔ session j —
+            # bare-list sessions get canonical session_{j+1} ids,
+            # dict sessions keep their own session_id (when present).
+            hdates = item.get("haystack_dates") or []
+            sdates = None
+            if isinstance(hdates, list) and hdates:
+                sdates = {}
+                for j, dt in enumerate(hdates):
+                    if j >= len(sessions):
+                        break
+                    s = sessions[j]
+                    sid = (s.get("session_id") if isinstance(s, dict)
+                           else None) or f"session_{j + 1}"
+                    sdates[sid] = dt
+            adapter.ingest_sessions(sessions, session_dates=sdates)
         all_results.extend(adapter.evaluate([item])["results"])
         if entropies:
             sweep_rows.extend(
@@ -954,6 +1242,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--entropy-weak", type=int, default=1,
                         help="Max keyword hits still counted as weak "
                              "evidence for the entropy gate")
+    parser.add_argument("--no-temporal-arith", action="store_true",
+                        help="Disable the Cycle 457 temporal-arithmetic "
+                             "answer path (pre-C457 baseline)")
     parser.add_argument("--mode", choices=("extract", "eval"),
                         default="extract",
                         help="extract = pre-C454 row dump (default); "
@@ -977,7 +1268,8 @@ def main(argv: list[str] | None = None) -> int:
         use_ppr=not args.no_ppr, max_context_tokens=args.max_tokens,
         abstain_score=args.abstain_score,
         abstain_entropy=abstain_entropy,
-        entropy_weak_score=args.entropy_weak)
+        entropy_weak_score=args.entropy_weak,
+        temporal_arith=not args.no_temporal_arith)
 
     if args.mode == "eval":
         entropies = None
@@ -991,7 +1283,8 @@ def main(argv: list[str] | None = None) -> int:
             max_context_tokens=args.max_tokens,
             abstain_score=args.abstain_score,
             abstain_entropy=abstain_entropy,
-            entropy_weak_score=args.entropy_weak)
+            entropy_weak_score=args.entropy_weak,
+            temporal_arith=not args.no_temporal_arith)
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2)
         print(f"\n{report['total_questions']} questions · "
@@ -1021,7 +1314,8 @@ def main(argv: list[str] | None = None) -> int:
                 max_context_tokens=args.max_tokens,
                 abstain_score=args.abstain_score,
                 abstain_entropy=abstain_entropy,
-                entropy_weak_score=args.entropy_weak)
+                entropy_weak_score=args.entropy_weak,
+                temporal_arith=not args.no_temporal_arith)
             adapter.ingest_sessions(haystack if isinstance(haystack, list)
                                     else [haystack])
         answer, meta = adapter.answer_extractive(
@@ -1035,7 +1329,8 @@ def main(argv: list[str] | None = None) -> int:
                    "config": {"use_ppr": not args.no_ppr,
                               "max_context_tokens": args.max_tokens,
                               "abstain_entropy": abstain_entropy,
-                              "entropy_weak_score": args.entropy_weak}},
+                              "entropy_weak_score": args.entropy_weak,
+                              "temporal_arith": not args.no_temporal_arith}},
                   f, indent=2)
     abst = sum(1 for r in report_rows if r["abstained"])
     avg_tok = (sum(r["tokens_est"] for r in report_rows) / len(report_rows)
