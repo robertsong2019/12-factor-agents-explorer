@@ -631,3 +631,170 @@ def test_top_larger_than_available(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode == 0
     assert "app.py" in r.stdout
+
+
+# ── Watch mode ─────────────────────────────────────────────────────────
+
+def test_fingerprint_tracks_files(tmp_path):
+    from ctxpack import project_fingerprint
+    (tmp_path / "app.py").write_text("x = 1")
+    (tmp_path / "util.py").write_text("y = 2")
+    fp = project_fingerprint(tmp_path)
+    assert "app.py" in fp and "util.py" in fp
+    mtime, size = fp["app.py"]
+    assert size == 5
+    assert isinstance(mtime, int)
+
+
+def test_fingerprint_ignores_node_modules_and_git(tmp_path):
+    from ctxpack import project_fingerprint
+    (tmp_path / "app.py").write_text("x = 1")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "dep.js").write_text("module.exports = 1")
+    fp = project_fingerprint(tmp_path)
+    assert "app.py" in fp
+    assert not any(f.startswith("node_modules/") for f in fp)
+
+
+def test_diff_detects_changed(tmp_path):
+    from ctxpack import project_fingerprint, diff_fingerprints
+    f = tmp_path / "app.py"
+    f.write_text("short")
+    old = project_fingerprint(tmp_path)
+    f.write_text("much longer content now")
+    new = project_fingerprint(tmp_path)
+    changed, added, removed = diff_fingerprints(old, new)
+    assert changed == ["app.py"]
+    assert added == [] and removed == []
+
+
+def test_diff_detects_added_and_removed(tmp_path):
+    from ctxpack import project_fingerprint, diff_fingerprints
+    (tmp_path / "a.py").write_text("a")
+    old = project_fingerprint(tmp_path)
+    (tmp_path / "b.py").write_text("b")   # added
+    (tmp_path / "a.py").unlink()          # removed
+    new = project_fingerprint(tmp_path)
+    changed, added, removed = diff_fingerprints(old, new)
+    assert changed == []
+    assert added == ["b.py"]
+    assert removed == ["a.py"]
+
+
+def test_diff_identical_snapshots_no_events(tmp_path):
+    from ctxpack import project_fingerprint, diff_fingerprints
+    (tmp_path / "a.py").write_text("a")
+    fp = project_fingerprint(tmp_path)
+    changed, added, removed = diff_fingerprints(fp, dict(fp))
+    assert changed == added == removed == []
+
+
+def test_diff_results_sorted(tmp_path):
+    from ctxpack import project_fingerprint, diff_fingerprints
+    (tmp_path / "z.py").write_text("z")
+    old = project_fingerprint(tmp_path)
+    for name in ("c.py", "a.py", "m.py"):
+        (tmp_path / name).write_text("x" * 20)
+    new = project_fingerprint(tmp_path)
+    changed, added, removed = diff_fingerprints(old, new)
+    assert added == ["a.py", "c.py", "m.py"]  # sorted, not creation order
+
+
+def test_watch_fires_on_change(tmp_path):
+    from ctxpack import watch
+    (tmp_path / "app.py").write_text("v1")
+    events_log = []
+
+    def on_poll(i):
+        if i == 0:
+            (tmp_path / "app.py").write_text("version two")   # different size
+
+    def on_change(events, fp):
+        events_log.append(events)
+
+    final = watch(tmp_path, interval=0.01, max_polls=3,
+                  on_poll=on_poll, on_change=on_change)
+    assert len(events_log) == 1
+    changed, added, removed = events_log[0]
+    assert changed == ["app.py"]
+    assert "app.py" in final
+
+
+def test_watch_quiet_when_unchanged(tmp_path):
+    from ctxpack import watch
+    (tmp_path / "app.py").write_text("stable")
+    calls = []
+    watch(tmp_path, interval=0.01, max_polls=3,
+          on_poll=lambda i: None, on_change=lambda e, fp: calls.append(e))
+    assert calls == []
+
+
+def test_watch_detects_added_file_mid_loop(tmp_path):
+    from ctxpack import watch
+    (tmp_path / "base.py").write_text("b")
+
+    def on_poll(i):
+        if i == 1:
+            (tmp_path / "new.py").write_text("n")
+
+    seen = []
+    watch(tmp_path, interval=0.01, max_polls=3,
+          on_poll=on_poll, on_change=lambda e, fp: seen.append(e))
+    assert len(seen) == 1
+    _, added, _ = seen[0]
+    assert added == ["new.py"]
+
+
+def test_cli_watch_requires_output(tmp_path):
+    import subprocess
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "app.py").write_text("x = 1")
+    r = subprocess.run(["python3", "-m", "ctxpack", str(proj), "--watch"],
+                       capture_output=True, text=True)
+    assert r.returncode == 1
+    assert "--output" in r.stderr
+
+
+def test_cli_watch_rejects_stats_combo(tmp_path):
+    import subprocess
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "app.py").write_text("x = 1")
+    r = subprocess.run(["python3", "-m", "ctxpack", str(proj), "--watch",
+                        "--stats", "-o", str(tmp_path / "out.md")],
+                       capture_output=True, text=True)
+    assert r.returncode == 1
+    assert "--stats" in r.stderr
+
+
+def test_fingerprint_exclude_paths(tmp_path):
+    from ctxpack import project_fingerprint
+    (tmp_path / "app.py").write_text("x = 1")
+    (tmp_path / "out.md").write_text("# generated")
+    fp = project_fingerprint(tmp_path, exclude_paths={"out.md"})
+    assert "app.py" in fp and "out.md" not in fp
+
+
+def test_watch_exclude_paths_prevents_feedback_loop(tmp_path):
+    """Watched-tree regeneration loop: output file excluded → no self-trigger."""
+    from ctxpack import watch
+    (tmp_path / "app.py").write_text("v1")
+    (tmp_path / "out.md").write_text("generated")
+
+    def on_poll(i):
+        if i == 0:
+            (tmp_path / "out.md").write_text("regenerated content")  # only output changes
+            (tmp_path / "app.py").write_text("v2 changed too")       # real change
+
+    seen = []
+
+    def on_change(events, fp):
+        seen.append(events)
+
+    watch(tmp_path, interval=0.01, max_polls=2, on_poll=on_poll,
+          on_change=on_change, exclude_paths={"out.md"})
+    assert len(seen) == 1
+    changed, added, removed = seen[0]
+    assert "out.md" not in changed + added + removed
+    assert "app.py" in changed

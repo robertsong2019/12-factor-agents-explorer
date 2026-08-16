@@ -18,4 +18,4 @@
 
 ## Planned
 - [ ] **Diff mode** — compare generated context with existing file, show changes → ✅ 2026-05-14 (3 tests)
-- [ ] **Watch mode** — regenerate on file changes
+- [x] **Watch mode** (`--watch` + `--interval`) — polling fingerprint (mtime+size), auto-regenerate on change, output-file excluded to prevent feedback loop ✅ 2026-08-16 (13 tests)

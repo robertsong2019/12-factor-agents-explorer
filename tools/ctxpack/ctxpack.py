@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import textwrap
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -556,6 +557,58 @@ def generate_stats(
     }
 
 
+# ── Watch mode ────────────────────────────────────────────────────────
+
+def project_fingerprint(root: Path, exclude_paths: Optional[set[str]] = None) -> dict[str, tuple[int, int]]:
+    """Snapshot of tracked files: {rel_path: (mtime_ns, size)}.
+
+    exclude_paths: rel-posix paths to skip (e.g. the watch output file itself).
+    """
+    ignore = load_gitignore(root) | load_ctxpackignore(root)
+    files = scan_tree(root, ignore)
+    if exclude_paths:
+        files = [f for f in files if f not in exclude_paths]
+    fp: dict[str, tuple[int, int]] = {}
+    for f in files:
+        try:
+            st = (root / f).stat()
+            fp[f] = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            continue  # file vanished between scan and stat
+    return fp
+
+
+def diff_fingerprints(old: dict, new: dict) -> tuple[list[str], list[str], list[str]]:
+    """Compare two fingerprints → (changed, added, removed) rel-path lists, sorted."""
+    changed = sorted(f for f in new if f in old and new[f] != old[f])
+    added = sorted(f for f in new if f not in old)
+    removed = sorted(f for f in old if f not in new)
+    return changed, added, removed
+
+
+def watch(root: Path, interval: float = 2.0, max_polls: Optional[int] = None,
+          on_poll=None, on_change=None, exclude_paths: Optional[set[str]] = None) -> dict:
+    """Poll project fingerprint; fire on_change((changed, added, removed), fp) on drift.
+
+    on_poll(poll_index) runs each cycle before diffing (hook for tests / stop signals:
+    raise to exit). Returns the final fingerprint.
+    """
+    last = project_fingerprint(root, exclude_paths)
+    polls = 0
+    while True:
+        time.sleep(interval)
+        if on_poll is not None:
+            on_poll(polls)
+        current = project_fingerprint(root, exclude_paths)
+        events = diff_fingerprints(last, current)
+        if any(events) and on_change is not None:
+            on_change(events, current)
+        last = current
+        polls += 1
+        if max_polls is not None and polls >= max_polls:
+            return last
+
+
 # ── Main ───────────────────────────────────────────────────────────────
 
 def main():
@@ -582,6 +635,10 @@ def main():
                         help="Max key files per category (default: 10)")
     parser.add_argument("--diff", metavar="FILE",
                         help="Compare generated context with existing file, show changes")
+    parser.add_argument("--watch", action="store_true",
+                        help="Watch mode: regenerate on file changes (requires --output)")
+    parser.add_argument("--interval", type=float, default=2.0, metavar="SEC",
+                        help="Watch poll interval in seconds (default: 2.0)")
     parser.add_argument("-v", "--version", action="version", version=f"ctxpack {VERSION}")
 
     args = parser.parse_args()
@@ -590,6 +647,58 @@ def main():
     if not root.is_dir():
         eprint(f"Error: {root} is not a directory")
         sys.exit(1)
+
+    if args.watch:
+        if args.stats or args.diff:
+            eprint("Error: --watch cannot be combined with --stats or --diff")
+            sys.exit(1)
+        if not args.output:
+            eprint("Error: --watch requires --output (nowhere to write regenerated context)")
+            sys.exit(1)
+
+        def regenerate() -> int:
+            """Re-run scan+generate pipeline, write output. Returns token count."""
+            gitignore = load_gitignore(root) | load_ctxpackignore(root)
+            files = scan_tree(root, gitignore)
+            if args.exclude:
+                files = [f for f in files
+                         if not any(fnmatch.fnmatch(f, pat) for pat in args.exclude)]
+            languages = detect_languages(files)
+            frameworks = detect_frameworks(root, files)
+            key_files = find_key_files(files, root)
+            if args.include:
+                for pat in args.include:
+                    for f in files:
+                        if fnmatch.fnmatch(f, pat) and f not in key_files["entry"]:
+                            key_files["entry"].append(f)
+            context = generate_context(
+                root=root, files=files, key_files=key_files,
+                languages=languages, frameworks=frameworks,
+                project_name=args.name or root.name, max_tokens=args.max_tokens,
+                fmt=args.format, include_source=args.include_source, top=args.top,
+            )
+            Path(args.output).write_text(context)
+            return estimate_tokens(context)
+
+        eprint(f"👀 Watching {root} (interval {args.interval}s) → {args.output}  Ctrl-C to stop")
+
+        def on_change(events, _fp):
+            changed, added, removed = events
+            for f in changed:
+                eprint(f"   ~ {f}")
+            for f in added:
+                eprint(f"   + {f}")
+            for f in removed:
+                eprint(f"   - {f}")
+            tokens = regenerate()
+            eprint(f"♻️  Regenerated → {args.output} (~{tokens} tokens)")
+
+        try:
+            watch(root, interval=args.interval, on_change=on_change,
+                  exclude_paths={Path(os.path.relpath(args.output, root)).as_posix()})
+        except KeyboardInterrupt:
+            eprint("\n👋 Watch stopped.")
+        return
 
     project_name = args.name or root.name
     eprint(f"📂 Scanning {root} ...")
