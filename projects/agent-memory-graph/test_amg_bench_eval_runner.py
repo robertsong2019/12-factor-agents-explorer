@@ -73,6 +73,18 @@ def test_run_eval_no_haystack_uses_empty_graph():
     assert rep["results"][0]["abstained"]  # empty gate
 
 
+def test_run_eval_bare_list_sessions():
+    """LongMemEval-cleaned shape: haystack_sessions = list of sessions,
+    each session a bare list of message dicts (Cycle 454 fix)."""
+    item = {"id": "q4", "question": "What is my favorite color?",
+            "answer": "teal",
+            "haystack_sessions": [[
+                {"role": "user", "content": "My favorite color is teal."}]]}
+    rep = run_eval([item])
+    assert rep["total_questions"] == 1
+    assert rep["results"][0]["correct"]
+
+
 def test_cli_eval_mode(tmp_path: Path):
     data = tmp_path / "d.json"
     data.write_text(json.dumps([Q1, Q2]), encoding="utf-8")

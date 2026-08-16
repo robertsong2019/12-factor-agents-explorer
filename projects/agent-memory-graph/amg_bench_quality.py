@@ -869,8 +869,13 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
         haystack = (item.get("haystack_sessions")
                     or item.get("sessions") or [])
         if haystack:
-            adapter.ingest_sessions(haystack if isinstance(haystack, list)
-                                    else [haystack])
+            sessions = haystack if isinstance(haystack, list) else [haystack]
+            # LongMemEval-cleaned ships each session as a bare list of
+            # message dicts — normalize to ingest_sessions shape.
+            sessions = [{"session_id": f"session_{j + 1}", "messages": s}
+                        if isinstance(s, list) else s
+                        for j, s in enumerate(sessions)]
+            adapter.ingest_sessions(sessions)
         all_results.extend(adapter.evaluate([item])["results"])
         if entropies:
             sweep_rows.extend(
