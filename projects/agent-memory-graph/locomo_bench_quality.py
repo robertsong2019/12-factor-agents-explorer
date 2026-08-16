@@ -401,7 +401,8 @@ def load_locomo(path, *, limit_samples: int = 0) -> list[dict]:
 
 def run_locomo(path, *, limit_samples: int = 0,
                max_questions_per_sample: int = 0,
-               judge_fn=None, **adapter_kwargs) -> dict:
+               judge_fn=None, include_questions: bool = False,
+               **adapter_kwargs) -> dict:
     """Full LoCoMo run: per-sample graphs, cross-sample aggregation.
 
     Each sample gets a FRESH adapter + graph (samples are independent
@@ -415,6 +416,8 @@ def run_locomo(path, *, limit_samples: int = 0,
         limit_samples: Evaluate at most this many samples (0 = all).
         max_questions_per_sample: Cap per sample (0 = all).
         judge_fn: Optional ``(question, truth, predicted) -> bool``.
+        include_questions: Keep per-question rows in each sample
+            report (default stripped to keep the report compact).
         **adapter_kwargs: Forwarded to ``LoCoMoAdapter`` (``use_ppr``,
             ``abstain_entropy``, ``max_context_tokens``, ...).
 
@@ -480,7 +483,9 @@ def run_locomo(path, *, limit_samples: int = 0,
         "context_hit_rate": _rate(totals["context_hits"], totals["na"]),
         "avg_tokens": _rate(totals["tokens"], n),
         "categories": merged,
-        "samples": [{k: v for k, v in r.items() if k != "questions"}
+        "samples": [{**{k: v for k, v in r.items() if k != "questions"},
+                     **({"questions": r["questions"]}
+                        if include_questions else {})}
                     for r in sample_reports],
         "config": {**adapter_kwargs,
                    "limit_samples": limit_samples,
