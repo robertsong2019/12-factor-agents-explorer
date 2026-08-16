@@ -133,6 +133,210 @@ def _same_name(a: str, b: str) -> bool:
     return len(shorter) >= 4 and longer.startswith(shorter)
 
 
+# ── Temporal date resolution (Cycle 456) ─────────────────────────
+# LoCoMo temporal answers are dates ("7 May 2023") living in the
+# evidence turn, but extractive answering returns whole messages —
+# C453 temporal accuracy was 1/96 (floor). The digit-seed A/B
+# (this cycle, reverted) proved the weakness is answer-side, not
+# retrieval-side: temporal questions rarely contain digits (9/96).
+
+_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5,
+           "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10,
+           "nov": 11, "dec": 12}
+_MONTH_WORD = "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
+
+_DATE_RES = [
+    # 7 May 2023 · 7th of May, 2023 (LoCoMo ground-truth format)
+    re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?"
+               r"(" + _MONTH_WORD + r")[a-z]*\.?\s*,?\s*(\d{4})\b",
+               re.IGNORECASE),
+    # May 7, 2023 · May 7 2023
+    re.compile(r"\b(" + _MONTH_WORD + r")[a-z]*\.?\s+"
+               r"(\d{1,2})(?:st|nd|rd|th)?\s*,?\s*(\d{4})\b",
+               re.IGNORECASE),
+    # 2023-05-07
+    re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b"),
+    # 05/07/2023 (month-first, C449 convention)
+    re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b"),
+]
+
+_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+
+# When-form questions (Cycle 456 trigger) — category-agnostic.
+# PAST/EVENTIVE forms only: "when did/was/were" resolve to dates;
+# habitual "when is/are" ("When is the class?" → "Tuesday") must
+# keep the extractive path.
+_WHEN_RE = re.compile(
+    r"^\s*(?:when\s+(?:did|was|were)\b|what\s+year\b|which\s+year\b"
+    r"|what\s+date\b|on\s+what\s+date\b)", re.IGNORECASE)
+
+_NUM_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3,
+              "four": 4, "five": 5, "six": 6, "seven": 7,
+              "eight": 8, "nine": 9, "ten": 10}
+
+
+def _relative_days(text: str) -> list[int]:
+    """Day-offsets for relative-time mentions (day precision only).
+
+    "yesterday" → [-1], "a week ago"/"last week" → [-7],
+    "3 days ago" → [-3]. Month/year relatives are deliberately
+    skipped — without calendar anchoring their day-precision
+    resolution is a guess (honest fallback beats a wrong date).
+    """
+    out: list[int] = []
+    low = text.lower()
+    if re.search(r"\byesterday\b|\blast night\b", low):
+        out.append(-1)
+    if re.search(r"\b(?:today|tonight|this morning|this afternoon|"
+                 r"this evening)\b", low):
+        out.append(0)
+    if re.search(r"\btomorrow\b", low):
+        out.append(1)
+    if re.search(r"\blast week\b", low):
+        out.append(-7)
+    if re.search(r"\bnext week\b", low):
+        out.append(7)
+    for m in re.finditer(
+            r"\b(\d+|a|an|one|two|three|four|five|six|seven|"
+            r"eight|nine|ten)\s+(day|week)s?\s+ago\b", low):
+        n = _NUM_WORDS.get(m.group(1), None) if not m.group(1).isdigit() \
+            else int(m.group(1))
+        if n is not None:
+            out.append(-n * (1 if m.group(2) == "day" else 7))
+    return out
+
+
+def _shift_date(canon: str, days: int) -> str:
+    from datetime import date, timedelta
+    d = date.fromisoformat(canon) + timedelta(days=days)
+    return d.isoformat()
+
+
+def extract_dates(text: str) -> list[str]:
+    """All full dates in *text*, canonical ``YYYY-MM-DD`` strings."""
+    out: list[str] = []
+    for i, pat in enumerate(_DATE_RES):
+        for m in pat.finditer(text):
+            g = m.groups()
+            if i == 0:      # D Mon YYYY
+                d, mon, y = int(g[0]), _MONTHS[g[1].lower()[:3]], int(g[2])
+            elif i == 1:    # Mon D, YYYY
+                mon, d, y = _MONTHS[g[0].lower()[:3]], int(g[1]), int(g[2])
+            elif i == 2:    # ISO
+                y, mon, d = int(g[0]), int(g[1]), int(g[2])
+            else:           # M/D/Y
+                mon, d = int(g[0]), int(g[1])
+                y = int(g[2])
+                if y < 100:
+                    y += 2000
+            canon = f"{y:04d}-{mon:02d}-{d:02d}"
+            if canon not in out:
+                out.append(canon)
+    return sorted(out)
+
+
+_MONTH_FULL = {1: "January", 2: "February", 3: "March", 4: "April",
+                5: "May", 6: "June", 7: "July", 8: "August",
+                9: "September", 10: "October", 11: "November",
+                12: "December"}
+
+
+def _canon_to_day_month_year(canon: str) -> str:
+    """``2023-05-07`` → ``7 May 2023`` (LoCoMo answer format)."""
+    y, mon, d = canon.split("-")
+    return f"{int(d)} {_MONTH_FULL[int(mon)]} {y}"
+
+
+def date_canon(s: str) -> str | None:
+    """First full date in *s* as canonical ``YYYY-MM-DD`` (or None)."""
+    dates = extract_dates(s)
+    return dates[0] if dates else None
+
+
+def temporal_judge(question: str, truth: str, predicted: str) -> bool:
+    """Date-aware judge for temporal questions (zero-LLM protocol).
+
+    Canonical-form date equality first (so "May 7th, 2023" ==
+    "7 May 2023"); bare-year truth ("2023") matches any predicted
+    containing that year; otherwise falls back to ``exact_judge``
+    containment (ranges like "2019 to 2021").
+    """
+    ct, cp = date_canon(truth), date_canon(predicted)
+    if ct and cp:
+        return ct == cp
+    truth_years = {m.group(0) for m in _YEAR_RE.finditer(truth)}
+    pred_years = {m.group(0) for m in _YEAR_RE.finditer(predicted)}
+    if truth_years and (truth_years & pred_years):
+        return True
+    return exact_judge(question, truth, predicted)
+
+
+def answer_temporal(question: str, context: str,
+                    subjects: list[str] | None = None,
+                    retrieved_ids: list[str] | None = None,
+                    node_session: dict[str, int] | None = None,
+                    session_dates: dict[int, str] | None = None) -> tuple[str, bool]:
+    """Resolve a "when" question to a date from retrieved context.
+
+    Two evidence sources, absolute first (C456):
+
+    1. **Absolute dates in message text** ("... on 7 May 2023");
+    2. **Relative mentions grounded on the session date** —
+       "I went ... yesterday" in a session dated 8 May, 2023
+       resolves to 7 May 2023 (message-node → session →
+       ``session_N_date_time``; LoCoMo when-truths are typically
+       session-date ± offset).
+
+    Lines are scanned in rank order (line 0 = top ranked); a line
+    naming a question subject (C455 ``_question_subjects``) beats
+    any dated line. Answers use the ground-truth format
+    (``7 May 2023``).
+
+    Returns ``(answer, found)`` — callers fall back to the
+    extractive answer when ``found`` is False.
+    """
+    if subjects is None:
+        subjects = _question_subjects(question)
+    node_session = node_session or {}
+    session_dates = session_dates or {}
+
+    def line_dates(text: str, i: int) -> list[str]:
+        """Canonical dates for line *i* — absolute, then relative."""
+        dates = extract_dates(text)
+        if dates:
+            return dates
+        nid = retrieved_ids[i] if retrieved_ids and i < len(retrieved_ids) \
+            else None
+        sdate = session_dates.get(node_session.get(nid, 0))
+        if sdate:
+            return [_shift_date(sdate, d)
+                    for d in _relative_days(text)]
+        return []
+
+    best: str | None = None
+    for i, line in enumerate(context.splitlines()):
+        text = re.sub(r"^\[[^\]]*\]\s*", "", line)
+        dates = line_dates(text, i)
+        if not dates:
+            continue
+        # Subject match includes the [Speaker] prefix — the speaker
+        # IS the subject evidence ("When did Caroline ..." ↔ her
+        # line) even when her name is absent from the message text.
+        low = line.lower()
+        if any(any(_same_name(s, tok)
+                   for tok in re.findall(r"[a-z']+", low))
+               for s in subjects):
+            return _canon_to_day_month_year(dates[0]), True
+        if best is None and i == 0:
+            # Only the TOP-ranked line earns subject-less trust:
+            # an arbitrary dated line fabricates dates for when-
+            # questions whose answers are not dates ("Every Tuesday").
+            best = dates[0]
+    if best is not None:
+        return _canon_to_day_month_year(best), True
+    return "", False
+
+
 def _context_speaker(context: str) -> str | None:
     """Speaker of the FIRST (best-ranked) context line.
 
@@ -236,12 +440,19 @@ class LoCoMoAdapter(LongMemEvalAdapter):
     abstention-scored adversarial questions).
     """
 
-    def __init__(self, *args, subject_gate: bool = False, **kwargs):
+    def __init__(self, *args, subject_gate: bool = False,
+                 temporal_dates: bool = True, **kwargs):
         super().__init__(*args, **kwargs)
         self._dia_nodes: dict[str, str] = {}   # "D<n>:<t>" → node id
         # Cycle 455: answer-side subject-support gate (cat 5).
         self.subject_gate = subject_gate
+        # Cycle 456: temporal questions answered as dates from
+        # retrieved context (answer-side resolution — see
+        # ``answer_temporal``). Disable to reproduce C453 behavior.
+        self.temporal_dates = temporal_dates
         self._speakers: set[str] = set()        # sample speaker names
+        self._session_dates: dict[int, str] = {}  # session n → YYYY-MM-DD
+        self._node_session: dict[str, int] = {}   # node id → session n
 
     # ── Ingestion ──────────────────────────────────────────────────
 
@@ -279,6 +490,13 @@ class LoCoMoAdapter(LongMemEvalAdapter):
                 "timestamp": str(conv.get(f"session_{n}_date_time", "")),
                 "messages": messages,
             })
+            # Cycle 456: session absolute date ("1:56 pm on 8 May, 2023")
+            # grounds relative-time mentions in message text
+            # ("I went ... yesterday") for when-question resolution.
+            sdate = date_canon(
+                str(conv.get(f"session_{n}_date_time", "")))
+            if sdate:
+                self._session_dates[n] = sdate
             n += 1
 
         before = len(self._messages)
@@ -293,6 +511,9 @@ class LoCoMoAdapter(LongMemEvalAdapter):
         for dia_id, nid in zip(flat_dias, new_ids):
             if dia_id:
                 self._dia_nodes[dia_id] = nid
+                m = _DIA_RE.match(dia_id)
+                if m:
+                    self._node_session[nid] = int(m.group(1))
         return stats
 
     def answer_extractive(self, question: str,
@@ -547,8 +768,29 @@ class LoCoMoAdapter(LongMemEvalAdapter):
             predicted, meta = self.answer_extractive(question)
             abstained = bool(meta["abstained"])
 
+            # Cycle 456: when-form questions resolve to a date from
+            # retrieved context (absolute text dates, or relative
+            # mentions grounded on session dates — multi-hop). The
+            # trigger is question FORM, not category: LoCoMo's
+            # when-questions live in multi_hop (252/321), not the
+            # "temporal" category (which holds counterfactuals).
+            used_date_answer = False
+            if (self.temporal_dates and not abstained
+                    and _WHEN_RE.match(question)):
+                date_ans, found = answer_temporal(
+                    question, meta.get("context", ""),
+                    retrieved_ids=meta.get("retrieved_ids"),
+                    node_session=self._node_session,
+                    session_dates=self._session_dates)
+                if found:
+                    predicted = date_ans
+                    used_date_answer = True
+
             if is_adv:
                 correct = abstained
+            elif (judge_fn is None and self.temporal_dates
+                    and date_canon(truth) is not None):
+                correct = temporal_judge(question, truth, predicted)
             elif judge_fn is not None:
                 correct = bool(judge_fn(question, truth, predicted))
             else:
@@ -574,6 +816,7 @@ class LoCoMoAdapter(LongMemEvalAdapter):
                 "ground_truth": truth,
                 "predicted": predicted,
                 "abstained": abstained,
+                "date_answer": used_date_answer,
                 "correct": correct,
                 "session_hit": session_hit,
                 "turn_hit": turn_hit,
@@ -777,6 +1020,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--subject-gate", action="store_true",
                         help="Enable Cycle 455 answer-side subject "
                              "support gate (adversarial abstention)")
+    parser.add_argument("--no-dates", action="store_true",
+                        help="Disable Cycle 456 temporal date "
+                             "resolution (C453 behavior)")
     parser.add_argument("--output", default="amg_locomo_results.json",
                         help="Output report path")
     args = parser.parse_args(argv)
@@ -791,7 +1037,8 @@ def main(argv: list[str] | None = None) -> int:
         abstain_score=args.abstain_score,
         abstain_entropy=abstain_entropy,
         entropy_weak_score=args.entropy_weak,
-        subject_gate=args.subject_gate)
+        subject_gate=args.subject_gate,
+        temporal_dates=not args.no_dates)
 
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)

@@ -19,10 +19,15 @@ import locomo_bench_quality as lbq
 from locomo_bench_quality import (
     CATEGORY_NAMES,
     LoCoMoAdapter,
+    _canon_to_day_month_year,
     _dia_session,
+    answer_temporal,
+    date_canon,
+    extract_dates,
     load_locomo,
     main,
     run_locomo,
+    temporal_judge,
 )
 from amg_bench_quality import LongMemEvalAdapter
 
@@ -708,3 +713,154 @@ class TestSweepSubjectGate:
         assert rc == 0
         report = json.loads(out.read_text(encoding="utf-8"))
         assert report["config"]["subject_gate"] is True
+
+
+# ---------------------------------------------------------------------------
+# Temporal date resolution (Cycle 456)
+# ---------------------------------------------------------------------------
+
+class TestDateExtraction:
+    def test_all_formats_canonical(self):
+        assert extract_dates("We met on 7 May 2023.") == ["2023-05-07"]
+        assert extract_dates("It was May 7th, 2023 already") == \
+            ["2023-05-07"]
+        assert extract_dates("Deadline: 2023-05-07 sharp") == ["2023-05-07"]
+        assert extract_dates("Opened 05/07/2023") == ["2023-05-07"]
+        assert extract_dates("The 7th of May, 2023 was great") == \
+            ["2023-05-07"]
+        assert extract_dates("Opened 05/07/23") == ["2023-05-07"]
+
+    def test_multiple_dedup_sorted(self):
+        ds = extract_dates("from 9 May 2023 until 1 June 2023, again 9 May 2023")
+        assert ds == ["2023-05-09", "2023-06-01"]
+
+    def test_no_false_positives(self):
+        assert extract_dates("I have 3 cats and 12 dogs") == []
+        assert extract_dates("Room 2023 was nice") == []   # no word boundary year pattern w/o date grammar
+
+    def test_canon_roundtrip(self):
+        assert date_canon("see you 7 May 2023") == "2023-05-07"
+        assert _canon_to_day_month_year("2023-05-07") == "7 May 2023"
+
+
+class TestTemporalJudge:
+    def test_format_insensitive_equality(self):
+        assert temporal_judge("q", "7 May 2023", "May 7th, 2023")
+        assert temporal_judge("q", "2023-05-07", "7 May 2023")
+
+    def test_wrong_date_fails(self):
+        assert not temporal_judge("q", "7 May 2023", "8 May 2023")
+
+    def test_year_only_truth(self):
+        assert temporal_judge("q", "2023", "graduated 7 May 2023")
+        assert not temporal_judge("q", "2019", "graduated 7 May 2023")
+
+    def test_containment_fallback(self):
+        # Non-date truths keep the containment protocol.
+        assert temporal_judge("q", "Tuesday", "Every Tuesday at noon")
+        assert not temporal_judge("q", "Friday", "Every Tuesday at noon")
+
+
+class TestAnswerTemporal:
+    CTX = ("[Mel] That trip sounds amazing!\n"
+           "[Caroline] I adopted my dog on 12 March 2021, a beagle.\n"
+           "[Mel] My interview was on 3 April 2022.")
+
+    def test_subject_line_preferred_over_first_dated(self):
+        ans, found = answer_temporal("When did Caroline adopt her dog?",
+                                     self.CTX)
+        assert found and ans == "12 March 2021"
+
+    def test_rank_order_first_subject_line_wins(self):
+        # Rank order within subject-matching lines; month-year-only
+        # mentions ("June 2019") are not full dates and are skipped.
+        ctx = ("[Caroline] We moved house in June 2019.\n"
+               "[Caroline] The reno finished 2 September 2020.\n"
+               "[Caroline] Party on 1 January 2021.")
+        ans, _ = answer_temporal("When did Caroline finish the reno?", ctx)
+        assert ans == "2 September 2020"
+
+    def test_no_subject_match_top_line_trusted(self):
+        # Subject-less dated lines are trusted ONLY at rank 0.
+        ans, found = answer_temporal("When did Sam travel?", self.CTX)
+        assert not found            # rank-0 line has no date
+        ctx = ("[Sam] I flew out on 3 April 2022.\n"
+               "[Mel] unrelated chit chat")
+        ans, found = answer_temporal("When did Sam travel?", ctx)
+        assert found and ans == "3 April 2022"
+
+    def test_no_dates_not_found(self):
+        ans, found = answer_temporal("When is class?",
+                                     "[Caroline] Every Tuesday at the center.")
+        assert not found and ans == ""
+
+
+class TestTemporalEvaluateWiring:
+    def make_dated_sample(self):
+        conv = {
+            "speaker_a": "Caroline", "speaker_b": "Mel",
+            "session_1_date_time": "1:56 pm on 8 May, 2023",
+            "session_1": [
+                {"speaker": "Mel", "dia_id": "D1:1",
+                 "text": "Hey! How was the support group?"},
+                {"speaker": "Caroline", "dia_id": "D1:2",
+                 "text": "I went to the LGBTQ support group on 7 May 2023 and it helped."},
+            ],
+        }
+        qa = [
+            {"question": "When did Caroline go to the LGBTQ support group?",
+             "answer": "7 May 2023", "evidence": ["D1:2"], "category": 3},
+        ]
+        return {"sample_id": "sd", "conversation": conv, "qa": qa}
+
+    def test_temporal_row_correct_with_date(self):
+        ad = LoCoMoAdapter(use_ppr=False)
+        s = self.make_dated_sample()
+        ad.ingest_sample(s)
+        rep = ad.evaluate_sample(s["qa"])
+        row = rep["questions"][0]
+        assert row["date_answer"] is True
+        assert row["predicted"] == "7 May 2023"
+        assert row["correct"] is True
+
+    def test_no_dates_flag_restores_c453_protocol(self):
+        s = self.make_dated_sample()
+        ad = LoCoMoAdapter(use_ppr=False, temporal_dates=False)
+        ad.ingest_sample(s)
+        rep = ad.evaluate_sample(s["qa"])
+        row = rep["questions"][0]
+        assert row["date_answer"] is False
+        # C453 protocol: extractive answer is the whole message and
+        # containment judges it (correct here only because the truth
+        # string appears verbatim in the ranked message — real-run
+        # temporal was 1/96 because ranking rarely achieves this).
+        assert "7 May 2023" in row["predicted"]
+        assert row["correct"] is True
+
+    def test_fixture_tuesday_unaffected(self):
+        # Existing fixture temporal question has no dated message:
+        # no date resolution fires; extractive+judge behavior is the
+        # documented pre-C456 outcome (incorrect — the temporal floor).
+        ad = LoCoMoAdapter(use_ppr=False)
+        s = make_sample()
+        ad.ingest_sample(s)
+        rep = ad.evaluate_sample(
+            [q for q in s["qa"] if q["category"] == 3])
+        row = rep["questions"][0]
+        assert row["date_answer"] is False
+        assert row["correct"] is False    # C453 temporal floor, unchanged
+
+    def test_run_locomo_config_passthrough(self, tmp_path):
+        p = tmp_path / "d.json"
+        p.write_text(json.dumps([self.make_dated_sample()]),
+                     encoding="utf-8")
+        r = run_locomo(str(p), use_ppr=False, temporal_dates=False)
+        assert r["config"]["temporal_dates"] is False
+
+    def test_cli_no_dates(self, data_file, tmp_path):
+        out = tmp_path / "nd.json"
+        rc = main(["--data", str(data_file), "--no-ppr", "--no-dates",
+                   "--output", str(out)])
+        assert rc == 0
+        cfg = json.loads(out.read_text(encoding="utf-8"))["config"]
+        assert cfg["temporal_dates"] is False
