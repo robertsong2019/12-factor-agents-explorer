@@ -49769,6 +49769,85 @@ n            - ``total_rules`` – number of rules scanned.
             "residuals": res_result,
         }
 
+    def forget_preserving(self, node_id: str, *,
+                          force: bool = False,
+                          extract: bool = True) -> dict:
+        """Forget a node while preserving its atomic facts as residuals.
+
+        Combines :meth:`extract_residuals` + :meth:`safe_forget` in a
+        single call. Before deletion, extracts dates, quantities,
+        named entities and temporal references as residual nodes linked
+        to remaining graph neighbors.
+
+        Args:
+            node_id: Node to forget.
+            force: Override high-risk block (audited via verdict).
+            extract: Whether to extract residuals (False = plain forget).
+
+        Returns:
+            ``{verdict, residuals, forget_result, preserved_count}``
+        """
+        # Extract residuals first (before deletion)
+        residuals_result = {"residuals": [], "residuals_created": 0,
+                           "unique_facts": 0, "dry_run": False}
+        if extract:
+            residuals_result = self.extract_residuals(
+                node_ids=[node_id], dry_run=False)
+
+        # Run safe_forget
+        forget_result = self.safe_forget(node_id, force=force)
+
+        return {
+            "verdict": forget_result["verdict"],
+            "residuals": residuals_result,
+            "forget_result": forget_result,
+            "preserved_count": residuals_result["unique_facts"],
+        }
+
+    def batch_forget_preserving(self, node_ids: list[str], *,
+                                force: bool = False,
+                                extract: bool = True) -> dict:
+        """Forget multiple nodes while preserving residuals.
+
+        Extracts residuals from ALL targets first (single scan),
+        then forgets each node. This ensures no facts are lost
+        even when correlated nodes are batch-forgotten.
+
+        Args:
+            node_ids: Nodes to forget.
+            force: Override high-risk block.
+            extract: Whether to extract residuals.
+
+        Returns:
+            ``{results: [...], total_preserved, total_deleted, total_blocked}``
+        """
+        # Phase 1: extract residuals from all targets before any deletion
+        residuals_result = {"residuals": [], "residuals_created": 0,
+                           "unique_facts": 0, "dry_run": False}
+        if extract and node_ids:
+            residuals_result = self.extract_residuals(
+                node_ids=node_ids, dry_run=False)
+
+        # Phase 2: forget each node
+        results = []
+        total_deleted = 0
+        total_blocked = 0
+        for nid in node_ids:
+            r = self.forget_preserving(nid, force=force, extract=False)
+            results.append(r)
+            if r["verdict"] == "deleted":
+                total_deleted += 1
+            elif r["verdict"] == "blocked":
+                total_blocked += 1
+
+        return {
+            "results": results,
+            "total_preserved": residuals_result["unique_facts"],
+            "total_deleted": total_deleted,
+            "total_blocked": total_blocked,
+            "total_targeted": len(node_ids),
+        }
+
     # ════════════════════════════════════════════════════════════
     #  Consolidation Dashboard
     # ════════════════════════════════════════════════════════════
