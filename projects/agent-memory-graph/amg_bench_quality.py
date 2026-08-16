@@ -65,6 +65,7 @@ __all__ = [
     "entropy_gate_fires",
     "exact_judge",
     "load_longmemeval_data",
+    "run_eval",
     "main",
 ]
 
@@ -832,6 +833,102 @@ def load_longmemeval_data(path, *, limit: int = 0) -> list[dict]:
 
 # ── CLI entry point ────────────────────────────────────────────────
 
+def run_eval(dataset: list[dict], *, limit: int = 0,
+             entropies: list[float | None] | None = None,
+             use_ppr: bool = True, max_context_tokens: int = 4000,
+             abstain_score: float = 1.0, abstain_entropy: float | None = 0.95,
+             entropy_weak_score: int = 1) -> dict:
+    """Per-question-haystack evaluation (Cycle 454).
+
+    LongMemEval-cleaned ships one haystack per question; this builds a
+    FRESH adapter + graph per question (isolation guarantee — no
+    cross-question contamination), runs single-question ``evaluate()``
+    and aggregates, optionally running the C448 entropy
+    ``sweep_abstention`` on the same graphs.
+
+    Args:
+        dataset: LongMemEval items (``id``/``question``/``answer``;
+            ``haystack_sessions`` or ``sessions`` per item;
+            ``_abs`` suffix = abstention-scored).
+        limit: Evaluate at most this many questions (0 = all).
+        entropies: Optional entropy thresholds (``None`` = gate off).
+
+    Returns:
+        Same shape as ``evaluate()`` plus ``sweep`` (``None`` when
+        *entropies* not given).
+    """
+    items = dataset[:limit] if limit and limit > 0 else dataset
+    kwargs = dict(use_ppr=use_ppr, max_context_tokens=max_context_tokens,
+                  abstain_score=abstain_score,
+                  abstain_entropy=abstain_entropy,
+                  entropy_weak_score=entropy_weak_score)
+    all_results: list[dict] = []
+    sweep_rows: list[dict] = []
+    for i, item in enumerate(items):
+        adapter = LongMemEvalAdapter(**kwargs)
+        haystack = (item.get("haystack_sessions")
+                    or item.get("sessions") or [])
+        if haystack:
+            adapter.ingest_sessions(haystack if isinstance(haystack, list)
+                                    else [haystack])
+        all_results.extend(adapter.evaluate([item])["results"])
+        if entropies:
+            sweep_rows.extend(
+                adapter.sweep_abstention([item], entropies=entropies)["rows"])
+
+    n = len(all_results)
+
+    def _rate(key: str) -> float:
+        return sum(r[key] for r in all_results) / n if n else 0.0
+
+    categories: dict[str, dict] = {}
+    for r in all_results:
+        c = categories.setdefault(r["category"], {
+            "category": r["category"], "total": 0, "correct": 0,
+            "abstentions": 0, "hits": 0, "total_tokens": 0})
+        c["total"] += 1
+        c["correct"] += int(r["correct"])
+        c["abstentions"] += int(r["abstained"])
+        c["hits"] += int(r["retrieval_hit"])
+        c["total_tokens"] += r["tokens_est"]
+    for c in categories.values():
+        t, tok = c["total"], c.pop("total_tokens")
+        c["accuracy"] = round(c["correct"] / t, 4) if t else 0.0
+        c["abstention_rate"] = round(c["abstentions"] / t, 4) if t else 0.0
+        c["retrieval_hit_rate"] = round(c["hits"] / t, 4) if t else 0.0
+        c["avg_tokens"] = round(tok / t, 1) if t else 0.0
+
+    sweep = None
+    if entropies:
+        labels = ["None" if e is None else str(e) for e in entropies]
+        totals = {lab: [0, 0] for lab in labels}  # correct, abstained
+        for row in sweep_rows:
+            for lab in labels:
+                totals[lab][0] += int(row["correct"][lab])
+                totals[lab][1] += int(row["abstained"][lab])
+        m = len(sweep_rows)
+        sweep = {
+            "thresholds": labels,
+            "summary": {lab: {"accuracy": (c / m if m else 0.0),
+                              "abstention_rate": (a / m if m else 0.0),
+                              "total": m}
+                        for lab, (c, a) in totals.items()},
+            "rows": sweep_rows,
+        }
+
+    return {
+        "overall_accuracy": _rate("correct"),
+        "retrieval_hit_rate": _rate("retrieval_hit"),
+        "abstention_rate": _rate("abstained"),
+        "avg_tokens": _rate("tokens_est"),
+        "total_questions": n,
+        "categories": categories,
+        "results": all_results,
+        "sweep": sweep,
+        "config": kwargs,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="amg LongMemEval memory-quality benchmark")
@@ -852,6 +949,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--entropy-weak", type=int, default=1,
                         help="Max keyword hits still counted as weak "
                              "evidence for the entropy gate")
+    parser.add_argument("--mode", choices=("extract", "eval"),
+                        default="extract",
+                        help="extract = pre-C454 row dump (default); "
+                             "eval = full per-question evaluation + "
+                             "scoring (Cycle 454)")
+    parser.add_argument("--sweep-entropies", default="",
+                        help="CSV entropy thresholds for eval-mode sweep "
+                             "(e.g. 'none,0.90,0.95'; 'none' = gate off)")
     parser.add_argument("--output", default="amg_longmemeval_results.json",
                         help="Output report path")
     args = parser.parse_args(argv)
@@ -868,6 +973,35 @@ def main(argv: list[str] | None = None) -> int:
         abstain_score=args.abstain_score,
         abstain_entropy=abstain_entropy,
         entropy_weak_score=args.entropy_weak)
+
+    if args.mode == "eval":
+        entropies = None
+        if args.sweep_entropies:
+            entropies = [None if t.strip().lower() == "none"
+                         else float(t)
+                         for t in args.sweep_entropies.split(",")]
+        report = run_eval(
+            dataset, limit=args.limit, entropies=entropies,
+            use_ppr=not args.no_ppr,
+            max_context_tokens=args.max_tokens,
+            abstain_score=args.abstain_score,
+            abstain_entropy=abstain_entropy,
+            entropy_weak_score=args.entropy_weak)
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2)
+        print(f"\n{report['total_questions']} questions · "
+              f"accuracy {report['overall_accuracy']:.3f} · "
+              f"retrieval_hit {report['retrieval_hit_rate']:.3f} · "
+              f"abstention {report['abstention_rate']:.1%} · "
+              f"avg {report['avg_tokens']:.0f} tokens/query")
+        if report["sweep"]:
+            best = max(report["sweep"]["summary"].items(),
+                       key=lambda kv: kv[1]["accuracy"])
+            print(f"sweep best: entropy={best[0]} "
+                  f"accuracy {best[1]['accuracy']:.3f} "
+                  f"abstention {best[1]['abstention_rate']:.1%}")
+        print(f"Report written to {args.output}")
+        return 0
 
     # LongMemEval-cleaned ships one shared haystack per question; ingest
     # the first non-empty one (all-question mode) or per-question.
