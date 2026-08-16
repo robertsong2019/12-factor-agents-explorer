@@ -22,7 +22,7 @@
 > 08-06~07 completed items archived to MEMORY.md.
 
 ## 系统状态
-- **agent-memory-graph (Python)**: **9241 tests** — 970+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ (C446 repatriated) + MCP 16 tools ✅ + OTel telemetry ✅ (C446 repatriated: 8 methods incl search_graphrag) + MultiAgentMemoryGraph (MESI) ✅ + FastAppendQueue ✅ + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + retrieval quality family COMPLETE ✅ + attention ✅ + temporal trilogy ✅ + bi-temporal APIs (5) ✅ + forgetting_forecast ✅ + seeded RNG fix ✅ + Experience Compression Spectrum COMPLETE ✅ + GraphRAG API family COMPLETE ✅ + export_graphml ✅ + run_amg.py 适配器 ✅ + chunk_text ✅ + resolve_entity_variants ✅ + amg_bench_quality LongMemEval 适配器 ✅ + 熵置信双门 abstention ✅。**⚠️ 08-16 审计 (#068)：旧台账 "(TS) 7349" 为幻影双计，已删——无 TS 实现（唯一真 TS = amg-mcp wrapper 1718 行/122 tests）**
+- **agent-memory-graph (Python)**: **9354 tests** — 970+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ (C446 repatriated) + MCP 16 tools ✅ + OTel telemetry ✅ (C446 repatriated: 8 methods incl search_graphrag) + MultiAgentMemoryGraph (MESI) ✅ + FastAppendQueue ✅ + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + retrieval quality family COMPLETE ✅ + attention ✅ + temporal trilogy ✅ + bi-temporal APIs (5) ✅ + forgetting_forecast ✅ + seeded RNG fix ✅ + Experience Compression Spectrum COMPLETE ✅ + GraphRAG API family COMPLETE ✅ + export_graphml ✅ + run_amg.py 适配器 ✅ + chunk_text ✅ + resolve_entity_variants ✅ + amg_bench_quality LongMemEval 适配器 ✅ + 熵置信双门 abstention ✅。**⚠️ 08-16 审计 (#068)：旧台账 "(TS) 7349" 为幻影双计，已删——无 TS 实现（唯一真 TS = amg-mcp wrapper 1718 行/122 tests）**
 - **agent-context-store**: **2929 tests**
 - **structured-output-toolkit**: **571 tests**
 - **agent-task-cli**: **1570 tests** — F237
@@ -32,9 +32,12 @@
 - **prompt-mgr**: **196 tests**
 - **agent-cost-tracker**: **25 tests** (08-15 修复 export.js 死导入 + 格式化函数测试)
 - **agent-mesh-network**: **373 tests** (355→373, taskStats/cancelTask/routingAnalytics)
-- **四项目总计**: 11382 tests ✅（同口径 amg+sot+atc = 9241+571+1570；⚠️ #068 审计：旧 18731 含幻影 "TS 7349" 双计）
-- **全项目总计**: ~20062 tests（#068 审计修正，旧 ~27411）
+- **四项目总计**: 11495 tests ✅（同口径 amg+sot+atc = 9354+571+1570；⚠️ #068 审计：旧 18731 含幻影 "TS 7349" 双计）
+- **全项目总计**: ~20175 tests（#068 审计修正，旧 ~27411）
 - **零回滚率**: amg **293天** 🏆（按日历校正；会话内曾报 294/295 系计数漂移）/ acs 200天 🏆
+
+## 近期活动 (08-16 晚 cron 23:00)
+- **Cycle 455 (key-development-1)**: amg 9329→**9354** (+25)，cat5 答案侧校验实验 ✅。subject_support_gate（零 LLM：主体缺席 ∧ 外名在场 ∧ 说话人≠主体 → abstain）+ speaker 守卫 + sweep_subject_gate + CLI。**决定性负发现（1986q 全量）**：① 朴素版 +36 cat5/−47 事实伤害 = 净负 11；② speaker 守卫后 1/446 fire = 净 0；③ 根因：**LoCoMo cat5 从主体自己的行伪造**（evidence dia_id 全指向主体 turn，外名只是呼语），与事实型第三方内容题（grandma/Sweden）在名字拓扑上同构——谓词级语义匹配是唯一剩余路径（嵌入/LLM judge）。延伸 C452：置信门+名字拓扑双双证伪。另发现 LoCoMo 类别标签噪声（cat5 伪装题泄漏进 multi_hop/open_domain，fire 前后皆错=零成本）。commit 464361a/c3a8085
 
 ## 近期活动 (08-16 晚 cron 22:16)
 - **Cycle 454 (tool-development-evening)**: amg 9320→**9329** (+9)，双首跑②完成 ✅。① run_eval() per-question-haystack 评估器 + CLI --mode eval/--sweep-entropies（fresh adapter+graph per question 隔离保证；真实数据形状修复：bare-list sessions 归一化）② **LongMemEval_s_cleaned --limit 50 首跑**（零 LLM 协议，144s）：acc 0.360 / **retrieval_hit 0.780** / abstention 8% / 3821 tok/query；sweep none/0.85/0.90/0.95 → best=None 0.360（熵门对纯事实型 split 无增益，与 C452 结论一致：门是任务相关的）。类别：preference 1.0 / temporal 0.5 / ssu 0.348(hit 0.783) / kupdate 0.0(hit 1.0 — 检索强、抽取协议弱，LLM judge 才是 leaderboard 可比口径）。**双首跑②解除，仅剩① (ollama blocker)**。数据集 /tmp/lme_s.json (277MB，HF 直连成功)；报告 /tmp/lme_s50.json。commit 7d26bdd→1cd9639
