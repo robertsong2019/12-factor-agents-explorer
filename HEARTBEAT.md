@@ -36,6 +36,9 @@
 - **全项目总计**: ~20062 tests（#068 审计修正，旧 ~27411）
 - **零回滚率**: amg **293天** 🏆（按日历校正；会话内曾报 294/295 系计数漂移）/ acs 200天 🏆
 
+## 近期活动 (08-16 晚 cron 22:16)
+- **Cycle 454 (tool-development-evening)**: amg 9320→**9329** (+9)，双首跑②完成 ✅。① run_eval() per-question-haystack 评估器 + CLI --mode eval/--sweep-entropies（fresh adapter+graph per question 隔离保证；真实数据形状修复：bare-list sessions 归一化）② **LongMemEval_s_cleaned --limit 50 首跑**（零 LLM 协议，144s）：acc 0.360 / **retrieval_hit 0.780** / abstention 8% / 3821 tok/query；sweep none/0.85/0.90/0.95 → best=None 0.360（熵门对纯事实型 split 无增益，与 C452 结论一致：门是任务相关的）。类别：preference 1.0 / temporal 0.5 / ssu 0.348(hit 0.783) / kupdate 0.0(hit 1.0 — 检索强、抽取协议弱，LLM judge 才是 leaderboard 可比口径）。**双首跑②解除，仅剩① (ollama blocker)**。数据集 /tmp/lme_s.json (277MB，HF 直连成功)；报告 /tmp/lme_s50.json。commit 7d26bdd→1cd9639
+
 ## 近期活动 (08-16 晚 cron 20:05)
 - **Research #067 (20:02-20:04 早轮)**: LoCoMo 适配器前置完成 ✅（详见下方条目）
 - **Research #068 (20:05 deep-exploration 本轮)**: 发布前双审计 ✅ — ① **幻影指标曝光**："amg TS 7349" 不存在（635 TS/JS 文件零命中 4 个“TS 专属 API”；唯一真 TS=amg-mcp wrapper 1718 行/122 tests；数字=真身 Python 仓 08-06 冻结计数，与 code-lab 副本计数双计）。四项目 18731→11382，全项目 ~27411→~20062，台账已修正（MEMORY+HEARTBEAT，历史日志加注不重写）② **npm 名被占**：`agent-memory-graph`=LightHaru（TS，05-22 抢注，10天19版后弃坑）；`@robertsong2019/agent-memory-graph`/`amgraph`/`amg-graph` FREE；PyPI 全免费零阻塞 ③ "TS port" 伪任务已从 Next dev targets 移除 ④ count-from-truth 脚本落地（exploration-notes/code/publish_namespace_audit.py，双部分实测）。洞察 #233-#235，人工三步扩为四步（+npm 命名决策）
