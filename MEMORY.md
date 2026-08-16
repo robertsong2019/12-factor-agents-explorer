@@ -22,18 +22,17 @@ Autoresearch 方法论实践 — amg **连续293天零回滚率** 🏆（按日�
 ### 项目测试总量 (08-16 凌晨快照)
 | 项目 | Tests | APIs | 状态 |
 |------|-------|------|------|
-| agent-memory-graph (TS) | **7349** | 1000+ | entropy framework (40+) + **25-API classification suite** ✅ + FINGEREntropy + StreamingGraph + PPR + multi_hop_reason + spreading_activation + SummaryTree + enrich_node + code-aware APIs + provenance/lineage (4) + entropy scan (4) + adaptive forgetting (6) + EntityResolver (8) + MCP Day 1-5 |
 | agent-memory-graph (Python) | **9241** | 970+ | entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace + competitive_spreading + SummaryTree + enrich_node + code-aware + provenance (4) + OWASP security (6) + amg-bench + MCP 16 tools + OTel telemetry + MultiAgentMemoryGraph (MESI) + FastAppendQueue + ResidualExtractor + consolidate() NREM/REM + retrieval quality family **COMPLETE** (audit/explain/rerank/compare/**trend**) + attention (distribution/rebalance_plan) + **temporal trilogy** (changepoints/stability/velocity) + **bi-temporal query APIs** (5) + **forgetting_forecast** + **memory_half_life** + **staleness_report** + **batch_half_life** + seeded RNG fix + **GraphRAG-Bench 适配器 run_amg.py** (C439) + export_graphml (C438) + chunk_text 无损分块 (C440) + **SearchTree suite** (C441) + **cross_modal_leak_scan/safe_forget** (C442) + **repair_pattern nodes** (C443) + **safety_purge leak gate** (C444) + **resolve_entity_variants** (C445, 差距 6/6) + **telemetry/amg-bench 回迁真身仓** (C446) + **amg_bench_quality.py LongMemEval 适配器** (C447) + **熵双门 abstention + sweep_abstention** (C448) |
 | structured-output-toolkit | **571** | 4650+ lines | generation+validation+consensus+recovery+scoring+monitoring+versioning+cross-provider |
 | agent-task-cli | **1570** | 237 features | Cache+Storage+EventBus+ConcurrencyManager+merge — **F234** |
-| **四项目总计** | **18731** | — | 7349+9241+571+1570. Python +299 from cycles 441-448 (code-lab + key-dev sessions) |
+| **四项目总计**（同口径 amg+sot+atc） | **11382** | — | ~~18731~~ → 08-16 审计（Research #068）："TS 7349" 为幻影指标，实为真身 Python 仓 08-06 冻结计数双计，已删除 |
 
 其他: context-forge **1458** / nano-agent **1106** / amg-mcp **122** / chain-of-thought **88** / prompt-weaver 223 / openclaw-langgraph-bridge 261 / better-ralph-core **391** / lab/agent-observability 166 / AMS 645 / prompt-router 123 / edge-agent-runtime **345** / agent-mesh-network **373** / prompt-mgr **196** / session-archiver 44 / agent-cost-tracker **25** / agent-context-store **2929**
 
-**全项目总计**: ~27411 tests (amg Python 9241 ✅, acs 2929, nano-agent 1106, better-ralph 391, catalyst-agent-mesh 522, agent-mesh-network 373, agent-cost-tracker 25, chain-of-thought 88)
+**全项目总计**: ~20062 tests（08-16 审计修正：-7349 幻影 TS。amg Python 9241 ✅, acs 2929, nano-agent 1106, better-ralph 391, agent-mesh-network 373, agent-cost-tracker 25, chain-of-thought 88）
 
 ### 最高优先级
-**README → npm publish** (四项目)。18731 tests across 4 projects, 全部 npm ready。**amg PyPI 同样就绪 (#066)**: 包名实测可用 + wheel 构建通过，只剩人工三步（建独立 GitHub 仓 / PyPI 2FA+Trusted Publisher / twine upload）——npm 与 PyPI 双双 human-blocked。⚠️ Mandol (LoCoMo SOTA 92.21%) 竞争窗口收紧。**25-API classification suite** = full pipeline (single-match → ensemble → meta → evaluation → optimization → **explainability** + **uncertainty quantification**, incl. LOOCV + calibration + reference optimization + noise-adaptive + confusion_explain + counterfactual + **confidence_interval**)。**Provenance/lineage suite** = first npm library with cascading correction。**Entropy scan suite** = multi-scale Rényi sweep。**Three-layer router cascade** = MemFlow production pattern。
+**README → PyPI/npm publish** (四项目)。同口径四项目 11382 tests（⚠️ 08-16 审计 #068：旧 18731 含幻影 “TS 7349” 双计，已删），全部发布 ready。**amg PyPI 就绪 (#066)**: 包名实测可用 + wheel 构建通过，只剩人工三步（建独立 GitHub 仓 / PyPI 2FA+Trusted Publisher / twine upload）——PyPI human-blocked。**⚠️ npm 裸名 `agent-memory-graph` 已被第三方 LightHaru 占用（#068）——npm 侧需先定名（推荐 scoped `@robertsong2019/agent-memory-graph` 或 `amgraph`，均实测 FREE），命名决策列入 human-blocked**。⚠️ Mandol (LoCoMo SOTA 92.21%) 竞争窗口收紧。**25-API classification suite** = full pipeline (single-match → ensemble → meta → evaluation → optimization → **explainability** + **uncertainty quantification**, incl. LOOCV + calibration + reference optimization + noise-adaptive + confusion_explain + counterfactual + **confidence_interval**)。**Provenance/lineage suite** = first npm library with cascading correction。**Entropy scan suite** = multi-scale Rényi sweep。**Three-layer router cascade** = MemFlow production pattern。
 
 ### 早期 Cycle 归档 (07-01 ~ 07-16)
 > 详细记录已归档至 [memory/archive-2026-07-early.md](memory/archive-2026-07-early.md)。以下仅保留里程碑摘要：
@@ -65,9 +64,13 @@ Autoresearch 方法论实践 — amg **连续293天零回滚率** 🏆（按日�
 > - **Cycle 444**: safety_purge × cross-modal leak gate. Real integration gap: forget_policy("safety_purge") used to silently delete sensitive source nodes while leaving leaky derivatives — destroying the auditable source. Fix: apply_decay(+exclude_ids) + dry-run preview + cross_modal_leak_scan per delete candidate + blocked_by_leak report. Other policies unaffected; dry_run bypasses gate. +16
 > - **教训**: MEMORY 待办清单过时 — intent_aware_edge_cost / McNemar / procedural 均早已实现。选任务前先 grep 真身代码验证缺失。
 
+### 08-16 PM Research #067 + #068 — LoCoMo 适配器前置 ✅ / 台账幻影指标 + 名字空间审计 ✅
+> **#067 (deep-exploration 早轮)**: LoCoMo 数据就位（locomo10.json 2.8MB raw 直连）+ 零成本关键词基线全量跑通（1982 题：session 级 R@1=0.588/R@3=0.785；temporal 最弱 0.337=bitemporal 机会；adversarial 22.5% 走 C448 熵 abstention；~700 tok/query = 10× 优于 Mem0）。Next: C449 locomo_bench_quality.py。[笔记](catalyst-research/exploration-notes/2026-08-16-locomo-adapter-amg-bench.md)
+> **#068 (deep-exploration 本轮)**: 双审计。① **幻影指标**："amg TS 7349 tests" 不存在——635 个 TS/JS 文件搜 4 个“TS 专属 API”零命中，唯一真 TS 是 amg-mcp wrapper（1718 行/122 tests）；数字实为真身 Python 仓 08-06 冻结计数，与 code-lab 副本计数（标“Python”）双计。四项目 18731→11382，全项目 ~27411→~20062。② **npm 名已被占**：`agent-memory-graph` = LightHaru (TypeScript, 2026-05-22, 19 版后弃坑)；scoped/amgraph/amg-graph 等 FREE；PyPI 全免费。**谱系漂移第二案（指标漂移）**，修法 count-from-truth（脚本已存 exploration-notes/code/publish_namespace_audit.py）。[笔记](catalyst-research/exploration-notes/2026-08-16-amg-ledger-namespace-audit.md)
+
 ### 08-15 PM Research #066 — amg PyPI 首发打包全绿 ✅
 > deep-exploration-evening 产出。**PyPI 技术前置 100% 完成**：`agent-memory-graph` 包名实测可用（404）；projects/ 仓库 6月过期 pyproject 已现代化（PEP 639 SPDX / setuptools≥77 / 0.9.0 / `[mcp]` extra 含 mcp_server.py）；54k 行模块 wheel 564KB 构建通过 twine check；新 venv 安装冒烟 GraphRAG 全家族 API 存活。已 commit。
-> **发布只剩人工三步**: ① 建独立 GitHub 仓 `agent-memory-graph`（Homepage 指向处尚不存在）② PyPI 账号 2FA + Trusted Publisher 登记 ③ 定夺 0.9.0/1.0.0 后 twine upload（或 TestPyPI 演练）
+> **发布只剩人工三步**: ① 建独立 GitHub 仓 `agent-memory-graph`（Homepage 指向处尚不存在）② PyPI 账号 2FA + Trusted Publisher 登记 ③ 定夺 0.9.0/1.0.0 后 twine upload（或 TestPyPI 演练）。**④ (#068 新增) npm 命名决策**：裸名被占，三选一 `@robertsong2019/agent-memory-graph`（推荐）/`amgraph`/`agent-memory-graph-py`，需在 npm README 终稿前定
 > ⚠️ **新发现: workspace amg Python 三副本漂移** — `code-lab/agent-memory-graph`(22.5k行/C424 过期，含独有 telemetry.py+amg_bench.py) vs `projects/agent-memory-graph`(54k行/C440 真身)。首轮差点打包过期代码，冒烟签名对不上才暴露。已记 error-patterns。行动项: diff 后决定合并/归档方向。
 > 竞争情报: TencentDB-Agent-Memory GitHub 21.5k★ 但不在 PyPI — Python 生态入口真空，first-mover 窗口在。
 
@@ -160,7 +163,7 @@ Autoresearch 方法论实践 — amg **连续293天零回滚率** 🏆（按日�
 - **Cycle 366: spreading_activation()** — ACT-R cognitive model (Anderson 1983). Fire-once BFS, threshold-gated, decay per hop, multi-seed. 5th retrieval paradigm. Research #049. +41 Python tests.
 - **Cycle 358 TS: classification_confidence_interval()** — Bootstrap CI (Efron 1979). 25th classification API. Per-class F1 intervals. Research #050. +35 TS tests.
 - **amg Python**: 2217→2294 (+77). **279th consecutive day** 🏆.
-- **amg TS**: 7269→7349 (+80).
+- **amg TS**: 7269→7349 (+80). ←08-16 审计注：幻影指标（无 TS 实现，系真身 Python 仓计数双计，#068）
 
 ### 08-05 PM 开发 (cycles 361-364: streaming entropy + GraphRAG reasoning + SummaryTree)
 - **Cycle 361: FINGEREntropy + personalized_pagerank() + multi_hop_reason()** — Streaming incremental von Neumann entropy (O(Δ) per edge). PPR HippoRAG2 pattern. First reasoning API. Research #047 + #048. +29 Python tests.
@@ -385,6 +388,9 @@ Autoresearch 方法论实践 — amg **连续293天零回滚率** 🏆（按日�
 
 231. **Abstention 双门的 evidence≥3 门限不是调参——是语义分界 (C448)** — 二路弱平局 [1,1] 不该 abstain：amg 有原则性消歧器（bitemporal -seq latest-wins = knowledge-update 语义）；强平局 [2,2] 恰是 update 签名；只有 ≥3 路弱平 [1,1,1] 才是散落证据=均匀猜测域=LongMemEval `_abs` 惩罚的幻觉区。门是纯后检索决策 → 阈值 sweep 零额外检索成本（每 question 一次 retrieval 扫全部阈值）。
 232. **子串相关性污染排序——词边界+屈折形态是检索底线，token 效率是第二记分牌 (C447)** — "love" 子串命中 "lovely" 导致 answer 错误消息：相关性匹配必须词边界 + 屈折后缀（s/es/ed/ing + e-deletion + 辅音加倍），拒绝派生形态（love⊄lovely）。LongMemEval 的 tokens/query 让 graph-precision 检索可量化对标：Mem0 ~6787 tok/query vs amg 目标 <2000——这是除准确率外第二张竞品对比表。
+233. **幻影指标比功能漂移更隐蔽——台账数字必须 count-from-truth (#068)** — C446 抓到功能漂移（声称 ✅ 但真身仓缺失），#068 抓到指标漂移（"TS 7349" 语言根本不存在）。共性根因：手写台账从不回链 git 可验证事实。修法制度化：knowledge-org 02:00 轮改用脚本从真身仓实时计数（publish_namespace_audit.py 雏形），手写数字仅允许引用脚本输出。对外声称（README/博客/registry）一旦引用幻影数字，被社区审计 = 信誉事故。
+234. **npm 裸名是稀缺资产，scoped 包是唯一结构性免疫 (#068)** — LightHaru 2026-05-22 抢注 `agent-memory-graph`（TypeScript graph memory，10 天 19 版后弃坑，1 star）——名字拿不回。抢注成本极低、先到先得，任何准备 npm 发布的项目都该在 Day 1 就占位（哪怕空 publish 或 scoped）。@robertsong2019/* scoped 名随 GitHub org 语义对齐 PyPI Trusted Publisher 流程。教训：发布计划的名宇可用性检查必须在 README 终稿前，不是发布前夜。
+235. **“TS port” 伪任务的识别价值——选任务前先验真身资产 (#068)** — HEARTBEAT “TS port of Python APIs” 建立在幻影指标上：真 TS 化 = 55k 行/831 方法从零重写，不是 port。与 08-15 教训（选任务前先 grep 真身代码验证缺失）同源：任务清单条目本身可能是漂移产物。规则升级：涉及“已有资产”假设的任务，启动前先跑事实核查（文件存在性/计数可复现）。
 
 ---
 - [x] ✅ **amg: classification_loocv()** — Cycle 350. Leave-one-out CV. +40 tests.
@@ -395,7 +401,7 @@ Autoresearch 方法论实践 — amg **连续293天零回滚率** 🏆（按日�
 - [ ] **amg: SummaryTree class** — 5-level temporal hierarchy (segment→session→day→week→profile). Co-extract summary + residuals (ProGraph pattern). Best-effort recall with level descent (HiMem pattern). ~150 lines + ~60 tests. Research #045 ✅. Cycles 353+.
 - [ ] **amg: Wire entropy_guided_query_route → SummaryTree recall** — High entropy→segment, low entropy→profile. ~10 lines. Research #045 ✅.
 - [ ] **amg: Compression residuals in consolidation** — consolidate() outputs (summary, residuals[]) tuple. ~20 lines. Research #045 ✅.
-- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 9241 Python tests**, 1000+ APIs
+- [ ] **agent-memory-graph: README + PyPI/npm publish** — **9241 Python tests**（⚠️ 08-16 审计：无 TS 实现，旧 "TS 7349" 为双计幻影，Research #068）, 970+ APIs。**npm 裸名 `agent-memory-graph` 已被第三方 LightHaru 占用（2026-05-22，已弃坑）；命名决策需在 README 终稿前：推荐 `@robertsong2019/agent-memory-graph` scoped 或 `amgraph`；PyPI 名全部免费零阻塞**
 - [ ] **agent-context-store: README + npm publish** — **2929 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
 - [ ] **agent-task-cli: README + npm publish** — **1570 tests**, F237
@@ -552,7 +558,7 @@ Autoresearch 方法论实践 — amg **连续293天零回滚率** 🏆（按日�
 | # | 项目 | Tests | 状态 |
 |---|------|-------|------|
 | 1 | agent-task-cli | 1548 | ✅ npm ready, F234 (234 features) |
-| 2 | agent-memory-graph | **7349** | ✅ npm ready, entropy framework (40+) + **25-API classification suite** (+ confidence_interval) + FINGEREntropy + StreamingGraph + PPR + multi_hop_reason + spreading_activation + SummaryTree + enrich_node + code-aware APIs + provenance/lineage (4) + entropy scan (4) + adaptive forgetting (6) + EntityResolver (8) + MCP Day 1-5 |
+| 2 | agent-memory-graph | **9241** (Py) | ✅ PyPI ready / ⚠️ npm 需先定名（裸名被占 #068）。970+ APIs: entropy framework (40+) + **25-API classification suite** + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + SummaryTree + enrich_node + code-aware APIs + provenance/lineage (4) + OWASP security (6) + GraphRAG family + amg-bench + MCP 16 tools |
 | 3 | agent-context-store | 2929 | ✅ npm ready, 二十六层: detect→configure→recommend→validate→correlate complete |
 | 4 | structured-output-toolkit | 571 | ✅ npm ready |
 | 5 | openclaw-langgraph-bridge | 261 | 🔄 Supervisor 完善 |
@@ -615,7 +621,7 @@ curl -X POST "https://api.tavily.com/search" \
 - [x] ✅ **amg: multi_hop_reason()** — Cycle 361. PPR + BFS evidence paths. First reasoning API. Research #048.
 - [x] ✅ **amg: enrich_node()** — Cycle 362. A-MEM retroactive enrichment. Research #048.
 - [x] ✅ **amg: SummaryTree** — Cycle 364. 5-level temporal hierarchy. Research #045.
-- [ ] README(amg) → npm publish — **#1 priority**. 7349 TS + 2294 Python tests. **25-API classification suite** + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + SummaryTree + code-aware APIs = unique differentiators.
+- [ ] README(amg) → npm publish — **#1 priority**. 9241 Python tests（“TS 7349”系双计幻影，已删，Research #068）. **25-API classification suite** + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + SummaryTree + code-aware APIs = unique differentiators. ⚠️ npm 名已被占，先定名（Research #068）。
 - [x] ✅ **amg: Code-aware node types** — Cycle 365. function/class/file/module + explainCode() + recordCodeDecision() + impactAnalysis(). +36 Python tests.
 - [x] ✅ **amg: explainCode(nodeId) API** — Cycle 365.
 - [ ] README(acs) → npm publish — 2929 tests.
@@ -638,6 +644,7 @@ curl -X POST "https://api.tavily.com/search" \
 - [ ] amg OpenClaw plugin (~200 lines) — Research #063 ✅ (08-13). 三条路径已明确：(A) MCP注册零代码 (B) Skill Extension ~60行 (C) ClawHub发布。next: 创建 extensions/amg-memory/ + SKILL.md + 注册 mcporter.json. [笔记](catalyst-research/exploration-notes/2026-08-13-openclaw-plugin-architecture-amg-distribution.md)
 - [ ] **amg-bench: LongMemEval adapter** — Research #061 complete ✅ (08-12). Adapter skeleton + smoke test verified. Next: download HF dataset, run retrieval-only baseline, integrate LLM judge. Target: multi-session 95%+, token efficiency <2K. [笔记](catalyst-research/exploration-notes/2026-08-12-longmemeval-adapter-amg-bench-quality.md)
 - [ ] amg-bench: LongMemEval S baseline run (full-context vs entropy-weighted retrieval)
+- [ ] **amg-bench: LoCoMo adapter** — Research #067 ✅ (08-16)。**数据已就位**（catalyst-research/data/locomo10.json，GitHub raw 直连 2.8MB）+ **零成本基线已全量跑通**：关键词 session 级 R@1=0.588/R@3=0.785（1982 题），temporal 最弱 0.337=bitemporal 机会，adversarial 446 题(22.5%)走 C448 熵 abstention，top-1 session 仅 ~700 tok/query（10× 优于 Mem0）。Next: C449 `locomo_bench_quality.py`（复用 ingest_sessions + dia_id turn 级 evidence 评分）。[笔记](catalyst-research/exploration-notes/2026-08-16-locomo-adapter-amg-bench.md)
 
 ### Medium-term (September)
 - [ ] compress_to_skill() + retrieve_skills() + evolve_skill()

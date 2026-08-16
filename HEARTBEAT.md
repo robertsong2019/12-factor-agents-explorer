@@ -3,8 +3,8 @@
 ## 待办任务
 
 ### 🔴 最高优先级（本周）
-- [ ] **agent-memory-graph: README + npm publish** — **7349 TS + 9241 Python tests**, 1000+ APIs, 40+ entropy APIs, 25-API classification suite + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + activation_trace + competitive_spreading + SummaryTree + code-aware APIs + OWASP security suite (6) + amg-bench + OTel telemetry + MultiAgentMemoryGraph (MESI) + FastAppendQueue ✅ + consolidate() + retrieval quality family **COMPLETE** ✅ + attention (distribution/rebalance) + temporal trilogy + bi-temporal APIs (5) + forgetting_forecast + **Experience Compression Spectrum COMPLETE** ✅ + **GraphRAG API family COMPLETE** ✅ (extract_from_text → graphrag_query → graphrag_explain → graphrag_coverage_report) + knowledge_freshness_report + **GraphRAG-Bench 适配器 run_amg.py COMPLETE** (C439) + export_graphml (C438) + chunk_text 无损分块 (C440) + resolve_entity_variants (C445, 差距 6/6) + amg_bench_quality LongMemEval 适配器 (C447) + 熵双门 abstention (C448)
-- [ ] **amg PyPI publish — 人工三步**（建独立 GitHub 仓 agent-memory-graph / PyPI 2FA + Trusted Publisher / twine upload）— 技术前置 100% 完成 (#066)，与 npm 同为 human-blocked
+- [ ] **agent-memory-graph: README + PyPI/npm publish** — **9241 Python tests**, 970+ APIs, 40+ entropy APIs, 25-API classification suite + FINGEREntropy + PPR + multi_hop_reason + spreading_activation + activation_trace + competitive_spreading + SummaryTree + code-aware APIs + OWASP security suite (6) + amg-bench + OTel telemetry + MultiAgentMemoryGraph (MESI) + FastAppendQueue ✅ + consolidate() + retrieval quality family **COMPLETE** ✅ + attention (distribution/rebalance) + temporal trilogy + bi-temporal APIs (5) + forgetting_forecast + **Experience Compression Spectrum COMPLETE** ✅ + **GraphRAG API family COMPLETE** ✅ (extract_from_text → graphrag_query → graphrag_explain → graphrag_coverage_report) + knowledge_freshness_report + **GraphRAG-Bench 适配器 run_amg.py COMPLETE** (C439) + export_graphml (C438) + chunk_text 无损分块 (C440) + resolve_entity_variants (C445, 差距 6/6) + amg_bench_quality LongMemEval 适配器 (C447) + 熵双门 abstention (C448)。**⚠️ #068 审计：无 TS 实现（旧 "TS 7349" 幻影双计已删）；npm 裸名已被 LightHaru 占用，命名决策（scoped/amgraph）列为 human-blocked，须在 README 终稿前**
+- [ ] **amg PyPI publish — 人工三步**（建独立 GitHub 仓 agent-memory-graph / PyPI 2FA + Trusted Publisher / twine upload）+ **④ npm 命名决策 (#068)**（裸名被占：`@robertsong2019/agent-memory-graph` 推荐 / `amgraph` / `agent-memory-graph-py`，均实测 FREE）— 技术前置 100% 完成 (#066)，与 PyPI 同为 human-blocked
 - [ ] **agent-context-store: README + npm publish** — **2929 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
 - [ ] **agent-task-cli: README + npm publish** — **1570 tests**, F237
@@ -22,8 +22,7 @@
 > 08-06~07 completed items archived to MEMORY.md.
 
 ## 系统状态
-- **agent-memory-graph (TS)**: **7349 tests** — 1000+ APIs。entropy framework (40+) + 25-API classification ✅ + FINGEREntropy + StreamingGraph ✅ + PPR + multi_hop_reason ✅ + spreading_activation ✅ + code-aware ✅ + SummaryTree ✅ + enrich_node ✅ + provenance (4) ✅ + entropy scan (4) ✅ + adaptive forgetting ✅ + EntityResolver ✅ + MCP Day 1-5 ✅
-- **agent-memory-graph (Python)**: **9241 tests** — 970+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ **(C446 repatriated into real repo)** + MCP 16 tools ✅ + OTel telemetry ✅ **(C446 repatriated: telemetry.py + enable/disable/telemetry_status on MemoryGraph, 8 methods incl search_graphrag)** + MultiAgentMemoryGraph (MESI) ✅ + **FastAppendQueue ✅** + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + **retrieval quality family COMPLETE** (audit/explain/rerank/compare/trend) ✅ + attention (distribution/rebalance_plan) ✅ + **temporal trilogy** (changepoints/stability/velocity) ✅ + **bi-temporal APIs** (5) ✅ + **forgetting_forecast** ✅ + seeded RNG fix ✅ + **Experience Compression Spectrum COMPLETE** (extract_rules + compression_spectrum_report + rule_conflict_detect + rule_apply + rule_explain) ✅ + **GraphRAG API family COMPLETE** (extract_from_text + graphrag_query + graphrag_explain + graphrag_coverage_report) ✅ + **export_graphml ✅ (C438)** + **run_amg.py GraphRAG-Bench 适配器 ✅ (C439, 严格官方 schema)** + **chunk_text 无损分块 ✅ (C440)** + **resolve_entity_variants ✅ (C445, GraphRAG-Bench 差距 6/6 全关)** + **amg_bench_quality.py LongMemEval 质量适配器 ✅ (C447: abstention gate + exact_judge + tokens/query，对标 Mem0 ~6787 tok/query 目标 <2000)** + **熵置信双门 abstention ✅ (C448: score_confidence/entropy_gate_fires/sweep_abstention，混合 fixture 0.80→1.00)**
+- **agent-memory-graph (Python)**: **9241 tests** — 970+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ (C446 repatriated) + MCP 16 tools ✅ + OTel telemetry ✅ (C446 repatriated: 8 methods incl search_graphrag) + MultiAgentMemoryGraph (MESI) ✅ + FastAppendQueue ✅ + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + retrieval quality family COMPLETE ✅ + attention ✅ + temporal trilogy ✅ + bi-temporal APIs (5) ✅ + forgetting_forecast ✅ + seeded RNG fix ✅ + Experience Compression Spectrum COMPLETE ✅ + GraphRAG API family COMPLETE ✅ + export_graphml ✅ + run_amg.py 适配器 ✅ + chunk_text ✅ + resolve_entity_variants ✅ + amg_bench_quality LongMemEval 适配器 ✅ + 熵置信双门 abstention ✅。**⚠️ 08-16 审计 (#068)：旧台账 "(TS) 7349" 为幻影双计，已删——无 TS 实现（唯一真 TS = amg-mcp wrapper 1718 行/122 tests）**
 - **agent-context-store**: **2929 tests**
 - **structured-output-toolkit**: **571 tests**
 - **agent-task-cli**: **1570 tests** — F237
@@ -33,9 +32,13 @@
 - **prompt-mgr**: **196 tests**
 - **agent-cost-tracker**: **25 tests** (08-15 修复 export.js 死导入 + 格式化函数测试)
 - **agent-mesh-network**: **373 tests** (355→373, taskStats/cancelTask/routingAnalytics)
-- **四项目总计**: 18731 tests ✅ (amg TS+Py + sot + atc = 7349+9241+571+1570)
-- **全项目总计**: ~27411 tests
+- **四项目总计**: 11382 tests ✅（同口径 amg+sot+atc = 9241+571+1570；⚠️ #068 审计：旧 18731 含幻影 "TS 7349" 双计）
+- **全项目总计**: ~20062 tests（#068 审计修正，旧 ~27411）
 - **零回滚率**: amg **293天** 🏆（按日历校正；会话内曾报 294/295 系计数漂移）/ acs 200天 🏆
+
+## 近期活动 (08-16 晚 cron 20:05)
+- **Research #067 (20:02-20:04 早轮)**: LoCoMo 适配器前置完成 ✅（详见下方条目）
+- **Research #068 (20:05 deep-exploration 本轮)**: 发布前双审计 ✅ — ① **幻影指标曝光**："amg TS 7349" 不存在（635 TS/JS 文件零命中 4 个“TS 专属 API”；唯一真 TS=amg-mcp wrapper 1718 行/122 tests；数字=真身 Python 仓 08-06 冻结计数，与 code-lab 副本计数双计）。四项目 18731→11382，全项目 ~27411→~20062，台账已修正（MEMORY+HEARTBEAT，历史日志加注不重写）② **npm 名被占**：`agent-memory-graph`=LightHaru（TS，05-22 抢注，10天19版后弃坑）；`@robertsong2019/agent-memory-graph`/`amgraph`/`amg-graph` FREE；PyPI 全免费零阻塞 ③ "TS port" 伪任务已从 Next dev targets 移除 ④ count-from-truth 脚本落地（exploration-notes/code/publish_namespace_audit.py，双部分实测）。洞察 #233-#235，人工三步扩为四步（+npm 命名决策）
 
 ## 近期活动 (08-15 晚 ~ 08-16 AM)
 - **Cycles 445-448 (overnight)**: amg Py 9079→**9241** (+162)，零回归，全部 push ✅
@@ -88,9 +91,10 @@
 ## 本周关键路径
 1. ✅ ~~Cycles 367-440: security suite + bench + MCP + multi-agent + consolidation + retrieval QA + attention + temporal + Experience Compression + GraphRAG lifecycle + GraphRAG-Bench 适配器~~ DONE
 2. ⬜ README(agent-memory-graph) → npm publish + **amg PyPI 人工三步** — **BLOCKED on human action**
-3. ⬜ Next dev targets: **8月底双首跑**（①GraphRAG-Bench Novel sample_100 retrieval_eval——先 `ollama pull qwen2.5:7b`，本机未装 ollama=唯一阻塞；②LongMemEval_s_cleaned --limit 50 + sweep_abstention 定工作点，均零 API 成本）/ amg-bench LoCoMo adapter / MCP registry publish / OpenClaw plugin / TS port of Python APIs
+3. ⬜ Next dev targets: **8月底双首跑**（①GraphRAG-Bench Novel sample_100 retrieval_eval——先 `ollama pull qwen2.5:7b`，本机未装 ollama=唯一阻塞；②LongMemEval_s_cleaned --limit 50 + sweep_abstention 定工作点，均零 API 成本）/ amg-bench LoCoMo adapter（#067 前置就绪，Next: C449 locomo_bench_quality.py）/ MCP registry publish / OpenClaw plugin。⚠️ ~~TS port of Python APIs~~ 已移除——#068 审计：无 TS 实现存在，真 TS 化是从零重写须单独立项
 
 ## 上次检查
+- **Knowledge org 验证轮: 2026-08-16 02:04** — 重复触发（同昨日模式）。02:00 轮已完整执行，本轮仅验证：①git HEAD~1 = a4fb5ca "Cycle 448 amg 9241" ✅ 且 02:00 knowledge-org 提交 5ba272e 已入库 ②experiments.tsv 链 9079→9158→9210→9241 三条记录完整 ✅ ③grep test 函数 9077 + parametrize ≈ 9241 吻合 ④四项目 18731 验算通过。无新活动（02:00 后仅 3 个知识文件变更）。无需修正项。
 - **Knowledge org: 2026-08-16 02:00** — Integrated C445-448 (amg Py 9079→9241 verified vs git a4fb5ca; day counter normalized 293 per calendar, sessions had drifted to 294/295). nano 1106 / act 25 / mesh 373. 四项目 18731（修正 HEARTBEAT 错误值 18511）/ 全项目 ~27411. Fixed stale agent-mesh-network 505→373. 双首跑关键路径 + ollama blocker surfaced. 新增 insight #231/#232 (abstention 语义分界 / 子串污染+token 效率).
 - **Knowledge org 验证轮: 2026-08-15 02:04** — 重复触发；核心更新已由 02:00 run 完成（cycles 432-440, amg 8942, 292d）。本轮修正：MEMORY.md 3 处过时计数（atc 1548→1570/F237；amg Py 2294→8942；12223→18432）+ HEARTBEAT 18284→18432；**experiments.tsv 回填 nano-agent R17/R18 三行**（1018→1076，08-13/14 会话遗漏，实际 158 行而非 summary 所称 239 行，末条原为 08-12）。
 - **Knowledge org: 2026-08-15 02:00** — Integrated cycles 432-440 (amg Py 8794→8942, 292nd day, +148)。nano-agent 1018→1076。GraphRAG-Bench 差距清单 5/6 关闭（仅剩 #5 可选）。四项目 18371→18432，全项目 ~27050。acs 统一为 2929（MEMORY 内部三处 2898 已修正）。8月底 Novel sample_100 retrieval_eval 已列为参赛关键路径。
