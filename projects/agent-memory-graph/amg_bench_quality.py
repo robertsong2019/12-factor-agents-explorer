@@ -502,6 +502,7 @@ class LongMemEvalAdapter:
         ranked.sort()
 
         lines: list[str] = []
+        retrieved_ids: list[str] = []
         tokens = 0
         best_score = 0
         for neg_hits, _, nid in ranked:
@@ -510,6 +511,7 @@ class LongMemEvalAdapter:
             if lines and tokens + _estimate_tokens(line) > self.max_context_tokens:
                 break
             lines.append(line)
+            retrieved_ids.append(nid)
             tokens += _estimate_tokens(line)
             best_score = max(best_score, -neg_hits)
 
@@ -527,6 +529,7 @@ class LongMemEvalAdapter:
             "latency_ms": latency,
             "tokens_est": tokens,
             "keywords": keywords,
+            "retrieved_ids": retrieved_ids,   # Cycle 451: turn-level evidence scoring
         }
         return context, meta
 
