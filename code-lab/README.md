@@ -111,7 +111,7 @@
 
 ### 📐 信息论进化史（Cycles 306–316 + 326–407）
 
-最新里程碑：**安全遗忘 + 记忆质量双轴基准（Cycles 441-448，9241 tests）** — 搜索树物化（图即搜索树）、跨模态泄漏扫描与安全遗忘（遗忘前检查派生物敏感 token）、前瞻修复记忆、safety_purge 泄漏闸门、实体变体归一（GraphRAG-Bench 差距清单 6/6 全部清零）、OTel 遥测遣返、LongMemEval 记忆质量适配器与熵置信度弃权闸门。此前：GraphRAG-Bench 基准接入完结（Cycles 432-440，run_amg.py 成为 ICLR 2026 完整适配器，零 LLM/零 API 成本）+ GraphRAG 全流水线完结（extract→query→explain→coverage）+ 双进程写入 FastAppendQueue + 知识新鲜度 FAMA 诊断 + Experience Compression L2→L3 规则生命周期（Cycles 408-431）。
+最新里程碑：**压缩残差 + 对抗鲁棒 + 时间推理（Cycles 449-457，9406 tests）** — 压缩残差三件套（摘要化前抽原子事实，合并/遗忘不丢细节）、保留式遗忘、LoCoMo 对抗基准接入与全量基线、每题独立 haystack 隔离评估（`run_eval`）、主语支撑门（零 LLM 破解 cat-5 主语调包对抗题）、when-日期解析 grounding session 日期、temporal-arithmetic 答案路径（temporal 切片 4.0x，跨数据集泛化）。此前：安全遗忘 + 记忆质量双轴基准（Cycles 441-448，9241 tests）— 搜索树物化（图即搜索树）、跨模态泄漏扫描与安全遗忘（遗忘前检查派生物敏感 token）、前瞻修复记忆、safety_purge 泄漏闸门、实体变体归一（GraphRAG-Bench 差距清单 6/6 全部清零）、OTel 遥测遣返、LongMemEval 记忆质量适配器与熵置信度弃权闸门。更早：GraphRAG-Bench 基准接入完结（Cycles 432-440，run_amg.py 成为 ICLR 2026 完整适配器，零 LLM/零 API 成本）+ GraphRAG 全流水线完结（extract→query→explain→coverage）+ 双进程写入 FastAppendQueue + 知识新鲜度 FAMA 诊断 + Experience Compression L2→L3 规则生命周期（Cycles 408-431）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -219,6 +219,15 @@
 | 遥测遣返 | 446 | `enable_telemetry` / `disable_telemetry` / `telemetry_status` | OTel `gen_ai.memory.*` span 插桩；telemetry.py + amg_bench.py 从过期 C424 副本遭返真身仓（79 tests）|
 | LongMemEval 质量适配器 | 447 | `amg_bench_quality.py` | ingest→retrieve→extractive answer（双置信度门控）→judge，CategorySummary 四指标 |
 | 熵置信度闸门 | 448 | `score_confidence` + `sweep_abstention` | Shannon 熵 over 关键词命中分数：低熵可答/高熵弃权；阈值扫描出 accuracy-coverage 曲线 |
+| 压缩残差 | 449 | `extract_residuals` / `residual_report` / `consolidate_with_residuals` | 摘要化前先抽原子事实存残差节点，合并/压缩不再丢细节 |
+| 保留式遗忘 | 450 | `forget_preserving` / `batch_forget_preserving` | 删除前提取残差 — 与 safe_forget 互补：一个防删漏，一个防删丢 |
+| LoCoMo 适配器 | 451 | `locomo_bench_quality.py` | 对标 LongMemEvalAdapter 的 LoCoMo 接入层（Research #067）|
+| 对抗调参负发现 | 452 | `sweep_abstention` on LoCoMo | **决定性负发现**：cat-5 对抗题词法重叠高，置信度门/新颖性计数均无法分离 |
+| LoCoMo 全量基线 | 453 | 10 样本基线 + `include_questions` | 全量基线落地，适配器支持按题过滤 |
+| 每题独立 haystack | 454 | `run_eval` + CLI `--mode eval` | 一题一图隔离评估（无跨题污染），可选同步 sweep_abstention |
+| 主语支撑门 | 455 | `subject_support_gate` | 零 LLM 答案侧验证破解 C452 负发现：主语调包题的最佳答案行提到别人且从不提被问主体 → 弃权 |
+| when-日期解析 | 456 | 绝对/相对日期 grounding session 日期 | multi_hop 42/321；findall 分组 bug 教训入 memory |
+| 时间运算答案路径 | 457 | `temporal_arith` 答案路径 | LME_s duration/ordering 经 session 日期日历运算，temporal 切片 **4.0x**，跨数据集泛化 |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---

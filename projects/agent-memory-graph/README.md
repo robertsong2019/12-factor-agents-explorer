@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-9241-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-9406-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -2295,7 +2295,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-8505 → **9241 个测试**覆盖所有 API（**448 个 cycle，294 天零回滚**）。
+8505 → **9406 个测试**覆盖所有 API（**457 个 cycle，295 天零回滚**）。
 
 ## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
 
@@ -3952,6 +3952,52 @@ LongMemEval 记忆质量适配器（Research #061）：`ingest_sessions`（会�
 #### `score_confidence(scores) -> dict` + `sweep_abstention(dataset, ...)` (Cycle 448)
 
 熵置信度闸门（Research #061 洞察 #3/#4）：`score_confidence` 计算候选关键词命中分数的 Shannon 熵——低熵=证据集中=可作答，高熵=证据分散=应弃权。`sweep_abstention` 在 LongMemEval 数据集上扫描弃权阈值，输出 accuracy-vs-coverage 曲线（诚实契约：宁可弃权不可胡答）。
+
+### 压缩残差、保留遗忘与对抗鲁棒 (Cycles 449-457)
+
+#### `extract_residuals(*, node_ids=None, kinds=("fact", "event", "entity"), dry_run=False) -> dict` (Cycle 449)
+
+压缩残差三件套之一：从待压缩节点提取原子事实存为残差节点，防止摘要化过程丢失细节。`dry_run=True` 只预览不落库。
+
+#### `residual_report() -> dict` (Cycle 449)
+
+残差全景：残差节点计数、平均每残差事实数、源节点覆盖率、陈旧度指标——压缩损失的体检表。
+
+#### `consolidate_with_residuals(**kwargs) -> dict` (Cycle 449)
+
+`consolidate()` + `extract_residuals()` 合一，但**先**提取残差再合并——源节点被合并吞掉后原子事实仍然幸存。
+
+#### `forget_preserving(node_id, *, force=False, extract=True) -> dict` / `batch_forget_preserving(node_ids, ...) -> dict` (Cycle 450)
+
+保留式遗忘：删除节点前先把原子事实提取为残差（`extract=False` 则直接删）。与 C442 `safe_forget`（泄漏闸门）互补——一个防删漏敏感信息，一个防删丢有价值信息。
+
+#### `locomo_bench_quality.py` — LoCoMo 记忆质量适配器 (Cycle 451, Research #067)
+
+对标 C447 LongMemEvalAdapter 的 LoCoMo 接入层：会话摄入、检索、抽取式作答与分类别评估。
+
+#### `sweep_abstention` LoCoMo 对抗调参 — 决定性负发现 (Cycle 452)
+
+把 C448 弃权扫描搬到 LoCoMo 对抗集：**负发现**——对抗性 cat-5 问题词法重叠高，置信度门与新颖性计数都无法将其与正常问题分离。
+
+#### LoCoMo 10 样本全量基线 + `include_questions` (Cycle 453)
+
+全量基线落地，适配器新增 `include_questions` 参数支持按题过滤。
+
+#### `run_eval(dataset, *, limit=0, entropies=None, use_ppr=True, max_context_tokens=4000, abstain_score=1.0, abstain_entropy=0.95, entropy_weak_score=1, temporal_arith=True) -> dict` (Cycle 454)
+
+每题独立 haystack 评估（LongMemEval-cleaned 一题一 haystack）：为每道题构建全新适配器+图（隔离保证，无跨题污染），运行单题 `evaluate()` 后聚合，可在同一批图上顺带跑 C448 `sweep_abstention`。`temporal_arith` 开关 C457 时间运算路径。配套 CLI `--mode eval`。
+
+#### `subject_support_gate(question, answer_text, known_names=None, speaker=None) -> bool` (Cycle 455)
+
+零 LLM 答案侧语义验证，破解 C452 负发现：LoCoMo cat-5 是主语调包伪造（问 X 的事件，对话里只有 Y 谈过）——当问题点名主体 X，而最佳匹配答案行提到另一个人且从未提到 X 时，问题预设不成立，应弃权。9354 tests 时定稿，**决定性负发现 → 专用闸门**的完整闭环。
+
+#### when-question 日期解析 (Cycle 456)
+
+绝对文本日期 + 相对表述（“上周二”）grounding 到 session 日期作答；multi_hop 42/321。教训入 memory：findall 分组 bug、类别标签对齐、session-date grounding。
+
+#### temporal-arithmetic 答案路径 (Cycle 457)
+
+LME_s duration/ordering 类问题经 session 日期做日历运算作答，temporal 切片 **4.0x** 提升，跨数据集验证了 C456 的时间推理路径。
 
 ---
 
