@@ -10,3 +10,4 @@ timestamp	commit	metric	value	status	description
 2026-05-26T22:10	draft	F5_summary_types_tests	4/4	pass	summary --types activity classification
 2026-05-30T22:10	local	F2_tests	6/6 (100%)	keep	F2: search date range filtering (--from/--to). 6 tests all passing.
 2026-05-30T22:15	local	F17_tests	13/13 (100%)	keep	F17: Integration tests with fixture data. 13 tests covering search/summary/today/date/stats.
+2026-08-16T23:00+08:00	test_fix	test_scripts	13/13=100%	keep	agent-log: fixed 4 stale test scripts — hardcoded May dates & live-workspace content deps replaced with hermetic fixtures (dynamic dates + OPENCLAW_WORKSPACE override + trap cleanup). integration 13/13, regex/keyword/types all pass.

@@ -13,9 +13,14 @@ FIXTURE_DIR=$(mktemp -d)
 FIXTURE_MEMORY="$FIXTURE_DIR/memory"
 mkdir -p "$FIXTURE_MEMORY"
 
+# Date-sensitive fixtures computed relative to today (keeps --days/today tests stable)
+TODAY=$(date +%Y-%m-%d)
+D1=$(date -d '1 day ago' +%Y-%m-%d)
+D2=$(date -d '2 days ago' +%Y-%m-%d)
+
 # Create known fixture files
-cat > "$FIXTURE_MEMORY/2026-05-28.md" << 'EOF'
-# 2026-05-28 Daily Log
+cat > "$FIXTURE_MEMORY/$D2.md" << EOF
+# $D2 Daily Log
 
 ## Morning
 - Fixed bug in agent-task-cli Cache module
@@ -27,8 +32,8 @@ cat > "$FIXTURE_MEMORY/2026-05-28.md" << 'EOF'
 - Meeting with team about Q3 roadmap
 EOF
 
-cat > "$FIXTURE_MEMORY/2026-05-29.md" << 'EOF'
-# 2026-05-29 Daily Log
+cat > "$FIXTURE_MEMORY/$D1.md" << EOF
+# $D1 Daily Log
 
 ## Coding
 - Implemented Cache.getOrSet feature (F18)
@@ -40,8 +45,8 @@ cat > "$FIXTURE_MEMORY/2026-05-29.md" << 'EOF'
 - Explored MCP protocol spec v2
 EOF
 
-cat > "$FIXTURE_MEMORY/2026-05-30.md" << 'EOF'
-# 2026-05-30 Daily Log
+cat > "$FIXTURE_MEMORY/$TODAY.md" << EOF
+# $TODAY Daily Log
 
 ## Today
 - Working on agent-log date range search (F2)
@@ -94,13 +99,13 @@ run_test "Search finds 'Cache' across fixture files" \
   "$AGENT_LOG search 'Cache'" \
   "Cache"
 run_test "Search with --from only shows recent files" \
-  "$AGENT_LOG search --from 2026-05-30 'sprint'" \
+  "$AGENT_LOG search --from $TODAY 'sprint'" \
   "sprint"
-run_test "Search --from 2026-05-29 finds 'RAG' in earlier file" \
-  "$AGENT_LOG search --from 2026-05-29 'RAG'" \
+run_test "Search --from $D1 finds 'RAG' in earlier file" \
+  "$AGENT_LOG search --from $D1 'RAG'" \
   "RAG"
-run_test "Search --to 2026-05-28 finds 'staging' only in 05-28 file" \
-  "$AGENT_LOG search --to 2026-05-28 'staging'" \
+run_test "Search --to $D2 finds 'staging' only in oldest file" \
+  "$AGENT_LOG search --to $D2 'staging'" \
   "staging"
 run_test "Regex search finds pattern" \
   "$AGENT_LOG search -r 'F[0-9]{2}'" \
@@ -110,10 +115,10 @@ echo
 echo "summary tests"
 run_test "Summary with --days 3 shows 3 files" \
   "$AGENT_LOG summary --days 3" \
-  "2026-05-28"
+  "$D2"
 run_test "Summary --days 1 only shows today" \
   "$AGENT_LOG summary --days 1" \
-  "2026-05-30"
+  "$TODAY"
 run_test "Summary with -k keyword filters" \
   "$AGENT_LOG summary --days 3 -k 'sprint'" \
   "filter: sprint"
@@ -128,13 +133,13 @@ echo
 echo "today tests"
 run_test "today command shows today's log" \
   "$AGENT_LOG today | head -5" \
-  "2026-05-30"
+  "$TODAY"
 
 echo
 echo "date tests"
 run_test "date command shows specific date" \
-  "$AGENT_LOG date 2026-05-28 | head -5" \
-  "2026-05-28"
+  "$AGENT_LOG date $D2 | head -5" \
+  "$D2"
 
 echo
 echo "stats tests"

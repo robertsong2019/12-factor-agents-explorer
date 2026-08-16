@@ -71,6 +71,13 @@ echo "Running tests for F1: search with regex support"
 echo "================================================"
 echo
 
+# Hermetic fixture workspace (no dependency on real workspace content)
+FIXTURE_DIR=$(mktemp -d)
+export OPENCLAW_WORKSPACE="$FIXTURE_DIR"
+mkdir -p "$FIXTURE_DIR/memory"
+printf '# Regex fixture\nfixed f49 bug, F42 approved\nran test123 with docker container\n' > "$FIXTURE_DIR/memory/$(date +%Y-%m-%d).md"
+trap 'rm -rf "$FIXTURE_DIR"' EXIT
+
 # Test 1: Basic text search (should still work)
 run_test "Basic text search" \
   "$AGENT_LOG search 'test' | head -5" \

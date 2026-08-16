@@ -26,6 +26,13 @@ echo "Running tests for F5: summary activity types"
 echo "=============================================="
 echo
 
+# Hermetic fixture workspace (research-heavy content → deterministic type label)
+FIXTURE_DIR=$(mktemp -d)
+export OPENCLAW_WORKSPACE="$FIXTURE_DIR"
+mkdir -p "$FIXTURE_DIR/memory"
+printf '# Research fixture\nread research paper, deep analysis and study\nfound interesting article while doing search\n' > "$FIXTURE_DIR/memory/$(date +%Y-%m-%d).md"
+trap 'rm -rf "$FIXTURE_DIR"' EXIT
+
 # Test 1: --types flag shows activity labels
 run_test "Types flag shows parenthesized type" \
   "$AGENT_LOG summary 7 --types" \

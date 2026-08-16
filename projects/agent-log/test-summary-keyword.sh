@@ -71,6 +71,14 @@ echo "Running tests for F4: summary with keyword filtering"
 echo "===================================================="
 echo
 
+# Hermetic fixture workspace (no dependency on real workspace content)
+FIXTURE_DIR=$(mktemp -d)
+export OPENCLAW_WORKSPACE="$FIXTURE_DIR"
+mkdir -p "$FIXTURE_DIR/memory"
+TODAY=$(date +%Y-%m-%d)
+printf '# Keyword fixture\nworked on test suite improvements and test helpers\n' > "$FIXTURE_DIR/memory/$TODAY.md"
+trap 'rm -rf "$FIXTURE_DIR"' EXIT
+
 # Test 1: Basic summary without keyword (backward compatibility)
 run_test "Basic summary without keyword" \
   "$AGENT_LOG summary 3" \
@@ -84,7 +92,7 @@ run_test "Summary with keyword filter" \
 # Test 3: Keyword filter shows filtered results
 run_test "Keyword filter shows matching files" \
   "$AGENT_LOG summary 7 'test'" \
-  "2026-05-2"
+  "$TODAY"
 
 # Test 4: Non-matching keyword shows zero files
 run_test "Non-matching keyword shows zero files" \
