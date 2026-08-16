@@ -49569,6 +49569,207 @@ n            - ``total_rules`` – number of rules scanned.
         return result
 
     # ════════════════════════════════════════════════════════════
+    #  Compression Residuals
+    # ════════════════════════════════════════════════════════════
+
+    def extract_residuals(self, *, node_ids: list[str] | None = None,
+                          kinds: tuple[str, ...] = ("fact", "event", "entity"),
+                          dry_run: bool = False) -> dict:
+        """Extract atomic facts from nodes to prevent summary loss.
+
+        Implements the ProGraph compression-residual pattern (Research #045):
+        narrative summaries paraphrase away dates, quantities, named items.
+        Co-extracting atomic facts alongside consolidation preserves
+        precision at zero extra API cost.
+
+        Pattern extractors (no LLM required):
+        - **Dates**: YYYY-MM-DD, DD/MM/YYYY, Month DD, YYYY
+        - **Quantities**: numbers with units (3.5kg, $100, 42 items)
+        - **Named entities**: capitalized multi-word phrases (2+ words)
+        - **Temporal references**: "yesterday", "last week", "2 days ago"
+
+        Args:
+            node_ids: Specific nodes to scan (None = all).
+            kinds: Node kinds to consider for extraction.
+            dry_run: Report without creating residual nodes.
+
+        Returns:
+            Dict with ``residuals`` (list of extracted facts),
+            ``nodes_scanned``, ``residuals_created``, ``dry_run``.
+        """
+        import re as _re
+
+        # Atomic fact patterns
+        _date_pats = [
+            _re.compile(r'\b\d{4}-\d{2}-\d{2}\b'),           # ISO
+            _re.compile(r'\b\d{1,2}/\d{1,2}/\d{2,4}\b'),      # US/EU
+            _re.compile(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|'
+                        r'Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2},? \d{4}\b'),  # Written
+        ]
+        _qty_pat = _re.compile(
+            r'(?:[\$\u20ac\u00a3\u00a5])?(\d+(?:\.\d+)?)\s*(?:%|kg|lb|km|mi|ms|s|min|h|hr|'
+            r'days?|weeks?|months?|years?|items?|times?|bytes?|KB|MB|GB|'
+            r'TB|USD|EUR|GBP|JPY|CNY)')
+        _entity_pat = _re.compile(
+            r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b')  # 2+ caps words
+        _temporal_pat = _re.compile(
+            r'\b(?:yesterday|today|tomorrow|last\s+week|next\s+week|'
+            r'\d+\s+(?:days?|weeks?|months?|years?)\s+ago)\b',
+            _re.IGNORECASE)
+
+        targets = node_ids or [r["id"] for r in self.conn.execute(
+            "SELECT id FROM nodes").fetchall()]
+
+        residuals: list[dict] = []
+        created = 0
+        seen_facts: set[str] = set()  # dedup within batch
+        scanned = 0
+
+        for nid in targets:
+            node = self.get_node(nid)
+            if not node:
+                continue
+            if kinds and node.kind not in kinds:
+                continue
+            scanned += 1
+
+            text = node.label
+            facts_found: list[str] = []
+
+            for pat in _date_pats:
+                for m in pat.finditer(text):
+                    f = f"date:{m.group()}"
+                    if f not in seen_facts:
+                        seen_facts.add(f)
+                        facts_found.append(f)
+
+            for m in _qty_pat.finditer(text):
+                f = f"qty:{m.group()}"
+                if f not in seen_facts:
+                    seen_facts.add(f)
+                    facts_found.append(f)
+
+            for m in _entity_pat.finditer(text):
+                f = f"entity:{m.group()}"
+                if f not in seen_facts:
+                    seen_facts.add(f)
+                    facts_found.append(f)
+
+            for m in _temporal_pat.finditer(text):
+                f = f"temporal:{m.group().lower()}"
+                if f not in seen_facts:
+                    seen_facts.add(f)
+                    facts_found.append(f)
+
+            if facts_found:
+                residuals.append({
+                    "source_node": nid,
+                    "source_label": text[:80],
+                    "facts": facts_found,
+                    "count": len(facts_found),
+                })
+
+                if not dry_run:
+                    # Create a residual node per source
+                    res_label = "; ".join(facts_found[:5])
+                    res_node = self.add(
+                        label=res_label,
+                        kind="residual",
+                        data={"importance": 0.3},
+                    )
+                    # Link residual to source
+                    self.link(nid, res_node.id,
+                              relation="has_residual", weight=0.5)
+                    created += 1
+
+        return {
+            "residuals": residuals,
+            "nodes_scanned": scanned,
+            "residuals_created": created,
+            "unique_facts": len(seen_facts),
+            "dry_run": dry_run,
+        }
+
+    def residual_report(self) -> dict:
+        """Summary of compression residual nodes in the graph.
+
+        Returns count, average facts per residual, source coverage,
+        and staleness metrics for residual nodes.
+        """
+        import json as _json
+
+        res_rows = self.conn.execute(
+            "SELECT id, data, label, created FROM nodes WHERE kind='residual'"
+        ).fetchall()
+
+        if not res_rows:
+            return {
+                "count": 0, "avg_facts": 0.0,
+                "source_coverage": 0.0,
+                "oldest_residual_hours": 0.0,
+            }
+
+        # Count facts per residual (semicolon-separated)
+        total_facts = 0
+        for r in res_rows:
+            if r["label"]:
+                total_facts += len(r["label"].split("; "))
+
+        # Source coverage: how many unique source nodes have residuals?
+        src_edges = self.conn.execute(
+            "SELECT DISTINCT source FROM edges "
+            "WHERE relation='has_residual'"
+        ).fetchall()
+        total_nodes = self.conn.execute("SELECT COUNT(*) as c FROM nodes").fetchone()["c"]
+        coverage = len(src_edges) / total_nodes if total_nodes else 0.0
+
+        # Oldest residual
+        now = time.time()
+        oldest = 0.0
+        for r in res_rows:
+            if r["created"]:
+                try:
+                    created = float(r["created"])
+                    age = (now - created) / 3600  # hours
+                    oldest = max(oldest, age)
+                except (ValueError, TypeError):
+                    pass
+
+        return {
+            "count": len(res_rows),
+            "avg_facts": round(total_facts / len(res_rows), 2),
+            "source_coverage": round(coverage * 100, 2),
+            "oldest_residual_hours": round(oldest, 2),
+        }
+
+    def consolidate_with_residuals(self, **kwargs) -> dict:
+        """consolidate() + extract_residuals() in one call.
+
+        Runs residual extraction BEFORE consolidation so that atomic
+        facts are preserved even when their source nodes are merged
+        or pruned during NREM/REM phases.
+
+        Accepts all ``consolidate()`` kwargs. Additional:
+            - ``extract_kwargs``: dict passed to extract_residuals().
+
+        Returns:
+            Combined result dict with ``consolidation`` and ``residuals``
+            top-level keys.
+        """
+        extract_kw = kwargs.pop("extract_kwargs", {})
+
+        # Extract residuals FIRST (before any merges/prunes)
+        res_result = self.extract_residuals(**extract_kw)
+
+        # Run consolidation
+        con_result = self.consolidate(**kwargs)
+
+        return {
+            "consolidation": con_result,
+            "residuals": res_result,
+        }
+
+    # ════════════════════════════════════════════════════════════
     #  Consolidation Dashboard
     # ════════════════════════════════════════════════════════════
 
