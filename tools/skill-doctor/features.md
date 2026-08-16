@@ -17,3 +17,4 @@
 - [x] **Custom checks** — load additional checks from `.skill-doctor.js` ✅ 2026-05-16
 - [x] **Quiet mode** (`--quiet`) — only show warnings/failures ✅ 2026-05-16
 - [x] **Auto-fix** (`--fix`) — auto-fix simple issues (add .gitignore, create SKILL.md/README.md) ✅ 2026-05-14 (7 tests)
+- [x] **GitHub Actions format** (`--format github`) — emit `::error`/`::warning` workflow-command annotations (CI inline annotations, `%`/newline escaped, --json takes precedence) ✅ 2026-08-16 (11 tests)

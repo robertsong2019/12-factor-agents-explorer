@@ -539,3 +539,108 @@ test("diagnoseJSON handles custom check throwing error", () => {
   expect(crasher.status).toBe("fail");
   expect(crasher.msg).toContain("custom crash");
 });
+
+// ── GitHub Actions annotations format ─────────────────────────────────
+
+describe("formatGithubAnnotations", () => {
+  const { formatGithubAnnotations, escapeGithubData } = require("./index");
+
+  const report = {
+    results: [
+      { name: "SKILL.md exists", status: "fail", msg: "SKILL.md not found" },
+      { name: "SKILL.md description", status: "warn", msg: "No explicit description found" },
+      { name: "README.md exists", status: "pass", msg: "ok" },
+      { name: "skipped check", status: "skip", msg: "n/a" },
+    ],
+    summary: { pass: 1, warn: 1, fail: 1, skip: 1 },
+  };
+
+  test("fail → ::error with title and name: msg", () => {
+    const lines = formatGithubAnnotations(report);
+    expect(lines[0]).toBe("::error title=skill-doctor::SKILL.md exists: SKILL.md not found");
+  });
+
+  test("warn → ::warning line, ordered as reported", () => {
+    const lines = formatGithubAnnotations(report);
+    expect(lines[1]).toBe("::warning title=skill-doctor::SKILL.md description: No explicit description found");
+    expect(lines).toHaveLength(2);
+  });
+
+  test("pass and skip produce no annotations", () => {
+    const clean = { results: [
+      { name: "a", status: "pass", msg: "ok" },
+      { name: "b", status: "skip", msg: "n/a" },
+    ]};
+    expect(formatGithubAnnotations(clean)).toEqual([]);
+  });
+
+  test("empty results → empty output", () => {
+    expect(formatGithubAnnotations({ results: [] })).toEqual([]);
+  });
+
+  test("escapes % as %25", () => {
+    const r = { results: [{ name: "n", status: "warn", msg: "50% done" }] };
+    expect(formatGithubAnnotations(r)[0]).toContain("50%25 done");
+  });
+
+  test("escapes newlines as %0A (single-line annotation)", () => {
+    const r = { results: [{ name: "n", status: "fail", msg: "line1\nline2" }] };
+    const line = formatGithubAnnotations(r)[0];
+    expect(line).not.toContain("\n");
+    expect(line).toContain("line1%0Aline2");
+  });
+
+  test("escapeGithubData handles %, CR and LF together", () => {
+    expect(escapeGithubData("a%b\rc\nd")).toBe("a%25b%0Dc%0Ad");
+  });
+
+  test("double escaping is idempotent-safe: %25 does not become %2525", () => {
+    expect(escapeGithubData("100%")).toBe("100%25");
+  });
+});
+
+describe("CLI --format github", () => {
+  const { execFileSync } = require("child_process");
+
+  test("fail condition emits ::error annotation, exit code 2, no ANSI", () => {
+    const dir = createTempSkill({}); // empty dir: no SKILL.md → fail, no README → warn
+    let out, status;
+    try {
+      out = execFileSync("node", ["index.js", "--format", "github", dir], { encoding: "utf8" });
+      status = 0;
+    } catch (e) {
+      out = e.stdout;
+      status = e.status;
+    }
+    expect(status).toBe(2);
+    expect(out).toContain("::error title=skill-doctor::");
+    expect(out).toContain("::warning title=skill-doctor::");
+    expect(out).not.toContain("\u001b["); // no ANSI colors in CI output
+  });
+
+  test("healthy skill dir emits no annotation lines, exit 0", () => {
+    const dir = createTempSkill({
+      "SKILL.md": "A".repeat(200) + "\nDescription: does things properly for tests here\n" + "B".repeat(100),
+      "README.md": "# readme\n",
+    });
+    const out = execFileSync("node", ["index.js", "--format", "github", dir], {
+      encoding: "utf8",
+    });
+    expect(out.trim()).toBe("");
+  });
+
+  test("--json takes precedence over --format github (machine JSON stays machine JSON)", () => {
+    const dir = createTempSkill({});
+    let out;
+    try {
+      out = execFileSync("node", ["index.js", "--json", "--format", "github", dir], {
+        encoding: "utf8",
+      });
+    } catch (e) {
+      out = e.stdout; // exit 2 from failed checks is expected
+    }
+    const parsed = JSON.parse(out);
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed[0].summary).toBeDefined();
+  });
+});

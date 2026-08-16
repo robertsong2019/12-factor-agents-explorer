@@ -194,6 +194,26 @@ function diagnoseJSON(dir) {
   return { directory: resolved, results, summary, exitCode: summary.fail > 0 ? 2 : summary.warn > 0 ? 1 : 0 };
 }
 
+// ── GitHub Actions annotations format ───────────────────────────
+
+function escapeGithubData(s) {
+  return String(s).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+}
+
+// Turn a diagnoseJSON() report into GitHub Actions workflow-command lines.
+// fail → ::error, warn → ::warning; pass/skip are silent (annotations are for problems).
+function formatGithubAnnotations(report) {
+  const lines = [];
+  for (const r of report.results) {
+    if (r.status !== "fail" && r.status !== "warn") continue;
+    const cmd = r.status === "fail" ? "error" : "warning";
+    lines.push(
+      `::${cmd} title=skill-doctor::${escapeGithubData(`${r.name}: ${r.msg}`)}`
+    );
+  }
+  return lines;
+}
+
 // ── Auto-fix ─────────────────────────────────────────────────
 
 const fixers = [];
@@ -284,14 +304,20 @@ function loadCustomChecks(dir) {
 }
 
 // Export for testing
-module.exports = { checks, diagnose, diagnoseJSON, fixers, autoFix, autoFixJSON, loadCustomChecks };
+module.exports = { checks, diagnose, diagnoseJSON, fixers, autoFix, autoFixJSON, loadCustomChecks, formatGithubAnnotations, escapeGithubData };
 
 if (require.main === module) {
   const args = process.argv.slice(2);
   const jsonMode = args.includes("--json");
   const fixMode = args.includes("--fix");
   const quietMode = args.includes("--quiet");
-  const dirs = args.filter((a) => a !== "--json" && a !== "--fix" && a !== "--quiet");
+  const formatIdx = args.indexOf("--format");
+  const formatMode = formatIdx !== -1 ? args[formatIdx + 1] : null; // "github" expected
+  const dirs = args.filter(
+    (a, i) =>
+      a !== "--json" && a !== "--fix" && a !== "--quiet" && a !== "--format" &&
+      !(formatIdx !== -1 && i === formatIdx + 1)
+  );
 
   if (dirs.length === 0 || args.includes("--help") || args.includes("-h")) {
     console.log(`${c.bold}skill-doctor${c.reset} — Diagnose OpenClaw Agent Skills
@@ -302,6 +328,7 @@ ${c.bold}Usage:${c.reset}
   skill-doctor --fix <skill-dir>    auto-fix simple issues
   skill-doctor --fix --json        auto-fix with JSON output
   skill-doctor --quiet <skill-dir> only show warnings/failures
+  skill-doctor --format github <skill-dir>  GitHub Actions annotations (::error/::warning)
   skill-doctor --help
 
 ${c.bold}Exit codes:${c.reset}
@@ -320,6 +347,15 @@ ${c.bold}Exit codes:${c.reset}
     }
     // After fixing, re-diagnose to show current state
     console.log(`\n${c.bold}${c.cyan}--- Re-running diagnosis ---${c.reset}`);
+  }
+
+  if (formatMode === "github" && !jsonMode && !fixMode) {
+    const reports = dirs.map((d) => diagnoseJSON(d));
+    for (const report of reports) {
+      for (const line of formatGithubAnnotations(report)) console.log(line);
+    }
+    const worst = Math.max(...reports.map((r) => r.exitCode));
+    process.exit(worst);
   }
 
   if (jsonMode && !fixMode) {
