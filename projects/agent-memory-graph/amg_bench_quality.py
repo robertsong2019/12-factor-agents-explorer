@@ -261,6 +261,39 @@ def _normalize(text: str) -> str:
                   re.sub(r"[^a-z0-9 ]+", " ", text.lower())).strip()
 
 
+def evidence_session_ids(item: dict) -> set[str]:
+    """Resolve dataset ``answer_session_ids`` → ingest-side session ids.
+
+    LongMemEval-cleaned ships ``haystack_session_ids`` parallel to
+    ``haystack_sessions`` (evidence sessions are hidden among noise
+    sessions). ``run_eval`` ingests bare-list sessions with positional
+    ``session_{j+1}`` ids; dict sessions keep their own ``session_id``.
+    This mirrors that convention so evidence coverage can be scored
+    against the adapter's ``node→session_id`` map (Cycle 467).
+
+    Returns an empty set when the item carries no evidence pointers
+    (synthetic datasets) — callers treat coverage as unresolvable
+    (``None``), never as a miss: honest unknown > confident wrong
+    label (C466 lesson 3).
+    """
+    ans = item.get("answer_session_ids") or []
+    hs_ids = item.get("haystack_session_ids") or []
+    sessions = (item.get("haystack_sessions")
+                or item.get("sessions") or [])
+    if not ans or not hs_ids:
+        return set()
+    ans_set = {str(a) for a in ans}
+    out: set[str] = set()
+    for j, sid in enumerate(hs_ids):
+        if str(sid) not in ans_set or j >= len(sessions):
+            continue
+        s = sessions[j]
+        out.add(s.get("session_id")
+                if isinstance(s, dict) and s.get("session_id")
+                else f"session_{j + 1}")
+    return out
+
+
 @dataclass
 class QuestionResult:
     """Result for a single LongMemEval question."""
@@ -280,6 +313,14 @@ class QuestionResult:
     # losses (Research #069 — kupdate 0.0 was a protocol artifact).
     correct_exact: bool | None = None
     correct_llm: bool | None = None
+    # Evidence-session coverage (Cycle 467): did retrieval surface
+    # ANY message from a session the dataset marks as answer
+    # evidence? ``None`` = item carries no evidence pointers (metric
+    # unresolvable — distinct from a miss). Fixes the structural
+    # blindness of truth-containment ``retrieval_hit`` on categories
+    # whose truths are synthesized ("The user would prefer…" —
+    # preference 30q hit 0.000 was a metric artifact, not retrieval).
+    answer_session_hit: bool | None = None
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -294,6 +335,9 @@ class CategorySummary:
     abstentions: int = 0
     hits: int = 0
     total_tokens: int = 0
+    # Cycle 467: evidence coverage over RESOLVABLE questions only.
+    answer_hits: int = 0
+    answer_resolved: int = 0
 
     @property
     def accuracy(self) -> float:
@@ -308,6 +352,11 @@ class CategorySummary:
         return self.hits / self.total if self.total else 0.0
 
     @property
+    def answer_session_hit_rate(self) -> float:
+        return (self.answer_hits / self.answer_resolved
+                if self.answer_resolved else 0.0)
+
+    @property
     def avg_tokens(self) -> float:
         return self.total_tokens / self.total if self.total else 0.0
 
@@ -320,6 +369,10 @@ class CategorySummary:
             "accuracy": round(self.accuracy, 4),
             "abstention_rate": round(self.abstention_rate, 4),
             "retrieval_hit_rate": round(self.retrieval_hit_rate, 4),
+            "answer_session_hits": self.answer_hits,
+            "answer_sessions_resolved": self.answer_resolved,
+            "answer_session_hit_rate": round(
+                self.answer_session_hit_rate, 4),
             "avg_tokens": round(self.avg_tokens, 1),
         }
 
@@ -752,6 +805,18 @@ class LongMemEvalAdapter:
             hit = (bool(truth) and not is_abs
                    and _normalize(truth) in _normalize(meta["context"]))
 
+            # Cycle 467: evidence-session coverage — resolvable only
+            # when the item ships answer_session_ids; None means
+            # unresolvable (excluded from rates, never counted a miss).
+            answer_session_hit: bool | None = None
+            ev_ids = evidence_session_ids(item)
+            if ev_ids:
+                retrieved_sessions = {
+                    self._nodes[nid]["session_id"]
+                    for nid in meta.get("retrieved_ids", [])
+                    if nid in self._nodes}
+                answer_session_hit = bool(retrieved_sessions & ev_ids)
+
             # C466: dataset question_type/category is AUTHORITATIVE when
             # present — _classify_question heuristics mislabel otherwise
             # (full-500 LME_s: 419/500 → single_session_user, temporal 49
@@ -765,6 +830,7 @@ class LongMemEvalAdapter:
                 ground_truth=truth, predicted_answer=predicted,
                 abstained=meta["abstained"], correct=correct,
                 retrieval_hit=hit,
+                answer_session_hit=answer_session_hit,
                 latency_ms=meta["latency_ms"], tokens_est=meta["tokens_est"],
                 correct_exact=correct_exact, correct_llm=correct_llm,
                 retrieval={"best_score": meta["best_score"],
@@ -782,13 +848,21 @@ class LongMemEvalAdapter:
             summary.abstentions += int(meta["abstained"])
             summary.hits += int(hit)
             summary.total_tokens += meta["tokens_est"]
+            if answer_session_hit is not None:
+                summary.answer_resolved += 1
+                summary.answer_hits += int(answer_session_hit)
 
         total = len(results)
+        resolved = [r for r in results if r.answer_session_hit is not None]
         report = {
             "overall_accuracy": (sum(r.correct for r in results) / total
                                  if total else 0.0),
             "retrieval_hit_rate": (sum(r.retrieval_hit for r in results)
                                    / total if total else 0.0),
+            "answer_session_hit_rate": (
+                sum(r.answer_session_hit for r in resolved)
+                / len(resolved) if resolved else 0.0),
+            "answer_sessions_resolved": len(resolved),
             "abstention_rate": (sum(r.abstained for r in results) / total
                                 if total else 0.0),
             "avg_tokens": (sum(r.tokens_est for r in results) / total
@@ -1423,17 +1497,26 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
     for r in all_results:
         c = categories.setdefault(r["category"], {
             "category": r["category"], "total": 0, "correct": 0,
-            "abstentions": 0, "hits": 0, "total_tokens": 0})
+            "abstentions": 0, "hits": 0, "total_tokens": 0,
+            "answer_session_hits": 0, "answer_sessions_resolved": 0})
         c["total"] += 1
         c["correct"] += int(r["correct"])
         c["abstentions"] += int(r["abstained"])
         c["hits"] += int(r["retrieval_hit"])
         c["total_tokens"] += r["tokens_est"]
+        ash = r.get("answer_session_hit")
+        if ash is not None:
+            c["answer_sessions_resolved"] += 1
+            c["answer_session_hits"] += int(ash)
     for c in categories.values():
         t, tok = c["total"], c.pop("total_tokens")
         c["accuracy"] = round(c["correct"] / t, 4) if t else 0.0
         c["abstention_rate"] = round(c["abstentions"] / t, 4) if t else 0.0
         c["retrieval_hit_rate"] = round(c["hits"] / t, 4) if t else 0.0
+        c["answer_session_hit_rate"] = (
+            round(c["answer_session_hits"]
+                  / c["answer_sessions_resolved"], 4)
+            if c["answer_sessions_resolved"] else 0.0)
         c["avg_tokens"] = round(tok / t, 1) if t else 0.0
 
     sweep = None
@@ -1465,6 +1548,13 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
         "sweep": sweep,
         "config": kwargs,
     }
+    # Cycle 467: None-aware evidence-coverage aggregation.
+    resolved_rows = [r for r in all_results
+                     if r.get("answer_session_hit") is not None]
+    report["answer_session_hit_rate"] = (
+        sum(r["answer_session_hit"] for r in resolved_rows)
+        / len(resolved_rows) if resolved_rows else 0.0)
+    report["answer_sessions_resolved"] = len(resolved_rows)
     if judge_mode == "dual":
         report["config"] = {**kwargs, "judge_mode": judge_mode}
         report["accuracy_exact"] = report["overall_accuracy"]
@@ -1554,6 +1644,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{report['total_questions']} questions · "
               f"accuracy {report['overall_accuracy']:.3f} · "
               f"retrieval_hit {report['retrieval_hit_rate']:.3f} · "
+              f"evidence_hit {report['answer_session_hit_rate']:.3f} "
+              f"({report['answer_sessions_resolved']} resolved) · "
               f"abstention {report['abstention_rate']:.1%} · "
               f"avg {report['avg_tokens']:.0f} tokens/query")
         if report["sweep"]:
