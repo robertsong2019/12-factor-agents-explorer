@@ -678,7 +678,8 @@ export {
   buildExecutionPlan,
   validateOrchestrator,
   generateMarkdownReport,
-  getStatusIcon
+  getStatusIcon,
+  executeTasks
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
