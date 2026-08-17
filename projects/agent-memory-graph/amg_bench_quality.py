@@ -694,6 +694,10 @@ class LongMemEvalAdapter:
 
         Args:
             dataset: ``[{"id", "question", "answer", ...}]``.
+              ``question_id`` is honored as an id fallback (C466 —
+              LongMemEval-cleaned naming), and ``question_type`` /
+              ``category`` override category heuristics when present
+              (C466 — honest attribution for calibration_by_category).
             judge_fn: Optional external judge; default containment.
             limit: Evaluate at most this many questions (0 = all).
             judge_mode: "exact" (default) or "dual".
@@ -708,7 +712,10 @@ class LongMemEvalAdapter:
         cat: dict[str, CategorySummary] = {}
 
         for i, item in enumerate(items):
-            qid = str(item.get("id", i))
+            # C466: LongMemEval-cleaned ships ``question_id`` (not ``id``);
+            # honoring it keeps run_eval rows traceable (was: all "0",
+            # because run_eval passes single-item lists → index 0).
+            qid = str(item.get("id") or item.get("question_id") or i)
             question = str(item.get("question", ""))
             truth = str(item.get("answer", ""))
             is_abs = qid.endswith("_abs") or bool(item.get("abstention"))
@@ -745,7 +752,14 @@ class LongMemEvalAdapter:
             hit = (bool(truth) and not is_abs
                    and _normalize(truth) in _normalize(meta["context"]))
 
-            category = self._classify_question(question, qid)
+            # C466: dataset question_type/category is AUTHORITATIVE when
+            # present — _classify_question heuristics mislabel otherwise
+            # (full-500 LME_s: 419/500 → single_session_user, temporal 49
+            # vs true 133; raw ids carry no category suffix).
+            qtype = str(item.get("question_type")
+                        or item.get("category") or "").strip().lower()
+            category = (CATEGORIES.get(qtype, qtype) if qtype
+                        else self._classify_question(question, qid))
             res = QuestionResult(
                 question_id=qid, category=category, question=question,
                 ground_truth=truth, predicted_answer=predicted,

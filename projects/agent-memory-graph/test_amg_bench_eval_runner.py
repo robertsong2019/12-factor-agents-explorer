@@ -48,6 +48,41 @@ def test_run_eval_categories_aggregate():
     assert cats["single_session_user"]["correct"] == 2
 
 
+def test_run_eval_honest_attribution_e2e():
+    """C466: raw LongMemEval-cleaned items (question_id + question_type,
+    NO id) keep traceable qids and true categories end-to-end — the
+    full-500 reference run had every qid as "0" and 419/500 questions
+    misfiled under single_session_user."""
+    raw = [{"question_id": "gpt4_f49edff3",
+            "question_type": "temporal-reasoning",
+            "question": "What is my favorite color?",
+            "answer": "teal",
+            "haystack_sessions": HAY1},
+           {"question_id": "71017276",
+            "question_type": "multi-session",
+            "question": "What is my favorite color?",
+            "answer": "teal",
+            "haystack_sessions": HAY1}]
+    rep = run_eval(raw)
+    rows = {r["question_id"]: r for r in rep["results"]}
+    assert set(rows) == {"gpt4_f49edff3", "71017276"}  # no "0" rows
+    assert rows["gpt4_f49edff3"]["category"] == "temporal_reasoning"
+    assert rows["71017276"]["category"] == "multi_session"
+    assert set(rep["categories"]) == {"temporal_reasoning", "multi_session"}
+
+
+def test_run_eval_calibration_by_category_honest():
+    """C466 endgame: dual-mode calibration_by_category groups by the
+    dataset's own labels, not heuristic guesses."""
+    raw = [{"question_id": "t1", "question_type": "temporal-reasoning",
+            "question": "What is my favorite color?", "answer": "teal",
+            "haystack_sessions": HAY1}]
+    rep = run_eval(raw, judge_mode="dual")
+    by_cat = rep["calibration_by_category"]
+    assert "temporal_reasoning" in by_cat
+    assert "single_session_user" not in by_cat
+
+
 def test_run_eval_limit():
     rep = run_eval([Q1, Q2], limit=1)
     assert rep["total_questions"] == 1

@@ -385,6 +385,62 @@ class TestEvaluate:
 
 
 # ---------------------------------------------------------------------------
+# C466 — honest attribution: question_id fallback + authoritative
+# question_type/category (heuristics mislabeled full-500 LME_s 419/500
+# as single_session_user; temporal 49 vs true 133)
+# ---------------------------------------------------------------------------
+
+class TestHonestAttribution:
+    def test_question_id_fallback(self, adapter):
+        """LongMemEval-cleaned ships question_id (no id) — must reach the
+        result row instead of the loop index."""
+        dataset = [dict(QUESTIONS[0], question_id="gpt4_59149c77")]
+        del dataset[0]["id"]
+        row = adapter.evaluate(dataset)["results"][0]
+        assert row["question_id"] == "gpt4_59149c77"
+
+    def test_id_still_wins_over_question_id(self, adapter):
+        dataset = [dict(QUESTIONS[0], question_id="loser")]
+        row = adapter.evaluate(dataset)["results"][0]
+        assert row["question_id"] != "loser"  # explicit id contract kept
+
+    def test_question_type_hyphen_maps_canonical(self, adapter):
+        dataset = [dict(QUESTIONS[0], question_type="temporal-reasoning")]
+        row = adapter.evaluate(dataset)["results"][0]
+        assert row["category"] == "temporal_reasoning"
+
+    def test_question_type_canonical_kept(self, adapter):
+        dataset = [dict(QUESTIONS[0], question_type="knowledge_update")]
+        row = adapter.evaluate(dataset)["results"][0]
+        assert row["category"] == "knowledge_update"
+
+    def test_category_field_also_honored(self, adapter):
+        dataset = [dict(QUESTIONS[0], category="multi-session")]
+        row = adapter.evaluate(dataset)["results"][0]
+        assert row["category"] == "multi_session"
+
+    def test_unknown_type_passes_through_honestly(self, adapter):
+        """An unseen type stays itself — mislabeling via heuristics would
+        poison calibration_by_category."""
+        dataset = [dict(QUESTIONS[0], question_type="hybrid-events")]
+        row = adapter.evaluate(dataset)["results"][0]
+        assert row["category"] == "hybrid-events"
+
+    def test_no_type_falls_back_to_heuristics(self, adapter):
+        dataset = [dict(QUESTIONS[0])]
+        row = adapter.evaluate(dataset)["results"][0]
+        assert row["category"] == "single_session_user"  # default path
+
+    def test_heuristic_overrides_respected(self, adapter):
+        """Explicit type beats question-form heuristics even when the
+        question text contains trigger words."""
+        q = dict(QUESTIONS[0], question="When did I update my preference?",
+                 question_type="single-session-preference")
+        row = adapter.evaluate([q])["results"][0]
+        assert row["category"] == "single_session_preference"
+
+
+# ---------------------------------------------------------------------------
 # Judge + classification + prompts
 # ---------------------------------------------------------------------------
 
