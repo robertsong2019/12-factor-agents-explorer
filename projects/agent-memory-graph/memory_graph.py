@@ -3183,6 +3183,146 @@ class MemoryGraph:
             edge_count += 1
         return {"nodes": node_count, "edges": edge_count}
 
+    def export_tsv(self, *, include_weights: bool = True,
+                       include_kinds: bool = True,
+                       include_tags: bool = False) -> dict:
+        """Export graph as TSV (tab-separated values).
+
+        Returns a dict with two TSV strings:
+        - 'nodes': id\tlabel\tkind\ttags (optional)
+        - 'edges': source\ttarget\trelation\tweight
+
+        TSV is the simplest interchange format — usable by spreadsheets,
+        R, pandas, awk, and any text processing tool. Complements JSON,
+        GraphML, DOT, and edgelist export formats.
+
+        Args:
+            include_weights: Include edge weights in edges TSV.
+            include_kinds: Include node kinds in nodes TSV.
+            include_tags: Include tags (comma-separated) in nodes TSV.
+
+        Returns:
+            {"nodes": str, "edges": str, "node_count": int, "edge_count": int}
+        """
+        node_rows = self.conn.execute(
+            "SELECT id, label, kind, tags FROM nodes ORDER BY id"
+        ).fetchall()
+        node_parts = []
+        for row in node_rows:
+            parts = [row['id'], row['label']]
+            if include_kinds:
+                parts.append(row['kind'] or '')
+            if include_tags:
+                try:
+                    import json
+                    tag_list = json.loads(row['tags']) if row['tags'] else []
+                except Exception:
+                    tag_list = []
+                parts.append(','.join(tag_list))
+            node_parts.append('\t'.join(parts))
+
+        edge_rows = self.conn.execute(
+            "SELECT source, target, relation, weight FROM edges ORDER BY source, target"
+        ).fetchall()
+        edge_parts = []
+        for row in edge_rows:
+            parts = [row['source'], row['target'], row['relation'] or '']
+            if include_weights:
+                parts.append(str(row['weight']))
+            edge_parts.append('\t'.join(parts))
+
+        return {
+            "nodes": '\n'.join(node_parts),
+            "edges": '\n'.join(edge_parts),
+            "node_count": len(node_rows),
+            "edge_count": len(edge_rows),
+        }
+
+    def import_tsv(self, nodes_tsv: str = "", edges_tsv: str = "",
+                   *, merge: bool = False) -> dict:
+        """Import graph from TSV format. Round-trip compatible with export_tsv.
+
+        Args:
+            nodes_tsv: TSV string with columns id\tlabel\t[kind]\t[tags]
+                Header line is auto-detected and skipped.
+            edges_tsv: TSV string with columns source\ttarget\trelation\t[weight]
+                Header line is auto-detected and skipped.
+            merge: True=merge into existing graph, False=clear first.
+
+        Returns:
+            {"nodes_imported": int, "edges_imported": int}
+        """
+        if not merge:
+            self.clear()
+        node_count = 0
+        edge_count = 0
+
+        # Nodes
+        if nodes_tsv.strip():
+            for raw in nodes_tsv.strip().split('\n'):
+                parts = raw.split('\t')
+                # Skip header
+                if parts[0].lower() in ('id', 'node_id', 'node'):
+                    continue
+                if len(parts) < 2:
+                    continue
+                nid, label = parts[0], parts[1]
+                kind = parts[2] if len(parts) > 2 and parts[2] else 'fact'
+                data = None
+                tags_str = parts[3] if len(parts) > 3 and parts[3] else None
+                if tags_str:
+                    tags = [t.strip() for t in tags_str.split(',') if t.strip()]
+                else:
+                    tags = None
+                # Use original ID if it looks like a hex ID, so edges
+                # in the TSV can reference it via has_node()
+                if len(nid) >= 8 and all(c in '0123456789abcdef' for c in nid):
+                    if not self.has_node(nid):
+                        self._insert_node_raw(nid, label, kind=kind, tags=tags)
+                    stored_id = nid
+                else:
+                    stored_id = self.add(label, kind=kind, data=data)
+                    stored_id = stored_id.id if hasattr(stored_id, 'id') else stored_id
+                    if tags:
+                        for tag in tags:
+                            try:
+                                self.add_tag(stored_id, tag)
+                            except Exception:
+                                pass
+                node_count += 1
+
+        # Edges
+        if edges_tsv.strip():
+            for raw in edges_tsv.strip().split('\n'):
+                parts = raw.split('\t')
+                if parts[0].lower() in ('source', 'src'):
+                    continue
+                if len(parts) < 2:
+                    continue
+                # Find actual node IDs (TSV may have labels)
+                src_label, tgt_label = parts[0], parts[1]
+                # Try direct ID first, then label search
+                if self.has_node(src_label):
+                    src_id = src_label
+                else:
+                    src_candidates = self.search_by_label(src_label)
+                    if not src_candidates:
+                        continue
+                    src_id = src_candidates[0].id if hasattr(src_candidates[0], 'id') else src_candidates[0]
+                if self.has_node(tgt_label):
+                    tgt_id = tgt_label
+                else:
+                    tgt_candidates = self.search_by_label(tgt_label)
+                    if not tgt_candidates:
+                        continue
+                    tgt_id = tgt_candidates[0].id if hasattr(tgt_candidates[0], 'id') else tgt_candidates[0]
+                relation = parts[2] if len(parts) > 2 else ''
+                weight = float(parts[3]) if len(parts) > 3 and parts[3] else 1.0
+                self.link(src_id, tgt_id, relation, weight=weight)
+                edge_count += 1
+
+        return {"nodes_imported": node_count, "edges_imported": edge_count}
+
     def import_cytoscape(self, data: dict, *, merge: bool = False) -> dict:
         """从 Cytoscape.js JSON 导入，兼容 serialize_cytoscape() 的输出格式。
 
