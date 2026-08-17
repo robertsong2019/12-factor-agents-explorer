@@ -275,3 +275,7 @@ export class AgentObserver {
     }
   }
 }
+
+// OTel GenAI semantic-convention export adapter (pinned @ c739977) —
+// mapSpan / exportGenAiOtlp / lintGenAiSpans / evaluationEventAttributes
+export * from './otel-genai.js';

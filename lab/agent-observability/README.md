@@ -288,6 +288,32 @@ tests/
 npm test
 ```
 
+## OTel GenAI-Convention Export
+
+`src/otel-genai.ts` is an export-boundary adapter that maps internal spans to the
+OpenTelemetry GenAI semantic conventions (**pinned against
+`semantic-conventions-genai` @ `c739977`, 2026-07-30** — all `gen_ai.*`
+conventions are Status: Development; on the repo's first tagged release the pin
+is re-verified):
+
+- `agent.run` → `invoke_agent {name}` · `llm.call` → `chat {model}` ·
+  `tool.execute` → `execute_tool {name}` · `retrieval.search` → `retrieval` ·
+  `memory.write` → `upsert_memory` · `memory.read` → `search_memory`
+- Prompt/completion/tool args/memory queries are **Opt-In** content, gated by
+  `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` — off by default per spec
+- Custom info with no spec equivalent lives under `ao.*` (no self-invented
+  `gen_ai.*` keys)
+- `lintGenAiSpans()` is a 5-rule compliance gate (Required attrs, span-name
+  formats, `error.type`, Opt-In leakage, integer usage) usable in CI
+- `exportGenAiOtlp()` emits OTLP-JSON `resourceSpans` — importable into
+  Jaeger/Tempo/Datadog backends that aggregate v1.37+ conventions natively
+
+```ts
+import { lintGenAiSpans, exportGenAiOtlp } from './src/index.js';
+const result = lintGenAiSpans(tracer.getSpans()); // zero-intrusion
+const otlp = exportGenAiOtlp(tracer.getSpans());  // → OTLP-JSON
+```
+
 ## Design Principles
 
 1. **Zero dependencies** — Pure TypeScript on Node.js built-ins. No OTel SDK required.

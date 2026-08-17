@@ -1,0 +1,520 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2026-05-27T08:30:00.000Z",
+  "generator": "understand-anything",
+  "projectName": "agent-observability",
+  "projectDescription": "Minimal Agent Observability toolkit — Tracer, PolicyEngine, Evaluator. 为 AI Agent 提供 OTel 语义兼容的 trace + policy guardrail + 多维评估能力。",
+  "language": "zh",
+  "stats": {
+    "files": 11,
+    "nodes": 42,
+    "edges": 58
+  },
+  "nodes": [
+    {
+      "id": "src/tracer.ts",
+      "type": "file",
+      "layer": "core",
+      "title": "Tracer — 分布式追踪核心",
+      "description": "Agent 追踪的核心模块。管理 Span 生命周期（start/end）、父子关系、因果链接、OTLP 导出。430 行，是项目中最大的文件。",
+      "tags": ["tracing", "otel", "spans", "causal-links"],
+      "loc": 430,
+      "languageNotes": "Span 采用栈式管理（activeStack），支持同步 traceFn 和异步 traceAsync 两种便捷包装。"
+    },
+    {
+      "id": "src/policy-engine.ts",
+      "type": "file",
+      "layer": "core",
+      "title": "PolicyEngine — 策略守卫",
+      "description": "分类规则引擎，支持 addPolicy/evaluate/enable/disable/loadFromJSON。内置 4 种规则：blockDestructiveOps、costLimit、rateLimit、piiFilter。333 行。",
+      "tags": ["policy", "guardrails", "rules", "safety"],
+      "loc": 333,
+      "languageNotes": "采用 OPA 模式：Input + Policy + Data = Decision。规则通过 buildRule 工厂从 JSON 定义动态构建。"
+    },
+    {
+      "id": "src/evaluator.ts",
+      "type": "file",
+      "layer": "core",
+      "title": "Evaluator — 多维评估引擎",
+      "description": "可插拔的评估框架。支持加权评分、聚合、回归对比、Markdown 报告生成。内置 4 种检查：policy_compliance、latency、reliability、cost_efficiency。245 行。",
+      "tags": ["evaluation", "metrics", "scoring", "regression"],
+      "loc": 245,
+      "languageNotes": "compareTraces 支持基线对比和回归检测，threshold 可配置。"
+    },
+    {
+      "id": "src/index.ts",
+      "type": "file",
+      "layer": "api",
+      "title": "统一导出入口",
+      "description": "Barrel file，统一导出 Tracer、PolicyEngine、Evaluator 及其类型。240 行，包含 convenience 工厂函数和预配置组合。",
+      "tags": ["exports", "barrel", "api"],
+      "loc": 240
+    },
+    {
+      "id": "Tracer",
+      "type": "class",
+      "layer": "core",
+      "title": "Tracer 类",
+      "description": "核心追踪类。维护 Span 列表和活跃栈，提供完整的 span CRUD、因果链接、树构建、OTLP 导出、统计分析能力。",
+      "tags": ["class", "tracing"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "Span",
+      "type": "interface",
+      "layer": "core",
+      "title": "Span 接口",
+      "description": "追踪单元数据结构。包含 traceId、spanId、parentSpanId、operation、timestamps、attributes、status、events。",
+      "tags": ["interface", "data-structure"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "SpanTreeNode",
+      "type": "interface",
+      "layer": "core",
+      "title": "SpanTreeNode 接口",
+      "description": "带子节点的 Span 树节点，用于 getSpanTree() 返回层级结构。",
+      "tags": ["interface", "tree"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "TraceReport",
+      "type": "interface",
+      "layer": "core",
+      "title": "TraceReport 接口",
+      "description": "追踪报告汇总：总 span 数、按操作类型分组耗时、错误数、总持续时间。",
+      "tags": ["interface", "report"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "PolicyEngine",
+      "type": "class",
+      "layer": "core",
+      "title": "PolicyEngine 类",
+      "description": "分类规则引擎。以 Map<category, PolicyRule[]> 存储规则，支持 JSON 导入导出、启用/禁用、批量评估、合并。",
+      "tags": ["class", "policy"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "PolicyRule",
+      "type": "interface",
+      "layer": "core",
+      "title": "PolicyRule 接口",
+      "description": "规则定义：name + description + category + evaluate 函数。evaluate 接收 input 返回 {allow, reason}。",
+      "tags": ["interface", "rule"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "EvalResult",
+      "type": "interface",
+      "layer": "core",
+      "title": "EvalResult 接口",
+      "description": "策略评估结果：allowed 布尔值 + violations 列表（含 rule 名和 reason）。",
+      "tags": ["interface", "result"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "Evaluator",
+      "type": "class",
+      "layer": "core",
+      "title": "Evaluator 类",
+      "description": "可插拔评估引擎。支持注册加权检查函数、聚合评分、回归对比、Markdown 报告。",
+      "tags": ["class", "evaluation"],
+      "file": "src/evaluator.ts"
+    },
+    {
+      "id": "EvalCheckResult",
+      "type": "interface",
+      "layer": "core",
+      "title": "EvalCheckResult 接口",
+      "description": "评估检查结果：dimension + score(0-1) + reason。",
+      "tags": ["interface", "result"],
+      "file": "src/evaluator.ts"
+    },
+    {
+      "id": "TraceComparison",
+      "type": "interface",
+      "layer": "core",
+      "title": "TraceComparison 接口",
+      "description": "回归对比结果：基线分数 vs 当前分数 + delta + 是否为回归。",
+      "tags": ["interface", "comparison"],
+      "file": "src/evaluator.ts"
+    },
+    {
+      "id": "startSpan",
+      "type": "function",
+      "layer": "core",
+      "title": "startSpan()",
+      "description": "开始新的 Span，自动关联到当前活跃 Span 作为父节点。压入 activeStack。",
+      "tags": ["function", "lifecycle"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "endSpan",
+      "type": "function",
+      "layer": "core",
+      "title": "endSpan()",
+      "description": "结束 Span，记录结束时间和状态。从 activeStack 弹出。",
+      "tags": ["function", "lifecycle"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "traceFn",
+      "type": "function",
+      "layer": "core",
+      "title": "traceFn() — 同步便捷包装",
+      "description": "在 Span 内执行同步函数，自动处理 start/end/error。类似 OTel 的 WithSpan 装饰器。",
+      "tags": ["function", "convenience"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "traceAsync",
+      "type": "function",
+      "layer": "core",
+      "title": "traceAsync() — 异步便捷包装",
+      "description": "traceFn 的异步版本，支持 Promise 返回。",
+      "tags": ["function", "async", "convenience"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "exportOTLP",
+      "type": "function",
+      "layer": "core",
+      "title": "exportOTLP()",
+      "description": "导出为 OTLP JSON 格式，兼容 OTel Collector。resourceSpans > scopeSpans > spans 层级。",
+      "tags": ["function", "export", "otel"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "getCausalChain",
+      "type": "function",
+      "layer": "core",
+      "title": "getCausalChain() — 因果链追踪",
+      "description": "沿因果链接向上游或下游追踪，返回完整因果链。BFS 实现，防止环。",
+      "tags": ["function", "causal", "bfs"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "linkSpans",
+      "type": "function",
+      "layer": "core",
+      "title": "linkSpans() — 建立因果链接",
+      "description": "在两个 Span 之间建立因果链接（非父子关系），用于表达跨 trace 的因果关系。",
+      "tags": ["function", "causal"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "getSpanTree",
+      "type": "function",
+      "layer": "core",
+      "title": "getSpanTree() — 构建树结构",
+      "description": "将扁平 Span 列表转为树形结构。递归构建子节点。",
+      "tags": ["function", "tree"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "getStats",
+      "type": "function",
+      "layer": "core",
+      "title": "getStats() — 一站式统计",
+      "description": "返回 total/active/completed/errors/avgDurationMs 摘要。",
+      "tags": ["function", "stats"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "getSlowSpans",
+      "type": "function",
+      "layer": "core",
+      "title": "getSlowSpans() — 慢 span 检测",
+      "description": "返回持续时间超过阈值的 Span 列表。",
+      "tags": ["function", "performance"],
+      "file": "src/tracer.ts"
+    },
+    {
+      "id": "addPolicy",
+      "type": "function",
+      "layer": "core",
+      "title": "addPolicy()",
+      "description": "向指定分类添加一条规则。",
+      "tags": ["function", "rule-management"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "evaluate",
+      "type": "function",
+      "layer": "core",
+      "title": "evaluate()",
+      "description": "对指定分类执行所有已启用规则，返回 EvalResult（allowed + violations）。",
+      "tags": ["function", "evaluation"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "loadFromJSON",
+      "type": "function",
+      "layer": "core",
+      "title": "loadFromJSON()",
+      "description": "从 JSON 定义加载规则，通过 buildRule 工厂动态构建 evaluate 函数。",
+      "tags": ["function", "serialization"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "evaluateAll",
+      "type": "function",
+      "layer": "core",
+      "title": "evaluateAll()",
+      "description": "对所有分类执行评估，返回 Record<category, EvalResult>。",
+      "tags": ["function", "batch"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "blockDestructiveOps",
+      "type": "function",
+      "layer": "core",
+      "title": "blockDestructiveOps() — 危险操作拦截",
+      "description": "内置规则工厂。检测 rm/drop/delete/truncate 等破坏性命令模式。",
+      "tags": ["function", "built-in-rule", "safety"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "costLimit",
+      "type": "function",
+      "layer": "core",
+      "title": "costLimit() — 成本上限",
+      "description": "内置规则工厂。检查 cost/estimatedCost 是否超过配置的 maxCost。",
+      "tags": ["function", "built-in-rule", "cost"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "rateLimit",
+      "type": "function",
+      "layer": "core",
+      "title": "rateLimit() — 调用频率限制",
+      "description": "内置规则工厂。滑动窗口计数，maxCalls 次 / windowMs 毫秒。",
+      "tags": ["function", "built-in-rule", "rate-limit"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "piiFilter",
+      "type": "function",
+      "layer": "core",
+      "title": "piiFilter() — PII 过滤",
+      "description": "内置规则工厂。正则检测 SSN 和 email 等个人身份信息。",
+      "tags": ["function", "built-in-rule", "privacy"],
+      "file": "src/policy-engine.ts"
+    },
+    {
+      "id": "policyComplianceCheck",
+      "type": "function",
+      "layer": "core",
+      "title": "policyComplianceCheck() — 策略合规检查",
+      "description": "内置评估检查。统计 tool.execute spans 中被 policy 拒绝的比例。",
+      "tags": ["function", "built-in-check"],
+      "file": "src/evaluator.ts"
+    },
+    {
+      "id": "latencyCheck",
+      "type": "function",
+      "layer": "core",
+      "title": "latencyCheck() — 延迟检查",
+      "description": "内置评估检查。平均 span 耗时 <100ms 得满分，>5000ms 得零分。",
+      "tags": ["function", "built-in-check", "latency"],
+      "file": "src/evaluator.ts"
+    },
+    {
+      "id": "reliabilityCheck",
+      "type": "function",
+      "layer": "core",
+      "title": "reliabilityCheck() — 可靠性检查",
+      "description": "内置评估检查。error 状态 span 占比的反比。",
+      "tags": ["function", "built-in-check", "reliability"],
+      "file": "src/evaluator.ts"
+    },
+    {
+      "id": "costEfficiencyCheck",
+      "type": "function",
+      "layer": "core",
+      "title": "costEfficiencyCheck() — 成本效率检查",
+      "description": "内置评估检查。LLM token 消耗 <1000 得满分，>100k 得零分。",
+      "tags": ["function", "built-in-check", "cost"],
+      "file": "src/evaluator.ts"
+    },
+    {
+      "id": "compareTraces",
+      "type": "function",
+      "layer": "core",
+      "title": "compareTraces() — 回归检测",
+      "description": "对比基线和当前 spans 的评估结果，delta < threshold 标记为回归。",
+      "tags": ["function", "regression", "comparison"],
+      "file": "src/evaluator.ts"
+    },
+    {
+      "id": "evaluateAndReport",
+      "type": "function",
+      "layer": "api",
+      "title": "evaluateAndReport() — 一键评估+报告",
+      "description": "执行评估 + 聚合评分 + 生成 Markdown 报告，一步到位。",
+      "tags": ["function", "convenience"],
+      "file": "src/evaluator.ts"
+    },
+    {
+      "id": "tests/tracer.test.ts",
+      "type": "file",
+      "layer": "test",
+      "title": "Tracer 测试套件",
+      "description": "540 行，覆盖 span 生命周期、树构建、因果链接、OTLP 导出、统计分析等。",
+      "tags": ["test", "tracer"],
+      "loc": 540
+    },
+    {
+      "id": "tests/policy-engine.test.ts",
+      "type": "file",
+      "layer": "test",
+      "title": "PolicyEngine 测试套件",
+      "description": "294 行，覆盖规则 CRUD、分类管理、JSON 导入导出、批量评估等。",
+      "tags": ["test", "policy"],
+      "loc": 294
+    },
+    {
+      "id": "tests/evaluator.test.ts",
+      "type": "file",
+      "layer": "test",
+      "title": "Evaluator 测试套件",
+      "description": "289 行，覆盖检查注册、加权评分、回归对比、报告生成等。",
+      "tags": ["test", "evaluator"],
+      "loc": 289
+    },
+    {
+      "id": "tests/integration.test.ts",
+      "type": "file",
+      "layer": "test",
+      "title": "集成测试",
+      "description": "253 行，测试 Tracer + PolicyEngine + Evaluator 端到端协作。",
+      "tags": ["test", "integration"],
+      "loc": 253
+    },
+    {
+      "id": "tests/cycle1.test.ts",
+      "type": "file",
+      "layer": "test",
+      "title": "Cycle 1 测试 — 基础扩展",
+      "description": "90 行，第一轮 autoresearch 迭代新增功能的测试。",
+      "tags": ["test", "autoresearch"],
+      "loc": 90
+    },
+    {
+      "id": "tests/cycle2.test.ts",
+      "type": "file",
+      "layer": "test",
+      "title": "Cycle 2 测试 — 策略增强",
+      "description": "78 行，第二轮迭代测试。批量评估、分类统计等。",
+      "tags": ["test", "autoresearch"],
+      "loc": 78
+    },
+    {
+      "id": "tests/cycle3.test.ts",
+      "type": "file",
+      "layer": "test",
+      "title": "Cycle 3 测试 — 回归检测",
+      "description": "65 行，第三轮迭代测试。回归对比、同步观察器等。",
+      "tags": ["test", "autoresearch"],
+      "loc": 65
+    }
+  ],
+  "edges": [
+    {"from": "src/tracer.ts", "to": "Tracer", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "Span", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "SpanTreeNode", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "TraceReport", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "startSpan", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "endSpan", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "traceFn", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "traceAsync", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "exportOTLP", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "getCausalChain", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "linkSpans", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "getSpanTree", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "getStats", "type": "defines"},
+    {"from": "src/tracer.ts", "to": "getSlowSpans", "type": "defines"},
+    {"from": "Tracer", "to": "Span", "type": "uses"},
+    {"from": "Tracer", "to": "SpanTreeNode", "type": "produces"},
+    {"from": "Tracer", "to": "TraceReport", "type": "produces"},
+    {"from": "startSpan", "to": "Span", "type": "returns"},
+    {"from": "traceFn", "to": "startSpan", "type": "calls"},
+    {"from": "traceFn", "to": "endSpan", "type": "calls"},
+    {"from": "traceAsync", "to": "startSpan", "type": "calls"},
+    {"from": "traceAsync", "to": "endSpan", "type": "calls"},
+    {"from": "getSpanTree", "to": "SpanTreeNode", "type": "returns"},
+    {"from": "getCausalChain", "to": "linkSpans", "type": "queries"},
+    {"from": "exportOTLP", "to": "Span", "type": "transforms"},
+
+    {"from": "src/policy-engine.ts", "to": "PolicyEngine", "type": "defines"},
+    {"from": "src/policy-engine.ts", "to": "PolicyRule", "type": "defines"},
+    {"from": "src/policy-engine.ts", "to": "EvalResult", "type": "defines"},
+    {"from": "src/policy-engine.ts", "to": "addPolicy", "type": "defines"},
+    {"from": "src/policy-engine.ts", "to": "evaluate", "type": "defines"},
+    {"from": "src/policy-engine.ts", "to": "loadFromJSON", "type": "defines"},
+    {"from": "src/policy-engine.ts", "to": "blockDestructiveOps", "type": "defines"},
+    {"from": "src/policy-engine.ts", "to": "costLimit", "type": "defines"},
+    {"from": "src/policy-engine.ts", "to": "rateLimit", "type": "defines"},
+    {"from": "src/policy-engine.ts", "to": "piiFilter", "type": "defines"},
+    {"from": "PolicyEngine", "to": "PolicyRule", "type": "stores"},
+    {"from": "PolicyEngine", "to": "EvalResult", "type": "produces"},
+    {"from": "evaluate", "to": "PolicyRule", "type": "uses"},
+    {"from": "loadFromJSON", "to": "blockDestructiveOps", "type": "calls"},
+    {"from": "loadFromJSON", "to": "costLimit", "type": "calls"},
+    {"from": "loadFromJSON", "to": "rateLimit", "type": "calls"},
+    {"from": "loadFromJSON", "to": "piiFilter", "type": "calls"},
+
+    {"from": "src/evaluator.ts", "to": "Evaluator", "type": "defines"},
+    {"from": "src/evaluator.ts", "to": "EvalCheckResult", "type": "defines"},
+    {"from": "src/evaluator.ts", "to": "TraceComparison", "type": "defines"},
+    {"from": "src/evaluator.ts", "to": "policyComplianceCheck", "type": "defines"},
+    {"from": "src/evaluator.ts", "to": "latencyCheck", "type": "defines"},
+    {"from": "src/evaluator.ts", "to": "reliabilityCheck", "type": "defines"},
+    {"from": "src/evaluator.ts", "to": "costEfficiencyCheck", "type": "defines"},
+    {"from": "src/evaluator.ts", "to": "compareTraces", "type": "defines"},
+    {"from": "src/evaluator.ts", "to": "Span", "type": "imports"},
+    {"from": "Evaluator", "to": "EvalCheckResult", "type": "produces"},
+    {"from": "compareTraces", "to": "policyComplianceCheck", "type": "calls"},
+    {"from": "compareTraces", "to": "latencyCheck", "type": "calls"},
+    {"from": "compareTraces", "to": "reliabilityCheck", "type": "calls"},
+    {"from": "compareTraces", "to": "costEfficiencyCheck", "type": "calls"},
+    {"from": "evaluateAndReport", "to": "Evaluator", "type": "method-of"},
+
+    {"from": "src/index.ts", "to": "src/tracer.ts", "type": "re-exports"},
+    {"from": "src/index.ts", "to": "src/policy-engine.ts", "type": "re-exports"},
+    {"from": "src/index.ts", "to": "src/evaluator.ts", "type": "re-exports"},
+
+    {"from": "tests/tracer.test.ts", "to": "Tracer", "type": "tests"},
+    {"from": "tests/policy-engine.test.ts", "to": "PolicyEngine", "type": "tests"},
+    {"from": "tests/evaluator.test.ts", "to": "Evaluator", "type": "tests"},
+    {"from": "tests/integration.test.ts", "to": "Tracer", "type": "tests"},
+    {"from": "tests/integration.test.ts", "to": "PolicyEngine", "type": "tests"},
+    {"from": "tests/integration.test.ts", "to": "Evaluator", "type": "tests"},
+    {"from": "tests/cycle1.test.ts", "to": "Tracer", "type": "tests"},
+    {"from": "tests/cycle2.test.ts", "to": "PolicyEngine", "type": "tests"},
+    {"from": "tests/cycle3.test.ts", "to": "Evaluator", "type": "tests"}
+  ],
+  "layers": {
+    "core": { "color": "#4A90D9", "label": "核心模块" },
+    "api": { "color": "#7B68EE", "label": "API 层" },
+    "test": { "color": "#50C878", "label": "测试" }
+  },
+  "architecturalNotes": {
+    "overview": "三层架构：Tracer（数据采集）→ PolicyEngine（安全守卫）→ Evaluator（质量评估）。三者通过 Span 数据结构松耦合。",
+    "keyDecisions": [
+      "Span 采用栈式管理而非 Map，因为 Agent 执行天然是嵌套的",
+      "PolicyEngine 用 Map<category, Rule[]> 而非扁平列表，因为策略需要按场景分组",
+      "Evaluator 使用可插拔检查函数而非硬编码维度，支持灵活扩展",
+      "内置规则通过工厂函数从 JSON 动态构建，实现配置驱动的安全策略"
+    ],
+    "entryPoint": "src/index.ts 是唯一的外部入口，barrel 模式简化导入",
+    "testStrategy": "按模块分文件 + 集成测试 + 每轮 autoresearch 新增 cycle N 测试"
+  },
+  "dependencyGraph": {
+    "src/tracer.ts": { "internal": [], "external": ["node:crypto"] },
+    "src/policy-engine.ts": { "internal": [], "external": [] },
+    "src/evaluator.ts": { "internal": ["src/tracer.ts"], "external": [] },
+    "src/index.ts": { "internal": ["src/tracer.ts", "src/policy-engine.ts", "src/evaluator.ts"], "external": [] }
+  }
+}
