@@ -1029,15 +1029,20 @@ def calibration_summary(results: list) -> dict:
     n = 0
     agree = llm_only_correct = llm_only_wrong = errors = 0
     for r in results:
-        if r.correct_exact is None:
+        # Duck-typed access: QuestionResult attrs or report dict rows.
+        exact = (r.correct_exact if hasattr(r, "correct_exact")
+                 else r.get("correct_exact"))
+        llm = (r.correct_llm if hasattr(r, "correct_llm")
+               else r.get("correct_llm"))
+        if exact is None:
             continue
         n += 1
-        if r.correct_llm is None:  # judge errored on this item
+        if llm is None:  # judge errored on this item
             errors += 1
             continue
-        if r.correct_exact == r.correct_llm:
+        if exact == llm:
             agree += 1
-        elif r.correct_llm and not r.correct_exact:
+        elif llm and not exact:
             llm_only_correct += 1  # semantic-equivalence rescues
         else:
             llm_only_wrong += 1  # false passes — sample manually
@@ -1304,7 +1309,8 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              use_ppr: bool = True, max_context_tokens: int = 4000,
              abstain_score: float = 1.0, abstain_entropy: float | None = 0.95,
              entropy_weak_score: int = 1,
-             temporal_arith: bool = True) -> dict:
+             temporal_arith: bool = True,
+             judge_mode: str = "exact") -> dict:
     """Per-question-haystack evaluation (Cycle 454).
 
     LongMemEval-cleaned ships one haystack per question; this builds a
@@ -1319,6 +1325,9 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
             ``_abs`` suffix = abstention-scored).
         limit: Evaluate at most this many questions (0 = all).
         entropies: Optional entropy thresholds (``None`` = gate off).
+        judge_mode: "exact" (default) or "dual" (Cycle 462 — adds
+            ``accuracy_exact``/``accuracy_llm``/``calibration`` to the
+            aggregated report).
 
     Returns:
         Same shape as ``evaluate()`` plus ``sweep`` (``None`` when
@@ -1358,7 +1367,8 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                            else None) or f"session_{j + 1}"
                     sdates[sid] = dt
             adapter.ingest_sessions(sessions, session_dates=sdates)
-        all_results.extend(adapter.evaluate([item])["results"])
+        all_results.extend(adapter.evaluate([item],
+                                            judge_mode=judge_mode)["results"])
         if entropies:
             sweep_rows.extend(
                 adapter.sweep_abstention([item], entropies=entropies)["rows"])
@@ -1403,7 +1413,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
             "rows": sweep_rows,
         }
 
-    return {
+    report = {
         "overall_accuracy": _rate("correct"),
         "retrieval_hit_rate": _rate("retrieval_hit"),
         "abstention_rate": _rate("abstained"),
@@ -1414,6 +1424,16 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
         "sweep": sweep,
         "config": kwargs,
     }
+    if judge_mode == "dual":
+        report["config"] = {**kwargs, "judge_mode": judge_mode}
+        report["accuracy_exact"] = report["overall_accuracy"]
+        scored = [r for r in all_results
+                  if r.get("correct_llm") is not None]
+        report["accuracy_llm"] = (
+            sum(1 for r in scored if r["correct_llm"]) / len(scored)
+            if scored else 0.0)
+        report["calibration"] = calibration_summary(all_results)
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1447,6 +1467,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sweep-entropies", default="",
                         help="CSV entropy thresholds for eval-mode sweep "
                              "(e.g. 'none,0.90,0.95'; 'none' = gate off)")
+    parser.add_argument("--judge", choices=("exact", "dual"),
+                        default="exact",
+                        help="exact = containment judge (default); "
+                             "dual = additionally score with judge_llm "
+                             "(ollama/mock — two-column accuracy + "
+                             "calibration, Cycle 462)")
     parser.add_argument("--output", default="amg_longmemeval_results.json",
                         help="Output report path")
     args = parser.parse_args(argv)
@@ -1478,7 +1504,8 @@ def main(argv: list[str] | None = None) -> int:
             abstain_score=args.abstain_score,
             abstain_entropy=abstain_entropy,
             entropy_weak_score=args.entropy_weak,
-            temporal_arith=not args.no_temporal_arith)
+            temporal_arith=not args.no_temporal_arith,
+            judge_mode=args.judge)
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2)
         print(f"\n{report['total_questions']} questions · "
