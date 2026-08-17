@@ -36,6 +36,9 @@
 - **全项目总计**: ~20227 tests（08-17 KO 统一口径：含 ctxpack 69/skill-doctor 64；与 MEMORY 对齐，旧值 ~20175 基 amg 9354）
 - **零回滚率**: amg **294天** 🏆（按日历校正，KO 链 08-16=293；08-16~17 会话又报 293/295/296 漂移）/ acs 200天 🏆
 
+## 近期活动 (08-18 凌晨 cron 00:00)
+- **Cycle 466 (key-dev-2, 301e677)**: amg 9497→**9507** (+10)，honest attribution ✅。取证 C465 基准产物发现双缺陷：① run_eval 500 行 question_id 全为 "0"（单元素列表→索引 0；LME_cleaned 用 question_id 而非 id）② _classify_question 启发式把 419/500 误标 single_session_user（真 70），temporal 49 vs 真 133 → **C465 calibration_by_category 在幻影类目上分组**。修复：question_id 回退 + question_type/category 权威优先（未知类型诚实透传）。**修正版全量 reference（按题干 join，总量精确复现 0.140/0.194/0.378）**：temporal 0.061→**0.180（C457 在全量复现）** / ssu 0.343 / kupdate 0.256(calib 12 rescue/0 falsepass) / **preference 30q hit 0.000 = 新检索轴** / multi 0.008。坑：类别表先验归属再读数；get(key, default) 对字段方言静默降级。报告 /tmp/lme_s_full500_dual_corrected.json；Next：preference 检索轴 / temporal fired-wrong 取证已解锁（qid 可追溯）
+
 ## 近期活动 (08-17 深夜 cron 23:00)
 - **Cycle 465 (key-development-1, 50c2e97)**: amg 9485→**9497** (+12)，calibration_by_category() ✅ — 类目级 exact-vs-LLM 分歧分解（Research #069 延伸），接入全部 4 个 dual 报告点（LME evaluate/run_eval + LoCoMo evaluate_sample/run_locomo）。全量 9497/9497 (122s)，零回归，294 天 🏆。**双产出：full-500 LME_s 新 overall reference 落地**（19min，dual judge+temporal-arith）：exact **0.140** / mock-llm 0.194 / hit 0.378 / div 0.11 rubric OK；类目分歧 kupdate 4 rescue/0 falsepass（单向：containment 过严）×ssu 30/13×temporal 7/1。**x50 A/B 复现 C454 0.360 精确一致**（temporal-arith on/off 均 0.360）→ 全量差距系数据组成（首 50 题易：hit 0.76 vs 0.378），非回归。报告 /tmp/lme_s_full500_dual.json；坑：基准运行进程导入旧代码 → per-category 用保存的 results 行事后计算（duck-typed 设计直接消化）；test_large_flush_performance 在基准负载下 >2s 假败（clean HEAD 复现），空闲后 1.68s 过——负载敏感 perf 断言，非回归。Next ② 解除
 
