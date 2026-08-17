@@ -356,6 +356,15 @@ class MemoryGraph:
             "UPDATE nodes SET label=?, kind=?, data=?, weight=? WHERE id=?",
             (new_label, new_kind, new_data, new_weight, node_id)
         )
+        # Track label/kind changes in evolution_log
+        if new_label != old_label or new_kind != row['kind']:
+            try:
+                self.conn.execute(
+                    "INSERT INTO evolution_log (node_id, old_label, new_label, old_kind, new_kind, timestamp) VALUES (?,?,?,?,?,?)",
+                    (node_id, old_label, new_label, row['kind'], new_kind, time.time())
+                )
+            except Exception:
+                pass
         self._fts_sync_node(node_id)
         self.conn.commit()
         self._tick("update", node_id,
@@ -7623,6 +7632,55 @@ class MemoryGraph:
             "avg_degree_after": round(avg_deg, 2),
             "assessment": "; ".join(assessments),
         }
+
+    def graph_changelog(self, *, limit: int = 20, node_id: str = None) -> list[dict]:
+        """Return recent evolution log entries as structured dicts.
+
+        The evolution_log table tracks label/kind changes per node.
+        This method provides a readable changelog view, optionally
+        filtered by node_id.
+
+        Args:
+            limit: Max entries to return (most recent first).
+            node_id: If set, only return entries for this node.
+
+        Returns:
+            List of dicts with keys: id, node_id, change_type,
+            old_value, new_value, timestamp (ISO string).
+        """
+        try:
+            if node_id:
+                rows = self.conn.execute(
+                    "SELECT id, node_id, old_label, new_label, old_kind, new_kind, timestamp "
+                    "FROM evolution_log WHERE node_id=? ORDER BY id DESC LIMIT ?",
+                    (node_id, limit)
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT id, node_id, old_label, new_label, old_kind, new_kind, timestamp "
+                    "FROM evolution_log ORDER BY id DESC LIMIT ?",
+                    (limit,)
+                ).fetchall()
+            entries = []
+            for r in rows:
+                # Determine what changed
+                changes = []
+                if r['old_label'] != r['new_label']:
+                    changes.append(('label', r['old_label'], r['new_label']))
+                if r['old_kind'] != r['new_kind']:
+                    changes.append(('kind', r['old_kind'], r['new_kind']))
+                for ctype, old_val, new_val in changes:
+                    entries.append({
+                        'id': r['id'],
+                        'node_id': r['node_id'],
+                        'change_type': ctype,
+                        'old_value': old_val,
+                        'new_value': new_val,
+                        'timestamp': datetime.fromtimestamp(r['timestamp']).isoformat(),
+                    })
+            return entries
+        except Exception:
+            return []
 
     def graph_digest(self, *, include_content: bool = False,
                        include_weights: bool = True,
