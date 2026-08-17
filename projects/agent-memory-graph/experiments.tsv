@@ -561,3 +561,9 @@ timestamp	commit	metric	value	status	description
 2026-08-17T19:10:15+08:00	aca341c	test_count	9406→9424/9424	keep	Cycle 458: estimate_node_impact() — non-destructive topology prediction. +18 tests, zero regressions, 100% pass.
 2026-08-17T19:15:36+08:00	b2bccc1	test_count	9424→9443/9443	keep	Cycle 459: export_tsv()/import_tsv() — TSV interchange format. +19 tests, zero regressions, 100% pass.
 2026-08-17T19:19:52+08:00	acc20d2	test_count	9443→9453/9453	keep	Cycle 460: graph_changelog() + update_node evolution_log. +10 tests, zero regressions.
+2026-08-17T21:10	8a9f93c	test_pass_rate	100% (9456/9456)	keep	telemetry v2: verb-form spans + store.id + record.count + query.text Opt-In gate + amg.* ns (baseline 9453, +3)
+2026-08-17T21:32	4002ee7	test_pass_rate	100% (9476/9476)	keep	judge_llm dual-metric: ollama+mock judge, evaluate(dual) two-column accuracy, calibration gate (baseline 9456, +20)
+2026-08-17T21:55	afcb662	test_pass_rate	100% (9479/9479)	keep	--judge CLI + run_eval dual aggregation, CLI smoke 2q mock dual-metric OK (baseline 9476, +3)
+2026-08-17T22:19	4b096be	test_pass_rate	100% (9485/9485)	keep	LoCoMo judge_mode=dual wiring: evaluate_sample/run_locomo/CLI + cat5 protocol-shared verdicts (baseline 9479, +6)
+2026-08-17T23:45	50c2e97	test_pass_rate	100% (9497/9497)	keep	Cycle 465: calibration_by_category (category-wise exact-vs-LLM divergence, 4 dual-report sites). +12 tests, zero regressions. Baseline 9485.
+2026-08-17T23:46	50c2e97	lme_s_full500_exact	0.140 (llm 0.194, hit 0.378, div 0.11, 19min)	keep	Full-500 LME_s new overall reference (dual judge + temporal-arith): exact 0.140 / mock-llm 0.194; kupdate rescue-heavy (4/0). x50 A/B reproduces C454 0.360 exactly — gap is dataset composition, not regression. Report /tmp/lme_s_full500_dual.json
