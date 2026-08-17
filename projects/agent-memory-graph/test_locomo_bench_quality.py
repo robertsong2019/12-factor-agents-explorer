@@ -864,3 +864,81 @@ class TestTemporalEvaluateWiring:
         assert rc == 0
         cfg = json.loads(out.read_text(encoding="utf-8"))["config"]
         assert cfg["temporal_dates"] is False
+
+
+# ---------------------------------------------------------------------------
+# Cycle 464: dual-metric judge (Research #069) — exact/LLM two-column
+# ---------------------------------------------------------------------------
+
+class TestDualJudge:
+    def _dual(self, qa=None, sample=None):
+        import amg_bench_quality as abq
+        s = sample or make_sample()
+        ad = fresh_adapter()
+        ad.ingest_sample(s)
+        abq._JUDGE_MODE = "mock"   # skip ollama probe
+        try:
+            return ad.evaluate_sample(qa or s["qa"], judge_mode="dual")
+        finally:
+            abq._JUDGE_MODE = None
+
+    def test_dual_report_keys(self):
+        r = self._dual()
+        for key in ("accuracy_exact", "accuracy_llm", "calibration"):
+            assert key in r
+        assert r["accuracy_exact"] == r["overall_accuracy"]
+        for q in r["questions"]:
+            assert q["correct_exact"] is not None
+            assert q["correct_llm"] is not None
+
+    def test_exact_mode_default_no_dual_keys(self):
+        ad = fresh_adapter()
+        ad.ingest_sample(make_sample())
+        r = ad.evaluate_sample(make_sample()["qa"])
+        assert "accuracy_llm" not in r
+        assert "calibration" not in r
+        for q in r["questions"]:
+            assert q["correct_exact"] is None
+            assert q["correct_llm"] is None
+
+    def test_adversarial_verdicts_shared(self):
+        r = self._dual()
+        adv = [q for q in r["questions"] if q["category"] == "adversarial"]
+        assert adv
+        for q in adv:
+            # cat5 is protocol-level: both columns carry the abstain verdict
+            assert q["correct_llm"] == q["correct_exact"] == q["correct"]
+
+    def test_run_locomo_dual_aggregates(self, data_file):
+        import amg_bench_quality as abq
+        abq._JUDGE_MODE = "mock"
+        try:
+            r = run_locomo(str(data_file), use_ppr=False,
+                           judge_mode="dual")
+        finally:
+            abq._JUDGE_MODE = None
+        for key in ("accuracy_exact", "accuracy_llm", "calibration"):
+            assert key in r
+        assert r["config"]["judge_mode"] == "dual"
+        # calibration scored == every question across both samples
+        assert r["calibration"]["scored"] == r["total_questions"]
+
+    def test_run_locomo_default_regression(self, data_file):
+        r = run_locomo(str(data_file), use_ppr=False)
+        assert "accuracy_llm" not in r
+        assert "calibration" not in r
+        assert r["config"]["judge_mode"] == "exact"
+
+    def test_cli_judge_dual(self, data_file, tmp_path):
+        import amg_bench_quality as abq
+        out = tmp_path / "dual.json"
+        abq._JUDGE_MODE = "mock"
+        try:
+            rc = main(["--data", str(data_file), "--no-ppr",
+                       "--judge", "dual", "--output", str(out)])
+        finally:
+            abq._JUDGE_MODE = None
+        assert rc == 0
+        rep = json.loads(out.read_text(encoding="utf-8"))
+        assert rep["config"]["judge_mode"] == "dual"
+        assert "accuracy_llm" in rep and "calibration" in rep

@@ -42,6 +42,8 @@ from amg_bench_quality import (
     _normalize,
     entropy_gate_fires,
     exact_judge,
+    judge_llm,
+    calibration_summary,
 )
 
 __all__ = [
@@ -723,7 +725,7 @@ class LoCoMoAdapter(LongMemEvalAdapter):
         return {"modes": modes, "rows": rows, "retrievals": n}
 
     def evaluate_sample(self, qa: list[dict], *, judge_fn=None,
-                        limit: int = 0) -> dict:
+                        limit: int = 0, judge_mode: str = "exact") -> dict:
         """Evaluate one sample's question list.
 
         Scoring per category:
@@ -796,6 +798,20 @@ class LoCoMoAdapter(LongMemEvalAdapter):
             else:
                 correct = exact_judge(question, truth, predicted)
 
+            # Cycle 464: dual-metric scoring (Research #069) — the
+            # same exact/LLM two-column protocol as LME evaluate().
+            # cat5 adversarial verdicts are protocol-level (abstain)
+            # and shared across both metrics.
+            correct_exact = correct_llm = None
+            if judge_mode == "dual":
+                correct_exact = correct
+                if is_adv:
+                    correct_llm = correct
+                else:
+                    verdict = judge_llm(question, predicted, truth)
+                    correct_llm = (None if verdict == "ERROR"
+                                   else verdict == "CORRECT")
+
             retrieved = meta.get("retrieved_ids", [])
             ev_nodes = self.evidence_node_ids(evidence)
             ev_sessions = self.evidence_sessions(evidence)
@@ -818,6 +834,8 @@ class LoCoMoAdapter(LongMemEvalAdapter):
                 "abstained": abstained,
                 "date_answer": used_date_answer,
                 "correct": correct,
+                "correct_exact": correct_exact,
+                "correct_llm": correct_llm,
                 "session_hit": session_hit,
                 "turn_hit": turn_hit,
                 "context_hit": context_hit,
@@ -845,7 +863,7 @@ class LoCoMoAdapter(LongMemEvalAdapter):
         def _rate(num: int, den: int) -> float:
             return num / den if den else 0.0
 
-        return {
+        report = {
             "total_questions": total,
             "overall_accuracy": _rate(sum(r["correct"] for r in rows),
                                       total),
@@ -863,6 +881,14 @@ class LoCoMoAdapter(LongMemEvalAdapter):
             "categories": cats,
             "questions": rows,
         }
+        if judge_mode == "dual":
+            report["accuracy_exact"] = report["overall_accuracy"]
+            scored = [r for r in rows if r["correct_llm"] is not None]
+            report["accuracy_llm"] = (
+                sum(1 for r in scored if r["correct_llm"]) / len(scored)
+                if scored else 0.0)
+            report["calibration"] = calibration_summary(rows)
+        return report
 
 
 # ---------------------------------------------------------------------------
@@ -904,7 +930,7 @@ def load_locomo(path, *, limit_samples: int = 0) -> list[dict]:
 def run_locomo(path, *, limit_samples: int = 0,
                max_questions_per_sample: int = 0,
                judge_fn=None, include_questions: bool = False,
-               **adapter_kwargs) -> dict:
+               judge_mode: str = "exact", **adapter_kwargs) -> dict:
     """Full LoCoMo run: per-sample graphs, cross-sample aggregation.
 
     Each sample gets a FRESH adapter + graph (samples are independent
@@ -937,13 +963,15 @@ def run_locomo(path, *, limit_samples: int = 0,
               "abstained": 0, "session_hits": 0, "turn_hits": 0,
               "context_hits": 0, "tokens": 0}
     sample_reports = []
+    dual_rows: list[dict] = []
 
     for sample in samples:
         adapter = LoCoMoAdapter(**adapter_kwargs)
         stats = adapter.ingest_sample(sample)
         report = adapter.evaluate_sample(
             sample["qa"], judge_fn=judge_fn,
-            limit=max_questions_per_sample)
+            limit=max_questions_per_sample,
+            judge_mode=judge_mode)
         report["ingest_stats"] = stats
         sample_reports.append(report)
 
@@ -968,13 +996,16 @@ def run_locomo(path, *, limit_samples: int = 0,
         totals["turn_hits"] += sum(r["turn_hit"] for r in na)
         totals["context_hits"] += sum(r["context_hit"] for r in na)
         totals["tokens"] += sum(r["tokens_est"] for r in report["questions"])
+        if judge_mode == "dual":
+            dual_rows.extend(r for r in report["questions"]
+                             if r["correct_exact"] is not None)
 
     n = totals["total"]
 
     def _rate(num: int, den: int) -> float:
         return num / den if den else 0.0
 
-    return {
+    out = {
         "total_questions": n,
         "overall_accuracy": _rate(totals["correct"], n),
         "overall_accuracy_no_adversarial": _rate(
@@ -992,8 +1023,17 @@ def run_locomo(path, *, limit_samples: int = 0,
         "config": {**adapter_kwargs,
                    "limit_samples": limit_samples,
                    "max_questions_per_sample": max_questions_per_sample,
+                   "judge_mode": judge_mode,
                    "wall_seconds": round(time.perf_counter() - t0, 2)},
     }
+    if judge_mode == "dual":
+        out["accuracy_exact"] = out["overall_accuracy"]
+        scored = [r for r in dual_rows if r["correct_llm"] is not None]
+        out["accuracy_llm"] = (
+            sum(1 for r in scored if r["correct_llm"]) / len(scored)
+            if scored else 0.0)
+        out["calibration"] = calibration_summary(dual_rows)
+    return out
 
 
 # ── CLI entry point ────────────────────────────────────────────────
@@ -1021,8 +1061,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="Enable Cycle 455 answer-side subject "
                              "support gate (adversarial abstention)")
     parser.add_argument("--no-dates", action="store_true",
-                        help="Disable Cycle 456 temporal date "
-                             "resolution (C453 behavior)")
+                        help="Disable the Cycle 456 when-question date "
+                             "resolution (pre-C456 baseline)")
+    parser.add_argument("--judge", choices=("exact", "dual"),
+                        default="exact",
+                        help="exact = containment judge (default); "
+                             "dual = additionally score with judge_llm "
+                             "(two-column accuracy + calibration, "
+                             "Cycle 464)")
     parser.add_argument("--output", default="amg_locomo_results.json",
                         help="Output report path")
     args = parser.parse_args(argv)
@@ -1038,7 +1084,8 @@ def main(argv: list[str] | None = None) -> int:
         abstain_entropy=abstain_entropy,
         entropy_weak_score=args.entropy_weak,
         subject_gate=args.subject_gate,
-        temporal_dates=not args.no_dates)
+        temporal_dates=not args.no_dates,
+        judge_mode=args.judge)
 
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
