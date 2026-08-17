@@ -1,4 +1,4 @@
-# HEARTBEAT.md - August 16, 2026 (Sunday) — 02:00 AM update
+# HEARTBEAT.md - August 17, 2026 (Monday) — 02:00 AM update
 
 ## 待办任务
 
@@ -15,14 +15,14 @@
 - [ ] amg OpenClaw plugin (~200 lines) — Research #063 ✅, fastest-growing distribution channel. Path B: Skill Extension (~60 lines)
 - [x] amg: OTel GenAI instrumentation — Research #034 ✅, Research #053 ✅, **telemetry.py implemented Cycle 374** ✅
 - [ ] amg PyPI publish (Python-first strategy)
-- [ ] lab/agent-observability: OTel GenAI alignment
+- [x] lab/agent-observability: OTel GenAI alignment — Research #070 ✅ → **src/otel-genai.ts 落地 22:05 会话**（192→222 tests，导出边界适配器+lint CI 门禁，amg telemetry v2 同批完成）
 - [ ] openclaw-langgraph-bridge: Gateway 集成测试 (261 tests)
 - [ ] prompt-mgr: 继续 template management features (196 tests)
 
 > 08-06~07 completed items archived to MEMORY.md.
 
 ## 系统状态
-- **agent-memory-graph (Python)**: **9354 tests** — 970+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ (C446 repatriated) + MCP 16 tools ✅ + OTel telemetry ✅ (C446 repatriated: 8 methods incl search_graphrag) + MultiAgentMemoryGraph (MESI) ✅ + FastAppendQueue ✅ + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + retrieval quality family COMPLETE ✅ + attention ✅ + temporal trilogy ✅ + bi-temporal APIs (5) ✅ + forgetting_forecast ✅ + seeded RNG fix ✅ + Experience Compression Spectrum COMPLETE ✅ + GraphRAG API family COMPLETE ✅ + export_graphml ✅ + run_amg.py 适配器 ✅ + chunk_text ✅ + resolve_entity_variants ✅ + amg_bench_quality LongMemEval 适配器 ✅ + 熵置信双门 abstention ✅。**⚠️ 08-16 审计 (#068)：旧台账 "(TS) 7349" 为幻影双计，已删——无 TS 实现（唯一真 TS = amg-mcp wrapper 1718 行/122 tests）**
+- **agent-memory-graph (Python)**: **9406 tests**（08-17 KO 验证：git HEAD 1d57ec2=C457；grep 9242 test funcs + 47 parametrize 吻合）— 970+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ (C446 repatriated) + MCP 16 tools ✅ + OTel telemetry ✅ (C446 repatriated: 8 methods incl search_graphrag) + MultiAgentMemoryGraph (MESI) ✅ + FastAppendQueue ✅ + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + retrieval quality family COMPLETE ✅ + attention ✅ + temporal trilogy ✅ + bi-temporal APIs (5) ✅ + forgetting_forecast ✅ + seeded RNG fix ✅ + Experience Compression Spectrum COMPLETE ✅ + GraphRAG API family COMPLETE ✅ + export_graphml ✅ + run_amg.py 适配器 ✅ + chunk_text ✅ + resolve_entity_variants ✅ + amg_bench_quality LongMemEval 适配器 ✅ + 熵置信双门 abstention ✅ + locomo_bench_quality LoCoMo 适配器 ✅ (C451) + when-question date resolution ✅ (C456) + temporal-arithmetic answer path ✅ (C457)。**⚠️ 08-16 审计 (#068)：旧台账 "(TS) 7349" 为幻影双计，已删——无 TS 实现（唯一真 TS = amg-mcp wrapper 1718 行/122 tests）**
 - **agent-context-store**: **2929 tests**
 - **structured-output-toolkit**: **571 tests**
 - **agent-task-cli**: **1570 tests** — F237
@@ -32,9 +32,21 @@
 - **prompt-mgr**: **196 tests**
 - **agent-cost-tracker**: **25 tests** (08-15 修复 export.js 死导入 + 格式化函数测试)
 - **agent-mesh-network**: **373 tests** (355→373, taskStats/cancelTask/routingAnalytics)
-- **四项目总计**: 11495 tests ✅（同口径 amg+sot+atc = 9354+571+1570；⚠️ #068 审计：旧 18731 含幻影 "TS 7349" 双计）
-- **全项目总计**: ~20175 tests（#068 审计修正，旧 ~27411）
-- **零回滚率**: amg **293天** 🏆（按日历校正；会话内曾报 294/295 系计数漂移）/ acs 200天 🏆
+- **四项目总计**: 11547 tests ✅（同口径 amg+sot+atc = 9406+571+1570）
+- **全项目总计**: ~20227 tests（08-17 KO 统一口径：含 ctxpack 69/skill-doctor 64；与 MEMORY 对齐，旧值 ~20175 基 amg 9354）
+- **零回滚率**: amg **294天** 🏆（按日历校正，KO 链 08-16=293；08-16~17 会话又报 293/295/296 漂移）/ acs 200天 🏆
+
+## 近期活动 (08-17 晚 22:05 tool-development-evening)
+- **agent-observability otel-genai.ts 落地** (commit 9705e4e): Research #070 next-action #1 完成，amg telemetry v2 (C461) 的同批对啓。src/otel-genai.ts（导出边界适配器：mapSpan 6-op 映射 / Opt-In 内容门控 env+flag / lintGenAiSpans 5 规则 CI 门禁 / exportGenAiOtlp OTLP-JSON / evaluationEventAttributes）+ index.ts re-export + README 章节。测试 **192→222 (+30)** 一次全绿零回归（TDD：先写 30 测试再移植验证过的原型，唯一改动=OTLP traceId 改为 per-span）。坑：git add 目录时扫入了 .understand-anything/ 面板静态资产（工具生成物，无害已入库，下次应先 .gitignore）
+
+## 近期活动 (08-17 晚 cron 20:04)
+- **Research #069 (20:00 早轮)**: LLM-as-Judge 立项 ✅（详见 MEMORY）
+- **Research #070 (20:04 本轮, deep-exploration 重触发)**: OTel GenAI 语义约定快照 + amg/lab 双资产对齐 ✅ — 2026-06 约定迁仓（semantic-conventions-genai，无 tag，钉 c739977）；17 op 含 7 memory 动词，upsert_memory≡amg consolidate；双资产同源漂移（RFC vs registry）；导出边界适配器 E2E 验证（code/otel_genai_align.ts，7-span 真实工具包演示，lint PASS，零侵入）。Next: lab 落地 src/otel-genai.ts / amg telemetry v2 / 季度盯新仓首 tag。Tavily 配额仍耗尽（AnySearch 替代中）
+
+## 近期活动 (08-17 凌晨 cron 00:41/01:27)
+- **Cycle 456 (key-dev-2, be86830)**: amg 9354→9371 (+17)，when-question date resolution ✅ RETAINED。digit-seed 假说先被 A/B 证伪（干净 revert）；数据驱动 pivot：session dates 锚定 + 相对时间词解析 + habitual/eventive when 区分。**A/B: multi_hop 4→42/321 (10.5×)，no-adv 0.1032→0.1266**，检索/abstention 不变。坑：findall-with-groups 年份 bug（用 finditer+group(0)）；[Speaker] 前缀是主体证据不能剥
+- **Cycle 457 (key-dev-3, ff02a43)**: amg 9371→**9406** (+35)，LME_s temporal arithmetic ✅ RETAINED。侦察发现 LME_s temporal 实为 duration/ordering 非 when 题；解锁=question_date+haystack_dates 结构化锚点→纯日历算术。**A/B: 133q 0.045→0.180 (4.0×)**，unresolved anchor 无伪造 fall-through。C456/C457 教训沉淀 insights #239-#241（类目标签+FORM 触发/无 LLM 时序机制族/cat5 名字拓扑不可分；注：主清单 236-240 系 08-16 PM 会话写入文件尾部块，已合并去重）
+- **Next（C457 遗留）**: ① full-500 LME_s 带 temporal-arith（~20min→8月底新 overall reference）② fired-but-wrong 9 题取证（mention session vs event session 混淆）③ 博客候选 "temporal arithmetic without an LLM"
 
 ## 近期活动 (08-16 晚 cron 23:00)
 - **Cycle 455 (key-development-1)**: amg 9329→**9354** (+25)，cat5 答案侧校验实验 ✅。subject_support_gate（零 LLM：主体缺席 ∧ 外名在场 ∧ 说话人≠主体 → abstain）+ speaker 守卫 + sweep_subject_gate + CLI。**决定性负发现（1986q 全量）**：① 朴素版 +36 cat5/−47 事实伤害 = 净负 11；② speaker 守卫后 1/446 fire = 净 0；③ 根因：**LoCoMo cat5 从主体自己的行伪造**（evidence dia_id 全指向主体 turn，外名只是呼语），与事实型第三方内容题（grandma/Sweden）在名字拓扑上同构——谓词级语义匹配是唯一剩余路径（嵌入/LLM judge）。延伸 C452：置信门+名字拓扑双双证伪。另发现 LoCoMo 类别标签噪声（cat5 伪装题泄漏进 multi_hop/open_domain，fire 前后皆错=零成本）。commit 464361a/c3a8085
@@ -95,11 +107,12 @@
 > Cycles 384-407: Multi-agent (MESI) + consolidation + retrieval quality + attention.
 
 ## 本周关键路径
-1. ✅ ~~Cycles 367-440: security suite + bench + MCP + multi-agent + consolidation + retrieval QA + attention + temporal + Experience Compression + GraphRAG lifecycle + GraphRAG-Bench 适配器~~ DONE
-2. ⬜ README(agent-memory-graph) → npm publish + **amg PyPI 人工三步** — **BLOCKED on human action**
-3. ⬜ Next dev targets: **8月底双首跑**（①GraphRAG-Bench Novel sample_100 retrieval_eval——先 `ollama pull qwen2.5:7b`，本机未装 ollama=唯一阻塞；②LongMemEval_s_cleaned --limit 50 + sweep_abstention 定工作点，均零 API 成本）/ amg-bench LoCoMo adapter（#067 前置就绪，Next: C449 locomo_bench_quality.py）/ MCP registry publish / OpenClaw plugin。⚠️ ~~TS port of Python APIs~~ 已移除——#068 审计：无 TS 实现存在，真 TS 化是从零重写须单独立项
+1. ✅ ~~Cycles 367-457: security + bench + MCP + multi-agent + consolidation + retrieval QA + attention + temporal + Experience Compression + GraphRAG lifecycle + GraphRAG-Bench 适配器 + LoCoMo/LME_s 双基准 + 时序答案侧机制族~~ DONE
+2. ⬜ README(agent-memory-graph) → npm publish + **amg PyPI 人工三步 + npm 命名决策** — **BLOCKED on human action**
+3. ⬜ Next dev targets: **8月底双首跑①** GraphRAG-Bench Novel sample_100 retrieval_eval（唯一阻塞=`ollama pull qwen2.5:7b`，本机未装 ollama；**②已解除** C454 LME_s x50 首跑完成）/ full-500 LME_s run 带 temporal-arith（~20 min，新 overall reference）/ cat5+多跳残余→LLM judge 立项 / MCP registry publish / OpenClaw plugin。⚠️ ~~TS port of Python APIs~~ 已移除——#068 审计：无 TS 实现，须单独立项
 
 ## 上次检查
+- **Knowledge org: 2026-08-17 02:00** — Integrated C454-457 (amg 9354→9406 verified vs git 1d57ec2; day counter 294 calendar-corrected, sessions drifted 293/295/296 again)。四项目 11547 / 全项目 ~20227（统一口径含工具循环 ctxpack/skill-doctor，修复 MEMORY-HEARTBEAT 交叉漂移 ~113）。新增 insights #236-#238。双首跑②标记解除。C455 已由 23:00 会话自写入 HEARTBEAT。
 - **Knowledge org 验证轮: 2026-08-16 02:04** — 重复触发（同昨日模式）。02:00 轮已完整执行，本轮仅验证：①git HEAD~1 = a4fb5ca "Cycle 448 amg 9241" ✅ 且 02:00 knowledge-org 提交 5ba272e 已入库 ②experiments.tsv 链 9079→9158→9210→9241 三条记录完整 ✅ ③grep test 函数 9077 + parametrize ≈ 9241 吻合 ④四项目 18731 验算通过。无新活动（02:00 后仅 3 个知识文件变更）。无需修正项。
 - **Knowledge org: 2026-08-16 02:00** — Integrated C445-448 (amg Py 9079→9241 verified vs git a4fb5ca; day counter normalized 293 per calendar, sessions had drifted to 294/295). nano 1106 / act 25 / mesh 373. 四项目 18731（修正 HEARTBEAT 错误值 18511）/ 全项目 ~27411. Fixed stale agent-mesh-network 505→373. 双首跑关键路径 + ollama blocker surfaced. 新增 insight #231/#232 (abstention 语义分界 / 子串污染+token 效率).
 - **Knowledge org 验证轮: 2026-08-15 02:04** — 重复触发；核心更新已由 02:00 run 完成（cycles 432-440, amg 8942, 292d）。本轮修正：MEMORY.md 3 处过时计数（atc 1548→1570/F237；amg Py 2294→8942；12223→18432）+ HEARTBEAT 18284→18432；**experiments.tsv 回填 nano-agent R17/R18 三行**（1018→1076，08-13/14 会话遗漏，实际 158 行而非 summary 所称 239 行，末条原为 08-12）。
