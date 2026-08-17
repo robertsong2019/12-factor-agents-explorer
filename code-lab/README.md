@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~53,900 | ⭐ 知识图谱记忆引擎：565+ 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比/趋势）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询、Experience Compression Spectrum L2→L3 规则生命周期（提取/检测/匹配/诊断）、GraphRAG 流水线（文本提取/子图检索/诊断/健康报告）、双进程写入 FastAppendQueue、知识新鲜度诊断、GraphRAG-Bench (ICLR 2026) 完整适配器（缩写安全切分/事实作答/关系维度/GraphML 导出/长文分块）|
+| [agent-memory-graph](agent-memory-graph/) | ~53,900 | ⭐ 知识图谱记忆引擎：565+ 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比/趋势）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询、Experience Compression Spectrum L2→L3 规则生命周期（提取/检测/匹配/诊断）、GraphRAG 流水线（文本提取/子图检索/诊断/健康报告）、双进程写入 FastAppendQueue、知识新鲜度诊断、GraphRAG-Bench (ICLR 2026) 完整适配器（缩写安全切分/事实作答/关系维度/GraphML 导出/长文分块）、LLM-as-Judge 双口径判分（judge_llm/类目校准/证据会话覆盖）|
 
 ### 代码分析与可视化
 
@@ -111,7 +111,7 @@
 
 ### 📐 信息论进化史（Cycles 306–316 + 326–407）
 
-最新里程碑：**压缩残差 + 对抗鲁棒 + 时间推理（Cycles 449-457，9406 tests）** — 压缩残差三件套（摘要化前抽原子事实，合并/遗忘不丢细节）、保留式遗忘、LoCoMo 对抗基准接入与全量基线、每题独立 haystack 隔离评估（`run_eval`）、主语支撑门（零 LLM 破解 cat-5 主语调包对抗题）、when-日期解析 grounding session 日期、temporal-arithmetic 答案路径（temporal 切片 4.0x，跨数据集泛化）。此前：安全遗忘 + 记忆质量双轴基准（Cycles 441-448，9241 tests）— 搜索树物化（图即搜索树）、跨模态泄漏扫描与安全遗忘（遗忘前检查派生物敏感 token）、前瞻修复记忆、safety_purge 泄漏闸门、实体变体归一（GraphRAG-Bench 差距清单 6/6 全部清零）、OTel 遥测遣返、LongMemEval 记忆质量适配器与熵置信度弃权闸门。更早：GraphRAG-Bench 基准接入完结（Cycles 432-440，run_amg.py 成为 ICLR 2026 完整适配器，零 LLM/零 API 成本）+ GraphRAG 全流水线完结（extract→query→explain→coverage）+ 双进程写入 FastAppendQueue + 知识新鲜度 FAMA 诊断 + Experience Compression L2→L3 规则生命周期（Cycles 408-431）。
+最新里程碑：**记忆演化审计 + OTel v2 + LLM-as-Judge 双口径（Cycles 458-467，9519 tests）** — 写前拓扑预测（estimate_node_impact）、TSV 互换格式、graph_changelog 演化审计、telemetry v2 对齐 semantic-conventions-genai、judge_llm 多数投票双口径判分（Research #069 落地：LME/LoCoMo/CLI 三层接线 + 类目级校准 + full-500 参考 exact 0.140/llm 0.194）、诚实归因（question_id 回退 + 权威 question_type）与证据会话覆盖率指标。此前：压缩残差 + 对抗鲁棒 + 时间推理（Cycles 449-457，9406 tests）— 压缩残差三件套、保留式遗忘、LoCoMo 对抗基准接入与全量基线、每题独立 haystack 隔离评估（`run_eval`）、主语支撑门（零 LLM 破解 cat-5 主语调包对抗题）、when-日期解析 grounding session 日期、temporal-arithmetic 答案路径（temporal 切片 4.0x，跨数据集泛化）。更早：安全遗忘 + 记忆质量双轴基准（Cycles 441-448，9241 tests）— 搜索树物化、跨模态泄漏扫描与安全遗忘、前瞻修复记忆、safety_purge 泄漏闸门、实体变体归一（GraphRAG-Bench 差距清单 6/6 全部清零）、OTel 遥测遣返、LongMemEval 记忆质量适配器与熵置信度弃权闸门。更早：GraphRAG-Bench 基准接入完结（Cycles 432-440，run_amg.py 成为 ICLR 2026 完整适配器，零 LLM/零 API 成本）+ GraphRAG 全流水线完结（extract→query→explain→coverage）+ 双进程写入 FastAppendQueue + 知识新鲜度 FAMA 诊断 + Experience Compression L2→L3 规则生命周期（Cycles 408-431）。
 
 | 阶段 | Cycles | 代表方法 | 核心思想 |
 |------|--------|----------|----------|
@@ -228,6 +228,16 @@
 | 主语支撑门 | 455 | `subject_support_gate` | 零 LLM 答案侧验证破解 C452 负发现：主语调包题的最佳答案行提到别人且从不提被问主体 → 弃权 |
 | when-日期解析 | 456 | 绝对/相对日期 grounding session 日期 | multi_hop 42/321；findall 分组 bug 教训入 memory |
 | 时间运算答案路径 | 457 | `temporal_arith` 答案路径 | LME_s duration/ordering 经 session 日期日历运算，temporal 切片 **4.0x**，跨数据集泛化 |
+| 写前拓扑预测 | 458 | `estimate_node_impact` | 非破坏性预测加节点后 density/度熵/聚类/图型变化，写治理决策依据 |
+| TSV 互换 | 459 | `export_tsv` / `import_tsv` | 表格交换协议（电子表格/R/pandas/awk），round-trip + merge 模式 |
+| 图变更日志 | 460 | `graph_changelog` + `update_node` 埋点 | evolution_log 可读化；label/kind 变更自动留痕 |
+| telemetry v2 | 461 | 对齐 semantic-conventions-genai @c739977 | 动词化 span 名、单一 record.count、query.text Opt-In 门控、专有键迁 `amg.*` |
+| LLM judge | 462 | `judge_llm`（Research #069） | 多数投票判分（CORRECT/WRONG/ERROR），ollama auto-detect + sticky mock 降级，evaluate(dual) 双列 |
+| judge CLI | 463 | `--judge` + run_eval 聚合 | mock 冒烟全通，full-500 判分就绪 |
+| LoCoMo 双口径 | 464 | `evaluate_sample` / `run_locomo` dual | cat-5 判定协议与主基准共享 subject_support_gate |
+| 类目级校准 | 465 | `calibration_by_category` | exact-vs-LLM 分歧分解到类目；full-500 reference：exact 0.140 / llm 0.194 |
+| 诚实归因 | 466 | question_id 回退 + 权威 question_type | 修正幻影类目分组，temporal 0.061→0.180（C457 全量复现） |
+| 证据会话覆盖 | 467 | `answer_session_hit_rate` | retrieval_hit 在合成真相类目结构性失明（preference 0.000 是伪影，实际 17/30 已命中）|
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---

@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-9406-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-9519-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -2295,7 +2295,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-8505 → **9406 个测试**覆盖所有 API（**457 个 cycle，295 天零回滚**）。
+8505 → **9519 个测试**覆盖所有 API（**467 个 cycle，296 天零回滚**）。
 
 ## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
 
@@ -3998,6 +3998,48 @@ LongMemEval 记忆质量适配器（Research #061）：`ingest_sessions`（会�
 #### temporal-arithmetic 答案路径 (Cycle 457)
 
 LME_s duration/ordering 类问题经 session 日期做日历运算作答，temporal 切片 **4.0x** 提升，跨数据集验证了 C456 的时间推理路径。
+
+### 记忆演化审计、OTel 对齐与 LLM-as-Judge 双口径判分 (Cycles 458-467)
+
+#### `estimate_node_impact(*, degree: int = 0, weight: float = 1.0, label: str = "", existing_neighbors: int = 0) -> dict` (Cycle 458)
+
+非破坏性拓扑预测：在真正写入前，投影「若添加一个给定特征的节点，density/度熵/聚类系数/图类型指示器将如何变化」。写治理决策的直接依据（"这个节点会让图变得更星型吗？"），不产生任何副作用。
+
+#### `export_tsv(*, include_weights: bool = True, include_kinds: bool = True, include_tags: bool = False) -> dict` / `import_tsv(nodes_tsv: str = "", edges_tsv: str = "", *, merge: bool = False) -> dict` (Cycle 459)
+
+TSV 互换格式——最简单的表格交换协议，电子表格 / R / pandas / awk 即开即用，与 JSON、GraphML 导出互补。表头行自动检测跳过；`merge=True` 并入现有图而非先清空；round-trip 保留节点 ID、边、kinds、tags。
+
+#### `graph_changelog(*, limit: int = 20, node_id: str = None) -> list[dict]` (Cycle 460)
+
+把 `evolution_log` 表（label/kind 变更历史）以结构化 dict 输出为可读变更日志，可按 `node_id` 过滤、按最近优先截断。同 cycle 给 `update_node()` 补上 label/kind 变更时写 `evolution_log` 的埋点——此前只有显式 API 留痕，图演化审计从此完整。
+
+#### telemetry v2 对齐 semantic-conventions-genai @c739977 (Cycle 461)
+
+OTel span 命名与属性全面对齐 GenAI 语义约定注册表：span 名改为动词形式 `create_memory` / `search_memory` / `update_memory` / `delete_memory`；`gen_ai.operation.name` 每个必填；`gen_ai.memory.store.id` 标识存储；计数收敛为单一 `gen_ai.memory.record.count`（语义随操作变化）；内容属性 `gen_ai.memory.query.text` 走规范规定的 Opt-In 门控（`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`）；无注册表等价物的 amg 专有概念（memory_type、top_k、hit 等）全部迁至保留命名空间 `amg.*`——规范禁止自造 `gen_ai.*` 键。进程内记忆系统允许 `SpanKind.INTERNAL`。
+
+#### `judge_llm(question: str, answer: str, reference: str, *, mode: str | None = None, n_judges: int = 1, **ollama_kw) -> str` (Cycle 462)
+
+多数投票 LLM judge（Research #069 协议落地）：返回 `"CORRECT"` / `"WRONG"` / `"ERROR"`。`mode` 支持 `"mock"`（确定性降级）/ `"ollama"`（真实端点）/ `None`（auto-detect：一次性 probe ollama，失败则整轮 sticky 降级 mock，流水线永不因 judge 不可用而中断）。`n_judges` 奇数 ≥3 启用多数投票（Memora 3-judge 原子判据 κ 0.86-0.90 的可复现路径），ERROR 票不计入多数、全 ERROR 返回 `"ERROR"`。`evaluate(judge_mode="dual")` 输出 exact / llm 双列 accuracy。
+
+#### `--judge` CLI 与 run_eval 双口径聚合 (Cycle 463)
+
+`run_amg.py` 评估模式接入 `--judge` 开关，`run_eval` 聚合双口径结果。mock 冒烟 2 题全通，8 月底 full-500 LME_s 判分跑就绪。
+
+#### LoCoMo 双口径接线 (Cycle 464)
+
+`evaluate_sample(qa: list[dict], *, judge_fn=None, limit: int = 0, judge_mode: str = "exact") -> dict` 与 `run_locomo(path, *, limit_samples: int = 0, ...)` 三层（evaluate_sample / run_locomo / CLI）全部支持 dual——对抗类 cat-5 判定协议与主基准共享 `subject_support_gate`，两套数据集的 judge 口径从此一致。
+
+#### `calibration_by_category(results: list) -> dict` (Cycle 465)
+
+Research #069 延伸：`calibration_summary` 只有全局口径，本函数把 exact-vs-LLM 分解到类目级——kupdate 的 llm_only_correct rescue（containment 过严）与对抗集的 llm_only_wrong false pass 方向相反，全局 divergence 究竟由谁驱动一目了然。输入 duck-typed（QuestionResult 或报告 dict 行）。四个 dual 报告点（LME evaluate/run_eval + LoCoMo evaluate_sample/run_locomo）全部接入。同 cycle 建立 **full-500 LME_s overall reference**：exact **0.140** / mock-llm **0.194** / retrieval_hit 0.378；x50 A/B 精确复现 C454 的 0.360——全量差是数据组成（前 50 题 hit 0.76 vs 全量 0.378），非回归。
+
+#### 诚实归因：question_id 回退 + 权威 question_type (Cycle 466)
+
+full-500 暴露两个可追溯性缺陷：① `run_eval` 行全部携带 `question_id="0"`（单题 evaluate 列表恒取 index 0，而 LongMemEval-cleaned 原生字段是 question_id 而非 id）；② `_classify_question` 启发式把 419/500 误标为 single_session_user——`calibration_by_category` 一直在给幻影类目分组。修复：question_id 作为 id 回退；数据集自带 question_type/category 时为权威（连字符/规范名映射，未知类型诚实透传），启发式只做兜底。修正后参考：temporal 0.061→**0.180**（C457 在全量复现）、ssu 0.343、preference hit 0.000（新检索轴）；总量精确复现（0.140/0.194/0.378）。
+
+#### `answer_session_hit_rate` — 证据会话覆盖率 (Cycle 467)
+
+retrieval_hit（truth-containment）在合成真相类目上结构性失明：preference 切片「hit 0.000、30 题全部 miss」其实是指标伪影——原始数据侦察显示适配器已在 17/30 题上浮出证据会话。新指标 `answer_session_hit`：检索是否命中**任一**证据会话（数据集 answer_session_ids → ingest 侧 session id 映射，QuestionResult 逐题记录）；无法解析指针的题记 `None` 而非 miss，排除在分率之外（C466 教训 3 的直接应用）。evaluate() / run_eval 按类目 + overall 聚合，CLI eval 模式打印 evidence_hit。
 
 ---
 

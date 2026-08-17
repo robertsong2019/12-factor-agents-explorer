@@ -1,8 +1,8 @@
 # Agent Memory Graph 🧠
 
-> A graph-native memory engine for AI agents — 53,900+ lines, 565+ API methods, 8,942 tests, zero dependencies.
+> A graph-native memory engine for AI agents — 53,900+ lines, 565+ API methods, 9,519 tests, zero dependencies.
 >
-> **291st consecutive day of iteration** 🏆
+> **296th consecutive day of iteration** 🏆
 
 **Zero dependencies** — pure Python stdlib + sqlite3. `sqlite-vec` optional for vector search.
 
@@ -849,7 +849,9 @@ python3 -m pytest -k "classification" -q  # classification suite
 python3 -m pytest -k "activation" -q  # spreading activation family
 ```
 
-**8,942 test cases** across 40+ test files. **292nd consecutive day** 🏆.
+**9,519 test cases** across 40+ test files. **296th consecutive day** 🏆.
+
+> **Recent (Cycles 441–467, up to 9,519 tests):** safe forgetting (cross-modal leak scan + safety_purge gate), entity variant resolution closing the GraphRAG-Bench gap list, compression residual / retained forgetting / LoCoMo adversarial robustness, subject-support gate for cat-5 subject-swap attacks, temporal-arithmetic answer path (4.0x temporal slice), write-time topology prediction (`estimate_node_impact`), TSV interchange (`export_tsv`/`import_tsv`), graph evolution audit (`graph_changelog`), telemetry v2 aligned with semantic-conventions-genai, and the LLM-as-Judge dual-metric pipeline from Research #069 (`judge_llm` majority voting, `calibration_by_category`, honest attribution, `answer_session_hit_rate`). See the canonical `projects/agent-memory-graph/README.md` for the full API reference of these cycles.
 
 ---
 
