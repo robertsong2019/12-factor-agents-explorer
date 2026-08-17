@@ -270,6 +270,11 @@ class QuestionResult:
     latency_ms: float = 0.0
     tokens_est: int = 0
     retrieval: dict = field(default_factory=dict)
+    # Dual-metric scoring (judge_mode="dual"): exact + LLM verdicts
+    # side by side so one metric's gains can't mask the other's
+    # losses (Research #069 — kupdate 0.0 was a protocol artifact).
+    correct_exact: bool | None = None
+    correct_llm: bool | None = None
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -663,7 +668,7 @@ class LongMemEvalAdapter:
     # ── Full evaluation loop ────────────────────────────────────────
 
     def evaluate(self, dataset: list[dict], *, judge_fn=None,
-                 limit: int = 0) -> dict:
+                 limit: int = 0, judge_mode: str = "exact") -> dict:
         """Run the full evaluation over a LongMemEval dataset.
 
         Per question: retrieve + extractive answer + judge. Scoring:
@@ -676,10 +681,17 @@ class LongMemEvalAdapter:
           retrieved context — the zero-cost recall-quality metric
           (Research #061 Action 1: retrieval-only mode).
 
+        ``judge_mode="dual"`` additionally scores every non-abstention
+        question with :func:`judge_llm` (ollama endpoint with mock
+        fallback), producing ``accuracy_exact`` / ``accuracy_llm`` /
+        ``calibration`` report keys — one metric's gains can't mask
+        the other's losses (Research #069).
+
         Args:
             dataset: ``[{"id", "question", "answer", ...}]``.
             judge_fn: Optional external judge; default containment.
             limit: Evaluate at most this many questions (0 = all).
+            judge_mode: "exact" (default) or "dual".
 
         Returns:
             Report dict: overall accuracy / retrieval-hit rate /
@@ -709,6 +721,19 @@ class LongMemEvalAdapter:
             else:
                 correct = exact_judge(question, truth, predicted)
 
+            correct_exact: bool | None = None
+            correct_llm: bool | None = None
+            if judge_mode == "dual":
+                correct_exact = correct
+                if is_abs:
+                    # abstention semantics are protocol-level, not
+                    # semantic — both metrics share the verdict
+                    correct_llm = correct
+                else:
+                    verdict = judge_llm(question, predicted, truth)
+                    correct_llm = (None if verdict == "ERROR"
+                                   else verdict == "CORRECT")
+
             # retrieval_hit: truth text appears in the retrieved
             # context — the zero-cost recall-quality metric
             # (Research #061 Action 1: retrieval-only mode).
@@ -722,6 +747,7 @@ class LongMemEvalAdapter:
                 abstained=meta["abstained"], correct=correct,
                 retrieval_hit=hit,
                 latency_ms=meta["latency_ms"], tokens_est=meta["tokens_est"],
+                correct_exact=correct_exact, correct_llm=correct_llm,
                 retrieval={"best_score": meta["best_score"],
                            "candidates_found": meta["candidates_found"],
                            "messages_retrieved": meta["messages_retrieved"],
@@ -739,7 +765,7 @@ class LongMemEvalAdapter:
             summary.total_tokens += meta["tokens_est"]
 
         total = len(results)
-        return {
+        report = {
             "overall_accuracy": (sum(r.correct for r in results) / total
                                  if total else 0.0),
             "retrieval_hit_rate": (sum(r.retrieval_hit for r in results)
@@ -756,8 +782,17 @@ class LongMemEvalAdapter:
                        "max_context_tokens": self.max_context_tokens,
                        "abstain_score": self.abstain_score,
                        "abstain_entropy": self.abstain_entropy,
-                       "entropy_weak_score": self.entropy_weak_score},
+                       "entropy_weak_score": self.entropy_weak_score,
+                       "judge_mode": judge_mode},
         }
+        if judge_mode == "dual":
+            report["accuracy_exact"] = report["overall_accuracy"]
+            scored = [r for r in results if r.correct_llm is not None]
+            report["accuracy_llm"] = (
+                sum(1 for r in scored if r.correct_llm) / len(scored)
+                if scored else 0.0)
+            report["calibration"] = calibration_summary(results)
+        return report
 
     def sweep_abstention(self, dataset: list[dict], *,
                          entropies: list[float | None],
@@ -857,6 +892,165 @@ def exact_judge(question: str, truth: str, predicted: str) -> bool:
         return False
     nt, np_ = _normalize(truth), _normalize(predicted)
     return nt == np_ or nt in np_
+
+
+# ── LLM judge (Cycle 462 — Research #069: dual-metric scoring) ─────
+#
+# Reference-anchored binary judgment for the cat5 / knowledge-update
+# residual where containment fails on semantically-equivalent answers.
+# Protocol choices (per 2026-08 research): (1) reference-anchored beats
+# prompt-only; (2) binary CORRECT/WRONG avoids score-ID and rubric-order
+# bias; (3) explicit failure conditions (missing key fact / contradiction /
+# different entity substitution); (4) ollama OpenAI-compatible endpoint
+# for zero-API-cost runs with deterministic mock fallback so the pipeline
+# is always runnable and testable.
+
+JUDGE_PROMPT = """You are a strict answer grader for a memory-QA benchmark.
+
+Question: {question}
+
+Candidate answer: {answer}
+
+Grade the candidate answer against the reference answer below.
+The candidate is CORRECT only if it contains the same key information as the
+reference (paraphrase, pronoun substitution, or superset details are OK).
+It is WRONG if the key fact is missing, contradicted, or a different entity
+is substituted (e.g. wrong person, wrong date).
+Do not reward verbosity. Do not infer missing facts.
+Reply with exactly one word: CORRECT or WRONG.
+
+Reference answer: {reference}"""
+
+
+def judge_mock(question: str, answer: str, reference: str) -> str:
+    """Deterministic mock judge — word-level F1 >= 0.35 containment.
+
+    Used to validate pipeline plumbing and calibration aggregation
+    without ollama; NOT for drawing real conclusions.
+    """
+    if not reference:
+        return "CORRECT"
+    if not answer:
+        return "WRONG"
+    a_toks = set(re.findall(r"[a-z0-9']+", answer.lower()))
+    r_toks = set(re.findall(r"[a-z0-9']+", reference.lower()))
+    if not r_toks:
+        return "CORRECT"
+    overlap = len(a_toks & r_toks) / len(r_toks)
+    return "CORRECT" if overlap >= 0.35 else "WRONG"
+
+
+def judge_ollama(question: str, answer: str, reference: str, *,
+                 endpoint: str = "http://localhost:11434/v1/chat/completions",
+                 model: str = "qwen2.5:7b", timeout: int = 60) -> str:
+    """Single LLM verdict via an OpenAI-compatible (ollama) endpoint.
+
+    Returns "CORRECT" / "WRONG" / "ERROR" (network/model failure).
+    """
+    import urllib.request
+    payload = {
+        "model": model,
+        "temperature": 0.0,
+        "max_tokens": 8,
+        "messages": [
+            {"role": "system",
+             "content": "You are a binary grader. Output one word only."},
+            {"role": "user",
+             "content": JUDGE_PROMPT.format(
+                 question=question, answer=answer, reference=reference)},
+        ],
+    }
+    req = urllib.request.Request(
+        endpoint, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = json.loads(r.read().decode()) or ""
+        out = (body.get("choices", [{}])[0]
+               .get("message", {}).get("content", "")).strip().upper()
+        if "CORRECT" in out:
+            return "CORRECT"
+        if "WRONG" in out:
+            return "WRONG"
+        return "ERROR"
+    except Exception:  # noqa: BLE001 — any failure grades as ERROR
+        return "ERROR"
+
+
+def judge_llm(question: str, answer: str, reference: str, *,
+              mode: str | None = None, n_judges: int = 1,
+              **ollama_kw) -> str:
+    """Majority-vote LLM judge — Research #069 protocol.
+
+    Args:
+        mode: "mock" forces the deterministic mock judge; "ollama"
+            forces the real endpoint; None auto-detects (tries one
+            ollama call, falls back to mock for the rest of the run).
+        n_judges: votes per item — odd >= 3 enables majority voting
+            (Memora: 3-judge atomic-criteria majority ≈ κ 0.86-0.90).
+            ERROR votes don't count toward the majority; all-ERROR →
+            "ERROR".
+
+    Returns "CORRECT" / "WRONG" / "ERROR".
+    """
+    global _JUDGE_MODE
+    if mode is None:
+        mode = _JUDGE_MODE
+    votes: list[str] = []
+    if mode is None:
+        # One-time probe: a live ollama endpoint sticks for the run,
+        # a dead one degrades permanently to the mock judge.
+        v = judge_ollama(question, answer, reference, **ollama_kw)
+        mode = "ollama" if v != "ERROR" else "mock"
+        _JUDGE_MODE = mode
+        if v != "ERROR":
+            votes.append(v)
+    for _ in range(max(1, n_judges) - len(votes)):
+        if mode == "ollama":
+            votes.append(judge_ollama(
+                question, answer, reference, **ollama_kw))
+        else:
+            votes.append(judge_mock(question, answer, reference))
+    valid = [v for v in votes if v != "ERROR"]
+    if not valid:
+        return "ERROR"
+    return "CORRECT" if valid.count("CORRECT") > len(valid) / 2 else "WRONG"
+
+
+_JUDGE_MODE: str | None = None  # sticky auto-detect cache
+
+
+def calibration_summary(results: list) -> dict:
+    """Exact-vs-LLM calibration over dual-scored results.
+
+    Divergence rate > 25% means the rubric needs re-review before
+    either number is quoted (judge validation practice).
+    """
+    n = 0
+    agree = llm_only_correct = llm_only_wrong = errors = 0
+    for r in results:
+        if r.correct_exact is None:
+            continue
+        n += 1
+        if r.correct_llm is None:  # judge errored on this item
+            errors += 1
+            continue
+        if r.correct_exact == r.correct_llm:
+            agree += 1
+        elif r.correct_llm and not r.correct_exact:
+            llm_only_correct += 1  # semantic-equivalence rescues
+        else:
+            llm_only_wrong += 1  # false passes — sample manually
+    div = (llm_only_correct + llm_only_wrong) / max(n, 1)
+    return {
+        "scored": n,
+        "agree": agree,
+        "llm_only_correct": llm_only_correct,
+        "llm_only_wrong": llm_only_wrong,
+        "judge_errors": errors,
+        "divergence_rate": round(div, 4),
+        "verdict": "rubric OK" if div <= 0.25 else "RECALIBRATE",
+    }
 
 
 # ── Temporal arithmetic (Cycle 457 — LME_s temporal-reasoning) ──────
