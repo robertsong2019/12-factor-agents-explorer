@@ -72,6 +72,11 @@ __all__ = [
     "temporal_arith_judge",
     "load_longmemeval_data",
     "run_eval",
+    "judge_llm",
+    "judge_mock",
+    "judge_ollama",
+    "calibration_summary",
+    "calibration_by_category",
     "main",
 ]
 
@@ -792,6 +797,8 @@ class LongMemEvalAdapter:
                 sum(1 for r in scored if r.correct_llm) / len(scored)
                 if scored else 0.0)
             report["calibration"] = calibration_summary(results)
+            report["calibration_by_category"] = \
+                calibration_by_category(results)
         return report
 
     def sweep_abstention(self, dataset: list[dict], *,
@@ -1056,6 +1063,26 @@ def calibration_summary(results: list) -> dict:
         "divergence_rate": round(div, 4),
         "verdict": "rubric OK" if div <= 0.25 else "RECALIBRATE",
     }
+
+
+def calibration_by_category(results: list) -> dict:
+    """Category-wise exact-vs-LLM divergence breakdown (Cycle 465).
+
+    Groups dual-scored results by category and runs
+    :func:`calibration_summary` per group, so a full-run divergence
+    verdict traces to the categories driving it — e.g. kupdate
+    llm_only_correct rescues (containment too strict) diverge in the
+    opposite direction from adversarial llm_only_wrong false passes.
+    Duck-typed input — QuestionResult attrs or report dict rows,
+    same protocol as :func:`calibration_summary`.
+    """
+    groups: dict[str, list] = {}
+    for r in results:
+        cat = (r.category if hasattr(r, "category")
+               else r.get("category")) or "unknown"
+        groups.setdefault(cat, []).append(r)
+    return {cat: calibration_summary(rows)
+            for cat, rows in sorted(groups.items())}
 
 
 # ── Temporal arithmetic (Cycle 457 — LME_s temporal-reasoning) ──────
@@ -1433,6 +1460,8 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
             sum(1 for r in scored if r["correct_llm"]) / len(scored)
             if scored else 0.0)
         report["calibration"] = calibration_summary(all_results)
+        report["calibration_by_category"] = \
+            calibration_by_category(all_results)
     return report
 
 

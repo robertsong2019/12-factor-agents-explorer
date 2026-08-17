@@ -44,6 +44,7 @@ from amg_bench_quality import (
     exact_judge,
     judge_llm,
     calibration_summary,
+    calibration_by_category,
 )
 
 __all__ = [
@@ -888,6 +889,8 @@ class LoCoMoAdapter(LongMemEvalAdapter):
                 sum(1 for r in scored if r["correct_llm"]) / len(scored)
                 if scored else 0.0)
             report["calibration"] = calibration_summary(rows)
+            report["calibration_by_category"] = \
+                calibration_by_category(rows)
         return report
 
 
@@ -1033,6 +1036,8 @@ def run_locomo(path, *, limit_samples: int = 0,
             sum(1 for r in scored if r["correct_llm"]) / len(scored)
             if scored else 0.0)
         out["calibration"] = calibration_summary(dual_rows)
+        out["calibration_by_category"] = \
+            calibration_by_category(dual_rows)
     return out
 
 
