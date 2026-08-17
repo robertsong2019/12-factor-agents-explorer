@@ -7339,6 +7339,151 @@ class MemoryGraph:
             result["profile"] = profile
         return result
 
+    def estimate_node_impact(self, *, degree: int = 0,
+                               weight: float = 1.0,
+                               label: str = "",
+                               existing_neighbors: int = 0) -> dict:
+        """Predict how adding a node would change graph topology metrics.
+
+        Non-destructive analysis: computes current metrics and projects
+        the values after adding a hypothetical node with the given
+        characteristics. Useful for write-time governance decisions
+        ("would this node make the graph more star-like?") and
+        capacity planning.
+
+        Args:
+            degree: Expected degree (edges) of the new node.
+            weight: Expected weight of edges connecting to it.
+            label: Optional label for entropy diversity estimation.
+            existing_neighbors: How many of the degree edges connect
+                to existing nodes (vs new isolated nodes).
+
+        Returns:
+            Dictionary with current and projected metrics:
+            - node_count_delta: +1 always
+            - edge_count_delta: degree (or existing_neighbors)
+            - density_delta: absolute change in graph density
+            - degree_entropy_delta: projected Shannon degree entropy change
+            - clustering_delta: estimated clustering coefficient change
+            - graph_type_before/after: heuristic topology classification
+            - assessment: one-line verdict (e.g. "more star-like")
+        """
+        n = self.conn.execute("SELECT count(*) FROM nodes").fetchone()[0]
+        m = self.conn.execute("SELECT count(*) FROM edges").fetchone()[0]
+        nn = n + 1
+        mm = m + existing_neighbors
+
+        # Current density (directed: n*(n-1) possible edges)
+        max_edges_current = n * (n - 1) if n > 1 else 1
+        max_edges_new = nn * (nn - 1) if nn > 1 else 1
+        density_before = m / max_edges_current if max_edges_current > 0 else 0.0
+        density_after = mm / max_edges_new
+
+        # Degree entropy before
+        import math
+        deg_before = [d for d, in self.conn.execute(
+            "SELECT degree FROM node_degrees"
+        ).fetchall()] if self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='node_degrees'"
+        ).fetchone() else []
+
+        if not deg_before and n > 0:
+            # Fallback: compute from edges
+            deg_counts = {}
+            for row in self.conn.execute("SELECT source, target FROM edges").fetchall():
+                deg_counts[row['source']] = deg_counts.get(row['source'], 0) + 1
+                deg_counts[row['target']] = deg_counts.get(row['target'], 0) + 1
+            deg_before = list(deg_counts.values())
+
+        # Degree entropy before
+        if deg_before:
+            total_deg = sum(deg_before)
+            if total_deg > 0:
+                h_before = -sum((d / total_deg) * math.log2(d / total_deg)
+                               for d in deg_before if d > 0)
+            else:
+                h_before = 0.0
+        else:
+            h_before = 0.0
+            total_deg = 0
+
+        # Project degree entropy after adding node
+        deg_after = deg_before + [degree]
+        total_deg_after = total_deg + degree
+        if total_deg_after > 0:
+            h_after = -sum((d / total_deg_after) * math.log2(d / total_deg_after)
+                          for d in deg_after if d > 0)
+        else:
+            h_after = 0.0
+
+        # Clustering estimate: new node adds triangles proportional to
+        # (neighbors choose 2) × average clustering of neighbors
+        clustering_before = self.global_clustering_coefficient() if n >= 3 else 0.0
+        if existing_neighbors >= 2 and n >= 3:
+            # Rough estimate: new triangles ~ C(existing_neighbors, 2) * clustering_before
+            new_triangles = (existing_neighbors * (existing_neighbors - 1) / 2) * clustering_before
+            # New possible triples
+            new_triples = existing_neighbors * (existing_neighbors - 1)
+            if new_triples > 0:
+                clustering_delta = new_triangles / (2 * mm) * clustering_before - clustering_before
+            else:
+                clustering_delta = 0.0
+        else:
+            clustering_delta = 0.0
+
+        # Graph type classification (reuse existing if possible)
+        gtype_before = self.graph_type_indicator() if n >= 3 else {"type": "empty", "confidence": 1.0}
+
+        # After: degree of new node gives hints
+        avg_deg = (total_deg_after / nn) if nn > 0 else 0
+        if nn >= 3:
+            max_deg_after = max(deg_after) if deg_after else 0
+            if degree >= nn - 1 and degree > avg_deg * 2:
+                gtype_after = {"type": "star", "confidence": 0.7}
+            elif degree <= 2 and abs(avg_deg - 2) < 0.5:
+                gtype_after = {"type": "path", "confidence": 0.6}
+            else:
+                gtype_after = gtype_before
+        else:
+            gtype_after = gtype_before
+
+        # Assessment
+        assessments = []
+        if density_after > density_before + 0.01:
+            assessments.append("more dense")
+        elif density_after < density_before - 0.01:
+            assessments.append("sparser")
+        if h_after > h_before + 0.05:
+            assessments.append("more diverse degrees")
+        elif h_after < h_before - 0.05:
+            assessments.append("more concentrated")
+        if gtype_after.get("type") != gtype_before.get("type") and gtype_after.get("confidence", 0) > 0.5:
+            assessments.append(f"type shifts toward {gtype_after['type']}")
+        if not assessments:
+            assessments.append("negligible structural impact")
+
+        return {
+            "node_count_delta": 1,
+            "edge_count_delta": existing_neighbors,
+            "density": {
+                "before": round(density_before, 6),
+                "after": round(density_after, 6),
+                "delta": round(density_after - density_before, 6),
+            },
+            "degree_entropy": {
+                "before": round(h_before, 4),
+                "after": round(h_after, 4),
+                "delta": round(h_after - h_before, 4),
+            },
+            "clustering_delta": round(clustering_delta, 4),
+            "graph_type": {
+                "before": gtype_before.get("type", "unknown"),
+                "after": gtype_after.get("type", "unknown"),
+            },
+            "avg_degree_after": round(avg_deg, 2),
+            "assessment": "; ".join(assessments),
+        }
+
     def graph_digest(self, *, include_content: bool = False,
                        include_weights: bool = True,
                        include_temporal: bool = False) -> str:
