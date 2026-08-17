@@ -5,6 +5,7 @@
 import json
 import re
 import copy
+import hashlib
 from difflib import SequenceMatcher
 from fnmatch import fnmatchcase
 from typing import List, Dict, Any, Optional, Tuple, Callable
@@ -47,7 +48,20 @@ class Memory:
         self.persistence_path = Path(persistence_path) if persistence_path else None
         self._entries: List[MemoryEntry] = []
         self._archived: List[MemoryEntry] = []
+        # F69: in-memory subscription registry (never persisted, never copied)
+        self._subscribers: Dict[str, List[Callable]] = {}
+        self._sub_tokens: Dict[str, Tuple[str, Callable]] = {}
+        self._sub_seq: int = 0
         self._load()
+
+    def _emit(self, event: str, entry: MemoryEntry, index: int) -> None:
+        """F69: notify subscribers. Observer exceptions are swallowed so a
+        broken callback can never break core memory operations."""
+        for cb in list(self._subscribers.get(event, [])):
+            try:
+                cb(event, entry, index)
+            except Exception:
+                pass
 
     def add(self, content: str, metadata: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, importance: float = 0.5) -> None:
         """添加记忆"""
@@ -59,6 +73,7 @@ class Memory:
             self._entries = self._entries[-self.max_entries:]
 
         self._save()
+        self._emit("add", entry, len(self._entries) - 1)
 
     def search(self, query: str, limit: int = 5, tags: Optional[List[str]] = None) -> List[MemoryEntry]:
         """搜索记忆（关键词匹配 + 可选标签过滤）"""
@@ -78,8 +93,9 @@ class Memory:
     def remove(self, index: int) -> bool:
         """按索引删除记忆，返回是否成功"""
         if 0 <= index < len(self._entries):
-            self._entries.pop(index)
+            removed = self._entries.pop(index)
             self._save()
+            self._emit("remove", removed, index)
             return True
         return False
 
@@ -91,6 +107,7 @@ class Memory:
                 self._entries[index].metadata = metadata
             self._entries[index].timestamp = datetime.now()
             self._save()
+            self._emit("update", self._entries[index], index)
             return True
         return False
 
@@ -2009,6 +2026,9 @@ class Memory:
             indices = [i - evicted if i >= 0 else i for i in indices]
 
         self._save()
+        for spec_idx, entry_idx in enumerate(indices):
+            if entry_idx >= 0:
+                self._emit("add", self._entries[entry_idx], entry_idx)
         return indices
 
     # F56: search_snippet — search returning context-windowed snippets
@@ -2222,7 +2242,8 @@ class Memory:
         valid_indices = [idx for idx in indices if isinstance(idx, int)]
         for idx in sorted(set(valid_indices), reverse=True):
             if 0 <= idx < len(self._entries):
-                self._entries.pop(idx)
+                removed_entry = self._entries.pop(idx)
+                self._emit("remove", removed_entry, idx)
                 removed += 1
         if removed > 0:
             self._save()
@@ -2262,6 +2283,7 @@ class Memory:
             if "metadata" in u and isinstance(u["metadata"], dict):
                 entry.metadata = u["metadata"]
             updated += 1
+            self._emit("update", entry, idx)
         if updated > 0:
             self._save()
         return updated
@@ -2728,3 +2750,97 @@ class Memory:
         def _access_time(e: MemoryEntry) -> str:
             return e.metadata.get("_last_accessed", e.timestamp.isoformat())
         return sorted(self._entries, key=_access_time)[:n]
+
+    # F67: Sequence protocol — make Memory a first-class Python sequence
+    def __len__(self) -> int:
+        """Number of active entries (aliases ``count()``)."""
+        return len(self._entries)
+
+    def __iter__(self):
+        """Iterate over active entries (snapshot-iter: safe against
+        concurrent mutation during iteration)."""
+        return iter(list(self._entries))
+
+    def __getitem__(self, key):
+        """Index or slice access. Int → MemoryEntry (negative indices
+        supported, out-of-range raises IndexError like a list); slice →
+        List[MemoryEntry]."""
+        if isinstance(key, slice):
+            return self._entries[key]
+        if not isinstance(key, int):
+            raise TypeError(
+                f"Memory indices must be integers or slices, not {type(key).__name__}")
+        return self._entries[key]  # IndexError propagates naturally
+
+    def __contains__(self, item) -> bool:
+        """``MemoryEntry in mem`` → content equality (per ``MemoryEntry.__eq__``);
+        ``str in mem`` → exact content match. Other types → ``False``."""
+        if isinstance(item, MemoryEntry):
+            return any(e == item for e in self._entries)
+        if isinstance(item, str):
+            return any(e.content == item for e in self._entries)
+        return False
+
+    # F68: copy + content_hash — safe duplication & integrity fingerprinting
+    def copy(self) -> "Memory":
+        """Deep copy of this Memory (active + archived entries).
+
+        The copy is data-only and fully decoupled: no persistence path
+        (writes never touch the original's file), no subscribers.
+        Reserved metadata (``_pinned``, ``_annotations``,
+        ``_last_accessed``) survives via deepcopy. Use before destructive
+        ops (``condense`` / ``resize`` / batch edits) for undo safety.
+        """
+        m = Memory(max_entries=self.max_entries)
+        m._entries = copy.deepcopy(self._entries)
+        m._archived = copy.deepcopy(self._archived)
+        return m
+
+    def content_hash(self, include_archived: bool = False) -> str:
+        """SHA-256 hex digest over canonical JSON of all entries.
+
+        Deterministic: same entries (content, timestamp, metadata, tags,
+        importance) in the same order → same hash. Any mutation — even a
+        metadata tweak — changes it. Order-sensitive by design (entry
+        order is meaningful). Enables tamper detection, snapshot
+        comparison, and cross-session deduplication.
+        """
+        payload = [e.to_dict() for e in self._entries]
+        if include_archived:
+            payload += [e.to_dict() for e in self._archived]
+        canon = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+    # F69: subscribe / unsubscribe — reactive event hooks
+    def subscribe(self, event: str, callback: Callable[[str, MemoryEntry, int], Any]) -> str:
+        """Register *callback* for *event*; returns an unsubscribe token.
+
+        Events: ``"add"`` (``add`` / ``batch_add``), ``"remove"``
+        (``remove`` / ``batch_remove``), ``"update"`` (``update`` /
+        ``batch_update``). Callback signature:
+        ``callback(event, entry, index)``. Callback exceptions are
+        swallowed — observers can never break core ops. Internal
+        maintenance (``resize`` / ``forget`` / ``condense`` / ``clear`` /
+        LRU-trim in ``add``) intentionally does not emit.
+        """
+        if event not in ("add", "remove", "update"):
+            raise ValueError(f"Unknown event {event!r}; expected add/remove/update")
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        self._subscribers.setdefault(event, []).append(callback)
+        self._sub_seq += 1
+        token = f"sub_{self._sub_seq}"
+        self._sub_tokens[token] = (event, callback)
+        return token
+
+    def unsubscribe(self, token: str) -> bool:
+        """Remove a subscription by its token. Returns True if a
+        subscription was removed, False for unknown/expired tokens."""
+        if token not in self._sub_tokens:
+            return False
+        event, callback = self._sub_tokens.pop(token)
+        try:
+            self._subscribers[event].remove(callback)
+        except ValueError:
+            pass
+        return True
