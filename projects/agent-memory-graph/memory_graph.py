@@ -55212,7 +55212,12 @@ n            - ``total_rules`` – number of rules scanned.
         store: str = "agent_memory_graph",
         wrap: list[str] | None = None,
     ) -> dict[str, str]:
-        """Auto-instrument core CRUD methods with OTel ``gen_ai.memory.*`` spans.
+        """Auto-instrument core CRUD methods with OTel GenAI memory spans.
+
+        Spans follow the verb-form GenAI conventions
+        (semantic-conventions-genai @c739977): span names like
+        ``create_memory`` / ``search_memory``, attributes
+        ``gen_ai.operation.name`` / ``gen_ai.memory.store.id`` /
 
         Wraps the following methods (all optional via *wrap*):
         ``add``, ``link``, ``get_node``, ``neighbors``, ``recall``,
@@ -55222,7 +55227,7 @@ n            - ``total_rules`` – number of rules scanned.
         will not double-wrap.  Use :meth:`disable_telemetry` to undo.
 
         Args:
-            store: value for the ``gen_ai.memory.store`` attribute.
+            store: value for the ``gen_ai.memory.store.id`` attribute.
             wrap: subset of method names to wrap (default: all eight).
 
         Returns:
