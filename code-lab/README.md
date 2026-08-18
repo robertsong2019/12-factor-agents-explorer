@@ -23,7 +23,7 @@
 |------|------|------|
 | [agent-pipeline](agent-pipeline/) | ~400 | YAML 声明式工作流引擎，类 Unix pipe 哲学 |
 | [prompt-weaver](prompt-weaver/) | ~350 | 轻量级 Prompt 编排引擎，零依赖 |
-| [agent-memory-graph](agent-memory-graph/) | ~53,900 | ⭐ 知识图谱记忆引擎：565+ 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比/趋势）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询、Experience Compression Spectrum L2→L3 规则生命周期（提取/检测/匹配/诊断）、GraphRAG 流水线（文本提取/子图检索/诊断/健康报告）、双进程写入 FastAppendQueue、知识新鲜度诊断、GraphRAG-Bench (ICLR 2026) 完整适配器（缩写安全切分/事实作答/关系维度/GraphML 导出/长文分块）、LLM-as-Judge 双口径判分（judge_llm/类目校准/证据会话覆盖）|
+| [agent-memory-graph](agent-memory-graph/) | ~53,900 | ⭐ 知识图谱记忆引擎：565+ 公开 API，覆盖图算法、信息论、图分类（24-API 全流水线）、数据溯源、时序演化、向量检索、代码感知记忆、双时序查询、流式健康监控、层级记忆 consolidation、认知扩散激活、OWASP ASI06 安全防护、性能基准、竞争扩散激活、OTel 遥测、图诊断报告、时序熵分析、社区熵分析、多 Agent 一致性、离线巩固、检索质量族（审计/诊断/重排/对比/趋势）、注意力管理、链路预测、遗忘预测、时序分析三部曲、双时序查询、Experience Compression Spectrum L2→L3 规则生命周期（提取/检测/匹配/诊断）、GraphRAG 流水线（文本提取/子图检索/诊断/健康报告）、双进程写入 FastAppendQueue、知识新鲜度诊断、GraphRAG-Bench (ICLR 2026) 完整适配器（缩写安全切分/事实作答/关系维度/GraphML 导出/长文分块）、LLM-as-Judge 双口径判分（judge_llm/类目校准/证据会话覆盖）、时序取证与锚定卫生（speaker-recall 路径/确定性 label propagation/全图锚点回退/定向种子广度）|
 
 ### 代码分析与可视化
 
@@ -238,6 +238,12 @@
 | 类目级校准 | 465 | `calibration_by_category` | exact-vs-LLM 分歧分解到类目；full-500 reference：exact 0.140 / llm 0.194 |
 | 诚实归因 | 466 | question_id 回退 + 权威 question_type | 修正幻影类目分组，temporal 0.061→0.180（C457 全量复现） |
 | 证据会话覆盖 | 467 | `answer_session_hit_rate` | retrieval_hit 在合成真相类目结构性失明（preference 0.000 是伪影，实际 17/30 已命中）|
+| speaker-recall 路径 | 468 | `answer_speaker_recall` + `recall_form` | you-addressed 回忆题定向 assistant 自述，第一人称源短语静默不触发；跨仓 checkout 事故后从 transcript 完整复活 |
+| duration 负发现 | 469 | duration-aggregation（回退） | **决定性负发现**：32 单测全绿但 A/B 0/16，realized-vs-intended 谓词语义是零 LLM 墙 |
+| LP 确定性 | 470 | `ORDER BY rowid` + seeded tie-break | 修 ~1/3 全套 flake：PK 索引扫描致初始标签随机 + dict 插入序决胜 |
+| 锚定卫生 | 471 | `_strip_quotes` + 平局阶梯 + 周 round-half-up | temporal-133 fire_precision 0.679→0.774，exact 0.180→0.226，零逐题回归；prefix-stem 碰撞回退 |
+| 全图锚点回退 | 472 | full-graph fallback | 窗口失败（mirror 行同会话坍缩）时全量重试；temporal-133 exact 0.226→0.271（+6/0）|
+| 种子广度 | 473 | `recall_seed_k=40`（recall_form 限定） | ssa evhit 0.786→0.929；全局 k=40 对照被否（temporal 36→14）——定向优于全局 |
 | 诊断 | 323–325 | `graph_health_score`, `entropy_dashboard`, `get_operation_history` | 一站式健康检查 |
 
 ---
