@@ -45,6 +45,13 @@ function formatDate(filename) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function localDateStr(d) {
+  // Memory files are named with LOCAL dates; toISOString() (UTC) misses
+  // today's file whenever local date != UTC date (e.g. 00:00-08:00 CST).
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 // --- Commands ---
 function cmdSearch(query) {
   if (!query) { console.error('Usage: amk search <query>'); process.exit(1); }
@@ -81,7 +88,7 @@ function cmdSummary() {
   const days = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(now - i * 86400000);
-    const name = d.toISOString().slice(0, 10) + '.md';
+    const name = localDateStr(d) + '.md';
     const p = join(MEMORY_DIR, name);
     if (existsSync(p)) {
       const content = readFileSafe(p);
@@ -91,7 +98,7 @@ function cmdSummary() {
   }
   
   console.log('📋 Memory Summary (Last 7 Days)\n');
-  if (!days.length) { console.log('No memory files found for the last 7 days.'); return; }
+  if (!days.length) console.log('No memory files found for the last 7 days.');
   for (const d of days) {
     console.log(`  ${formatDate(d.date)} (${d.lines} lines)`);
     console.log(`    ${d.preview.split('\n')[0]?.slice(0, 80) || '(empty)'}`);
@@ -100,7 +107,8 @@ function cmdSummary() {
   // MEMORY.md stats
   if (existsSync(MEMORY_FILE)) {
     const mem = readFileSafe(MEMORY_FILE);
-    console.log(`\n  MEMORY.md: ${mem.split('\n').length} lines, ${mem.length} bytes`);
+    const memLines = mem.split('\n').filter(l => l.trim()).length;
+    console.log(`\n  MEMORY.md: ${memLines} lines, ${mem.length} bytes`);
   }
 }
 
@@ -111,11 +119,11 @@ function cmdStats() {
     const stat = statSync(f.path);
     const content = readFileSafe(f.path);
     totalSize += stat.size;
-    totalLines += content.split('\n').length;
+    totalLines += content.split('\n').filter(l => l.trim()).length;
   }
   
   const memSize = existsSync(MEMORY_FILE) ? statSync(MEMORY_FILE).size : 0;
-  const memLines = existsSync(MEMORY_FILE) ? readFileSafe(MEMORY_FILE).split('\n').length : 0;
+  const memLines = existsSync(MEMORY_FILE) ? readFileSafe(MEMORY_FILE).split('\n').filter(l => l.trim()).length : 0;
   
   console.log('📊 Memory Statistics\n');
   console.log(`  Daily files:    ${files.length}`);
