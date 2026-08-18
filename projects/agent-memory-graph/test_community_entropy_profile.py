@@ -334,16 +334,36 @@ class TestLeaveOneCommunityOut:
 
 class TestAlgorithmVariants:
 
+    @pytest.fixture
+    def two_dense_communities(self):
+        """Two 4-cliques + a single bridge — dense communities that
+        deterministic label propagation reliably separates (C470).
+        The original two_communities fixture (clique + degree-2
+        cycle + bridge) is structurally LP-fragile: with the C470
+        seeded tie-breaking, seed 42 deterministically collapses it
+        to one community, so it can't back an lp not-None assert."""
+        mg = MemoryGraph()
+        a = [mg.add(f"a{i}") for i in range(4)]
+        b = [mg.add(f"b{i}") for i in range(4)]
+        for group in (a, b):
+            for i in range(4):
+                for j in range(i + 1, 4):
+                    mg.link(group[i].id, group[j].id, "rel")
+        mg.link(a[0].id, b[0].id, "bridge")
+        return mg
+
     def test_greedy(self, rich_graph):
         result = rich_graph.community_entropy_profile(algorithm="greedy")
         if result is not None:
             assert result["algorithm"] == "greedy"
             assert result["summary"]["num_communities"] >= 2
 
-    def test_lp(self, two_communities):
-        result = two_communities.community_entropy_profile(algorithm="lp")
+    def test_lp(self, two_dense_communities):
+        result = two_dense_communities.community_entropy_profile(
+            algorithm="lp")
         assert result is not None
         assert result["algorithm"] == "lp"
+        assert result["summary"]["num_communities"] == 2
 
     def test_different_algorithms_same_structure(self, rich_graph):
         """Different algorithms on same graph should detect communities."""

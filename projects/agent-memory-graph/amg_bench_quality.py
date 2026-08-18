@@ -70,6 +70,8 @@ __all__ = [
     "duration_units",
     "answer_temporal_arith",
     "temporal_arith_judge",
+    "recall_form",
+    "answer_speaker_recall",
     "load_longmemeval_data",
     "run_eval",
     "judge_llm",
@@ -395,6 +397,8 @@ class LongMemEvalAdapter:
                  abstain_entropy: float | None = 0.95,
                  entropy_weak_score: int = 1,
                  temporal_arith: bool = True,
+                 assistant_recall: bool = True,
+                 recall_min_score: int = 5,
                  ppr_top: int = 15,
                  seed_recall_k: int = 5):
         """Args:
@@ -416,6 +420,14 @@ class LongMemEvalAdapter:
                 answer path (duration/ordering questions resolved by
                 calendar arithmetic on session dates; falls through
                 to the extractive path when anchors don't resolve).
+            assistant_recall: Enable the Cycle 468 speaker-recall
+                answer path (you-addressed "remind me what you
+                recommended" forms answered from the best-scored
+                ASSISTANT sentence; falls through when no sentence
+                reaches *recall_min_score*).
+            recall_min_score: Min keyword hits for the speaker-recall
+                sentence to be trusted as an answer (below: fall
+                through to the gate chain).
             ppr_top: Extra candidates taken from the PPR tail.
             seed_recall_k: Per-keyword recall limit for seed building.
         """
@@ -426,6 +438,8 @@ class LongMemEvalAdapter:
         self.abstain_entropy = abstain_entropy
         self.entropy_weak_score = entropy_weak_score
         self.temporal_arith = temporal_arith
+        self.assistant_recall = assistant_recall
+        self.recall_min_score = recall_min_score
         self.ppr_top = ppr_top
         self.seed_recall_k = seed_recall_k
         # Adapter-side bookkeeping (avoids depending on repo getter
@@ -673,6 +687,23 @@ class LongMemEvalAdapter:
                 meta["gate"] = "temporal_arith"
                 meta["abstained"] = False
                 return t_ans, meta
+
+        # Cycle 468: speaker-recall path — you-addressed "remind me
+        # what you recommended" forms. Assistant answers are multi-
+        # paragraph and the specific fact sits mid-body, so message-
+        # level ranking surfaces generic openers ("Sure, here are…");
+        # this path scores assistant SENTENCES and returns the best.
+        # Runs before the gate chain: an unresolved form (no sentence
+        # reaches recall_min_score) falls through untouched.
+        if self.assistant_recall and recall_form(question):
+            r_ans, r_detail = answer_speaker_recall(
+                question, self._nodes,
+                min_score=self.recall_min_score)
+            meta["speaker_recall"] = r_detail
+            if r_ans is not None:
+                meta["gate"] = "speaker_recall"
+                meta["abstained"] = False
+                return r_ans, meta
 
         conf = meta["confidence"]
         if not meta["messages_retrieved"]:
@@ -1188,6 +1219,17 @@ def calibration_by_category(results: list) -> dict:
 
 _LME_DATE_RE = re.compile(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})")
 
+# Cycle 468 — speaker-recall form: you-addressed recall targets the
+# assistant's own prior statements; a first-person source phrase
+# ("remind me what I told you") is user-side and must not fire.
+_RECALL_YOU_RE = re.compile(
+    r"(remind me|you (?:told|recommended|suggested|mentioned|said|"
+    r"advised|gave)|did you (?:say|suggest|recommend)|"
+    r"your (?:recommendation|suggestion|advice))", re.I)
+_RECALL_USER_SRC_RE = re.compile(
+    r"\b(?:i|we)\s+(?:told|said|mentioned|asked|"
+    r"recommended|suggested)\b", re.I)
+
 # Generic event-words stripped from anchor phrases so "the day I
 # visited the MoMA" scores on "moma", not on "day/visited".
 _ANCHOR_GENERIC = frozenset({
@@ -1215,6 +1257,68 @@ _TA_SINCE_RE = re.compile(
 _TA_FIRST_RE = re.compile(
     r"^(?:who|which\b[^,?]*)\b.*?\bfirst\s*,\s*(.+?)\s+or\s+(.+?)\s*[?.!]*$",
     re.I | re.S)
+
+
+def recall_form(question: str) -> str | None:
+    """Classify a speaker-recall question form (Cycle 468).
+
+    You-addressed recall ("remind me what you recommended",
+    "did you suggest…", "your advice on…") targets the ASSISTANT's
+    own prior statements. Returns ``"assistant"``; ``None`` when
+    the question is not you-addressed recall, or when it carries a
+    first-person source ("remind me what I told you") — that is
+    user-side recall and must NOT be answered from assistant nodes.
+    """
+    q = (question or "").strip()
+    if _RECALL_USER_SRC_RE.search(q):
+        return None
+    return "assistant" if _RECALL_YOU_RE.search(q) else None
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Sentences (and line-broken fragments) longer than 10 chars."""
+    parts = re.split(r"(?<=[.!?])\s+|\n", text or "")
+    return [p.strip() for p in parts if len(p.strip()) > 10]
+
+
+def answer_speaker_recall(question: str,
+                          nodes: dict,
+                          min_score: int = 5,
+                          ) -> tuple[str | None, dict]:
+    """Best assistant SENTENCE for a you-addressed recall question.
+
+    Scores every sentence of every assistant node with the
+    question's keywords (``_keyword_hits``) and returns the global
+    best when it reaches *min_score*. The full graph is the agent's
+    own memory — scanning it is legitimate retrieval, not
+    ground-truth peeking (answer_session_ids are never read).
+
+    Returns:
+        ``(answer, detail)`` — answer ``None`` = unresolved (caller
+        falls through to the gate chain); detail carries the best
+        score, sentence count scanned, and the winning session.
+    """
+    kws = _keywords(question)
+    best_sent: str | None = None
+    best_score = 0
+    best_session: str | None = None
+    sentences_scanned = 0
+    for nid, node in (nodes or {}).items():
+        if node.get("role") != "assistant":
+            continue
+        for sent in _split_sentences(node.get("label", "")):
+            sentences_scanned += 1
+            s = _keyword_hits(sent, kws)
+            if s > best_score:
+                best_score = s
+                best_sent = sent
+                best_session = node.get("session_id")
+    detail = {"keywords": kws, "sentences_scanned": sentences_scanned,
+              "best_score": best_score, "session_id": best_session,
+              "min_score": min_score}
+    if best_sent is None or best_score < min_score:
+        return None, detail
+    return best_sent, detail
 
 
 def parse_lme_date(text: str) -> str:
@@ -1425,6 +1529,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              abstain_score: float = 1.0, abstain_entropy: float | None = 0.95,
              entropy_weak_score: int = 1,
              temporal_arith: bool = True,
+             assistant_recall: bool = True,
              judge_mode: str = "exact") -> dict:
     """Per-question-haystack evaluation (Cycle 454).
 
@@ -1453,7 +1558,8 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   abstain_score=abstain_score,
                   abstain_entropy=abstain_entropy,
                   entropy_weak_score=entropy_weak_score,
-                  temporal_arith=temporal_arith)
+                  temporal_arith=temporal_arith,
+                  assistant_recall=assistant_recall)
     all_results: list[dict] = []
     sweep_rows: list[dict] = []
     for i, item in enumerate(items):
@@ -1592,6 +1698,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-temporal-arith", action="store_true",
                         help="Disable the Cycle 457 temporal-arithmetic "
                              "answer path (pre-C457 baseline)")
+    parser.add_argument("--no-assistant-recall", action="store_true",
+                        help="Disable the Cycle 468 speaker-recall "
+                             "answer path (pre-C468 baseline)")
     parser.add_argument("--mode", choices=("extract", "eval"),
                         default="extract",
                         help="extract = pre-C454 row dump (default); "
@@ -1622,7 +1731,8 @@ def main(argv: list[str] | None = None) -> int:
         abstain_score=args.abstain_score,
         abstain_entropy=abstain_entropy,
         entropy_weak_score=args.entropy_weak,
-        temporal_arith=not args.no_temporal_arith)
+        temporal_arith=not args.no_temporal_arith,
+        assistant_recall=not args.no_assistant_recall)
 
     if args.mode == "eval":
         entropies = None
@@ -1638,6 +1748,7 @@ def main(argv: list[str] | None = None) -> int:
             abstain_entropy=abstain_entropy,
             entropy_weak_score=args.entropy_weak,
             temporal_arith=not args.no_temporal_arith,
+            assistant_recall=not args.no_assistant_recall,
             judge_mode=args.judge)
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2)

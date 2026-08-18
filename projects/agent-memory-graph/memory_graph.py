@@ -1468,11 +1468,16 @@ class MemoryGraph:
 
     def community_detect(self, max_iter: int = 10, seed: int = 42) -> dict:
         """Label-propagation community detection. Returns {community_label: [node_ids]}."""
-        nodes = self.conn.execute("SELECT id FROM nodes").fetchall()
+        nodes = self.conn.execute(
+            "SELECT id FROM nodes ORDER BY rowid").fetchall()
         if not nodes:
             return {}
         import random
         rng = random.Random(seed)
+        # C470: bare `SELECT id FROM nodes` scans the PK index →
+        # uuid-sorted order (fresh randomness every run) → initial
+        # labels were random per run → LP outcome varied → flake.
+        # ORDER BY rowid pins initial labels to insertion order.
         labels = {r["id"]: i for i, r in enumerate(nodes)}
         ids = list(labels.keys())
         for _ in range(max_iter):
@@ -1488,7 +1493,20 @@ class MemoryGraph:
                     if lbl is not None:
                         neighbor_labels[lbl] = neighbor_labels.get(lbl, 0) + 1
                 if neighbor_labels:
-                    best = max(neighbor_labels, key=neighbor_labels.get)
+                    # C470: count ties were broken by dict insertion
+                    # order, which came from the uuid-sorted UNION
+                    # query — fresh randomness every run → LP outcome
+                    # varied → community_entropy_profile(lp) flaked
+                    # ~1/3 of full-suite runs. Ties now break via the
+                    # SEEDED rng over the value-sorted candidate list:
+                    # the draw sequence depends only on label dynamics
+                    # (ints), never on uuid ids — deterministic per
+                    # (structure, seed), same contract as leiden/C411.
+                    max_count = max(neighbor_labels.values())
+                    tied = sorted(
+                        lbl for lbl, c in neighbor_labels.items()
+                        if c == max_count)
+                    best = tied[0] if len(tied) == 1 else rng.choice(tied)
                     if labels[nid] != best:
                         labels[nid] = best
                         changed = True
