@@ -120,13 +120,24 @@ def _estimate_tokens(text: str) -> int:
     return max(1, round(len(text.split()) * TOKENS_PER_WORD))
 
 
+def _strip_quotes(w: str) -> str:
+    """Strip surrounding quotes/apostrophes: ``'ibotta'`` → ibotta.
+
+    Cycle 471: quoted tokens never matched anything (forensics
+    e072b769 — ``'ibotta'`` keyword scored 0 against a line saying
+    "Ibotta" 25 times).
+    """
+    return w.strip("'\"")
+
+
 def _keywords(question: str) -> list[str]:
     """Content keywords from a question (lowercased, stopwords removed).
 
     Possessives are stripped BEFORE the stopword filter so "user's"
     normalizes to the stopped word "user" (not a phantom keyword).
+    Quotes are stripped so ``'ibotta'`` normalizes to ``ibotta``.
     """
-    words = [w.removesuffix("'s")
+    words = [_strip_quotes(w.removesuffix("'s"))
              for w in re.findall(r"[A-Za-z']+", question.lower())]
     return [w for w in words if len(w) > 2 and w not in KEYWORD_STOP]
 
@@ -142,6 +153,10 @@ def _token_matches(token: str, kw: str) -> bool:
     Covers plain suffixes (``switch``/``switched``), e-deletion
     (``hike``/``hiking``) and consonant doubling (``run``/``running``)
     — but NOT derivational morphology (``love`` ⊄ ``lovely``).
+    Cycle 471 tried a shared-prefix stem for submitted/submission
+    and reverted it: no prefix length separates that pair from
+    instacart/instagram ("insta"), and the derivational pair it
+    targeted turned out to be retrieval-window-limited anyway.
     """
     if token == kw:
         return True
@@ -171,9 +186,12 @@ def _keyword_hits(label: str, keywords: list[str]) -> int:
 
     Substring matching (``kw in label``) is deliberately avoided:
     "love" would match "lovely" and corrupt ranking (caught by the
-    Cycle 447 smoke run).
+    Cycle 447 smoke run). Line tokens are quote-stripped and
+    possessive-normalized so ``master's`` matches ``master``
+    (Cycle 471).
     """
-    tokens = re.findall(r"[a-z']+", label.lower())
+    tokens = [_strip_quotes(t.removesuffix("'s"))
+              for t in re.findall(r"[a-z']+", label.lower())]
     return sum(1 for kw in keywords
                if any(_token_matches(t, kw) for t in tokens))
 
@@ -1371,14 +1389,19 @@ def _anchor_keywords(anchor: str) -> list[str]:
 def duration_units(date_a: str, date_b: str, unit: str) -> int:
     """Calendar distance between canonical dates in *unit*.
 
-    Days/weeks are exact; months use calendar-month arithmetic with
-    half-month rounding; years round on 365.25 days.
+    Days are exact; months use calendar-month arithmetic with
+    half-month rounding; years round on 365.25 days. Weeks round
+    half-up on days/7 (Cycle 471 A/B: 13d→2w, 20d→3w, 23d→3w,
+    30d→4w all fit round(); floor fails two, ceil fails two — the
+    annotator semantics are "about N weeks", same family as the
+    month half-rounding). Integer days never land on exactly
+    x.5 weeks, so the rounding boundary is unambiguous.
     """
     da = date.fromisoformat(date_a)
     db = date.fromisoformat(date_b)
     days = abs((da - db).days)
     if unit == "week":
-        return days // 7
+        return round(days / 7)
     if unit == "month":
         months = (da.year - db.year) * 12 + (da.month - db.month)
         if (da.day - db.day) > 15:
@@ -1389,6 +1412,19 @@ def duration_units(date_a: str, date_b: str, unit: str) -> int:
     if unit == "year":
         return round(days / 365.25)
     return days
+
+
+# Cycle 471 tie-ladder lexicon: realized events beat stated
+# intentions (forensics bucket A — "planning to run" vs "ran").
+_TA_FUTURE_RE = re.compile(
+    r"\b(?:plan(?:ning)?\s+to|will|going\s+to|wants?\s+to|"
+    r"hope\s+to|thinking\s+of|looking\s+forward|next\s+"
+    r"(?:week|month|year))\b", re.I)
+_TA_PAST_RE = re.compile(
+    r"\b(?:i|we)\s+(?:visited|attended|participated|went|had|took|"
+    r"saw|got|ran|finished|completed|submitted|adopted|received|met|"
+    r"did|made|bought|started|volunteered|helped|hosted|joined|won)\b",
+    re.I)
 
 
 def answer_temporal_arith(question: str,
@@ -1419,15 +1455,37 @@ def answer_temporal_arith(question: str,
     detail = {"form": kind, "unit": unit}
 
     def best_line(anchor: str) -> tuple[int, str] | None:
-        """Best-scoring dated line for *anchor* (≥1 keyword hit)."""
+        """Best dated line for *anchor* (≥1 distinctive hit).
+
+        Cycle 471 tie ladder (was: silent first-max = list-position
+        tie-break, which decided 3 of 9 forensics failures):
+        distinctive hits ↓, generic hits ↓ (tie-break only),
+        user-role, past aspect over future marker, later date.
+        """
         ks = _anchor_keywords(anchor)
         if not ks:
             return None
-        best, best_hits = None, 0
+        gen = [w for w in _keywords(anchor)
+               if w in _ANCHOR_GENERIC and w not in ks]
+        best, best_key = None, None
         for line, sdate in dated_lines:
             hits = _keyword_hits(line, ks)
-            if hits > best_hits:
-                best, best_hits = (hits, sdate), hits
+            if hits <= 0:
+                continue
+            try:
+                date_key = (0, -date.fromisoformat(sdate).toordinal())
+            except ValueError:
+                date_key = (1, 0)     # missing/unparseable date last
+            key = (
+                -hits,
+                -(_keyword_hits(line, gen) if gen else 0),
+                0 if line.startswith("[user]") else 1,
+                1 if _TA_FUTURE_RE.search(line) else 0,
+                0 if _TA_PAST_RE.search(line) else 1,
+                date_key,
+            )
+            if best_key is None or key < best_key:
+                best, best_key = (hits, sdate), key
         return best
 
     if kind == "first":
