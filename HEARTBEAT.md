@@ -1,4 +1,4 @@
-# HEARTBEAT.md - August 17, 2026 (Monday) — 02:00 AM update
+# HEARTBEAT.md - August 18, 2026 (Tuesday) — 02:00 AM update
 
 ## 待办任务
 
@@ -22,19 +22,29 @@
 > 08-06~07 completed items archived to MEMORY.md.
 
 ## 系统状态
-- **agent-memory-graph (Python)**: **9497 tests**（C465，08-17 深夜；experiments 链 9443→9485→9497）— 970+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ (C446 repatriated) + MCP 16 tools ✅ + OTel telemetry ✅ (C446 repatriated: 8 methods incl search_graphrag) + MultiAgentMemoryGraph (MESI) ✅ + FastAppendQueue ✅ + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + retrieval quality family COMPLETE ✅ + attention ✅ + temporal trilogy ✅ + bi-temporal APIs (5) ✅ + forgetting_forecast ✅ + seeded RNG fix ✅ + Experience Compression Spectrum COMPLETE ✅ + GraphRAG API family COMPLETE ✅ + export_graphml ✅ + run_amg.py 适配器 ✅ + chunk_text ✅ + resolve_entity_variants ✅ + amg_bench_quality LongMemEval 适配器 ✅ + 熵置信双门 abstention ✅ + locomo_bench_quality LoCoMo 适配器 ✅ (C451) + when-question date resolution ✅ (C456) + temporal-arithmetic answer path ✅ (C457)。**⚠️ 08-16 审计 (#068)：旧台账 "(TS) 7349" 为幻影双计，已删——无 TS 实现（唯一真 TS = amg-mcp wrapper 1718 行/122 tests）**
+- **agent-memory-graph (Python)**: **9565 tests**（C471，08-18 深夜；experiments 链 9519→9545→9565）— 990+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ (C446 repatriated) + MCP 16 tools ✅ + OTel telemetry ✅ (C446 repatriated: 8 methods incl search_graphrag) + MultiAgentMemoryGraph (MESI) ✅ + FastAppendQueue ✅ + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + retrieval quality family COMPLETE ✅ + attention ✅ + temporal trilogy ✅ + bi-temporal APIs (5) ✅ + forgetting_forecast ✅ + seeded RNG fix ✅ + Experience Compression Spectrum COMPLETE ✅ + GraphRAG API family COMPLETE ✅ + export_graphml ✅ + run_amg.py 适配器 ✅ + chunk_text ✅ + resolve_entity_variants ✅ + amg_bench_quality LongMemEval 适配器 ✅ + 熵置信双门 abstention ✅ + locomo_bench_quality LoCoMo 适配器 ✅ (C451) + when-question date resolution ✅ (C456) + temporal-arithmetic answer path ✅ (C457) + telemetry v2 semconv 对齐 ✅ (C461) + judge_llm() 双口径+CLI ✅ (C462-464) + calibration_by_category ✅ (C465) + honest attribution ✅ (C466) + evidence-session coverage (answer_session_hit) ✅ (C467)。**⚠️ 08-16 审计 (#068)：旧台账 "(TS) 7349" 为幻影双计，已删——无 TS 实现（唯一真 TS = amg-mcp wrapper 1718 行/122 tests）**
 - **agent-context-store**: **2929 tests**
 - **structured-output-toolkit**: **571 tests**
 - **agent-task-cli**: **1570 tests** — F237
 - **context-forge**: **1458 tests** (F79, 21 dimensions)
-- **nano-agent**: **1106 tests** — F66 (R19: search_wildcard/similar_to/touch+lru)
+- **nano-agent**: **1156 tests** — F69 (R20: 序列协议 dunders/copy+content_hash/subscribe 事件钩子)
 - **edge-agent-runtime**: **345 tests**
-- **prompt-mgr**: **196 tests**
+- **prompt-mgr**: **283 tests**（08-17 render 字面量 bug 修复 + F15 export_markdown；旧台账 196 系 07-31 后自然增长未记）
 - **agent-cost-tracker**: **25 tests** (08-15 修复 export.js 死导入 + 格式化函数测试)
 - **agent-mesh-network**: **373 tests** (355→373, taskStats/cancelTask/routingAnalytics)
-- **四项目总计**: 11547 tests ✅（同口径 amg+sot+atc = 9406+571+1570）
-- **全项目总计**: ~20227 tests（08-17 KO 统一口径：含 ctxpack 69/skill-doctor 64；与 MEMORY 对齐，旧值 ~20175 基 amg 9354）
-- **零回滚率**: amg **294天** 🏆（按日历校正，KO 链 08-16=293；08-16~17 会话又报 293/295/296 漂移）/ acs 200天 🏆
+- **四项目总计**: 11660 tests ✅（同口径 amg+sot+atc = 9519+571+1570）
+- **全项目总计**: ~20533 tests（08-18 KO 口径：amg 9519 + obs 222 + nano 1156 + prompt-mgr 283 台账修正，与 MEMORY 对齐）
+- **零回滚率**: amg **295天** 🏆（KO 日历链 08-17=294；08-17/18 会话又报 295/297 漂移，勿沿用）/ acs 200天 🏆
+
+## 近期活动 (08-18 深夜 cron 23:00)
+- **Cycle 471 (key-development-1, bbb3bb1)**: amg 9545→**9565** (+20)，锚定卫生三件套 ✅（#072 四件套落地版）。①引号/所有格 token 归一（'ibotta' 25 命中 0 修复）②确定性平局阶梯：区分度命中 > 泛词命中 > user-role > 过去时相 > 更晚日期（替换从未被审视的 first-max 列表位置裁决，暗中决定过 3/9 失败）③周单位 round-half-up。**temporal-133 A/B：fire 精度 0.679→0.774，exact 0.180→0.226，逐题零回归**（19→24 fired-correct；修复 b46e15ed/af082822/e072b769=引号×舍入堆叠栈/三新火全对）。**两个决定性发现**：(a) prefix-stem 试后回退——submitted↔submission 需 5 字符前缀而 instacart↔instagram 同在 5 碰撞、6 处分离（submit≠submis），无任何长度可分，且目标题本就窗口受限；(b) **周语义=round 7/7 全拟合**（13d→2w 20d→3w 23d→3w 30d→4w），floor 败 2 ceil 败 2——取证“包含式=ceil”假说被证伪。**0.85 目标运行时不可达**：b0863698/21adecb5 金锚行进不了 4000-token 检索窗（全量取证≠运行时可修性——headroom 在检索侧非锚定侧，Cycle 472 候选：temporal-form 触发的定向检索/窗口扩大）。报告 /tmp/lme_s_temporal133_c471_final.json
+
+## 近期活动 (08-18 晚 cron 20:00/20:11)
+- **Research #071 (20:00 早轮)**: Multi-Session 答案侧聚合立项 ✅（详见 MEMORY）
+- **Research #072 (20:11 deep-exploration 本轮)**: fired-but-wrong 9 题取证 ✅ — honest qid 首个消费。**同日叙事天花板**：对照组 17/17 fired-correct 全部纯会话日算术；9 失败五桶（计划-事件 2 / 子会话日期 3 / 锚词 bug 2 / 周舍入 2 / 多金歧义 1），堆栈 bug 实证（引号×舍入），平局裁决暗中决定 3/9。Fix-locality：六题可确定性修 → fire 精度 0.679→0.893。Maps to Cycle 468 锚定卫生四件套（与 #071 合并排期）。Tavily 配额仍耗尽（AnySearch academic 域替代，HeidelTime TIMEX3/DCT 锚点获取）
+
+## 近期活动 (08-18 凌晨 cron 01:00)
+- **Cycle 467 (key-dev-3, 1ca1a28)**: amg 9507→**9519** (+12)，evidence-session coverage 指标 ✅。preference 题实为建议请求（truth=合成元描述）→ truth-containment hit 结构性永不触发（**structural zero 第二案**，C466 的"hit 0.000 检索盲区"读数是伪影）。解锁=数据集自带 answer_session_ids → answer_session_hit + None=不可解析不计 miss。**修正地图（full-500 重跑 /tmp/lme_s_full500_evhit.json）**：overall evhit **0.890**；multi_session evhit **0.955** vs exact 0.007（检索非瓶颈，**答案侧聚合=新头号确定性 headroom**）/ temporal 0.895 / kupdate 0.987 / ssa 0.786（唯一 sub-0.85 轴）/ preference 0.567。preference-marker rerank 假说被原型证伪弃用。Next：multi_session counting/listing forms 答案侧 / ssa 覆盖 / fired-wrong 取证（qid 可追溯）/ 博客候选 "when the metric can't fire"
 
 ## 近期活动 (08-18 凌晨 cron 00:00)
 - **Cycle 466 (key-dev-2, 301e677)**: amg 9497→**9507** (+10)，honest attribution ✅。取证 C465 基准产物发现双缺陷：① run_eval 500 行 question_id 全为 "0"（单元素列表→索引 0；LME_cleaned 用 question_id 而非 id）② _classify_question 启发式把 419/500 误标 single_session_user（真 70），temporal 49 vs 真 133 → **C465 calibration_by_category 在幻影类目上分组**。修复：question_id 回退 + question_type/category 权威优先（未知类型诚实透传）。**修正版全量 reference（按题干 join，总量精确复现 0.140/0.194/0.378）**：temporal 0.061→**0.180（C457 在全量复现）** / ssu 0.343 / kupdate 0.256(calib 12 rescue/0 falsepass) / **preference 30q hit 0.000 = 新检索轴** / multi 0.008。坑：类别表先验归属再读数；get(key, default) 对字段方言静默降级。报告 /tmp/lme_s_full500_dual_corrected.json；Next：preference 检索轴 / temporal fired-wrong 取证已解锁（qid 可追溯）
@@ -115,9 +125,10 @@
 ## 本周关键路径
 1. ✅ ~~Cycles 367-457: security + bench + MCP + multi-agent + consolidation + retrieval QA + attention + temporal + Experience Compression + GraphRAG lifecycle + GraphRAG-Bench 适配器 + LoCoMo/LME_s 双基准 + 时序答案侧机制族~~ DONE
 2. ⬜ README(agent-memory-graph) → npm publish + **amg PyPI 人工三步 + npm 命名决策** — **BLOCKED on human action**
-3. ⬜ Next dev targets: **8月底双首跑①** GraphRAG-Bench Novel sample_100 retrieval_eval（唯一阻塞=`ollama pull qwen2.5:7b`，本机未装 ollama；~~②已解除 C454~~ ~~full-500 LME_s run 带 temporal-arith~~ **✅ 08-17 C465 完成：exact 0.140/llm 0.194 新 overall reference**）/ cat5+多跳残余→LLM judge 实测（机制 C462-465 全就位，等 ollama）/ fired-but-wrong 9 题取证 / MCP registry publish / OpenClaw plugin。⚠️ ~~TS port of Python APIs~~ 已移除——#068 审计：无 TS 实现，须单独立项
+3. ⬜ Next dev targets: **multi_session 答案侧聚合（C467 新头号确定性 headroom：evhit 0.955 vs exact 0.007，counting/listing forms "How many/Which of these"）** / 8月底双首跑① GraphRAG-Bench Novel sample_100 retrieval_eval（唯一阻塞=`ollama pull qwen2.5:7b`，本机未装 ollama）/ cat5+多跳残余→LLM judge 实测（机制 C462-465 全就位，等 ollama；C467 已证 multi_session 检索侧就绪 0.955）/ fired-but-wrong 9 题取证（honest qid 已解锁）/ MCP registry publish / OpenClaw plugin。⚠️ ~~TS port of Python APIs~~ 已移除——#068 审计：无 TS 实现，须单独立项
 
 ## 上次检查
+- **Knowledge org: 2026-08-18 02:00** — Integrated C461-467 (amg 9497→9519 verified vs git 1ca1a28/fac9190, full-suite 9519/9519 08-18 01:40；day counter 295 calendar-corrected，会话又报 295/297)。四项目 11660 / 全项目 ~20533（obs 222/nano 1156/prompt-mgr 283 台账修正）。新增 insights #242-#244（度量效度/归因验证/数据集 grounding）。**priority map 重写**：multi_session 答案侧聚合=新头号确定性 headroom，preference "检索轴"降级为度量伪影。
 - **Knowledge org: 2026-08-17 02:00** — Integrated C454-457 (amg 9354→9406 verified vs git 1d57ec2; day counter 294 calendar-corrected, sessions drifted 293/295/296 again)。四项目 11547 / 全项目 ~20227（统一口径含工具循环 ctxpack/skill-doctor，修复 MEMORY-HEARTBEAT 交叉漂移 ~113）。新增 insights #236-#238。双首跑②标记解除。C455 已由 23:00 会话自写入 HEARTBEAT。
 - **Knowledge org 验证轮: 2026-08-16 02:04** — 重复触发（同昨日模式）。02:00 轮已完整执行，本轮仅验证：①git HEAD~1 = a4fb5ca "Cycle 448 amg 9241" ✅ 且 02:00 knowledge-org 提交 5ba272e 已入库 ②experiments.tsv 链 9079→9158→9210→9241 三条记录完整 ✅ ③grep test 函数 9077 + parametrize ≈ 9241 吻合 ④四项目 18731 验算通过。无新活动（02:00 后仅 3 个知识文件变更）。无需修正项。
 - **Knowledge org: 2026-08-16 02:00** — Integrated C445-448 (amg Py 9079→9241 verified vs git a4fb5ca; day counter normalized 293 per calendar, sessions had drifted to 294/295). nano 1106 / act 25 / mesh 373. 四项目 18731（修正 HEARTBEAT 错误值 18511）/ 全项目 ~27411. Fixed stale agent-mesh-network 505→373. 双首跑关键路径 + ollama blocker surfaced. 新增 insight #231/#232 (abstention 语义分界 / 子串污染+token 效率).
