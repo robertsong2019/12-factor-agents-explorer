@@ -33,3 +33,11 @@
 - **根因:** 假设"文件尾=目标类尾"；grep 模式过窄（只搜 Graph 类名）
 - **修正:** git restore 回退；`grep -n "^class "` 列全类边界后插到 graphrag_coverage_report（MemoryGraph 真正末方法）之后
 - **出现次数:** 1（同家族: 选仓先验真身 ×N，nano-agent 嵌套 git ×1）
+
+### 2026-08-18 git checkout 在 workspace-monorepo 下销毁未提交跨-cycle 代码
+- **场景:** amg C469 revert（`git checkout -- amg_bench_quality.py`）
+- **错误:** 项目目录 /projects/agent-memory-graph 无独立 .git，toplevel=workspace 根；C468 改动未提交 → checkout 直接恢复到 C467 提交态，C468 实现全丢（test 文件幸存因之前被误暂存进 0865b03）
+- **根因:** 误以为项目=独立仓库；revert 前未确认 git 上下文与未提交内容；跨 cycle 依赖工作树存续
+- **修正:** 从昨晚 cron 会话 transcript jsonl 提取 edit 工具 arguments 里的 12 块 oldText/newText payload，回放到 C467 态文件，19/19 测试复活
+- **出现次数:** 1
+- **永久规则:** amg 每个 cycle keep 时必须同命令 `git add <具体文件> && git commit`；任何 revert/checkout 前先 `git status` 确认目标文件没有跨 cycle 未提交改动；会话 transcript jsonl 是最后救援线（edit/write 工具调用的 arguments 含完整代码）
