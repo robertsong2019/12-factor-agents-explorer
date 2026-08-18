@@ -418,7 +418,8 @@ class LongMemEvalAdapter:
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
                  ppr_top: int = 15,
-                 seed_recall_k: int = 5):
+                 seed_recall_k: int = 5,
+                 recall_seed_k: int = 40):
         """Args:
             mg: MemoryGraph to ingest into (default: fresh in-memory).
             use_ppr: Enable PersonalizedPageRank expansion (multi-hop).
@@ -448,6 +449,14 @@ class LongMemEvalAdapter:
                 through to the gate chain).
             ppr_top: Extra candidates taken from the PPR tail.
             seed_recall_k: Per-keyword recall limit for seed building.
+            recall_seed_k: Per-keyword recall limit for
+                speaker-recall questions (Cycle 473). You-addressed
+                recall hunts ASSISTANT evidence; weight-ordered
+                recall at breadth 5 truncated the evidence session
+                out of the candidate set for 10/12 coverage misses.
+                Scoped via ``recall_form`` — broader seeds on
+                temporal questions feed mirror lines into the window
+                (A/B: temporal exact 0.271→0.105 at k=40).
         """
         self.mg = mg if mg is not None else MemoryGraph(db_path=":memory:")
         self.use_ppr = use_ppr
@@ -460,6 +469,7 @@ class LongMemEvalAdapter:
         self.recall_min_score = recall_min_score
         self.ppr_top = ppr_top
         self.seed_recall_k = seed_recall_k
+        self.recall_seed_k = recall_seed_k
         # Adapter-side bookkeeping (avoids depending on repo getter
         # APIs): node id → {label, kind, role, seq, session_id}.
         self._nodes: dict[str, dict] = {}
@@ -588,9 +598,24 @@ class LongMemEvalAdapter:
         keywords = _keywords(question)
         candidate_ids: set[str] = set()
 
+        # Cycle 473: speaker-recall seed breadth. Per-question
+        # haystacks hold hundreds of assistant messages; the
+        # weight-ordered per-keyword recall (ORDER BY weight DESC
+        # LIMIT k) truncated the evidence session out of the
+        # candidate set for 10/12 evhit misses (C473 forensics:
+        # ev_in_candidates=0 while the messages scored 7-16 keyword
+        # hits). Broad seeds hand selection to the question-aware
+        # (-hits, -seq) ranker instead of ingest-weight order.
+        # Scoped to recall_form ONLY — the same breadth on temporal
+        # questions floods the window with question-echoing advice
+        # lines (A/B: temporal exact 36→14/133); C471/C472 anchor
+        # geometry is tuned at breadth 5.
+        k_eff = (self.recall_seed_k if recall_form(question)
+                 else self.seed_recall_k)
+
         # Seed: direct keyword recall (substring match, zero-cost).
         for kw in keywords[:8]:
-            for node in self.mg.recall(kw, limit=self.seed_recall_k):
+            for node in self.mg.recall(kw, limit=k_eff):
                 candidate_ids.add(node.id)
 
         # Scored candidates: graphrag local (BM25 + 1-hop expansion).
@@ -1607,6 +1632,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              entropy_weak_score: int = 1,
              temporal_arith: bool = True,
              assistant_recall: bool = True,
+             recall_seed_k: int = 40,
              judge_mode: str = "exact") -> dict:
     """Per-question-haystack evaluation (Cycle 454).
 
@@ -1636,7 +1662,8 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   abstain_entropy=abstain_entropy,
                   entropy_weak_score=entropy_weak_score,
                   temporal_arith=temporal_arith,
-                  assistant_recall=assistant_recall)
+                  assistant_recall=assistant_recall,
+                  recall_seed_k=recall_seed_k)
     all_results: list[dict] = []
     sweep_rows: list[dict] = []
     for i, item in enumerate(items):
