@@ -691,15 +691,34 @@ class LongMemEvalAdapter:
         # (arithmetic on two distinct dated sessions is not a guess).
         if (self.temporal_arith and self._session_dates
                 and temporal_arith_form(question)):
-            dated_lines = [
-                (f"[{self._nodes[nid]['role'] or '?'}] "
-                 f"{self._nodes[nid]['label']}",
-                 self._session_dates.get(
-                     self._nodes[nid]["session_id"], ""))
-                for nid in meta.get("retrieved_ids", [])
-                if nid in self._nodes]
+            def _dated(nids):
+                return [
+                    (f"[{self._nodes[nid]['role'] or '?'}] "
+                     f"{self._nodes[nid]['label']}",
+                     self._session_dates.get(
+                         self._nodes[nid]["session_id"], ""))
+                    for nid in nids if nid in self._nodes]
+
             t_ans, t_detail = answer_temporal_arith(
-                question, dated_lines, question_date)
+                question, _dated(meta.get("retrieved_ids", [])),
+                question_date)
+            if t_ans is None and t_detail.get("form"):
+                # Cycle 472: full-graph anchor retry. When the window
+                # cannot resolve the form (missing anchors OR both
+                # anchors landing on the same session — the dominant
+                # failure: assistant advice lines that lexically
+                # mirror the question crowd out the true event lines
+                # and collapse both anchors onto one wrong session),
+                # retry against ALL ingested messages where the C471
+                # tie ladder has the full candidate set. Window-first
+                # is preserved: an in-window answer is never second-
+                # guessed; walls that persist on the full graph
+                # still fall through untouched (C472 A/B: the 4
+                # prev-correct same-session cases stay None).
+                t_ans, t_detail = answer_temporal_arith(
+                    question, _dated(self._messages), question_date)
+                if t_ans is not None:
+                    t_detail["fallback"] = "full_graph"
             meta["temporal"] = t_detail
             if t_ans is not None:
                 meta["gate"] = "temporal_arith"
