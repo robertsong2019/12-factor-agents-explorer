@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-9519-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-9579-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -4040,6 +4040,32 @@ full-500 暴露两个可追溯性缺陷：① `run_eval` 行全部携带 `questi
 #### `answer_session_hit_rate` — 证据会话覆盖率 (Cycle 467)
 
 retrieval_hit（truth-containment）在合成真相类目上结构性失明：preference 切片「hit 0.000、30 题全部 miss」其实是指标伪影——原始数据侦察显示适配器已在 17/30 题上浮出证据会话。新指标 `answer_session_hit`：检索是否命中**任一**证据会话（数据集 answer_session_ids → ingest 侧 session id 映射，QuestionResult 逐题记录）；无法解析指针的题记 `None` 而非 miss，排除在分率之外（C466 教训 3 的直接应用）。evaluate() / run_eval 按类目 + overall 聚合，CLI eval 模式打印 evidence_hit。
+
+### 时序取证、锚定卫生与确定性修复 (Cycles 468-473)
+
+#### `answer_speaker_recall` — you-addressed 回忆路径 (Cycle 468)
+
+`recall_form()` 识别 you-addressed 回忆题（"remind me what you recommended" / "did you suggest" / "your advice"）——目标是 assistant 自己的既往陈述，而第一人称源短语（"I told you"）是用户侧、必须静默不触发。配 `recall_min_score` 关键词命中门与 `_ANCHOR_GENERIC` 事件词剥离（"the day I visited the MoMA" 按 "moma" 计分，不按 day/visited）。
+
+#### duration-aggregation 答案路径 — 决定性负发现 (Cycle 469)
+
+"How many hours ... in total" 答案侧路径：32 个单测全绿、全套 9570，但 LME 16 题 A/B **0 rescued / 0 lost / 9 changed 全错**——realized-vs-intended 谓词语义（planned/frequency/difference 形态 + GT=info-not-enough 被伪造）是零 LLM 无法翻越的墙。代码回退、A/B 取证存档：**全绿单测 ≠ 基准提升**。
+
+#### 确定性 label propagation (Cycle 470)
+
+修复全套 ~1/3 概率 flake（test_lp）：PK 索引扫描使初始标签按 uuid 序随机 + 平局按 dict 插入序决胜。修复 = `ORDER BY rowid`（插入序初始标签）+ seeded `rng.choice`（值排序平局集）——min-label 方案被否（0 号标签经桥渗漏导致确定性坍缩）。同 cycle 从会话 transcript 完整复活被跨仓 checkout 摧毁的 C468（12 块 edit payload 回放，19/19 通过）。
+
+#### 锚定卫生四件套 (Cycle 471)
+
+引号/所有格 token 归一（`_strip_quotes`：'ibotta' 25 次出现命中 0 的根因）、best_line 确定性平局阶梯（distinctive hits > generic hits > user-role > past-aspect > later-date，取代静默首个最大值——取证 9 失败中 3 个由它决定）、周单位 round-half-up（数据集 "including the last day" → ceil 语义逆向验证）。prefix-stem 尝试后回退（submitted↔subscription 碰撞）。temporal-133：fire_precision 0.679→0.774，exact 0.180→0.226，零逐题回归。
+
+#### temporal 全图锚点回退 (Cycle 472)
+
+form 匹配但窗口内失败时（锚点缺失 OR 两锚点经 mirror/advice 行坍缩到同一会话），全量 ingest 消息上重试 `answer_temporal_arith`；窗口优先保留（窗口内已出的答案绝不重猜，全图仍撞墙则诚实落空）。temporal-133 exact 0.226→0.271（+6/0——正是取证标记的 6 道全 haystack 可救题，全部答对）。
+
+#### speaker-recall 种子广度 — `recall_seed_k` (Cycle 473)
+
+取证：ssa evhit miss 12 题中 10 题 `ev_in_candidates=0`——证据消息有 7-16 个关键词命中，但权重序 `LIMIT 5` 永远浮不出。`recall_seed_k=40` 经 `recall_form` 手术式限定（恰匹配 48/500 题、全部 ssa）；全局 k=40 对照被否：temporal-133 exact 36→14（mirror/advice 行淹没窗口）。ssa-56 evhit 0.786→0.929，temporal 零翻转——**定向扩宽优于全局扩宽**。
 
 ---
 
