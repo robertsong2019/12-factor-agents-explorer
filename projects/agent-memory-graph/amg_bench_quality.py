@@ -419,6 +419,7 @@ class LongMemEvalAdapter:
                  counting: bool = True,
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
+                 recall_mode: str = "distinctive",
                  ppr_top: int = 15,
                  seed_recall_k: int = 5,
                  recall_seed_k: int = 40):
@@ -453,7 +454,12 @@ class LongMemEvalAdapter:
                 reaches *recall_min_score*).
             recall_min_score: Min keyword hits for the speaker-recall
                 sentence to be trusted as an answer (below: fall
-                through to the gate chain).
+                through to the gate chain). Used by ``raw`` mode only.
+            recall_mode: Speaker-recall scoring mode (Cycle 475 /
+                Research #074). ``"distinctive"`` (default) scores
+                squared distinctive weights ``w(kw)^2`` with a preface
+                penalty — prefaces parasitize raw overlap; ``"raw"``
+                preserves the Cycle 468 raw-hit counting.
             ppr_top: Extra candidates taken from the PPR tail.
             seed_recall_k: Per-keyword recall limit for seed building.
             recall_seed_k: Per-keyword recall limit for
@@ -475,6 +481,7 @@ class LongMemEvalAdapter:
         self.counting = counting
         self.assistant_recall = assistant_recall
         self.recall_min_score = recall_min_score
+        self.recall_mode = recall_mode
         self.ppr_top = ppr_top
         self.seed_recall_k = seed_recall_k
         self.recall_seed_k = recall_seed_k
@@ -788,7 +795,8 @@ class LongMemEvalAdapter:
         if self.assistant_recall and recall_form(question):
             r_ans, r_detail = answer_speaker_recall(
                 question, self._nodes,
-                min_score=self.recall_min_score)
+                min_score=self.recall_min_score,
+                mode=self.recall_mode)
             meta["speaker_recall"] = r_detail
             if r_ans is not None:
                 meta["gate"] = "speaker_recall"
@@ -1386,6 +1394,26 @@ def recall_form(question: str) -> str | None:
     return "assistant" if _RECALL_YOU_RE.search(q) else None
 
 
+# Cycle 475 preface lexicon (Research #074): generic openers
+# ("Sure, here are…") directly answer the question, so they
+# necessarily overlap its keywords — in dialogue recall, word
+# overlap is a NEGATIVE discriminator for prefaces (the AS2
+# literature's most reliable feature, reversed). The three v5.1
+# additions came from forensics: the contraction "Here's",
+# "Thank you for providing…", "I hope these help".
+_RECALL_PREAMBLE_RE = re.compile(
+    r"^(?:sure|absolutely|of course|certainly|"
+    r"yes,?\s*(?:here|of course|sure)|"
+    r"great (?:idea|question|news)|"
+    r"i(?:'d| would| will) (?:be happy|love|be delighted) to|"
+    r"i can help|i'?m happy to|"
+    r"here(?:\s+are|\s+is|'s)|let me know if|"
+    r"(?:(?:i|we)\s+)?hope (?:this|that|these) help(?:s|ed)?|"
+    r"happy to (?:help|provide|share|suggest)|"
+    r"thank you for (?:sharing|providing)|"
+    r"would you like me to)", re.I)
+
+
 def _split_sentences(text: str) -> list[str]:
     """Sentences (and line-broken fragments) longer than 10 chars."""
     parts = re.split(r"(?<=[.!?])\s+|\n", text or "")
@@ -1395,41 +1423,107 @@ def _split_sentences(text: str) -> list[str]:
 def answer_speaker_recall(question: str,
                           nodes: dict,
                           min_score: int = 5,
+                          mode: str = "distinctive",
+                          distinctive_df: int = 8,
+                          weighted_floor: float = 10.0,
                           ) -> tuple[str | None, dict]:
     """Best assistant SENTENCE for a you-addressed recall question.
 
-    Scores every sentence of every assistant node with the
-    question's keywords (``_keyword_hits``) and returns the global
-    best when it reaches *min_score*. The full graph is the agent's
-    own memory — scanning it is legitimate retrieval, not
-    ground-truth peeking (answer_session_ids are never read).
+    The full graph is the agent's own memory — scanning it is
+    legitimate retrieval, not ground-truth peeking (answer_session_ids
+    are never read).
+
+    ``mode="distinctive"`` (default, Cycle 475 / Research #074 v5):
+    squared distinctive weights ``w(kw)**2`` with ``w = 1 +
+    log(N/df)`` over the assistant-sentence pool. Prefaces parasitize
+    raw overlap (they answer the question directly), so ranking is
+    dominated by rare content hits instead:
+
+    * raw floor 3 — the v3 zero-flip lesson: parasitism is
+      FLOOR-level, and answer sentences with distinctive-but-few
+      hits never clear the legacy raw ``min_score`` of 5;
+    * necessary condition: at least one matched keyword with
+      ``df <= distinctive_df`` (a table header matching six
+      mid-frequency terms is not an answer row);
+    * preface sentences take a ``x0.25`` score penalty (v2 proved a
+      rank-level novelty multiplier regresses — dual-regime
+      reversal — while the floor-level penalty flips nothing);
+    * ``'?'`` sentences are skipped, and the winner must reach
+      ``weighted_floor`` (else unresolved, caller falls through).
+
+    ``mode="raw"`` preserves the Cycle 468 behavior: raw
+    ``_keyword_hits`` counting against *min_score*.
 
     Returns:
         ``(answer, detail)`` — answer ``None`` = unresolved (caller
-        falls through to the gate chain); detail carries the best
-        score, sentence count scanned, and the winning session.
+        falls through to the gate chain); detail carries the mode,
+        best score, sentence pool size and the winning session.
     """
     kws = _keywords(question)
-    best_sent: str | None = None
-    best_score = 0
-    best_session: str | None = None
-    sentences_scanned = 0
+    if mode == "raw":
+        best_sent: str | None = None
+        best_score = 0
+        best_session: str | None = None
+        sentences_scanned = 0
+        for nid, node in (nodes or {}).items():
+            if node.get("role") != "assistant":
+                continue
+            for sent in _split_sentences(node.get("label", "")):
+                sentences_scanned += 1
+                s = _keyword_hits(sent, kws)
+                if s > best_score:
+                    best_score = s
+                    best_sent = sent
+                    best_session = node.get("session_id")
+        detail = {"mode": "raw", "keywords": kws,
+                  "sentences_scanned": sentences_scanned,
+                  "best_score": best_score, "session_id": best_session,
+                  "min_score": min_score}
+        if best_sent is None or best_score < min_score:
+            return None, detail
+        return best_sent, detail
+
+    # distinctive mode (Cycle 475)
+    min_raw = 3
+    pool: list[tuple[str, str | None]] = []
     for nid, node in (nodes or {}).items():
         if node.get("role") != "assistant":
             continue
         for sent in _split_sentences(node.get("label", "")):
-            sentences_scanned += 1
-            s = _keyword_hits(sent, kws)
-            if s > best_score:
-                best_score = s
-                best_sent = sent
-                best_session = node.get("session_id")
-    detail = {"keywords": kws, "sentences_scanned": sentences_scanned,
-              "best_score": best_score, "session_id": best_session,
-              "min_score": min_score}
-    if best_sent is None or best_score < min_score:
+            pool.append((sent.strip(), node.get("session_id")))
+    detail: dict = {"mode": "distinctive", "keywords": kws,
+                    "pool": len(pool), "questions_skipped": 0}
+    if not pool:
+        detail["best_score"] = 0
         return None, detail
-    return best_sent, detail
+    N = len(pool)
+    df = {kw: sum(1 for s, _ in pool if _keyword_hits(s, [kw]))
+          for kw in kws}
+    w = {kw: (1.0 + math.log(N / d) if d else 0.0) for kw, d in df.items()}
+    detail["df"] = {k: v for k, v in df.items() if v}
+    best = None
+    for s, sid in pool:
+        if s.endswith("?"):
+            detail["questions_skipped"] += 1
+            continue
+        matched = [kw for kw in kws if w[kw] and _keyword_hits(s, [kw])]
+        if len(matched) < min_raw:
+            continue
+        if min(df[kw] for kw in matched) > distinctive_df:
+            continue          # no distinctive hit -> not an answer row
+        score = sum(w[kw] ** 2 for kw in matched)
+        if _RECALL_PREAMBLE_RE.match(s):
+            score *= 0.25
+        if best is None or score > best[0]:
+            best = (score, s, sid, len(matched))
+    detail["best_score"] = round(best[0], 1) if best else 0
+    if best is None:
+        return None, detail
+    detail["session_id"] = best[2]
+    detail["raw_hits"] = best[3]
+    if best[0] < weighted_floor:
+        return None, detail
+    return best[1], detail
 
 
 def parse_lme_date(text: str) -> str:
@@ -2220,6 +2314,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              temporal_arith: bool = True,
              counting: bool = True,
              assistant_recall: bool = True,
+             recall_mode: str = "distinctive",
              recall_seed_k: int = 40,
              judge_mode: str = "exact") -> dict:
     """Per-question-haystack evaluation (Cycle 454).
@@ -2252,6 +2347,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   temporal_arith=temporal_arith,
                   counting=counting,
                   assistant_recall=assistant_recall,
+                  recall_mode=recall_mode,
                   recall_seed_k=recall_seed_k)
     all_results: list[dict] = []
     sweep_rows: list[dict] = []
@@ -2394,6 +2490,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-assistant-recall", action="store_true",
                         help="Disable the Cycle 468 speaker-recall "
                              "answer path (pre-C468 baseline)")
+    parser.add_argument("--recall-mode", choices=("distinctive", "raw"),
+                        default="distinctive",
+                        help="Speaker-recall scoring: distinctive = w^2 "
+                             "distinctive weights + preface penalty "
+                             "(Cycle 475, default); raw = legacy "
+                             "hit counting")
     parser.add_argument("--no-counting", action="store_true",
                         help="Disable the Cycle 477 multi-session "
                              "counting path (pre-C477 baseline)")
@@ -2429,7 +2531,8 @@ def main(argv: list[str] | None = None) -> int:
         entropy_weak_score=args.entropy_weak,
         temporal_arith=not args.no_temporal_arith,
         counting=not args.no_counting,
-        assistant_recall=not args.no_assistant_recall)
+        assistant_recall=not args.no_assistant_recall,
+        recall_mode=args.recall_mode)
 
     if args.mode == "eval":
         entropies = None
@@ -2447,6 +2550,7 @@ def main(argv: list[str] | None = None) -> int:
             temporal_arith=not args.no_temporal_arith,
             counting=not args.no_counting,
             assistant_recall=not args.no_assistant_recall,
+            recall_mode=args.recall_mode,
             judge_mode=args.judge)
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2)
