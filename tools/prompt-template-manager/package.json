@@ -2,8 +2,19 @@
   "name": "prompt-template-manager",
   "version": "1.0.0",
   "description": "CLI for storing, cataloging, and rendering LLM prompt templates with variable substitution",
-  "bin": { "ptm": "./cli.mjs" },
+  "bin": {
+    "ptm": "./cli.mjs"
+  },
   "type": "module",
-  "keywords": ["prompt", "template", "cli", "ai-agent", "llm"],
-  "license": "MIT"
+  "keywords": [
+    "prompt",
+    "template",
+    "cli",
+    "ai-agent",
+    "llm"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/cli.test.mjs"
+  }
 }

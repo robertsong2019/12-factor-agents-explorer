@@ -34,7 +34,9 @@ function getTemplates() {
 }
 
 function render(content, vars) {
-  return content.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] || `{{${key}}}`);
+  // hasOwn check: an explicitly-passed empty value (k=) must substitute as '',
+  // only truly-absent keys stay visible as {{key}}
+  return content.replace(/\{\{(\w+)\}\}/g, (_, key) => (Object.hasOwn(vars, key) ? vars[key] : `{{${key}}}`));
 }
 
 function parseVars(args) {
@@ -72,7 +74,9 @@ switch (command) {
     const content = args.slice(2).join(' ') || (() => {
       // Read from stdin if no content provided
       console.error('Enter template content (Ctrl+D to finish):');
-      return readFileSync('/dev/stdin', 'utf-8');
+      // fd 0, not '/dev/stdin': the path form throws ENXIO when stdin is a pipe
+      // in some spawn contexts (e.g. child_process input option)
+      return readFileSync(0, 'utf-8');
     })();
     writeFileSync(join(TEMPLATES_DIR, name + '.md'), content, 'utf-8');
     console.log(`✅ Added template: ${name}`);
