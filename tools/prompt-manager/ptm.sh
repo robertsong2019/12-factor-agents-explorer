@@ -28,14 +28,20 @@ cmd_add() {
   local name="$1"
   local template_text
   if [[ -t 0 ]]; then
-    template_text="$2"
+    template_text="${2:-}"
+    shift 2
   else
+    # template comes from stdin; remaining args are tags/model/temp
     template_text="$(cat)"
+    shift 1
+  fi
+  if [[ -z "$template_text" ]]; then
+    echo "❌ Empty template. Usage: ptm add <name> <template> (or pipe template via stdin)" >&2; exit 1
   fi
   
-  local tags="${3:-}"
-  local model="${4:-default}"
-  local temperature="${5:-}"
+  local tags="${1:-}"
+  local model="${2:-default}"
+  local temperature="${3:-}"
   
   local file
   file="$(_get_template_file "$name")"
@@ -82,6 +88,10 @@ cmd_get() {
 
 cmd_list() {
   local tag_filter="${1:-}"
+  # help documents 'list --tag <tag>'; accept both forms
+  if [[ "$tag_filter" == "--tag" ]]; then
+    tag_filter="${2:-}"
+  fi
   if [[ -z "$(ls -A "$TEMPLATES_DIR" 2>/dev/null)" ]]; then
     echo "No templates yet. Use 'ptm add' to create one."
     return
@@ -112,20 +122,25 @@ cmd_render() {
   local template
   template=$(jq -r '.template' "$file")
   
-  # Parse -k key=val arguments
-  for arg in "$@"; do
+  # Parse -k key=val arguments. Index-based walk: mixing shift with
+  # 'for arg in "$@"' desyncs and silently drops later vars.
+  local _args=("$@")
+  local i=0
+  while (( i < ${#_args[@]} )); do
+    local arg="${_args[i]}"
     if [[ "$arg" == -k=* ]]; then
       local kv="${arg#-k=}"
       local key="${kv%%=*}"
       local val="${kv#*=}"
       template="${template//\{\{${key}\}\}/${val}}"
-    elif [[ "$arg" == -k ]] && [[ $# -gt 1 ]]; then
-      shift
-      local kv="$1"
+    elif [[ "$arg" == "-k" ]] && (( i+1 < ${#_args[@]} )); then
+      local kv="${_args[i+1]}"
       local key="${kv%%=*}"
       local val="${kv#*=}"
       template="${template//\{\{${key}\}\}/${val}}"
+      i=$((i+1))
     fi
+    i=$((i+1))
   done
   
   # Check for unfilled variables
