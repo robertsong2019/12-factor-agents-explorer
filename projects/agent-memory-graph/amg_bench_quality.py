@@ -1377,6 +1377,78 @@ _TA_FIRST_RE = re.compile(
     r"^(?:who|which\b[^,?]*)\b.*?\bfirst\s*,\s*(.+?)\s+or\s+(.+?)\s*[?.!]*$",
     re.I | re.S)
 
+# Cycle 482 forms: calendar-distance questions in new surface
+# clothes. Forensics on the 63 form-missed temporal questions:
+# the two largest coherent families are plain ``between``
+# arithmetic — "how many days before X did I Y" (5q) and "how
+# many days had passed since A when B" (4q). Both map onto the
+# existing two-anchor machinery; only the form regex was missing.
+_TA_BEFORE_RE = re.compile(
+    r"how many (days?|weeks?|months?|years?)\s+before\s+(.+?)\s+"
+    r"did\s+(?:i\s+)?(.+?)\s*[?.!]*$",
+    re.I | re.S)
+_TA_SINCEWHEN_RE = re.compile(
+    r"how many (days?|weeks?|months?|years?)\s+had\s+passed\s+since\s+"
+    r"(?:i\s+)?(.+?)\s+when\s+(?:i\s+)?(.+?)\s*[?.!]*$",
+    re.I | re.S)
+
+# Cycle 482: in-text adverbial dates. The true event lines STATE
+# their dates ("attended the workshop on January 10th") while the
+# session dates collapse same-session events onto one day — the
+# day-level truth lives in the line text. Only ADVERBIAL dates
+# engage (preposition "on" directly before the date): dated NOUNS
+# ("the March 15th issue of The New Yorker") are entity names,
+# not event times — engaging them would regress the currently-
+# correct issue-reading question onto the issue's publication date.
+_MONTH_WORD_RE = (r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|"
+                  r"may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+                  r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|"
+                  r"dec(?:ember)?")
+_TA_LINE_DATE_RE = re.compile(
+    r"\bon\s+(?:the\s+)?(?P<m1>" + _MONTH_WORD_RE + r")\.?,?\s+"
+    r"(?P<d1>\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(?P<y1>\d{4}))?"
+    r"|\bon\s+the\s+(?P<d2>\d{1,2})(?:st|nd|rd|th)?\s+of\s+"
+    r"(?P<m2>" + _MONTH_WORD_RE + r")\.?(?:,?\s+(?P<y2>\d{4}))?",
+    re.I)
+_TA_MONTH_NUM = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5,
+                 "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10,
+                 "nov": 11, "dec": 12}
+
+# C482 closeness gate: an in-text date only engages when it sits
+# within this many days of the session that contains it (true
+# event dates cluster near the session; far dates are plans).
+_TA_DATE_PROXIMITY = 14
+
+
+def _line_adverbial_date(line: str, year_hint: str = "") -> str | None:
+    """First adverbial date in *line* as ISO ``YYYY-MM-DD``.
+
+    Matches ``on January 10th`` / ``on Jun 14`` / ``on the 3rd of
+    March`` / ``on March 5, 2022`` (explicit year beats *year_hint*).
+    Dated nouns and month-year mentions without a day return
+    ``None`` (see the module comment for the regression guard).
+    """
+    m = _TA_LINE_DATE_RE.search(line or "")
+    if not m:
+        return None
+    if m.group("m1"):
+        mon = _TA_MONTH_NUM[m.group("m1")[:3].lower()]
+        day, yr = int(m.group("d1")), m.group("y1")
+    else:
+        day = int(m.group("d2"))
+        mon = _TA_MONTH_NUM[m.group("m2")[:3].lower()]
+        yr = m.group("y2")
+    if yr:
+        year = int(yr)
+    elif year_hint and str(year_hint).isdigit():
+        year = int(year_hint)
+    else:
+        return None
+    try:
+        return date(year, mon, day).isoformat()
+    except ValueError:
+        return None
+
 
 def recall_form(question: str) -> str | None:
     """Classify a speaker-recall question form (Cycle 468).
@@ -1549,6 +1621,14 @@ def temporal_arith_form(question: str) -> tuple | None:
     answer path; category labels are NOT trusted — C456 lesson 4).
     """
     q = question.strip()
+    m = _TA_BEFORE_RE.match(q)
+    if m:      # "days before B did A" = between(A, B)
+        return ("between", m.group(1).rstrip("s") or "day",
+                m.group(3).strip(), m.group(2).strip())
+    m = _TA_SINCEWHEN_RE.match(q)
+    if m:      # "days since A when B" = between(A, B)
+        return ("between", m.group(1).rstrip("s") or "day",
+                m.group(2).strip(), m.group(3).strip())
     m = _TA_BETWEEN_RE.match(q)
     if m:
         return ("between", m.group(1).rstrip("s") or "day",
@@ -1647,7 +1727,8 @@ def answer_temporal_arith(question: str,
         Cycle 471 tie ladder (was: silent first-max = list-position
         tie-break, which decided 3 of 9 forensics failures):
         distinctive hits ↓, generic hits ↓ (tie-break only),
-        user-role, past aspect over future marker, later date.
+        user-role, past aspect over future marker, in-text date
+        (Cycle 482), later date.
         """
         ks = _anchor_keywords(anchor)
         if not ks:
@@ -1659,8 +1740,37 @@ def answer_temporal_arith(question: str,
             hits = _keyword_hits(line, ks)
             if hits <= 0:
                 continue
+            # Cycle 482: an adverbial in-text date refines the
+            # session date to day granularity — same-session
+            # events that state their own dates separate, and
+            # explicitly-dated lines outrank undated ones on ties
+            # (they are the lines asserting WHEN the event was).
+            # Closeness gate (asymmetric): only dates within
+            # _TA_DATE_PROXIMITY days of the session — in EITHER
+            # direction — or in the PAST relative to it engage.
+            # Near dates are same-session day-granularity truth; a
+            # past in-text date is later recall ("during Holi on
+            # March 7th" mentioned weeks after). The poison is
+            # far-FUTURE dates: reminder/plan lines ("set up a
+            # reminder for the graduation on June 1st" in a March
+            # session) carry dates that are NOT the anchor event's
+            # time; engaging them hijacks the anchor onto the
+            # plan's date (C482 A/B loss gpt4_7a0daae1: 1 week →
+            # 12 weeks).
+            eff = sdate
+            ad = _line_adverbial_date(
+                line, sdate[:4] or question_date[:4] or "")
+            if ad:
+                try:
+                    delta = abs((date.fromisoformat(ad)
+                                 - date.fromisoformat(sdate)).days)
+                except ValueError:
+                    delta = None
+                if (delta is not None
+                        and (delta <= _TA_DATE_PROXIMITY or ad < sdate)):
+                    eff = ad
             try:
-                date_key = (0, -date.fromisoformat(sdate).toordinal())
+                date_key = (0, -date.fromisoformat(eff).toordinal())
             except ValueError:
                 date_key = (1, 0)     # missing/unparseable date last
             key = (
@@ -1669,10 +1779,11 @@ def answer_temporal_arith(question: str,
                 0 if line.startswith("[user]") else 1,
                 1 if _TA_FUTURE_RE.search(line) else 0,
                 0 if _TA_PAST_RE.search(line) else 1,
+                0 if eff != sdate else 1,
                 date_key,
             )
             if best_key is None or key < best_key:
-                best, best_key = (hits, sdate), key
+                best, best_key = (hits, eff), key
         return best
 
     if kind == "first":
