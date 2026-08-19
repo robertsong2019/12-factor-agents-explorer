@@ -431,15 +431,28 @@ class MemoryGraph:
                 "delete_many requires non-empty node_ids "
                 "(no-scope-mass-delete protection). Pass force=True to override."
             )
-        count = 0
+        # 优化：批量删除，减少数据库查询次数
+        # 首先验证所有节点存在性
+        valid_ids = []
         for nid in node_ids:
             row = self.conn.execute("SELECT id FROM nodes WHERE id=?", (nid,)).fetchone()
             if row:
-                self.conn.execute("DELETE FROM edges WHERE source=? OR target=?", (nid, nid))
-                self.conn.execute("DELETE FROM nodes WHERE id=?", (nid,))
-                count += 1
+                valid_ids.append(nid)
+        
+        # 批量删除边（一次性操作）
+        if valid_ids:
+            placeholders = ','.join(['?' for _ in valid_ids])
+            self.conn.execute(f"DELETE FROM edges WHERE source IN ({placeholders}) OR target IN ({placeholders})", valid_ids * 2)
+            
+            # 批量删除节点
+            self.conn.execute(f"DELETE FROM nodes WHERE id IN ({placeholders})", valid_ids)
+            
+            # 批量清理FTS索引
+            if getattr(self, '_fts_enabled', False):
+                self.conn.execute(f"DELETE FROM nodes_fts WHERE node_id IN ({placeholders})", valid_ids)
+        
         self.conn.commit()
-        return count
+        return len(valid_ids)
 
     def tag_nodes(self, tag: str, node_ids: list[str]):
         """Add a tag to multiple nodes."""
