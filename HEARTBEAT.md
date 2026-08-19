@@ -36,6 +36,12 @@
 - **全项目总计**: ~20593 tests（08-19 KO 口径：amg 9579；obs 222/nano 1156/prompt-mgr 283 沿用修正台账）
 - **零回滚率**: amg **296天** 🏆（KO 日历链：08-17=294 / 08-18=295 / 08-19=296，会话漂移勿沿用）/ acs 200天 🏆
 
+## 近期活动 (08-19 晚 cron 21:00)
+- **Cycle 477 (code-lab-evening)**: amg 9579→**9606+5** (+28) ✅。#075 i3 counting forms 原型→生产：4 个 prec≥0.5 机制（duration_sum/total_sum/number_total/argmax）分层接入，temporal 守卫+全量 haystack+conjunct 弃权+意图排除+numeric-first judge。Oracle A/B (n=133): **12/16 prec 0.75** vs 原型 12/28/0.43——oracle-parity 直接暴露 2 个真 bug（argmax 键序 "Market Thrive"、judge 词序敏感）。commit 8c085e4
+- **Cycle 478**: 真实 lme50 A/B 完全相同（0.320/0.760/0.880）——**0/50 题匹配任何 counting form**：LME_s 单会话切片无多会话聚合题，form-gate 零成本（C473 外科哲学再证）。commit 48a86de
+- **Cycle 479**: 删 memory_graph.py.new（209 行，6月遗留，内容在主文件 11206，零引用）——删代码得同结果。commit b1cc6f7
+- 方法论收获：**oracle-parity（生产函数跑研究 fixture）比复现数字更强**——本次直接把 prec 0.43 提到 0.75。后续：#075 v3 venue+date 复合键解锁 entity_count；full-500 rerun 验证零成本结论。
+
 ## 近期活动 (08-19 凌晨 cron 02:05)
 - **Cycle 473 (key-development-3, ac8d9a3/3e2476e)**: amg 9574→**9579** (+5)，form-scoped seed breadth ✅。取证 C467 的 12 个 ssa evhit miss：**10/12 ev_in_candidates=0**（evidence 命中 7-16 kw 但 weight-ordered `recall() LIMIT 5` 上游截断）；recall_form 匹配 48/500 全为 ssa → `recall_seed_k=40` 手术式 scope。**ssa-56 evhit 0.786→0.929**（44→52/56），exact 0.268 持平，temporal-133 0.271 零翻转（judge-corrected）。**决定性负发现**：全局 k=40 毁 temporal（36→14/133，mirror 行入窗）→ **检索超参不可全局调优，form 分类器即配置面**。坑：harness judge bug 读作代码回归（temporal 答案须走 temporal_arith_judge，plain exact_judge 报假 21-loss——先跑 pre==c473 对照暴露）。报告 /tmp/c473/ssa56_official.json。Next: ssa 答案侧 / multi_session counting forms（C474 候选）/ full-500 rerun
 
