@@ -261,3 +261,109 @@ class TestAdapterCountingPath(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCycle483UnitDiscipline(unittest.TestCase):
+    """C483: unit discipline + title guard + freq days + species sum."""
+
+    def test_hours_question_not_money(self):
+        # hours/years/months route to unit_sum, never total_sum ($)
+        self.assertEqual(
+            counting_form("How many hours have I spent playing "
+                          "games in total?"), "unit_sum")
+        self.assertEqual(
+            counting_form("How many years in total did I spend "
+                          "in school?"), "unit_sum")
+        self.assertEqual(
+            counting_form("How much money did I spend in total "
+                          "on food?"), "total_sum")
+        # count-noun "in total" → number_total
+        self.assertEqual(
+            counting_form("How many fish are there in total in "
+                          "both aquariums?"), "number_total")
+
+    def test_freq_days_form(self):
+        self.assertEqual(
+            counting_form("How many days a week do I attend "
+                          "fitness classes?"), "freq_days")
+
+    def test_unit_sum_dedup_and_question_clause(self):
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "I spent around 70 hours playing Assassin's "
+                    "Creed Odyssey.")},
+                {"role": "assistant", "content": "Nice!"}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "I beat The Last of Us Part II, which took me "
+                    "30 hours to finish.")},
+                {"role": "user", "content": (
+                    "The Last of Us Part II took me 30 hours on "
+                    "hard.")},   # duplicate → counts once
+                {"role": "user", "content": (
+                    "Can you recommend games similar to Celeste, "
+                    "which took me 10 hours to complete?")}]}]
+        ans, _ = answer_counting(
+            "How many hours have I spent playing games in total?",
+            sess)
+        self.assertEqual(ans, "110")   # 70 + 30 + 10
+
+    def test_unit_sum_strips_money_and_ranges(self):
+        sess = [{"session_id": "s1", "turns": [
+            {"role": "user", "content": (
+                "The $40 game took me 12 hours, plus a 2-3 hour "
+                "demo and 5 hours of extras.")}]}]
+        ans, _ = answer_counting(
+            "How many hours did I spend gaming in total?", sess)
+        self.assertEqual(ans, "17")   # 12 + 5; range dropped
+
+    def test_total_sum_money_gate(self):
+        sess = [{"session_id": "s1", "turns": [
+            {"role": "user", "content": (
+                "I have 10 neon tetras, 5 gouramis, and a pleco "
+                "catfish.")}]}]
+        # hours/fish questions never sum $ even if money nearby
+        ans, _ = answer_counting(
+            "How many fish are there in total in both tanks?", sess)
+        self.assertEqual(ans, "16")
+
+    def test_duration_title_guard(self):
+        sess = [{"session_id": "s1", "turns": [
+            {"role": "user", "content": (
+                'I think "Matthew: A 12-Week Study" by Jen Wilkin '
+                "would fit my faith group.")},
+            {"role": "user", "content": (
+                "I did a 3-day faith retreat last month.")}]}]
+        ans, _ = answer_counting(
+            "How many days did I spend on faith activities in "
+            "total?", sess)
+        self.assertEqual(ans, "3 days")
+
+    def test_freq_days_distinct_weekdays(self):
+        sess = [{"session_id": "s1", "turns": [
+            {"role": "user", "content": (
+                "I attend Zumba classes on Tuesdays and Thursdays "
+                "at 6:30 pm.")},
+            {"role": "user", "content": (
+                "I started a yoga class on Wednesdays, and "
+                "weightlifting on Saturdays.")}]}]
+        ans, _ = answer_counting(
+            "How many days a week do I attend fitness classes?",
+            sess)
+        self.assertEqual(ans, "4")
+
+    def test_species_sum_singular_and_adjacent(self):
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "My 20-gallon tank currently has 10 neon "
+                    "tetras, 5 golden honey gouramis, and a small "
+                    "pleco catfish.")}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "I have one betta in my old tank.")}]}]
+        ans, _ = answer_counting(
+            "How many fish are there in total in both of my "
+            "aquariums?", sess)
+        self.assertEqual(ans, "17")   # 10+5+1 + 1

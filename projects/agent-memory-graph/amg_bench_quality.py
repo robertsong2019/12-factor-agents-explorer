@@ -1933,6 +1933,10 @@ _CNT_HYPONYM = {
     'event': {'exhibition', 'lecture', 'tour', 'concert', 'show',
               'festival', 'workshop', 'event', 'meetup',
               'screening', 'performance'},
+    'fish': {'tetra', 'gourami', 'pleco', 'catfish', 'betta',
+             'danio', 'molly', 'guppy', 'cory', 'barb', 'loach',
+             'angelfish', 'goldfish', 'shark', 'snail', 'shrimp',
+             'eel', 'oscar', 'discus', 'platy', 'swordtail'},
     'service': {'platform', 'app', 'service', 'website',
                 'provider'},
     'store': {'store', 'market', 'shop', 'grocery'},
@@ -2048,7 +2052,12 @@ def _cnt_question_anchors(question: str) -> set[str]:
 
 
 def _cnt_durations_days(text: str) -> list:
-    """Explicit durations in days (``7-day trip`` = 7)."""
+    """Explicit durations in days (``7-day trip`` = 7).
+
+    Cycle 483 title guard: hyphenated durations followed by a
+    capitalized word are program/book titles ("12-Week Study"),
+    not lived durations — excluded.
+    """
     out = []
     for m in re.finditer(
             r'\b(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six'
@@ -2057,6 +2066,10 @@ def _cnt_durations_days(text: str) -> list:
         n = _cnt_num(m.group(1))
         if n is None:
             continue
+        hyphen = '-' in m.group(0)
+        after = text[m.end():].lstrip()[:1]
+        if hyphen and after.isupper():
+            continue      # "12-Week Study" — a title, not a duration
         out.append((n * (7.0 if m.group(2).lower().startswith('week')
                          else 1.0), m.group(0)))
     for m in re.finditer(r'\ba\s+week\s+and\sa\s+half\b', text,
@@ -2084,15 +2097,22 @@ def counting_form(question: str) -> str | None:
     """Classify a counting-aggregation question form (layered).
 
     Returns ``"duration_sum"`` / ``"total_sum"`` / ``"number_total"``
-    / ``"argmax"``, or ``None`` (not a counting form). Calendar-
-    distance questions ("how many days between …") belong to the
-    Cycle 457 temporal-arithmetic path and are excluded here —
-    distance is calendar arithmetic, not an evidence sum.
+    / ``"argmax"`` / ``"unit_sum"`` / ``"freq_days"``, or ``None``
+    (not a counting form). Calendar-distance questions ("how many
+    days between …") belong to the Cycle 457 temporal-arithmetic
+    path and are excluded here — distance is calendar arithmetic,
+    not an evidence sum. Cycle 483 unit discipline: ``total_sum``
+    sums money and ONLY fires on money-asking questions — unit
+    questions (hours/years/months) route to ``unit_sum``, count-
+    noun "in total" questions route to ``number_total``, and
+    "days a week" frequency questions route to ``freq_days``.
     """
     if temporal_arith_form(question):
         return None
     q = question.strip()
     ql = q.lower()
+    if re.search(r'\bhow many days?\s+(?:a|per)\s+week\b', ql):
+        return "freq_days"
     if re.match(r'^what is the total number of (days|weeks)', ql):
         return "duration_sum"
     if re.search(r'\bhow many (days|weeks)\b', ql) or \
@@ -2102,7 +2122,11 @@ def counting_form(question: str) -> str | None:
         return "duration_sum"
     if re.match(r'^how (much|many)\b', q, re.I) \
             and re.search(r'\btotal\b', ql):
-        return "total_sum"
+        if re.search(r'\bhow many (hours|years|months)\b', ql):
+            return "unit_sum"
+        if re.match(r'^how much\b', q, re.I):
+            return "total_sum"      # how-much totals are money
+        return "number_total"
     if re.match(r'^what (is|was) the total number', ql):
         return "number_total"
     if re.match(r'^which\b', q, re.I) and re.search(r'\bmost\b', ql):
@@ -2187,7 +2211,108 @@ def _cnt_duration_sum(question: str, sessions: list[dict]):
     return f"{round(val, 2):g} {want_unit}"
 
 
+def _cnt_money_q(ql: str) -> bool:
+    """Question asks for a money amount (unit discipline gate)."""
+    return bool(re.search(
+        r'\b(money|spend|spent|raise|raised|earn|earned|cost|costs'
+        r'|paid|pay|save|saved|donat\w*|fund\w*|discount|budget'
+        r'|expense|expenses|\$)\b', ql))
+
+
+def _cnt_unit_sum(question: str, sessions: list[dict]):
+    """Sum stated <N> <unit> quantities for unit-aggregate questions.
+
+    Cycle 483: hours/years/months totals. User-role sentences only,
+    money tokens and numeric ranges stripped, repeated quantities
+    deduplicated by (number, proper-noun signature of sentence) —
+    "it took me 30 hours" stated twice for the same game counts
+    once, while a second playthrough's "25 hours" counts again.
+    """
+    ql = question.lower()
+    m = re.search(r'\bhow many (hours?|years?|months?)\b', ql)
+    if not m:
+        return None
+    unit = m.group(1).rstrip('s')
+    unit_re = re.compile(
+        r'\b(\d+(?:\.\d+)?|one|two|three|four|five|six|seven'
+        r'|eight|nine|ten|eleven|twelve|fifteen|twenty)\s+'
+        r'(' + unit + r's?)\b', re.I)
+    seen = set()
+    total = 0.0
+    found = False
+    for si, sent in _cnt_sents(sessions):
+        # clause-level gating: a question sentence may carry the
+        # count in a declarative relative clause ("…similar to
+        # Celeste, which took me 10 hours to complete?") — only
+        # the interrogative head clause is skipped
+        clauses = [c.strip() for c in re.split(r'[,;]', sent)
+                   if c.strip()]
+        for cl in clauses:
+            if _CNT_INTENT_RE.search(cl):
+                continue
+            if cl.endswith('?') and not re.match(
+                    r'^(which|that|who|and|but|so|because|since)\b',
+                    cl, re.I):
+                continue      # interrogative head clause
+            s = cl
+            # strip money tokens, ranges, and title-style durations
+            s = re.sub(r'\$\s?\d[\d,.]*', ' ', s)
+            s = re.sub(r'\b\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?'
+                       r'\s+(?:' + unit + r's?)\b', ' ', s,
+                       flags=re.I)
+            s = re.sub(r'\b\d+\s*-?\s*(?:week|month|day)s?\s+'
+                       r'(?:program|study|plan|challenge|course)s?\b',
+                       ' ', s, flags=re.I)
+            for em in unit_re.finditer(s):
+                n = _cnt_num(em.group(1))
+                if n is None or n <= 0:
+                    continue
+                caps = frozenset(
+                    w.lower() for w in
+                    re.findall(r'\b[A-Z][a-z]{2,}\b', sent)
+                    if w.lower() not in _CNT_CAP_STOP)
+                key = (round(n, 2), caps)
+                if key in seen:
+                    continue
+                seen.add(key)
+                total += n
+                found = True
+    if not found:
+        return None
+    val = round(total, 2)
+    return str(int(val)) if val == int(val) else str(val)
+
+
+_WEEKDAY_RE = re.compile(
+    r'\b(monday|tuesday|wednesday|thursday|friday|saturday'
+    r'|sunday)s?\b', re.I)
+
+# families whose hyponyms are true species (per-species max
+# aggregation is valid); NOT generic hypernyms like course/event
+_CNT_SPECIES_FAMS = frozenset({'fish'})
+
+
+def _cnt_freq_days(question: str, sessions: list[dict]):
+    """"Days a week" frequency: distinct weekdays in habitual
+    attendance sentences ("I attend Zumba on Tuesdays and
+    Thursdays, yoga on Wednesdays" → 4)."""
+    days = set()
+    for si, sent in _cnt_sents(sessions):
+        if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
+            continue
+        if not _WEEKDAY_RE.search(sent):
+            continue
+        for m in _WEEKDAY_RE.finditer(sent):
+            days.add(m.group(1).lower())
+    if not days:
+        return None
+    return str(len(days))
+
+
 def _cnt_total_sum(question: str, sessions: list[dict]):
+    if not _cnt_money_q(question.lower()):
+        return None      # unit discipline — never sum $ into
+    # hours/fish/course questions (Cycle 483)
     amts = set()
     for si, sent in _cnt_sents(sessions):
         if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
@@ -2252,6 +2377,63 @@ def _cnt_number_total(question: str, sessions: list[dict]):
                 return None      # conjunctive completeness
             vals.append(max(sub_counts[s_]))
         return str(int(sum(vals)))
+    # Cycle 483 species sum: hyponym-carrying families (fish)
+    # aggregate per-species maxima; singular mentions ("a pleco",
+    # "my betta") count as one specimen; adjacent subtype names
+    # ("pleco catfish") are one species, not two. Allowlisted
+    # families ONLY — generic hyponym keys like 'course' →
+    # {module, class, program} would misroute (C483 A/B caught
+    # courses 20→14 preemption).
+    speciesable = {w for w in fam
+                   if w in _CNT_SPECIES_FAMS
+                   or _cnt_sing(w) in _CNT_SPECIES_FAMS}
+    if speciesable:
+        hypos = {h for w in speciesable
+                 for h in (_CNT_HYPONYM.get(w, set())
+                           | _CNT_HYPONYM.get(_cnt_sing(w), set()))}
+        species = defaultdict(set)
+        adjacent = set()
+        for si, sent in _cnt_sents(sessions):
+            # clause-level intent gate: counts may live in a factual
+            # trailing clause of a planning sentence ("I'm thinking
+            # of adding plants to my tank, which currently has 10
+            # neon tetras") — only intent clauses are skipped
+            clauses = [c.strip() for c in re.split(r'[,;]', sent) if c.strip()]
+            for cl in clauses:
+                if cl.endswith('?') or _CNT_INTENT_RE.search(cl):
+                    continue
+                low = cl.lower()
+                present = [h for h in hypos
+                           if re.search(r'\b' + re.escape(h) + r's?\b',
+                                        low)]
+                if not present:
+                    continue
+                for a, b in ((a, b) for a in present for b in present
+                             if a != b
+                             and re.search(r'\b' + re.escape(a)
+                                           + r's?\s+'
+                                           + re.escape(b) + r's?\b',
+                                           low)):
+                    adjacent.add((a, b))
+                for h in present:
+                    for em in re.finditer(
+                            r'\b(\d{1,3}(?:,\d{3})*|one|two|three|four'
+                            r'|five|six|seven|eight|nine|ten)\b'
+                            r'[^\w]{0,3}(?:\w+\s+){0,2}'
+                            + re.escape(h) + r's?\b', cl, re.I):
+                        n = _cnt_num(em.group(1))
+                        if n:
+                            species[h].add(n)
+                    if re.search(r'\b(?:a|an|my|the)\s+(?:\w+\s+){0,2}'
+                                 + re.escape(h) + r'\b(?!s)', cl,
+                                 re.I) and 'some' not in low:
+                        species[h].add(1)
+        if species:
+            for a, b in adjacent:
+                if b in species and a in species:
+                    species[a] |= species[b]
+                    del species[b]
+            return str(int(sum(max(v) for v in species.values())))
     if all_counts:
         return str(int(sum(all_counts)))   # SUM of distinct
     return None
@@ -2325,6 +2507,8 @@ def answer_counting(question: str,
         return None, {}
     fn = {"duration_sum": _cnt_duration_sum,
           "total_sum": _cnt_total_sum,
+          "unit_sum": _cnt_unit_sum,
+          "freq_days": _cnt_freq_days,
           "number_total": _cnt_number_total,
           "argmax": _cnt_argmax_entity}
     try:
