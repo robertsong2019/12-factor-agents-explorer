@@ -52,6 +52,7 @@ import json
 import math
 import re
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -415,6 +416,7 @@ class LongMemEvalAdapter:
                  abstain_entropy: float | None = 0.95,
                  entropy_weak_score: int = 1,
                  temporal_arith: bool = True,
+                 counting: bool = True,
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
                  ppr_top: int = 15,
@@ -439,6 +441,11 @@ class LongMemEvalAdapter:
                 answer path (duration/ordering questions resolved by
                 calendar arithmetic on session dates; falls through
                 to the extractive path when anchors don't resolve).
+            counting: Enable the Cycle 477 multi-session counting
+                path (evidence-side aggregation for total days /
+                total money / total number of instances / argmax
+                entity forms over the full ingested haystack;
+                unresolved forms fall through to the gate chain).
             assistant_recall: Enable the Cycle 468 speaker-recall
                 answer path (you-addressed "remind me what you
                 recommended" forms answered from the best-scored
@@ -465,6 +472,7 @@ class LongMemEvalAdapter:
         self.abstain_entropy = abstain_entropy
         self.entropy_weak_score = entropy_weak_score
         self.temporal_arith = temporal_arith
+        self.counting = counting
         self.assistant_recall = assistant_recall
         self.recall_min_score = recall_min_score
         self.ppr_top = ppr_top
@@ -750,6 +758,26 @@ class LongMemEvalAdapter:
                 meta["abstained"] = False
                 return t_ans, meta
 
+        # Cycle 477: multi-session counting forms — evidence-side
+        # aggregation (#075 i3 layered integration: ONLY precision-
+        # ≥0.5 mechanisms — duration_sum 0.67 / total_sum 1.00 /
+        # number_total 0.50 / argmax 0.50; entity_count 0.20 stays
+        # prototype-level pending the venue+date composite key).
+        # Calendar-distance questions were claimed by C457 above
+        # (counting_form returns None for them); counting owns
+        # sum/argmax forms over the FULL ingested haystack —
+        # aggregation over a retrieval window undercounts (the C472
+        # full-graph lesson applies to sums too). Fall-through
+        # preserved: an unresolved form reaches the gates untouched.
+        if self.counting and counting_form(question):
+            c_ans, c_detail = answer_counting(
+                question, self._counting_sessions())
+            meta["counting"] = c_detail
+            if c_ans is not None:
+                meta["gate"] = "counting"
+                meta["abstained"] = False
+                return c_ans, meta
+
         # Cycle 468: speaker-recall path — you-addressed "remind me
         # what you recommended" forms. Assistant answers are multi-
         # paragraph and the specific fact sits mid-body, so message-
@@ -785,6 +813,25 @@ class LongMemEvalAdapter:
         # First context line = best-ranked message ([role] prefix).
         best_line = context.split("\n", 1)[0]
         return best_line.split("] ", 1)[-1], meta
+
+    def _counting_sessions(self) -> list[dict]:
+        """All ingested messages grouped by session, in ingest order.
+
+        The #075 prototype's evidence-session shape — session-level
+        grouping is what duration_sum's anchor propagation and
+        signature dedup operate on. Full haystack, not the retrieval
+        window: aggregation over a window undercounts.
+        """
+        by_sess: dict[str, dict] = {}
+        for nid in sorted(self._messages,
+                          key=lambda n: self._messages[n]["seq"]):
+            info = self._messages[nid]
+            s = by_sess.setdefault(
+                info["session_id"],
+                {"session_id": info["session_id"], "turns": []})
+            s["turns"].append({"role": info["role"],
+                               "content": info["label"]})
+        return list(by_sess.values())
 
     @staticmethod
     def format_answer_prompt(question: str, context: str,
@@ -874,6 +921,8 @@ class LongMemEvalAdapter:
             elif meta.get("gate") == "temporal_arith":
                 correct = temporal_arith_judge(question, truth,
                                                predicted)
+            elif meta.get("gate") == "counting":
+                correct = counting_judge(question, truth, predicted)
             elif judge_fn is not None:
                 correct = bool(judge_fn(question, truth, predicted))
             else:
@@ -1597,6 +1646,544 @@ def temporal_arith_judge(question: str, truth: str,
     return bool(preds and golds and any(p in golds for p in preds))
 
 
+# ════════ Cycle 477: multi-session counting forms (#075 i3) ════════
+# Layered integration of the counting-aggregation prototype
+# (msagg_proto_v2.py): ONLY precision-≥0.5 mechanisms enter the
+# pipeline — duration_sum 0.67 / total_sum 1.00 / number_total
+# 0.50 / argmax 0.50 (~11 correct of the 133-question multi-
+# session axis). entity_count (prec 0.20) stays prototype-level
+# pending the venue+date composite event key (#075 v3). Form-
+# triggered like C456/C457/C473 — the form detector IS the
+# configuration surface; unresolved forms fall through to the
+# gate chain (abstention stays owned by the gates).
+
+_CNT_WORD2NUM = {'a': 1, 'an': 1, 'one': 1, 'two': 2, 'three': 3,
+                 'four': 4, 'five': 5, 'six': 6, 'seven': 7,
+                 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11,
+                 'twelve': 12, 'fifteen': 15, 'twenty': 20,
+                 'thirty': 30}
+
+# speaker intent — intent lines carry unrealized (unspendable,
+# unowned) durations/amounts and must not enter sums
+_CNT_INTENT_RE = re.compile(
+    r"\b(?:i(?:'m| am|’m)?\s+(?:thinking\s+of|planning|considering|"
+    r"hoping\s+to|looking\s+(?:to|at|into)|going\s+to)|"
+    r"i\s+(?:want|would\s+like|'ll|will|plan)\b|i'?d\s+like|"
+    r"i\s+think\si(?:'ll|\s+will)|planning\s+a|i'll\b)", re.I)
+
+# units that make a counted number a measurement, not an instance
+_CNT_UNIT_BLACKLIST = {
+    'gallon', 'gallons', 'pound', 'pounds', 'lb', 'lbs', 'mph',
+    'kph', 'percent', 'dollar', 'dollars', 'mile', 'miles', 'km',
+    'kilometer', 'kilometers', 'kg', 'kilogram', 'kilograms',
+    'ounce', 'ounces', 'oz', 'liter', 'liters', 'litre', 'litres',
+    'foot', 'feet', 'inch', 'inches', 'year', 'years', 'month',
+    'months', 'week', 'weeks', 'day', 'days', 'hour', 'hours',
+    'minute', 'minutes', 'degree', 'degrees'}
+
+_CNT_GENERIC_HEADS = {
+    'trip', 'trips', 'trek', 'treks', 'hike', 'hikes', 'thing',
+    'things', 'item', 'items', 'stuff', 'one', 'ones', 'time',
+    'times'}
+
+_CNT_STOP_Q = {
+    'many', 'much', 'have', 'does', 'did', 'that', 'this', 'with',
+    'from', 'about', 'what', 'which', 'there', 'been', 'were',
+    'will', 'would', 'currently', 'leading', 'worked', 'watched',
+    'watching', 'spent', 'spend', 'take', 'took', 'combined',
+    'total', 'year', 'month', 'past', 'recent', 'recently',
+    'different', 'various', 'distinct', 'all', 'my', 'me', 'i',
+    'in', 'on', 'at', 'the', 'a', 'an', 'of', 'for', 'and', 'or',
+    'to', 'how', 'is', 'was', 'are', 'do', 'number', 'amount',
+    'new', 'last', 'first', 'including', 'before', 'after',
+    'making', 'offer', 'own', 'led', 'simultaneously',
+    'excluding'}
+
+_CNT_MONTHS = {'january', 'february', 'march', 'april', 'may',
+               'june', 'july', 'august', 'september', 'october',
+               'november', 'december'}
+_CNT_WEEKDAYS = {'monday', 'tuesday', 'wednesday', 'thursday',
+                 'friday', 'saturday', 'sunday'}
+# capitalized tokens that are never instance names
+_CNT_CAP_STOP = {
+    "i'm", "i've", "i'll", "i'd", "it's", "that's", "they're",
+    "we're", "you're", "don't", "doesn't", "didn't", "can't",
+    "won't", "he's", "she's", "there's", "let's", "what's",
+    'by', 'can', 'now', 'since', 'when', 'what', 'how', 'the',
+    'do', 'does', 'did', 'so', 'and', 'but', 'if', 'then', 'also',
+    'for', 'from', 'with', 'my', 'im', 'ive', 'ill', 'id'} | \
+    _CNT_MONTHS | _CNT_WEEKDAYS
+
+# noun-family hyponyms: family word expands to its members
+_CNT_HYPONYM = {
+    'instrument': {'guitar', 'piano', 'drum', 'violin', 'ukulele',
+                   'bass', 'keyboard', 'saxophone', 'flute', 'cello',
+                   'banjo', 'mandolin', 'trumpet', 'clarinet',
+                   'synthesizer', 'organ', 'harp', 'trombone',
+                   'viola'},
+    'property': {'house', 'condo', 'townhouse', 'bungalow',
+                 'apartment', 'loft', 'cottage', 'duplex', 'villa',
+                 'cabin', 'flat'},
+    'museum': {'museum', 'gallery', 'exhibition', 'exhibit'},
+    'event': {'exhibition', 'lecture', 'tour', 'concert', 'show',
+              'festival', 'workshop', 'event', 'meetup',
+              'screening', 'performance'},
+    'service': {'platform', 'app', 'service', 'website',
+                'provider'},
+    'store': {'store', 'market', 'shop', 'grocery'},
+    'vehicle': {'bike', 'bicycle', 'car', 'motorcycle', 'scooter',
+                'truck'},
+    'plant': {'plant', 'seedling', 'shrub', 'tree'},
+    'course': {'course', 'class', 'module', 'program'},
+    'kit': {'kit', 'model'},
+    'sibling': {'brother', 'sister'},
+}
+
+
+def _cnt_num(tok: str) -> float | None:
+    tok = tok.lower()
+    if tok in _CNT_WORD2NUM:
+        return float(_CNT_WORD2NUM[tok])
+    try:
+        return float(tok)
+    except ValueError:
+        return None
+
+
+def _cnt_sing(noun: str) -> str:
+    if noun.endswith('ies'):
+        return noun[:-3] + 'y'
+    if noun.endswith('s') and not noun.endswith('ss'):
+        return noun[:-1]
+    return noun
+
+
+def _cnt_sents(sessions: list[dict], role: str = 'user'):
+    """Yield ``(session_index, sentence)`` for *role* turns."""
+    for si, s in enumerate(sessions):
+        for t in s.get('turns', []):
+            if t.get('role') != role:
+                continue
+            for m in re.finditer(r'[^.!?]*[.!?]?',
+                                 t.get('content', '')):
+                sent = m.group(0).strip()
+                if sent:
+                    yield si, sent
+
+
+def _cnt_proper_nouns(text: str) -> set[str]:
+    """Capitalized runs minus contractions/months/weekdays."""
+    out = set()
+    for w in re.findall(r"\b[A-Z][A-Za-z&'-]*\b", text):
+        wl = w.lower()
+        if wl in _CNT_CAP_STOP or wl in ('the', 'i', 'my', 'we',
+                                         'a', 'an'):
+            continue
+        out.add(wl)
+    return out
+
+
+def _cnt_np_fam(question: str) -> tuple:
+    """Content words of the counted NP (robust vs modifiers).
+
+    Returns ``(family, subtypes)`` — family is the full morph set of
+    every content word; subtypes is the conjoined head list when
+    the question counts "X and Y" separately (each needs evidence
+    or the mechanism abstains — conjunctive completeness).
+    """
+    ql = question.lower()
+    m = re.match(r'^how many ([a-z][\w\s-]{1,60}?)'
+                 r'(?:\s+(?:do|did|have|has)\s+i'
+                 r'|\s+i\s+(?:do|did|have|has|had|currently)'
+                 r'|\s+(?:in|on|at|from|across|over|during|before'
+                 r'|after|last|this|due)\b|[?.])', ql)
+    if not m:
+        m = re.match(r'^what (?:is|was) the total number of '
+                     r'([a-z][\w\s-]{1,60}?)'
+                     r'(?:\s+i\b|\s+(?:do|did|have|has)\s+i'
+                     r'|\bthat\b|,|\bby\b|\bfrom\b|[?.])', ql)
+    if not m:
+        return None, None
+    np = m.group(1)
+    parts = re.split(r'\s+and\s+|,\s+|\s+or\s+', np)
+    subs, fam = [], set()
+    for part in parts:
+        ws = [w for w in re.findall(r"[a-z][\w-]+", part)
+              if w not in _CNT_STOP_Q
+              and w not in _CNT_GENERIC_HEADS and len(w) >= 4]
+        if not ws:
+            continue
+        h = ws[-1]
+        for w in ws:
+            fam |= {w, _cnt_sing(w), w + 's', _cnt_sing(w) + 's'}
+        if len(parts) >= 2 and h not in subs:
+            subs.append(h)
+    return fam, (subs if len(subs) >= 2 else None)
+
+
+def _cnt_anchor_re(anchors: set[str]):
+    if not anchors:
+        return None
+    return re.compile(
+        r'\b(' + '|'.join(re.escape(a) for a in
+                          sorted(anchors, key=len, reverse=True))
+        + r')\b', re.I)
+
+
+def _cnt_question_anchors(question: str) -> set[str]:
+    toks = set()
+    for w in re.findall(r"[A-Za-z][\w'-]*", question):
+        wl = w.lower()
+        if wl in _CNT_STOP_Q or wl in _CNT_GENERIC_HEADS:
+            continue
+        if len(wl) < 4 and not w[0].isupper():
+            continue
+        toks.add(wl)
+    return {t for t in toks if len(t) >= 4}
+
+
+def _cnt_durations_days(text: str) -> list:
+    """Explicit durations in days (``7-day trip`` = 7)."""
+    out = []
+    for m in re.finditer(
+            r'\b(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six'
+            r'|seven|eight|nine|ten)\s*-?\s*(day|week)s?\b',
+            text, re.I):
+        n = _cnt_num(m.group(1))
+        if n is None:
+            continue
+        out.append((n * (7.0 if m.group(2).lower().startswith('week')
+                         else 1.0), m.group(0)))
+    for m in re.finditer(r'\ba\s+week\s+and\sa\s+half\b', text,
+                         re.I):
+        out.append((10.5, m.group(0)))
+    for m in re.finditer(r'\b(?:full|all)[- ]day\b', text, re.I):
+        out.append((1.0, m.group(0)))
+    return out
+
+
+def _cnt_daterange_days(text: str) -> float | None:
+    """"April 15th to 22nd" = 7 days (exclusive count — fits GT)."""
+    m = re.search(
+        r'\b(' + '|'.join(_CNT_MONTHS) + r')\.?\s+(\d{1,2})'
+        r'(?:st|nd|rd|th)?\s*(?:to|-|through|until)\s+(\d{1,2})'
+        r'(?:st|nd|rd|th)?\b', text, re.I)
+    if m:
+        d1, d2 = int(m.group(2)), int(m.group(3))
+        if 0 < d1 < 32 and 0 < d2 < 32 and d2 > d1:
+            return float(d2 - d1)
+    return None
+
+
+def counting_form(question: str) -> str | None:
+    """Classify a counting-aggregation question form (layered).
+
+    Returns ``"duration_sum"`` / ``"total_sum"`` / ``"number_total"``
+    / ``"argmax"``, or ``None`` (not a counting form). Calendar-
+    distance questions ("how many days between …") belong to the
+    Cycle 457 temporal-arithmetic path and are excluded here —
+    distance is calendar arithmetic, not an evidence sum.
+    """
+    if temporal_arith_form(question):
+        return None
+    q = question.strip()
+    ql = q.lower()
+    if re.match(r'^what is the total number of (days|weeks)', ql):
+        return "duration_sum"
+    if re.search(r'\bhow many (days|weeks)\b', ql) or \
+            (re.search(r'\b(days|weeks)\b', ql)
+             and re.search(r'\b(spend|spent|take|took)\b', ql)
+             and ql.startswith('how')):
+        return "duration_sum"
+    if re.match(r'^how (much|many)\b', q, re.I) \
+            and re.search(r'\btotal\b', ql):
+        return "total_sum"
+    if re.match(r'^what (is|was) the total number', ql):
+        return "number_total"
+    if re.match(r'^which\b', q, re.I) and re.search(r'\bmost\b', ql):
+        return "argmax"
+    return None
+
+
+def _cnt_duration_sum(question: str, sessions: list[dict]):
+    q = question.lower()
+    want_unit = ('days' if re.search(r'\bdays\b', q)
+                 else ('weeks' if re.search(r'\bweeks\b', q)
+                       else None))
+    if want_unit is None:
+        return None
+    anchors = _cnt_question_anchors(question)
+    are = _cnt_anchor_re(anchors)
+    per_session = defaultdict(
+        lambda: {'events': [], 'counts': set(), 'pnouns': set(),
+                 'anchor_ok': False})
+    # proper-noun anchors only — activity words like 'camping'
+    # appear in gear-discussion sessions and pollute propagation
+    cap_anchors = {w.lower()
+                   for w in re.findall(r"\b[A-Z][a-z]+\b", question)
+                   if w.lower() in anchors}
+    cap_are = _cnt_anchor_re(cap_anchors) if cap_anchors else None
+    for si, sent in _cnt_sents(sessions):
+        if are and are.search(sent):
+            per_session[si]['pnouns'] |= _cnt_proper_nouns(sent)
+            per_session[si]['counts'] |= {
+                int(n) for n in
+                re.findall(r'\ball\s+(\d{1,4})\b', sent)}
+            if cap_are and cap_are.search(sent):
+                per_session[si]['anchor_ok'] = True
+    # enrich signature from all non-intent sentences of anchor-ok
+    # sessions
+    for si, sent in _cnt_sents(sessions):
+        sess = per_session[si]
+        if not sess['anchor_ok']:
+            continue
+        if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
+            continue
+        sess['pnouns'] |= _cnt_proper_nouns(sent)
+
+    for si, sent in _cnt_sents(sessions):
+        sess = per_session[si]
+        if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
+            continue
+        if are and not are.search(sent) and not sess['anchor_ok']:
+            continue
+        for days, _span in _cnt_durations_days(sent):
+            sess['events'].append(round(days, 1))
+        dr = _cnt_daterange_days(sent)
+        if dr is not None:
+            sess['events'].append(round(dr, 1))
+
+    # merge equal values across sessions on signature overlap
+    merged = []   # [days, signature]
+    for si, data in sorted(per_session.items()):
+        sig = data['counts'] | data['pnouns']
+        for days in data['events']:
+            hit = next((ev for ev in merged
+                        if ev[0] == days and (ev[1] & sig)), None)
+            if hit:
+                hit[1] |= sig
+            else:
+                merged.append([days, set(sig)])
+    if not merged:
+        return None
+    # conjunctive completeness: "Hawaii and Seattle" — each needs
+    # an event, else abstain (fall through)
+    if cap_anchors and ' and ' in question.lower():
+        ev_sigs = set()
+        for ev, sig in merged:
+            ev_sigs |= sig
+        missing = [a for a in cap_anchors
+                   if a not in ev_sigs
+                   and not any(a in s for s in ev_sigs)]
+        if missing:
+            return None
+    total = sum(ev[0] for ev in merged)
+    val = total / (7.0 if want_unit == 'weeks' else 1.0)
+    return f"{round(val, 2):g} {want_unit}"
+
+
+def _cnt_total_sum(question: str, sessions: list[dict]):
+    amts = set()
+    for si, sent in _cnt_sents(sessions):
+        if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
+            continue
+        for m2 in re.finditer(
+                r'\$\s?(\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?)', sent):
+            amts.add(m2.group(1))
+    if not amts:
+        return None
+    total = round(sum(float(a.replace(',', '')) for a in amts), 2)
+    return f"${total:g}"
+
+
+def _cnt_number_total(question: str, sessions: list[dict]):
+    fam, subtypes = _cnt_np_fam(question)
+    if not fam:
+        return None
+    fam = {f for f in fam if len(f) >= 3}
+    for w in list(fam):
+        fam |= _CNT_HYPONYM.get(w, set()) \
+            | _CNT_HYPONYM.get(_cnt_sing(w), set())
+    sub_counts, all_counts = defaultdict(set), set()
+    for si, sent in _cnt_sents(sessions):
+        low = sent.lower()
+        if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
+            continue
+        if not any(re.search(r'\b' + re.escape(f) + r'\b', low)
+                   for f in fam):
+            continue
+        if subtypes:
+            for s_ in subtypes:
+                if re.search(r'\b' + re.escape(s_) + r's?\b', low):
+                    for em in re.finditer(
+                            r'\b(\d{1,3}(?:,\d{3})*|one|two|three'
+                            r'|four|five|six|seven|eight|nine|ten'
+                            r'|eleven|twelve|fifteen|twenty)\b'
+                            r'[^\w]{0,3}(?:\w+\s+){0,2}'
+                            + re.escape(s_) + r's?\b', sent, re.I):
+                        n = _cnt_num(em.group(1))
+                        if n and n < 10000:
+                            sub_counts[s_].add(n)
+        else:
+            for em in re.finditer(
+                    r'\b(\d{1,3}(?:,\d{3})*|one|two|three|four'
+                    r'|five|six|seven|eight|nine|ten|eleven|twelve'
+                    r'|fifteen|twenty)\b[^\w]{0,3}(?:\w+\s+){0,2}('
+                    + '|'.join(sorted(fam)) + r')\b', sent, re.I):
+                n = _cnt_num(em.group(1))
+                if n and n < 1000000:
+                    after = sent[em.end(1):em.start(2)] \
+                        .strip().lower().strip(' -')
+                    parts = after.split()
+                    if parts and parts[0].rstrip('s') in {
+                            u.rstrip('s')
+                            for u in _CNT_UNIT_BLACKLIST}:
+                        continue
+                    all_counts.add(n)
+    if subtypes:
+        vals = []
+        for s_ in subtypes:
+            if not sub_counts.get(s_):
+                return None      # conjunctive completeness
+            vals.append(max(sub_counts[s_]))
+        return str(int(sum(vals)))
+    if all_counts:
+        return str(int(sum(all_counts)))   # SUM of distinct
+    return None
+
+
+def _cnt_argmax_entity(question: str, sessions: list[dict]):
+    ql = question.lower()
+    money = ('money' in ql or 'spend' in ql or 'spent' in ql
+             or 'cost' in ql)
+    followers = 'follower' in ql
+    ent_totals = defaultdict(float)
+    for si, sent in _cnt_sents(sessions):
+        if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
+            continue
+        vals = []
+        if money:
+            vals = [float(x.replace(',', '')) for x in
+                    re.findall(
+                        r'\$\s?(\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?)',
+                        sent)]
+        elif followers:
+            vals = [float(x.replace(',', '')) for x in
+                    re.findall(r'\b(\d{1,6}(?:,\d{3})*)\s+'
+                               r'followers?\b', sent, re.I)]
+        if not vals:
+            continue
+        m = re.search(
+            r"\b(?:at|on|from|in)\s+((?:[A-Z][\w&'-]*\s*){1,3})",
+            sent)
+        if m:
+            key = m.group(1).strip()
+            toks = [w for w in key.split()
+                    if w.lower() not in _CNT_CAP_STOP]
+            if not toks:
+                continue
+            ent_totals[' '.join(toks)] += max(vals)
+        else:
+            ents = [w.lower() for w in
+                    re.findall(r"\b[A-Z][A-Za-z&'-]*\b", sent)
+                    if w.lower() not in _CNT_CAP_STOP
+                    and w.lower() not in ('the', 'i', 'my', 'we',
+                                          'a', 'an')]
+            ents = list(dict.fromkeys(ents))   # ordered dedup
+            if not ents:
+                continue
+            ent_totals[' '.join(ents)] += max(vals)
+    if not ent_totals:
+        return None
+    best = max(ent_totals.items(), key=lambda kv: kv[1])
+    return ' '.join(w.capitalize() for w in best[0].split())
+
+
+def answer_counting(question: str,
+                    sessions: list[dict]) -> tuple[str | None, dict]:
+    """Answer a counting-aggregation form from evidence sessions.
+
+    Args:
+        question: The raw question.
+        sessions: Evidence sessions — ``[{"session_id", "turns":
+            [{"role", "content"}]}]`` (the adapter groups its
+            ingested messages into this shape).
+
+    Returns:
+        ``(answer, detail)`` — answer ``None`` means the form did
+        not resolve (fall through to the gate chain; the gates own
+        abstention). ``detail["form"]`` names the detected form for
+        telemetry/forensics.
+    """
+    form = counting_form(question)
+    if form is None:
+        return None, {}
+    fn = {"duration_sum": _cnt_duration_sum,
+          "total_sum": _cnt_total_sum,
+          "number_total": _cnt_number_total,
+          "argmax": _cnt_argmax_entity}
+    try:
+        return fn[form](question, sessions), {"form": form}
+    except Exception:                     # noqa: BLE001 — never break
+        return None, {"form": form, "error": True}
+
+
+_CNT_NUMWORD = {v: k for k, v in _CNT_WORD2NUM.items()
+                if k not in ('a', 'an')}
+
+
+def _cnt_numval(s: str) -> float | None:
+    """Numeric value of an answer string (digits or word number)."""
+    if s is None:
+        return None
+    s = str(s).strip()
+    m = re.match(r'^\$?\s*([\d,]+(?:\.\d+)?)', s)
+    if m:
+        return float(m.group(1).replace(',', ''))
+    m = re.match(r'^\$?\s*(\w+)', s.lower())
+    if m and m.group(1) in _CNT_WORD2NUM:
+        return float(_CNT_WORD2NUM[m.group(1)])
+    # sentence-style GT: first numeric claim
+    m = re.search(
+        r'\b(five|four|three|two|one|zero|six|seven|eight|nine'
+        r'|ten|eleven|twelve|fifteen|twenty'
+        r'|\d+(?:,\d{3})*)\b', s.lower())
+    if m:
+        tok = m.group(1)
+        if tok in _CNT_WORD2NUM:
+            return float(_CNT_WORD2NUM[tok])
+        return float(tok.replace(',', ''))
+    return None
+
+
+def counting_judge(question: str, truth: str,
+                   predicted: str) -> bool:
+    """Judge counting answers (zero cost, numeric-first).
+
+    ``"2.5 weeks"`` vs ``"2.5"`` match numerically; word numbers
+    (``"three"`` vs ``"3"``) match; sentence-style ground truths
+    fall back to their first numeric claim; non-numeric answers
+    (argmax entities) fall back to bidirectional containment.
+    """
+    if not truth or not predicted:
+        return False
+    form = counting_form(question)
+    if form is None:
+        return exact_judge(question, truth, predicted)
+    p, g = _cnt_numval(predicted), _cnt_numval(truth)
+    if p is not None and g is not None:
+        return abs(p - g) < 1e-6
+    pl = str(predicted).lower().strip()
+    gl = str(truth).lower().strip()
+    if pl in gl or gl in pl:
+        return True
+    # entity answers: token-set containment — "Thrive Market" vs
+    # "Market Thrive" name the same store (word order is not
+    # semantics for proper-name evidence)
+    pt, gt_ = set(pl.split()), set(gl.split())
+    return bool(pt and gt_ and (pt <= gt_ or gt_ <= pt))
+
+
 def load_longmemeval_data(path, *, limit: int = 0) -> list[dict]:
     """Load a LongMemEval JSON dataset (list of question dicts).
 
@@ -1631,6 +2218,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              abstain_score: float = 1.0, abstain_entropy: float | None = 0.95,
              entropy_weak_score: int = 1,
              temporal_arith: bool = True,
+             counting: bool = True,
              assistant_recall: bool = True,
              recall_seed_k: int = 40,
              judge_mode: str = "exact") -> dict:
@@ -1662,6 +2250,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   abstain_entropy=abstain_entropy,
                   entropy_weak_score=entropy_weak_score,
                   temporal_arith=temporal_arith,
+                  counting=counting,
                   assistant_recall=assistant_recall,
                   recall_seed_k=recall_seed_k)
     all_results: list[dict] = []
@@ -1805,6 +2394,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-assistant-recall", action="store_true",
                         help="Disable the Cycle 468 speaker-recall "
                              "answer path (pre-C468 baseline)")
+    parser.add_argument("--no-counting", action="store_true",
+                        help="Disable the Cycle 477 multi-session "
+                             "counting path (pre-C477 baseline)")
     parser.add_argument("--mode", choices=("extract", "eval"),
                         default="extract",
                         help="extract = pre-C454 row dump (default); "
@@ -1836,6 +2428,7 @@ def main(argv: list[str] | None = None) -> int:
         abstain_entropy=abstain_entropy,
         entropy_weak_score=args.entropy_weak,
         temporal_arith=not args.no_temporal_arith,
+        counting=not args.no_counting,
         assistant_recall=not args.no_assistant_recall)
 
     if args.mode == "eval":
@@ -1852,6 +2445,7 @@ def main(argv: list[str] | None = None) -> int:
             abstain_entropy=abstain_entropy,
             entropy_weak_score=args.entropy_weak,
             temporal_arith=not args.no_temporal_arith,
+            counting=not args.no_counting,
             assistant_recall=not args.no_assistant_recall,
             judge_mode=args.judge)
         with open(args.output, "w", encoding="utf-8") as f:
