@@ -4,7 +4,7 @@
 
 ## 状态总览
 
-- 测试：0 → **50**（2026-08-19，hermetic：stub npm/pip + 临时 fixture，50/50 × 3 稳定）
+- 测试：0 → **58**（2026-08-19，hermetic：stub npm/pip + 临时 fixture，58/58 × 3 稳定）
 - 修复：6 个真 bug（管道子 shell / 函数外 local / 算术零崩溃 / 玄学引号嵌套 / json 裸字 / append_lines 假值传播）
 
 ## 功能点
@@ -20,6 +20,7 @@
 - [x] F8 --fail-on {none,vuln,major,outdated} 细粒度 CI 门禁（2026-08-19 新增）
 - [x] F9 --format csv（机器可读行式输出，2026-08-19 新增）
 - [x] F10 json 输出含 details 明细数组（vulnerabilities/outdated，2026-08-19 新增）
+- [x] F11 --ignore A,B,C 排除故意 pin 的包（2026-08-19 C480 第二循环新增）
 
 ## 已修复 bug（2026-08-19，C480）
 
@@ -34,7 +35,7 @@
 
 ## 已知问题 / 未做
 
-- README 权重表（40/30/20/10）与实现（逐项扣分）不一致 → 代码注释已澄清，README 待更新
+- README 权重表（40/30/20/10）与实现（逐项扣分）不一致 → 已在 C480 第二循环修正为逐项扣分表
 - text 输出框宽对齐在长项目名下会歪（printf 负宽度）——纯外观
 - pip-audit / pip 分支已有 hermetic stub 通道，但 python fixture 测试仅覆盖类型检测
 - `vuln_count`（high/critical 数）曾为死代码，已随 F1 修复移除

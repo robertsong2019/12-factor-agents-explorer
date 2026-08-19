@@ -185,7 +185,20 @@ else
   PASS=$((PASS+1)); echo "ok $PASS - security-only skips outdated"
 fi
 
-# ─── 11. python + unknown projects ──
+# ─── 12. F11: --ignore ──
+t "F11 ignore lodash exit 0" 0 run dirty proj_node --format json --ignore lodash
+assert_contains "F11 ignore high vuln: 73+15=88" '"score": 88'
+assert_contains "F11 ignored vuln not counted" '"vulnerabilities": 1'
+run dirty proj_node --format json --ignore express
+assert_contains "F11 ignore major: 73+5=78" '"score": 78'
+run dirty proj_node --format json --ignore express,ms
+assert_contains "F11 ignore list major+minor: 80" '"score": 80'
+run dirty proj_node --format json --ignore lodash,minimist,express,ms
+assert_contains "F11 ignore all → 100" '"score": 100'
+t "F11 ignore + fail-on vuln still exits 0" 0 run dirty proj_node --format json --ignore lodash,minimist --fail-on vuln
+t "F11 ignore bogus (no match) keeps score 73" 0 run dirty proj_node --format json --ignore nosuchpkg
+
+# ─── 13. python + unknown projects ──
 t "python project exit 0" 0 run clean proj_py --format json
 assert_contains "python type detected" '"type": "python"'
 assert_contains "python req.txt as lockfile" '"lockfile": true'

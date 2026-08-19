@@ -17,6 +17,7 @@ FORMAT="text"
 SECURITY_ONLY=false
 MIN_SCORE=0
 FAIL_ON="none"
+IGNORE=""
 PROJECT_DIR="."
 
 usage() {
@@ -30,6 +31,7 @@ Options:
   --security-only    Only check for vulnerabilities
   --min-score N      Exit 1 if health score < N (CI mode)
   --fail-on WHAT     Exit 1 if category non-empty: none, vuln, major, outdated
+  --ignore A,B,C     Package names to exclude from vuln/outdated counting
   --help             Show this help
   --version          Show version
 EOF
@@ -43,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --security-only) SECURITY_ONLY=true; shift ;;
     --min-score) MIN_SCORE="$2"; shift 2 ;;
     --fail-on) FAIL_ON="$2"; shift 2 ;;
+    --ignore)  IGNORE="$2"; shift 2 ;;
     --help) usage ;;
     --version) echo "dep-guard v${VERSION}"; exit 0 ;;
     -*) echo "Unknown option: $1"; exit 1 ;;
@@ -203,8 +206,34 @@ except Exception: pass
   fi
 }
 
+# Split ignore list into array
+declare -a IGNORES=()
+if [[ -n "$IGNORE" ]]; then
+  IFS=',' read -ra IGNORES <<< "$IGNORE"
+fi
+
 # ─── Run scan ────────────────────────────────────────
 if [[ "$PROJECT_TYPE" == "node" ]]; then scan_node; else scan_python; fi
+
+# ─── Apply --ignore (name field: vulns=1, outdated=0) ──
+filter_ignored() {
+  local -n __src=$1
+  local __field=$2 __line __keep __ig
+  local -a __out=()
+  if [[ ${#IGNORES[@]} -eq 0 ]]; then return 0; fi
+  for __line in "${__src[@]}"; do
+    __keep=true
+    for __ig in "${IGNORES[@]}"; do
+      if [[ "$(cut -d'|' -f$((__field+1)) <<< "$__line")" == "$__ig" ]]; then __keep=false; fi
+    done
+    if [[ "$__keep" == "true" ]]; then __out+=("$__line"); fi
+  done
+  __src=("${__out[@]}")
+  return 0
+}
+filter_ignored VULNS 1
+filter_ignored OUTDATED_MAJOR 0
+filter_ignored OUTDATED_MINOR 0
 
 # ─── Calculate score ────────────────────────────────
 # Per-item deduction (NOT the weighted-average table in the old README):
