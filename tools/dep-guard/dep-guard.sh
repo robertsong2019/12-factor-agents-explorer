@@ -3,7 +3,7 @@
 # Supports: Node.js (package.json), Python (requirements.txt)
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
@@ -16,6 +16,7 @@ NC='\033[0m'
 FORMAT="text"
 SECURITY_ONLY=false
 MIN_SCORE=0
+FAIL_ON="none"
 PROJECT_DIR="."
 
 usage() {
@@ -25,9 +26,10 @@ dep-guard v${VERSION} — Dependency health & security scanner
 Usage: dep-guard.sh [options] [project-dir]
 
 Options:
-  --format FORMAT    Output: text, json, markdown (default: text)
+  --format FORMAT    Output: text, json, csv, markdown (default: text)
   --security-only    Only check for vulnerabilities
   --min-score N      Exit 1 if health score < N (CI mode)
+  --fail-on WHAT     Exit 1 if category non-empty: none, vuln, major, outdated
   --help             Show this help
   --version          Show version
 EOF
@@ -40,12 +42,18 @@ while [[ $# -gt 0 ]]; do
     --format)   FORMAT="$2"; shift 2 ;;
     --security-only) SECURITY_ONLY=true; shift ;;
     --min-score) MIN_SCORE="$2"; shift 2 ;;
+    --fail-on) FAIL_ON="$2"; shift 2 ;;
     --help) usage ;;
     --version) echo "dep-guard v${VERSION}"; exit 0 ;;
     -*) echo "Unknown option: $1"; exit 1 ;;
     *) PROJECT_DIR="$1"; shift ;;
   esac
 done
+
+case "$FAIL_ON" in
+  none|vuln|major|outdated) ;;
+  *) echo "Error: --fail-on must be one of: none, vuln, major, outdated" >&2; exit 1 ;;
+esac
 
 cd "$PROJECT_DIR" 2>/dev/null || { echo "Error: cannot access $PROJECT_DIR"; exit 1; }
 
@@ -69,36 +77,30 @@ declare -a OUTDATED_MAJOR=()
 declare -a OUTDATED_MINOR=()
 HAS_LOCKFILE=false
 
+# Append non-empty lines from $2 to array named $1.
+# NOTE: parsing must NOT happen in a pipeline subshell — array writes there
+# are lost (the v1.0.0 bug that silently zeroed all scan results).
+append_lines() {
+  local -n __arr=$1
+  local __line
+  while IFS= read -r __line; do
+    if [[ -n "$__line" ]]; then
+      __arr+=("$__line")
+    fi
+  done <<< "$2"
+  return 0
+}
+
 scan_node() {
   # Lockfile check
   [[ -f package-lock.json || -f yarn.lock || -f pnpm-lock.yaml ]] && HAS_LOCKFILE=true
 
   # Security audit
   if command -v npm &>/dev/null; then
-    local audit_output
+    local audit_output parsed
     audit_output=$(npm audit --json 2>/dev/null || true)
     if [[ -n "$audit_output" ]]; then
-      local vuln_count
-      vuln_count=$(echo "$audit_output" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    v = d.get('metadata',{}).get('vulnerabilities',{})
-    print(v.get('high',0) + v.get('critical',0))
-except: print(0)
-" 2>/dev/null || echo 0)
-      local total_vulns
-      total_vulns=$(echo "$audit_output" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    v = d.get('metadata',{}).get('vulnerabilities',{})
-    print(sum(v.values()))
-except: print(0)
-" 2>/dev/null || echo 0)
-      if [[ "$total_vulns" -gt 0 ]]; then
-        # Extract individual vulns
-        echo "$audit_output" | python3 -c "
+      parsed=$(echo "$audit_output" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -106,20 +108,18 @@ try:
         severity = info.get('severity','?')
         title = info.get('title','')
         print(f'{severity}|{name}|{title}')
-except: pass
-" 2>/dev/null | while IFS='|' read -r sev name title; do
-          VULNS+=("$sev|$name|$title")
-        done
-      fi
+except Exception: pass
+" 2>/dev/null || true)
+      append_lines VULNS "$parsed"
     fi
   fi
 
   # Outdated check
   if [[ "$SECURITY_ONLY" == "false" ]] && command -v npm &>/dev/null; then
-    local outdated_output
+    local outdated_output parsed_major parsed_minor
     outdated_output=$(npm outdated --json 2>/dev/null || true)
     if [[ -n "$outdated_output" && "$outdated_output" != "{}" ]]; then
-      echo "$outdated_output" | python3 -c "
+      parsed_major=$(echo "$outdated_output" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -127,24 +127,28 @@ try:
         current = info.get('current','?')
         latest = info.get('latest','?')
         if current == 'missing' or latest == 'missing': continue
-        # Check major version diff
         try:
-            cm = int(current.split('.')[0])
-            lm = int(latest.split('.')[0])
-            if cm != lm:
-                print(f'MAJOR|{name}|{current}|{latest}')
-            else:
-                print(f'MINOR|{name}|{current}|{latest}')
-        except:
-            print(f'MINOR|{name}|{current}|{latest}')
-except: pass
-" 2>/dev/null | while IFS='|' read -r kind name current latest; do
-        if [[ "$kind" == "MAJOR" ]]; then
-          OUTDATED_MAJOR+=("$name|$current|$latest")
-        else
-          OUTDATED_MINOR+=("$name|$current|$latest")
-        fi
-      done
+            cm = int(current.split('.')[0]); lm = int(latest.split('.')[0])
+            if cm != lm: print(f'{name}|{current}|{latest}')
+        except ValueError: pass
+except Exception: pass
+" 2>/dev/null || true)
+      parsed_minor=$(echo "$outdated_output" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    for name, info in d.items():
+        current = info.get('current','?')
+        latest = info.get('latest','?')
+        if current == 'missing' or latest == 'missing': continue
+        try:
+            cm = int(current.split('.')[0]); lm = int(latest.split('.')[0])
+            if cm == lm: print(f'{name}|{current}|{latest}')
+        except ValueError: print(f'{name}|{current}|{latest}')
+except Exception: pass
+" 2>/dev/null || true)
+      append_lines OUTDATED_MAJOR "$parsed_major"
+      append_lines OUTDATED_MINOR "$parsed_minor"
     fi
   fi
 }
@@ -154,45 +158,48 @@ scan_python() {
 
   # pip-audit
   if command -v pip-audit &>/dev/null; then
-    local audit
+    local audit parsed
     audit=$(pip-audit --format json 2>/dev/null || true)
     if [[ -n "$audit" ]]; then
-      echo "$audit" | python3 -c "
+      parsed=$(echo "$audit" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
     for v in d.get('vulnerabilities',[]):
         print(f\"{v.get('severity','?')}|{v.get('package','?')}|{v.get('summary','')}\")
-except: pass
-" 2>/dev/null | while IFS='|' read -r sev name title; do
-        VULNS+=("$sev|$name|$title")
-      done
+except Exception: pass
+" 2>/dev/null || true)
+      append_lines VULNS "$parsed"
     fi
   fi
 
   # Outdated via pip list --outdated
   if [[ "$SECURITY_ONLY" == "false" ]] && command -v pip &>/dev/null; then
-    pip list --outdated --format=json 2>/dev/null | python3 -c "
+    local parsed_major parsed_minor
+    parsed_major=$(pip list --outdated --format=json 2>/dev/null | python3 -c "
 import sys, json
 try:
     for pkg in json.load(sys.stdin):
-        name = pkg.get('name','?')
-        ver = pkg.get('version','?')
-        latest = pkg.get('latest_version','?')
+        name = pkg.get('name','?'); ver = pkg.get('version','?'); latest = pkg.get('latest_version','?')
         try:
-            cm = int(ver.split('.')[0])
-            lm = int(latest.split('.')[0])
-            if cm != lm: print(f'MAJOR|{name}|{ver}|{latest}')
-            else: print(f'MINOR|{name}|{ver}|{latest}')
-        except: print(f'MINOR|{name}|{ver}|{latest}')
-except: pass
-" 2>/dev/null | while IFS='|' read -r kind name current latest; do
-      if [[ "$kind" == "MAJOR" ]]; then
-        OUTDATED_MAJOR+=("$name|$current|$latest")
-      else
-        OUTDATED_MINOR+=("$name|$current|$latest")
-      fi
-    done
+            cm = int(ver.split('.')[0]); lm = int(latest.split('.')[0])
+            if cm != lm: print(f'{name}|{ver}|{latest}')
+        except ValueError: pass
+except Exception: pass
+" 2>/dev/null || true)
+    parsed_minor=$(pip list --outdated --format=json 2>/dev/null | python3 -c "
+import sys, json
+try:
+    for pkg in json.load(sys.stdin):
+        name = pkg.get('name','?'); ver = pkg.get('version','?'); latest = pkg.get('latest_version','?')
+        try:
+            cm = int(ver.split('.')[0]); lm = int(latest.split('.')[0])
+            if cm == lm: print(f'{name}|{ver}|{latest}')
+        except ValueError: print(f'{name}|{ver}|{latest}')
+except Exception: pass
+" 2>/dev/null || true)
+    append_lines OUTDATED_MAJOR "$parsed_major"
+    append_lines OUTDATED_MINOR "$parsed_minor"
   fi
 }
 
@@ -200,26 +207,25 @@ except: pass
 if [[ "$PROJECT_TYPE" == "node" ]]; then scan_node; else scan_python; fi
 
 # ─── Calculate score ────────────────────────────────
+# Per-item deduction (NOT the weighted-average table in the old README):
+#   high/critical vuln -15, low/moderate vuln -5, major outdated -5,
+#   minor outdated -2, missing lockfile -5. Clamped to [0,100].
 VULN_COUNT=${#VULNS[@]}
 MAJOR_COUNT=${#OUTDATED_MAJOR[@]}
 MINOR_COUNT=${#OUTDATED_MINOR[@]}
 
 SCORE=100
-# Vulnerabilities: -15 each (high/critical), -5 each (low/moderate)
-for v in "${VULNS[@]+"${VULNS[@]}"}"; do
+for v in "${VULNS[@]}"; do
   IFS='|' read -r sev _ _ <<< "$v"
   if [[ "$sev" == "high" || "$sev" == "critical" ]]; then
-    (( SCORE -= 15 ))
+    SCORE=$((SCORE - 15))
   else
-    (( SCORE -= 5 ))
+    SCORE=$((SCORE - 5))
   fi
 done
-# Major outdated: -5 each
-(( SCORE -= MAJOR_COUNT * 5 ))
-# Minor outdated: -2 each
-(( SCORE -= MINOR_COUNT * 2 ))
-# Lockfile bonus: +5 if missing
-[[ "$HAS_LOCKFILE" == "false" ]] && (( SCORE -= 5 ))
+SCORE=$((SCORE - MAJOR_COUNT * 5))
+SCORE=$((SCORE - MINOR_COUNT * 2))
+[[ "$HAS_LOCKFILE" == "false" ]] && SCORE=$((SCORE - 5))
 
 (( SCORE < 0 )) && SCORE=0
 (( SCORE > 100 )) && SCORE=100
@@ -232,19 +238,54 @@ score_emoji() {
   fi
 }
 
+VULNS_STR=""
+MAJOR_STR=""
+MINOR_STR=""
+if (( VULN_COUNT > 0 ));   then VULNS_STR=$(printf '%s\n' "${VULNS[@]}"); fi
+if (( MAJOR_COUNT > 0 )); then MAJOR_STR=$(printf '%s\n' "${OUTDATED_MAJOR[@]}"); fi
+if (( MINOR_COUNT > 0 )); then MINOR_STR=$(printf '%s\n' "${OUTDATED_MINOR[@]}"); fi
+
 if [[ "$FORMAT" == "json" ]]; then
+  DEPG_PROJECT="$PROJECT_DIR" DEPG_TYPE="$PROJECT_TYPE" DEPG_SCORE="$SCORE" \
+  DEPG_VULN_COUNT="$VULN_COUNT" DEPG_MAJOR_COUNT="$MAJOR_COUNT" DEPG_MINOR_COUNT="$MINOR_COUNT" \
+  DEPG_LOCKFILE="$HAS_LOCKFILE" DEPG_VULNS="$VULNS_STR" DEPG_MAJOR="$MAJOR_STR" DEPG_MINOR="$MINOR_STR" \
   python3 -c "
-import json
+import json, os
+def triples(s):
+    out = []
+    for line in (s or '').splitlines():
+        p = line.split('|', 2)
+        if len(p) == 3:
+            out.append({'name': p[0], 'current': p[1], 'latest': p[2]})
+    return out
 print(json.dumps({
-    'project': '$PROJECT_DIR',
-    'type': '$PROJECT_TYPE',
-    'score': $SCORE,
-    'vulnerabilities': $VULN_COUNT,
-    'outdated_major': $MAJOR_COUNT,
-    'outdated_minor': $MINOR_COUNT,
-    'lockfile': $( $HAS_LOCKFILE && echo 'true' || echo 'false' )
+    'project': os.environ['DEPG_PROJECT'],
+    'type': os.environ['DEPG_TYPE'],
+    'score': int(os.environ['DEPG_SCORE']),
+    'vulnerabilities': int(os.environ['DEPG_VULN_COUNT']),
+    'outdated_major': int(os.environ['DEPG_MAJOR_COUNT']),
+    'outdated_minor': int(os.environ['DEPG_MINOR_COUNT']),
+    'lockfile': os.environ['DEPG_LOCKFILE'] == 'true',
+    'details': {
+        'vulnerabilities': [
+            dict(zip(('severity','name','title'), l.split('|', 2)))
+            for l in (os.environ['DEPG_VULNS'] or '').splitlines() if l
+        ],
+        'outdated_major': triples(os.environ['DEPG_MAJOR']),
+        'outdated_minor': triples(os.environ['DEPG_MINOR']),
+    },
 }, indent=2))
 "
+
+elif [[ "$FORMAT" == "csv" ]]; then
+  echo "metric,value"
+  echo "project,$PROJECT_DIR"
+  echo "type,$PROJECT_TYPE"
+  echo "score,$SCORE"
+  echo "vulnerabilities,$VULN_COUNT"
+  echo "outdated_major,$MAJOR_COUNT"
+  echo "outdated_minor,$MINOR_COUNT"
+  echo "lockfile,$HAS_LOCKFILE"
 
 elif [[ "$FORMAT" == "markdown" ]]; then
   echo "# dep-guard Report"
@@ -261,7 +302,7 @@ elif [[ "$FORMAT" == "markdown" ]]; then
   echo ""
   if (( VULN_COUNT > 0 )); then
     echo "## Vulnerabilities"
-    for v in "${VULNS[@]+"${VULNS[@]}"}"; do
+    for v in "${VULNS[@]}"; do
       IFS='|' read -r sev name title <<< "$v"
       echo "- **[${sev}]** ${name}: ${title}"
     done
@@ -269,7 +310,7 @@ elif [[ "$FORMAT" == "markdown" ]]; then
   fi
   if (( MAJOR_COUNT > 0 )); then
     echo "## Outdated (Major)"
-    for o in "${OUTDATED_MAJOR[@]+"${OUTDATED_MAJOR[@]}"}"; do
+    for o in "${OUTDATED_MAJOR[@]}"; do
       IFS='|' read -r name cur lat <<< "$o"
       echo "- **${name}** ${cur} → ${lat}"
     done
@@ -293,7 +334,7 @@ else
     echo -e "${CYAN}║${NC}  🔒 Security: ${GREEN}0 issues${NC}               ${CYAN}║${NC}"
   else
     echo -e "${CYAN}║${NC}  🔒 Security: ${RED}${VULN_COUNT} issue(s)${NC}           ${CYAN}║${NC}"
-    for v in "${VULNS[@]+"${VULNS[@]}"}"; do
+    for v in "${VULNS[@]}"; do
       IFS='|' read -r sev name title <<< "$v"
       echo -e "${CYAN}║${NC}    ${RED}[${sev}]${NC} ${name}: ${title:0:25}  ${CYAN}║${NC}"
     done
@@ -301,16 +342,16 @@ else
 
   # Outdated
   if [[ "$SECURITY_ONLY" == "false" ]]; then
-    local total_out=$((MAJOR_COUNT + MINOR_COUNT))
+    total_out=$((MAJOR_COUNT + MINOR_COUNT))
     if (( total_out == 0 )); then
       echo -e "${CYAN}║${NC}  📦 Outdated: ${GREEN}0 packages${NC}           ${CYAN}║${NC}"
     else
       echo -e "${CYAN}║${NC}  📦 Outdated: ${YELLOW}${total_out} package(s)${NC}         ${CYAN}║${NC}"
-      for o in "${OUTDATED_MAJOR[@]+"${OUTDATED_MAJOR[@]}"}"; do
+      for o in "${OUTDATED_MAJOR[@]}"; do
         IFS='|' read -r name cur lat <<< "$o"
         echo -e "${CYAN}║${NC}    ${YELLOW}•${NC} ${name} ${cur} → ${lat} (major)  ${CYAN}║${NC}"
       done
-      for o in "${OUTDATED_MINOR[@]+"${OUTDATED_MINOR[@]}"}"; do
+      for o in "${OUTDATED_MINOR[@]}"; do
         IFS='|' read -r name cur lat <<< "$o"
         echo -e "${CYAN}║${NC}    ${DIM}•${NC} ${name} ${cur} → ${lat}  ${CYAN}║${NC}"
       done
@@ -329,8 +370,18 @@ else
   echo ""
 fi
 
-# CI gate
+# ─── CI gates ────────────────────────────────────────
+GATE_MSG=""
 if (( MIN_SCORE > 0 && SCORE < MIN_SCORE )); then
-  echo "❌ Health score ${SCORE} is below threshold ${MIN_SCORE}"
+  GATE_MSG="❌ Health score ${SCORE} is below threshold ${MIN_SCORE}"
+elif [[ "$FAIL_ON" != "none" ]]; then
+  case "$FAIL_ON" in
+    vuln)     (( VULN_COUNT > 0 )) && GATE_MSG="❌ --fail-on vuln: ${VULN_COUNT} vulnerability(ies) found" ;;
+    major)    (( MAJOR_COUNT > 0 )) && GATE_MSG="❌ --fail-on major: ${MAJOR_COUNT} major outdated package(s)" ;;
+    outdated) (( MAJOR_COUNT + MINOR_COUNT > 0 )) && GATE_MSG="❌ --fail-on outdated: $((MAJOR_COUNT + MINOR_COUNT)) outdated package(s)" ;;
+  esac
+fi
+if [[ -n "$GATE_MSG" ]]; then
+  echo "$GATE_MSG"
   exit 1
 fi
