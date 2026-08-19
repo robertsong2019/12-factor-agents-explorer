@@ -389,14 +389,19 @@ class MemoryGraph:
                 created=now, accessed=now, weight=1.0
             )
             tags = item.get("tags", [])
-            # 优化：直接使用JSON字符串，避免重复转换
+            # 优化：延迟FTS同步到最后，减少数据库查询次数
             self.conn.execute(
                 "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
                 (node.id, node.label, node.kind, json.dumps(node.data),
                  node.created, node.accessed, node.weight, json.dumps(tags))
             )
-            self._fts_sync_node(node.id)
             nodes.append(node)
+        
+        # 优化：批量FTS同步，减少数据库往返
+        if getattr(self, '_fts_enabled', False):
+            for node in nodes:
+                self._fts_sync_node(node.id)
+        
         self.conn.commit()
         return nodes
 
