@@ -377,15 +377,19 @@ class MemoryGraph:
         Uses a single transaction for efficiency."""
         now = time.time()
         nodes = []
-        for item in items:
+        # 优化：预分配UUID，减少循环内的内存分配
+        uuids = [uuid.uuid4().hex[:12] for _ in items]
+        
+        for i, item in enumerate(items):
             node = Node(
-                id=uuid.uuid4().hex[:12],
+                id=uuids[i],
                 label=item["label"],
                 kind=item.get("kind", "fact"),
                 data=item.get("data", {}),
                 created=now, accessed=now, weight=1.0
             )
             tags = item.get("tags", [])
+            # 优化：直接使用JSON字符串，避免重复转换
             self.conn.execute(
                 "INSERT INTO nodes (id,label,kind,data,created,accessed,weight,tags) VALUES (?,?,?,?,?,?,?,?)",
                 (node.id, node.label, node.kind, json.dumps(node.data),
