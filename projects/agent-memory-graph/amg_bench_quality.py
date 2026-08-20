@@ -1653,6 +1653,85 @@ def _anchor_keywords(anchor: str) -> list[str]:
     return ks or _keywords(anchor)
 
 
+def _cnt_filter_session_context(sessions: list[dict], 
+                               question_date: str = "",
+                               max_sessions: int = 3) -> list[dict]:
+    """Filter sessions to only include relevant temporal context.
+    
+    Args:
+        sessions: List of session dictionaries
+        question_date: ISO format date when question was asked
+        max_sessions: Maximum number of relevant sessions to include
+        
+    Returns:
+        Filtered list of sessions likely to contain relevant temporal context
+    """
+    if not sessions:
+        return []
+    
+    # If we have a question date, prioritize sessions around that time
+    if question_date:
+        try:
+            from datetime import datetime
+            q_date = datetime.fromisoformat(question_date.replace('Z', '+00:00'))
+            
+            # Score sessions by temporal proximity
+            scored_sessions = []
+            for i, session in enumerate(sessions):
+                session_score = 0
+                
+                # Check session date if available
+                if 'date' in session:
+                    try:
+                        s_date = datetime.fromisoformat(session['date'].replace('Z', '+00:00'))
+                        days_diff = abs((q_date - s_date).days)
+                        
+                        # Recent sessions score higher (exponential decay)
+                        if days_diff <= 7:  # Same week
+                            session_score += 3
+                        elif days_diff <= 30:  # Same month
+                            session_score += 2
+                        elif days_diff <= 90:  # Same quarter
+                            session_score += 1
+                        elif days_diff <= 365:  # Same year
+                            session_score += 0.5
+                        
+                        # Future/past bias handling
+                        if s_date > q_date:  # Future sessions (plans/reminders)
+                            session_score *= 0.3  # Deprioritize future planning
+                        elif days_diff > 30:  # Distant past
+                            session_score *= 0.7  # Slight deprioritization
+                            
+                    except (ValueError, KeyError):
+                        pass
+                
+                # Score by content relevance
+                content_score = 0
+                if 'messages' in session:
+                    content = ' '.join(session['messages'])
+                    # Score for temporal keywords
+                    temporal_keywords = ['day', 'week', 'month', 'year', 'today', 'yesterday', 
+                                       'tomorrow', 'last', 'next', 'this', 'ago', 'since']
+                    for keyword in temporal_keywords:
+                        if keyword in content.lower():
+                            content_score += 0.1
+                
+                total_score = session_score + content_score
+                scored_sessions.append((total_score, i, session))
+            
+            # Sort by score and return top sessions
+            scored_sessions.sort(reverse=True, key=lambda x: x[0])
+            top_sessions = [sess[2] for sess in scored_sessions[:max_sessions]]
+            return top_sessions
+            
+        except Exception:
+            # Fall back to simple slicing if date parsing fails
+            pass
+    
+    # Default: Return most recent sessions
+    return sessions[:max_sessions]
+
+
 def duration_units(date_a: str, date_b: str, unit: str) -> int:
     """Calendar distance between canonical dates in *unit*.
 
