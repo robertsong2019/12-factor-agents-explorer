@@ -21,6 +21,7 @@ program
   .description('初始化新的 MCP 服务器项目')
   .option('-t, --type <type>', '服务器类型 (stdlib|stdio|sse)', 'stdio')
   .option('-d, --description <desc>', '服务器描述')
+  .option('-e, --example', '生成示例代码（echo 工具）')
   .action(init);
 
 // 验证 MCP 服务器配置
@@ -56,10 +57,9 @@ program
   .option('-h, --host <host>', 'SSE 模式下的主机地址', 'localhost')
   .action(serve);
 
-// 解析命令行参数
-program.parse(process.argv);
-
-// 如果没有提供任何命令，显示帮助信息
+// 解析命令行参数（无参数时仅输出帮助并以 0 退出，而非 commander 默认的 error=1）
 if (!process.argv.slice(2).length) {
   program.outputHelp();
+} else {
+  program.parse(process.argv);
 }

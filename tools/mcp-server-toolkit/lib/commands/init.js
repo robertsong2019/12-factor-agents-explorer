@@ -54,6 +54,12 @@ export async function init(name, options) {
     options.addExample = answers.addExample;
   }
 
+  // CLI 提供的名称走同一校验（与交互式 inquirer validate 一致）
+  if (name && !/^[a-z0-9-]+$/.test(name)) {
+    console.log(chalk.red('❌ 项目名称只能包含小写字母、数字和连字符'));
+    process.exit(1);
+  }
+
   const projectDir = path.resolve(name);
 
   // 检查目录是否已存在
@@ -95,7 +101,7 @@ export async function init(name, options) {
       },
       devDependencies: {
         '@types/node': '^20.0.0',
-        typescript': '^5.0.0',
+        'typescript': '^5.0.0',
         jest: '^29.0.0',
         '@types/jest': '^29.0.0'
       },
@@ -149,7 +155,7 @@ export async function init(name, options) {
     await fs.writeJson(path.join(projectDir, 'mcp-server.json'), mcpConfig, { spaces: 2 });
 
     // 创建主服务器文件
-    const serverCode = generateServerCode(name, options.type, options.addExample);
+    const serverCode = generateServerCode(name, options.type, options.addExample || options.example);
     await fs.writeFile(path.join(projectDir, 'src/index.ts'), serverCode);
 
     // 创建 README
