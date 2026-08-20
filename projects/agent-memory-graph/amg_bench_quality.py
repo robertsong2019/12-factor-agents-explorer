@@ -54,7 +54,7 @@ import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from memory_graph import MemoryGraph
@@ -71,6 +71,9 @@ __all__ = [
     "duration_units",
     "answer_temporal_arith",
     "temporal_arith_judge",
+    "pp_duration_form",
+    "answer_pp_duration",
+    "pp_duration_judge",
     "recall_form",
     "answer_speaker_recall",
     "load_longmemeval_data",
@@ -417,6 +420,7 @@ class LongMemEvalAdapter:
                  entropy_weak_score: int = 1,
                  temporal_arith: bool = True,
                  counting: bool = True,
+                 pp_duration: bool = True,
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
                  recall_mode: str = "distinctive",
@@ -447,6 +451,13 @@ class LongMemEvalAdapter:
                 total money / total number of instances / argmax
                 entity forms over the full ingested haystack;
                 unresolved forms fall through to the gate chain).
+            pp_duration: Enable the Cycle 486 past-perfect duration
+                path ("How long had I been <state> when/before
+                <event>?" resolved by anchoring both duration
+                expressions to absolute dates via their containing
+                session, then calendar subtraction; nested-tenure
+                route for before-current-job forms; unresolved
+                forms fall through to the gate chain).
             assistant_recall: Enable the Cycle 468 speaker-recall
                 answer path (you-addressed "remind me what you
                 recommended" forms answered from the best-scored
@@ -479,6 +490,7 @@ class LongMemEvalAdapter:
         self.entropy_weak_score = entropy_weak_score
         self.temporal_arith = temporal_arith
         self.counting = counting
+        self.pp_duration = pp_duration
         self.assistant_recall = assistant_recall
         self.recall_min_score = recall_min_score
         self.recall_mode = recall_mode
@@ -765,6 +777,32 @@ class LongMemEvalAdapter:
                 meta["abstained"] = False
                 return t_ans, meta
 
+        # Cycle 486: past-perfect duration forms (#077) — "How long
+        # had I been <state> when/before <event>?" Every "N units
+        # ago" / "for N units (now)" expression anchors to the
+        # ABSOLUTE date of its containing session (C482's
+        # line-adverbial insight generalized from dates to
+        # durations); the answer is calendar subtraction on the two
+        # anchors. Nested-tenure route ("before I started my current
+        # job at X" = total profession − tenure at X, in months)
+        # handles the compound y+m case. Full-haystack evidence —
+        # anchors are session-scattered (the C472 full-graph
+        # lesson). Runs after temporal_arith, before counting:
+        # the precise-arithmetic family claims first when forms
+        # overlap (C482 gate-order lesson). Fall-through preserved;
+        # only the negative-existence abstain (before-job route, no
+        # tenure line for the company anywhere) resolves here.
+        if (self.pp_duration and self._session_dates
+                and pp_duration_form(question)):
+            dated = [(self._session_dates.get(s["session_id"], ""),
+                      s["turns"]) for s in self._counting_sessions()]
+            p_ans, p_detail = answer_pp_duration(question, dated)
+            meta["pp_duration"] = p_detail
+            if p_ans is not None:
+                meta["gate"] = "pp_duration"
+                meta["abstained"] = p_ans == ABSTAIN_ANSWER
+                return p_ans, meta
+
         # Cycle 477: multi-session counting forms — evidence-side
         # aggregation (#075 i3 layered integration: ONLY precision-
         # ≥0.5 mechanisms — duration_sum 0.67 / total_sum 1.00 /
@@ -931,6 +969,8 @@ class LongMemEvalAdapter:
                                                predicted)
             elif meta.get("gate") == "counting":
                 correct = counting_judge(question, truth, predicted)
+            elif meta.get("gate") == "pp_duration":
+                correct = pp_duration_judge(question, truth, predicted)
             elif judge_fn is not None:
                 correct = bool(judge_fn(question, truth, predicted))
             else:
@@ -1930,6 +1970,325 @@ def temporal_arith_judge(question: str, truth: str,
     return bool(preds and golds and any(p in golds for p in preds))
 
 
+# ════════ Cycle 486: past-perfect duration forms (#077) ════════
+# "How long had I been <state> when/before <event>?" — durations
+# are dates in disguise: every "N units ago" / "for N units (now)"
+# expression resolves to an absolute date via its containing
+# session, and the past-perfect question reduces to the same
+# calendar subtraction as C457/C482 (one subtract, no LLM).
+# Prototype validated 7/7 on the full-500 population (baseline
+# 0/7); the strict form gate matched ONLY currently-wrong questions
+# → zero hijack surface by construction (C473 form-classifier
+# interlock property, now proven for answer-side routes).
+
+_PP_UNIT_DAYS = {"year": 365.25, "month": 30.44, "week": 7.0,
+                 "day": 1.0, "hour": 1 / 24, "minute": 1 / 1440}
+
+_PP_NUM_RE_SRC = (r"(\d+|a|an|one|two|three|four|five|six|seven|"
+                  r"eight|nine|ten|eleven|twelve)")
+
+_PP_AGO_RE = re.compile(
+    r"\b(?:about\s+|around\s+|over\s+|almost\s+|just\s+|recently\s+)?"
+    + _PP_NUM_RE_SRC
+    + r"\s*(?:and\s+a\s+half\s*)?(years?|months?|weeks?|days?|hours?|"
+      r"minutes?)\s+ago\b", re.I)
+_PP_LAST_RE = re.compile(r"\blast\s+(month|week|year)\b", re.I)
+_PP_NOW_RE = re.compile(
+    r"\bfor\s+(?:about\s+|around\s+|over\s+|almost\s+|just\s+)?"
+    + _PP_NUM_RE_SRC
+    + r"\s*(?:and\s+a\s+half\s*)?"
+      r"(years?|months?|weeks?|days?|hours?|minutes?)\b(?:\s+now\b)?",
+    re.I)
+_PP_BEFORE_JOB_RE = re.compile(
+    r"before\s+i\s+started\s+my\s+current\s+job\s+at\s+"
+    r"([a-z0-9 .&'-]+?)\s*\??\s*$", re.I)
+_PP_TENURE_RE = re.compile(
+    r"for\s+(?:about\s+|around\s+|over\s+|almost\s+)?"
+    + _PP_NUM_RE_SRC
+    + r"\s*(years?|months?)"
+      r"(?:\s+and\s+" + _PP_NUM_RE_SRC + r"\s*months?)?\s*(?:now\b)?",
+    re.I)
+
+_PP_HEAD_RE = re.compile(r"^\s*how long\s+(?:had|have|did)\b", re.I)
+
+# clause stopwords — 3-letter content nouns ("rug", "amp") must
+# survive (#077 prototype v2 lesson: len>3 silently dropped them)
+_PP_STOP = frozenset({
+    "how", "long", "had", "have", "been", "when", "before", "i",
+    "my", "me", "the", "a", "an", "to", "of", "in", "at", "for",
+    "on", "new", "regularly", "current", "job", "using", "so",
+    "far", "did", "you", "was", "were", "that"})
+
+
+def _pp_num(tok: str) -> int | None:
+    """Word/digit → int (None when unparsable)."""
+    return (int(tok) if tok.isdigit()
+            else _CNT_WORD2NUM.get(tok.lower()))
+
+
+def pp_duration_form(question: str) -> bool:
+    """Strict past-perfect duration form gate (#077 census).
+
+    ``how long (had|have|did) … (when|before)`` — the census over
+    the full-500 found exactly 7 ``had|have`` matches (all currently
+    wrong, zero currently-correct questions inside) plus one
+    ``did`` sibling (same arithmetic). Pure-tenure "how long have I
+    been X?" (no when/before) is deliberately excluded until the
+    v2 tenure route ships; "how long did it take…" event-duration
+    questions carry no when/before clause either.
+    """
+    q = question.strip()
+    if not _PP_HEAD_RE.match(q):
+        return False
+    return bool(re.search(r"\b(?:when|before)\b", q, re.I))
+
+
+def _pp_dur_exprs(line: str):
+    """Yield ``(kind, n, unit, raw)`` for every duration expression.
+
+    Two expression families, one arithmetic: *ago-type* (``N units
+    ago``, ``last month/week/year``) and *now-type* (``for N units
+    (now)`` — present-perfect tenure) both yield
+    ``session_date − N`` as the state/event start.
+    """
+    for m in _PP_AGO_RE.finditer(line):
+        n, u = _pp_num(m.group(1)), m.group(2)
+        if n:
+            yield ("ago", n, u.lower().rstrip("s"), m.group(0))
+    for m in _PP_LAST_RE.finditer(line):
+        u = m.group(1).lower()
+        yield ("ago", 1, u, m.group(0))
+    for m in _PP_NOW_RE.finditer(line):
+        n, u = _pp_num(m.group(1)), m.group(2)
+        if n:
+            yield ("now", n, u.lower().rstrip("s"), m.group(0))
+
+
+def _pp_kws(clause: str) -> list[str]:
+    """Distinctive content keywords of a state/event clause."""
+    return [w for w in re.findall(r"[a-z]+", clause.lower())
+            if w not in _PP_STOP and len(w) >= 3]
+
+
+def _pp_overlap(kw_list: list[str], line: str) -> int:
+    low = line.lower()
+    return sum(1 for w in kw_list if w in low)
+
+
+def _pp_render(days: float, hint_units: list[str]) -> str:
+    """Render a day count in the anchors' dominant unit.
+
+    Nonzero guard (#077 v4): a tolerance branch that accepts ``0
+    months`` for 10 days is a fabrication — every render path must
+    keep ``0 < round(x)``.
+    """
+    if days <= 0:
+        return "0 days"
+    if "week" in hint_units:
+        w = days / 7
+        r = round(w)
+        if 0 < r and abs(w - r) <= 0.5:
+            return f"{r} week" + ("s" if r != 1 else "")
+    if "month" in hint_units:
+        mo = days / 30.44
+        r = round(mo)
+        if 0 < r and abs(mo - r) <= 0.5:
+            return f"{r} month" + ("s" if r != 1 else "")
+    d = round(days)
+    if d > 0:
+        return f"{d} day" + ("s" if d != 1 else "")
+    return f"{round(days, 1)} days"
+
+
+def _pp_ym_sub(total_m: int, part_m: int) -> str:
+    """Compound y+m subtraction in months → canonical string."""
+    d = total_m - part_m
+    y, mo = d // 12, d % 12
+    return (f"{y} year{'s' if y != 1 else ''} and "
+            f"{mo} month{'s' if mo != 1 else ''}")
+
+
+def _pp_tenure_months(line: str) -> int | None:
+    """Parse ``for [about] N years [and M months] (now)`` → months."""
+    m = _PP_TENURE_RE.search(line)
+    if not m:
+        return None
+    n = _pp_num(m.group(1))
+    if n is None:
+        return None
+    total = n * (12 if m.group(2).lower().startswith("year") else 1)
+    if m.group(3):
+        extra = _pp_num(m.group(3))
+        if extra is not None:
+            total += extra
+    return total
+
+
+def answer_pp_duration(
+        question: str,
+        dated_sessions: list[tuple[str, list[dict]]],
+) -> tuple[str | None, dict]:
+    """Answer a past-perfect duration question (zero LLM).
+
+    Routes (#077 prototype, 7/7 vs baseline 0/7):
+
+    (a) *nested tenure* — "How long had I been working before I
+        started my current job at <C>?" Both facts are stated
+        as-of-now: ``total(profession) − tenure(C)`` in months.
+        No tenure line for C anywhere → ABSTAIN (negative
+        existence — the company was never joined).
+    (b) *anchor arithmetic* — split the question at when/before
+        into state and event clauses; scan user lines for duration
+        expressions; anchor each to ``session_date − N``. Two-phase
+        cross-exclusion selection: the event line is picked first
+        (max event-overlap), then the state line EXCLUDING that
+        line's identity — shared phrases ("bird watching") make
+        single-line double-capture the dominant failure mode.
+
+    Args:
+        question: The question text.
+        dated_sessions: Full-haystack evidence as
+            ``[(session_date "YYYY-MM-DD", turns), …]``; only user
+            lines are scanned. Unparsable dates are skipped.
+
+    Returns:
+        ``(answer | None, detail)`` — ``None`` = unresolved (fall
+        through to the gate chain; the gates own abstention).
+    """
+    detail: dict = {"form": "pp_duration"}
+    sessions: list[tuple[datetime, list[dict]]] = []
+    for sdate, turns in dated_sessions:
+        try:
+            dt = datetime.strptime(sdate, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+        sessions.append((dt, turns))
+    if not sessions:
+        return None, detail
+
+    m = _PP_BEFORE_JOB_RE.search(question)
+    if m:  # route (a): tenure subtraction
+        company = m.group(1).strip().rstrip("?.!")
+        comp_low = company.lower()
+        best_tenure = best_total = None
+        for _dt, turns in sessions:
+            for turn in turns:
+                if turn.get("role") != "user":
+                    continue
+                line = str(turn.get("content", ""))
+                low = line.lower()
+                if comp_low in low:
+                    tm = _pp_tenure_months(line)
+                    if tm is not None and ("work" in low
+                                           or "job" in low):
+                        best_tenure = tm
+                if ("working professionally" in low
+                        or ("working" in low and " for " in low)):
+                    tm = _pp_tenure_months(line)
+                    if tm is not None and comp_low not in low:
+                        best_total = tm
+        detail["route"] = "before_job"
+        detail["company"] = company
+        if best_tenure is None:
+            # Negative existence: no tenure line for the company
+            # anywhere — absence of state evidence, not retrieval
+            # failure (mirrors C469's ownership wall).
+            detail["abstain"] = f"no tenure line for {company}"
+            return ABSTAIN_ANSWER, detail
+        if best_total is None or best_total < best_tenure:
+            detail["abstain"] = "unparsable tenure/total"
+            return ABSTAIN_ANSWER, detail
+        detail["tenure_m"], detail["total_m"] = best_tenure, best_total
+        return _pp_ym_sub(best_total, best_tenure), detail
+
+    # route (b): event_abs − state_abs
+    if re.search(r"\bwhen\b", question, re.I):
+        state_clause, event_clause = re.split(
+            r"\bwhen\b", question, 1, flags=re.I)
+    else:
+        state_clause, event_clause = re.split(
+            r"\bbefore\b", question, 1, flags=re.I)
+    state_clause = re.sub(
+        r"^\s*how long\s+(?:had|have|did)\s+(?:i\s+)?(?:been\s+)?",
+        "", state_clause, flags=re.I)
+    sk, ek = _pp_kws(state_clause), _pp_kws(event_clause)
+    scored = []  # (line_id, s_ov, e_ov, anchor, n, unit, kind)
+    for si, (dt, turns) in enumerate(sessions):
+        for ti, turn in enumerate(turns):
+            if turn.get("role") != "user":
+                continue
+            line = str(turn.get("content", ""))
+            for kind, n, u, _raw in _pp_dur_exprs(line):
+                anchor = dt - timedelta(days=n * _PP_UNIT_DAYS[u])
+                scored.append(((si, ti), _pp_overlap(sk, line),
+                               _pp_overlap(ek, line), anchor, n, u, kind))
+    # phase 1: event anchor (max event-overlap; ties prefer lines
+    # whose event-overlap dominates over state-overlap).
+    ev_c = [x for x in scored if x[2] >= 2]
+    best_event = max(ev_c, key=lambda x: (x[2], -x[1])) if ev_c else None
+    # phase 2: state anchor — max state-overlap among lines OTHER
+    # than the event line (cross-exclusion by line identity).
+    st_c = [x for x in scored
+            if x[1] >= 2
+            and x[0] != (best_event[0] if best_event else None)]
+    best_state = max(st_c, key=lambda x: (x[1], -x[2])) if st_c else None
+    if not best_state or not best_event:
+        detail["missing"] = ("state" if not best_state else "event") \
+            + " anchor"
+        return None, detail
+    days = abs((best_event[3] - best_state[3]).days)
+    detail.update(route="ago_arith", state_unit=best_state[5],
+                  event_unit=best_event[5], days=days)
+    return _pp_render(days, [best_state[5], best_event[5]]), detail
+
+
+_PP_NUMWORD_JUDGE_RE = re.compile(
+    r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|"
+    r"eleven|twelve)\b")
+
+
+def _pp_norm_judge(s: str) -> str:
+    """Normalize number words to digits, strip punctuation."""
+    s = s.lower().strip()
+    s = _PP_NUMWORD_JUDGE_RE.sub(
+        lambda m: str(int(m.group(1))) if m.group(1).isdigit()
+        else str(_CNT_WORD2NUM.get(m.group(1), m.group(1))), s)
+    s = re.sub(r"[^a-z0-9 ]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def pp_duration_judge(question: str, truth: str,
+                      predicted: str) -> bool:
+    """Judge past-perfect duration answers (zero cost).
+
+    Word-number normalization ("two weeks" ≡ "2 weeks"), GT
+    day-range tolerance ("Answers ranging from 7 to 10 days are
+    also acceptable"), and singular/plural + article tolerance.
+    """
+    if not truth or not predicted:
+        return False
+    if predicted.strip() == ABSTAIN_ANSWER:
+        return ("not enough" in truth.lower()
+                or "haven't" in truth.lower())
+    if "not enough" in truth.lower():
+        return False
+    rng = re.search(r"ranging from (\d+) to (\d+) days",
+                    truth.lower())
+    base = _pp_norm_judge(
+        re.split(r"Answers ranging", truth, flags=re.I)[0])
+    p = _pp_norm_judge(predicted)
+    if rng:
+        m = re.search(r"(\d+)", p)
+        if m and int(rng.group(1)) <= int(m.group(1)) \
+                <= int(rng.group(2)):
+            return True
+    if p == base:
+        return True
+    ps = re.sub(r"\b(?:a|an|the)\b|s\b", "", p).split()
+    bs = re.sub(r"\b(?:a|an|the)\b|s\b", "", base).split()
+    return ps == bs
+
+
 # ════════ Cycle 477: multi-session counting forms (#075 i3) ════════
 # Layered integration of the counting-aggregation prototype
 # (msagg_proto_v2.py): ONLY precision-≥0.5 mechanisms enter the
@@ -2752,6 +3111,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              entropy_weak_score: int = 1,
              temporal_arith: bool = True,
              counting: bool = True,
+             pp_duration: bool = True,
              assistant_recall: bool = True,
              recall_mode: str = "distinctive",
              recall_seed_k: int = 40,
@@ -2785,6 +3145,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   entropy_weak_score=entropy_weak_score,
                   temporal_arith=temporal_arith,
                   counting=counting,
+                  pp_duration=pp_duration,
                   assistant_recall=assistant_recall,
                   recall_mode=recall_mode,
                   recall_seed_k=recall_seed_k)
@@ -2938,6 +3299,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-counting", action="store_true",
                         help="Disable the Cycle 477 multi-session "
                              "counting path (pre-C477 baseline)")
+    parser.add_argument("--no-pp-duration", action="store_true",
+                        help="Disable the Cycle 486 past-perfect "
+                             "duration path (pre-C486 baseline)")
     parser.add_argument("--mode", choices=("extract", "eval"),
                         default="extract",
                         help="extract = pre-C454 row dump (default); "
@@ -2970,6 +3334,7 @@ def main(argv: list[str] | None = None) -> int:
         entropy_weak_score=args.entropy_weak,
         temporal_arith=not args.no_temporal_arith,
         counting=not args.no_counting,
+        pp_duration=not args.no_pp_duration,
         assistant_recall=not args.no_assistant_recall,
         recall_mode=args.recall_mode)
 
@@ -2988,6 +3353,7 @@ def main(argv: list[str] | None = None) -> int:
             entropy_weak_score=args.entropy_weak,
             temporal_arith=not args.no_temporal_arith,
             counting=not args.no_counting,
+            pp_duration=not args.no_pp_duration,
             assistant_recall=not args.no_assistant_recall,
             recall_mode=args.recall_mode,
             judge_mode=args.judge)
