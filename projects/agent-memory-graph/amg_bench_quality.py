@@ -72,6 +72,7 @@ __all__ = [
     "answer_temporal_arith",
     "temporal_arith_judge",
     "pp_duration_form",
+    "pp_pure_tenure_form",
     "answer_pp_duration",
     "pp_duration_judge",
     "recall_form",
@@ -793,7 +794,8 @@ class LongMemEvalAdapter:
         # only the negative-existence abstain (before-job route, no
         # tenure line for the company anywhere) resolves here.
         if (self.pp_duration and self._session_dates
-                and pp_duration_form(question)):
+                and (pp_duration_form(question)
+                     or pp_pure_tenure_form(question))):
             dated = [(self._session_dates.get(s["session_id"], ""),
                       s["turns"]) for s in self._counting_sessions()]
             p_ans, p_detail = answer_pp_duration(question, dated)
@@ -2017,7 +2019,7 @@ _PP_STOP = frozenset({
     "how", "long", "had", "have", "been", "when", "before", "i",
     "my", "me", "the", "a", "an", "to", "of", "in", "at", "for",
     "on", "new", "regularly", "current", "job", "using", "so",
-    "far", "did", "you", "was", "were", "that"})
+    "far", "did", "you", "was", "were", "that", "use"})
 
 
 def _pp_num(tok: str) -> int | None:
@@ -2041,6 +2043,22 @@ def pp_duration_form(question: str) -> bool:
     if not _PP_HEAD_RE.match(q):
         return False
     return bool(re.search(r"\b(?:when|before)\b", q, re.I))
+
+
+def pp_pure_tenure_form(question: str) -> bool:
+    """Pure present-perfect tenure form (#077 v2).
+
+    ``how long (had|have) … been …`` with NO when/before clause —
+    the tenure line states the answer as-of its session, no
+    subtraction. ``did``-forms are excluded (event durations,
+    "how long did it take…").
+    """
+    q = question.strip()
+    if not _PP_HEAD_RE.match(q):
+        return False
+    if re.search(r"\b(?:when|before)\b", q, re.I):
+        return False
+    return bool(re.search(r"\bbeen\b", q, re.I))
 
 
 def _pp_dur_exprs(line: str):
@@ -2124,6 +2142,28 @@ def _pp_tenure_months(line: str) -> int | None:
     return total
 
 
+def _pp_tenure_str(line: str) -> str | None:
+    """Tenure expr → canonical answer string (compound-aware).
+
+    ``for a year and five months now`` → ``1 year and 5 months``;
+    ``for six weeks now`` → ``6 weeks``.
+    """
+    m = _PP_TENURE_RE.search(line)
+    if not m:
+        return None
+    n = _pp_num(m.group(1))
+    if n is None:
+        return None
+    unit = m.group(2).lower().rstrip("s")
+    if m.group(3):
+        extra = _pp_num(m.group(3))
+        if extra is None:
+            return None
+        return _pp_ym_sub(n * (12 if unit.startswith("year") else 1)
+                          + extra, 0)
+    return f"{n} {unit}" + ("s" if n != 1 else "")
+
+
 def answer_pp_duration(
         question: str,
         dated_sessions: list[tuple[str, list[dict]]],
@@ -2201,6 +2241,55 @@ def answer_pp_duration(
         detail["tenure_m"], detail["total_m"] = best_tenure, best_total
         return _pp_ym_sub(best_total, best_tenure), detail
 
+    if not re.search(r"\b(?:when|before)\b", question, re.I):
+        # route (c): pure tenure — no event anchor to subtract; the
+        # best all-keywords tenure line IS the answer, as-of its
+        # session (latest statement wins — knowledge_update
+        # questions are asked after the statement session). Strict
+        # all-keywords-on-one-line wall: with no second anchor to
+        # disambiguate, a partial match (the Shinjuku twin against
+        # a Harajuku line) must NOT fire (#077 v2). Planned
+        # durations ("taking a break for a month") are not tenure —
+        # for-type exprs require the explicit ``now`` suffix here.
+        clause = re.sub(
+            r"^\s*how long\s+(?:had|have)\s+(?:i\s+)?(?:been\s+)?",
+            "", question, flags=re.I)
+        sk = _pp_kws(clause)
+        best = None  # (dt, answer)
+        if sk:
+            for dt, turns in sessions:
+                for turn in turns:
+                    if turn.get("role") != "user":
+                        continue
+                    line = str(turn.get("content", ""))
+                    if _pp_overlap(sk, line) < len(sk):
+                        continue
+                    pick = None
+                    tm = _PP_TENURE_RE.search(line)
+                    if tm and tm.group(0).rstrip().lower()\
+                            .endswith("now"):
+                        # explicit as-of-now tenure (the compound
+                        # "for a year and five months now" is only
+                        # visible to TENURE_RE — NOW_RE stops at the
+                        # first unit and loses the trailing "now")
+                        pick = _pp_tenure_str(line)
+                    if pick is None:
+                        for kind, n, u, raw in _pp_dur_exprs(line):
+                            if kind == "ago" or (kind == "now" and
+                                                 raw.rstrip().lower()
+                                                 .endswith("now")):
+                                pick = f"{n} {u}" + (
+                                    "s" if n != 1 else "")
+                                break
+                    if pick is not None and (
+                            best is None or dt > best[0]):
+                        best = (dt, pick)
+        detail["route"] = "pure_tenure"
+        if best is None:
+            detail["missing"] = "tenure line"
+            return None, detail
+        return best[1], detail
+
     # route (b): event_abs − state_abs
     if re.search(r"\bwhen\b", question, re.I):
         state_clause, event_clause = re.split(
@@ -2223,13 +2312,17 @@ def answer_pp_duration(
                 scored.append(((si, ti), _pp_overlap(sk, line),
                                _pp_overlap(ek, line), anchor, n, u, kind))
     # phase 1: event anchor (max event-overlap; ties prefer lines
-    # whose event-overlap dominates over state-overlap).
-    ev_c = [x for x in scored if x[2] >= 2]
+    # whose event-overlap dominates over state-overlap). Short
+    # clauses need all of their keywords, not a fixed 2 (census:
+    # "did I use my new binoculars" → single content keyword after
+    # tenure verbs are stopped).
+    ev_c = [x for x in scored
+            if len(ek) and x[2] >= min(2, len(ek))]
     best_event = max(ev_c, key=lambda x: (x[2], -x[1])) if ev_c else None
     # phase 2: state anchor — max state-overlap among lines OTHER
     # than the event line (cross-exclusion by line identity).
     st_c = [x for x in scored
-            if x[1] >= 2
+            if len(sk) and x[1] >= min(2, len(sk))
             and x[0] != (best_event[0] if best_event else None)]
     best_state = max(st_c, key=lambda x: (x[1], -x[2])) if st_c else None
     if not best_state or not best_event:

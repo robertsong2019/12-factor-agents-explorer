@@ -11,7 +11,8 @@ import unittest
 
 from amg_bench_quality import (
     ABSTAIN_ANSWER, LongMemEvalAdapter, answer_pp_duration,
-    pp_duration_form, pp_duration_judge, _pp_dur_exprs, _pp_render,
+    pp_duration_form, pp_pure_tenure_form, pp_duration_judge,
+    _pp_dur_exprs, _pp_render,
 )
 
 # ── fixture: two-anchor ago arithmetic (Book Lovers shape) ────────
@@ -252,6 +253,130 @@ class TestPPDurationJudge(unittest.TestCase):
             GOOGLE_Q, "Not enough information", "2 years"))
 
 
+class TestPureTenure(unittest.TestCase):
+    def test_form_accepts_have_been(self):
+        self.assertTrue(pp_pure_tenure_form(
+            "How long have I been using my Fitbit Charge 3?"))
+
+    def test_form_rejects_when_clause(self):
+        self.assertFalse(pp_pure_tenure_form(BOOK_Q))
+
+    def test_form_rejects_did_without_been(self):
+        self.assertFalse(pp_pure_tenure_form(
+            "How long did it take to finish the book?"))
+
+    def test_now_type_word_number(self):
+        ans, detail = answer_pp_duration(
+            "How long have I been using my Fitbit Charge 3?",
+            [("2023-05-26", [
+                {"role": "user", "content": (
+                    "I have been using my Fitbit Charge 3 for "
+                    "nine months now and it works great.")},
+            ])])
+        self.assertEqual(ans, "9 months")
+        self.assertEqual(detail["route"], "pure_tenure")
+
+    def test_compound_years_months(self):
+        ans, _ = answer_pp_duration(
+            "How long have I been working in my current role?",
+            [("2023-05-20", [
+                {"role": "user", "content": (
+                    "I have been working in my current role for "
+                    "a year and five months now.")},
+            ])])
+        self.assertEqual(ans, "1 year and 5 months")
+
+    def test_ago_type_tenure(self):
+        # "moved … three months ago" states tenure as-of the
+        # session that contains it
+        ans, _ = answer_pp_duration(
+            "How long have I been living in my current apartment "
+            "in Harajuku?",
+            [("2023-05-21", [
+                {"role": "user", "content": (
+                    "I have been living in my new apartment in "
+                    "Harajuku since I moved three months ago.")},
+            ])])
+        self.assertEqual(ans, "3 months")
+
+    def test_twin_partial_match_falls_through(self):
+        # Shinjuku twin: no Shinjuku tenure line anywhere → the
+        # all-keywords wall must refuse the Harajuku line
+        ans, detail = answer_pp_duration(
+            "How long have I been living in my current apartment "
+            "in Shinjuku?",
+            [("2023-05-21", [
+                {"role": "user", "content": (
+                    "I moved to my new apartment in Harajuku "
+                    "three months ago.")},
+            ])])
+        self.assertIsNone(ans)
+        self.assertEqual(detail["missing"], "tenure line")
+
+    def test_planned_duration_not_tenure(self):
+        # "taking a break for a month" (no "now") is a plan,
+        # not an ongoing state
+        ans, _ = answer_pp_duration(
+            "How long have I been on a social media break?",
+            [("2023-05-21", [
+                {"role": "user", "content": (
+                    "I am thinking of taking a social media break "
+                    "for a month.")},
+            ])])
+        self.assertIsNone(ans)
+
+    def test_latest_statement_wins(self):
+        ans, _ = answer_pp_duration(
+            "How long have I been playing the piano?",
+            [("2023-04-02", [
+                {"role": "user", "content": (
+                    "I have been playing the piano for two months "
+                    "now.")},
+            ]),
+             ("2023-05-20", [
+                {"role": "user", "content": (
+                    "I have been playing the piano for four weeks "
+                    "now, still loving it.")},
+            ])])
+        # hmm — contradiction fixture; latest statement wins
+        self.assertEqual(ans, "4 weeks")
+
+    def test_third_person_subject(self):
+        ans, _ = answer_pp_duration(
+            "How long have my parents been staying with me in "
+            "the US?",
+            [("2023-05-20", [
+                {"role": "user", "content": (
+                    "My parents have been staying with me in the "
+                    "US for nine months now.")},
+            ])])
+        self.assertEqual(ans, "9 months")
+
+
+class TestShortClauseAnchors(unittest.TestCase):
+    """min(2, len(kws)) relaxation — single-keyword state clauses
+    (binoculars census shape) must anchor instead of missing."""
+
+    def test_single_keyword_state_anchor(self):
+        q = ("How long did I use my new binoculars before I saw "
+             "the American goldfinches returning to the area?")
+        ans, detail = answer_pp_duration(q, [
+            ("2023-05-20", [
+                {"role": "user", "content": (
+                    "I've been listening to bird calls online for "
+                    "about a month now, and it's been helping.")},
+                {"role": "user", "content": (
+                    "Speaking of my new binoculars, I remember "
+                    "that I got them exactly three weeks ago.")},
+                {"role": "user", "content": (
+                    "I saw the American goldfinches returning to "
+                    "the area a week ago when I was birding.")},
+            ])])
+        # state: 05-20 − 21d = 04-29; event: 05-20 − 7d = 05-13
+        self.assertEqual(ans, "2 weeks")
+        self.assertEqual(detail["route"], "ago_arith")
+
+
 class TestAdapterIntegration(unittest.TestCase):
     def _adapter(self, **kw):
         adapter = LongMemEvalAdapter(
@@ -310,6 +435,26 @@ class TestAdapterIntegration(unittest.TestCase):
         res = report["results"][0]
         # negative existence → abstain → _abs protocol scores it
         self.assertTrue(res["abstained"])
+        self.assertTrue(res["correct"])
+        self.assertEqual(res["retrieval"]["gate"], "pp_duration")
+
+    def test_e2e_pure_tenure(self):
+        adapter = LongMemEvalAdapter(abstain_entropy=None)
+        adapter.ingest_sessions(
+            [{"session_id": "s1", "messages": [
+                {"role": "user", "content": (
+                    "I have been using my Fitbit Charge 3 for "
+                    "nine months now.")},
+            ]}], session_dates={"s1": "2023/05/26 (Sat) 10:00"})
+        report = adapter.evaluate([{
+            "question_id": "pp_pt_1",
+            "question_type": "knowledge_update",
+            "question": "How long have I been using my Fitbit "
+                        "Charge 3?",
+            "answer": "9 months",
+        }])
+        res = report["results"][0]
+        self.assertEqual(res["predicted_answer"], "9 months")
         self.assertTrue(res["correct"])
         self.assertEqual(res["retrieval"]["gate"], "pp_duration")
 
