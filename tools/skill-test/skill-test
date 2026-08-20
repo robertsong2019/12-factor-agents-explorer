@@ -4,8 +4,7 @@
 
 set -uo pipefail
 
-SKILL_DIR="${1:-.}"
-[[ "${1:-}" == "--fix" || "${1:-}" == "--verbose" ]] && SKILL_DIR="."
+SKILL_DIR="."
 FIX=false
 VERBOSE=false
 
@@ -13,6 +12,7 @@ for arg in "$@"; do
   case "$arg" in
     --fix) FIX=true ;;
     --verbose) VERBOSE=true ;;
+    *) SKILL_DIR="$arg" ;;
   esac
 done
 
@@ -89,8 +89,8 @@ if echo "$SKILL_CONTENT" | grep -qiE '(curl.*\|.*sh|wget.*\|.*bash)'; then
   log_warn "Contains pipe-to-shell pattern (curl|sh) — security risk"
 fi
 
-# 6. References to local files exist
-REFS=$(echo "$SKILL_CONTENT" | grep -oE '[A-Za-z0-9_/-]+\.(md|sh|py|js|ts|json|yaml|yml)' | sort -u 2>/dev/null || true)
+# 6. References to local files exist (strip URLs first — https://…/x.md is not a local ref)
+REFS=$(echo "$SKILL_CONTENT" | sed -E 's|https?://[^ )"'\''`]+||g' | grep -oE '[A-Za-z0-9_/-]+\.(md|sh|py|js|ts|json|yaml|yml)' | sort -u 2>/dev/null || true)
 for ref in $REFS; do
   # Skip common non-local refs
   [[ "$ref" =~ ^/(usr|etc|tmp) ]] && continue
