@@ -41,3 +41,24 @@
 - **修正:** 从昨晚 cron 会话 transcript jsonl 提取 edit 工具 arguments 里的 12 块 oldText/newText payload，回放到 C467 态文件，19/19 测试复活
 - **出现次数:** 1
 - **永久规则:** amg 每个 cycle keep 时必须同命令 `git add <具体文件> && git commit`；任何 revert/checkout 前先 `git status` 确认目标文件没有跨 cycle 未提交改动；会话 transcript jsonl 是最后救援线（edit/write 工具调用的 arguments 含完整代码）
+
+### [2026-08-20] regex 大小写类（第 2 次）
+- **场景:** order_proto v2 sport 名词 alternation 小写 `triathlon` 不匹配大写 `Triathlon`
+- **错误:** regex alternation 默认大小写敏感，语料大小写混合
+- **根因:** 未加 re.I 或显式 [Tt] 类
+- **修正:** 名词 alternation 写 [Gg]ame|[Tt]ournament 形式
+- **出现次数:** 2
+
+### [2026-08-20] kw-子集合并过合并（新）
+- **场景:** "Museum of History" {museum,history} ⊆ "Natural History Museum" {natural,history,museum} 被吞并
+- **错误:** 用关键词集合包含做实体合并，专名短语不是词袋
+- **根因:** 集合语义 ≠ 标签语义
+- **修正:** 子串包含（大小写不敏感、剥所有格/动词前缀后）
+- **出现次数:** 1
+
+### [2026-08-20] 子句粒度假设（新）
+- **场景:** 同一行混 planning 子句（"next game"）与证据子句（NFL playoffs）；Alex 的 "who graduated" 在逗号后关系从句
+- **错误:** 行级统一判 planning/fresh——NFL 被误杀（planning 同行）、Alex 被误杀（eventive 在相邻子句）
+- **根因:** "today" 是话语级时间戳但 planning 是子句级意图，粒度不同
+- **修正:** fresh 行级判 + planning/eventive 子句级判 + 关系子句窗口 [c, c+next]
+- **出现次数:** 1
