@@ -14,10 +14,10 @@ export class ConfigManager {
     this.loadConfig();
   }
 
-  async loadConfig() {
+  loadConfig() {
     try {
-      if (await fs.pathExists(this.configPath)) {
-        const configContent = await fs.readFile(this.configPath, 'utf8');
+      if (fs.pathExistsSync(this.configPath)) {
+        const configContent = fs.readFileSync(this.configPath, 'utf8');
         this.config = JSON.parse(configContent);
       } else {
         this.config = this.getDefaultConfig();
@@ -141,7 +141,7 @@ export class ConfigManager {
       },
       {
         type: 'confirm',
-        name:editAgents,
+        name: 'editAgents',
         message: '编辑Agent配置?',
         default: false
       }
@@ -591,6 +591,7 @@ export class ConfigManager {
   async checkPermissions() {
     try {
       const testFile = path.join(process.cwd(), '.afm', 'permission-test.tmp');
+      await fs.ensureDir(path.dirname(testFile));
       await fs.writeFile(testFile, 'test');
       await fs.remove(testFile);
       

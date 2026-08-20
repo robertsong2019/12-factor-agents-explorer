@@ -15,11 +15,11 @@ export class Monitor {
     this.loadConfig();
   }
 
-  async loadConfig() {
+  loadConfig() {
     try {
       const configPath = path.join(process.cwd(), '.afm', 'config.json');
-      if (await fs.pathExists(configPath)) {
-        const configContent = await fs.readFile(configPath, 'utf8');
+      if (fs.pathExistsSync(configPath)) {
+        const configContent = fs.readFileSync(configPath, 'utf8');
         this.config = JSON.parse(configContent);
       }
     } catch (error) {
@@ -112,7 +112,7 @@ export class Monitor {
     }
 
     try {
-      const pid = await fs.readFile(agentPidPath, 'utf8').trim();
+      const pid = (await fs.readFile(agentPidPath, 'utf8')).trim();
       
       // 获取进程详细信息
       const metrics = await this.getProcessMetrics(pid);
@@ -212,7 +212,7 @@ export class Monitor {
     }
 
     try {
-      const pid = await fs.readFile(agentPidPath, 'utf8').trim();
+      const pid = (await fs.readFile(agentPidPath, 'utf8')).trim();
       
       // 检查进程是否仍在运行
       await execAsync(`kill -0 ${pid}`);
@@ -437,7 +437,7 @@ export class Monitor {
   }
 
   parseUptime(timeStr) {
-    // 解析 ps 命令的 etime 格式: DD-HH:MM:SS 或 HH:MM:SS 或 MM:SS
+    // 解析 ps 命令的 etime 格式: DD-HH:MM:SS 或 HH:MM:SS 或 MM:SS 或 SS
     const parts = timeStr.split('-');
     let days = 0;
     let timePart;
@@ -449,7 +449,15 @@ export class Monitor {
       timePart = parts[0];
     }
     
-    const [hours, minutes, seconds] = timePart.split(':').map(Number);
+    const fields = timePart.split(':').map(Number);
+    let hours = 0, minutes = 0, seconds = 0;
+    if (fields.length === 3) {
+      [hours, minutes, seconds] = fields;
+    } else if (fields.length === 2) {
+      [minutes, seconds] = fields;
+    } else {
+      [seconds] = fields;
+    }
     
     return days * 86400 + hours * 3600 + minutes * 60 + (seconds || 0);
   }

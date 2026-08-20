@@ -1,7 +1,7 @@
 import fs from 'fs-extra';
 import path from 'path';
 import chalk from 'chalk';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
@@ -13,12 +13,14 @@ export class AgentManager {
     this.loadConfig();
   }
 
-  async loadConfig() {
+  loadConfig() {
     try {
       const configPath = path.join(process.cwd(), '.afm', 'config.json');
-      if (await fs.pathExists(configPath)) {
-        const configContent = await fs.readFile(configPath, 'utf8');
+      if (fs.pathExistsSync(configPath)) {
+        const configContent = fs.readFileSync(configPath, 'utf8');
         this.config = JSON.parse(configContent);
+      } else {
+        this.config = this.getDefaultConfig();
       }
     } catch (error) {
       console.warn(chalk.yellow('⚠ 加载配置失败，将使用默认配置'));
@@ -72,6 +74,10 @@ export class AgentManager {
 
   async listAgents() {
     const agentsDir = path.join(this.agentsDir);
+    if (!await fs.pathExists(agentsDir)) {
+      console.log(chalk.gray('没有找到Agent配置文件（请先运行 afm init）'));
+      return;
+    }
     const agentFiles = await fs.readdir(agentsDir);
     
     console.log(chalk.bold('\n🤖 Agent列表:\n'));
@@ -155,8 +161,9 @@ export class AgentManager {
       const scriptPath = path.join(process.cwd(), '.afm', 'scripts', `start-${agentName}.js`);
       await fs.ensureDir(path.dirname(scriptPath));
       
+      const runnerPath = new URL('../lib/agent-runner.js', import.meta.url).href;
       const script = `
-import { AgentRunner } from './agent-runner.js';
+import { AgentRunner } from '${runnerPath}';
 
 const runner = new AgentRunner({
   name: '${agentName}',
@@ -168,11 +175,13 @@ runner.start().catch(console.error);
 
       await fs.writeFile(scriptPath, script);
       
-      // 启动Agent进程
-      const { pid } = await execAsync(`node ${scriptPath}`, {
+      // 启动Agent进程（detached + unref，exec 不返回 pid）
+      const child = spawn('node', [scriptPath], {
         detached: true,
-        stdio: ['ignore', 'pipe', 'pipe']
+        stdio: 'ignore'
       });
+      child.unref();
+      const pid = child.pid;
 
       // 记录PID
       const agentPidPath = path.join(process.cwd(), '.afm', 'pids', `${agentName}.pid`);
@@ -227,7 +236,7 @@ runner.start().catch(console.error);
     }
 
     try {
-      const pid = await fs.readFile(agentPidPath, 'utf8').trim();
+      const pid = (await fs.readFile(agentPidPath, 'utf8')).trim();
       
       // 检查进程是否仍在运行
       await execAsync(`kill -0 ${pid}`);
@@ -246,6 +255,7 @@ runner.start().catch(console.error);
       
       return { running: true, pid, uptime };
     } catch (error) {
+      console.error('DBG getAgentStatus catch:', error.message);
       // 进程不存在，清理PID文件
       await fs.remove(agentPidPath);
       return { running: false, pid: null, uptime: 0 };
@@ -253,7 +263,7 @@ runner.start().catch(console.error);
   }
 
   parseUptime(timeStr) {
-    // 解析 ps 命令的 etime 格式: DD-HH:MM:SS 或 HH:MM:SS 或 MM:SS
+    // 解析 ps 命令的 etime 格式: DD-HH:MM:SS 或 HH:MM:SS 或 MM:SS 或 SS
     const parts = timeStr.split('-');
     let days = 0;
     let timePart;
@@ -265,7 +275,15 @@ runner.start().catch(console.error);
       timePart = parts[0];
     }
     
-    const [hours, minutes, seconds] = timePart.split(':').map(Number);
+    const fields = timePart.split(':').map(Number);
+    let hours = 0, minutes = 0, seconds = 0;
+    if (fields.length === 3) {
+      [hours, minutes, seconds] = fields;
+    } else if (fields.length === 2) {
+      [minutes, seconds] = fields;
+    } else {
+      [seconds] = fields;
+    }
     
     return days * 86400 + hours * 3600 + minutes * 60 + (seconds || 0);
   }

@@ -24,7 +24,7 @@ program
   .option('-f, --force', '强制覆盖现有配置')
   .action(async (options) => {
     try {
-      await configManager.init(options.force);
+      await agentManager.init(options.force);
       console.log(chalk.green('✓ Agent框架初始化完成'));
     } catch (error) {
       console.error(chalk.red('✗ 初始化失败:'), error.message);
@@ -51,7 +51,11 @@ program
       } else if (options.stop) {
         await agentManager.stopAgent(options.stop);
       } else if (options.status) {
-        await agentManager.getAgentStatus(options.status);
+        const status = await agentManager.getAgentStatus(options.status);
+        console.log(chalk.bold(`\n🤖 Agent "${options.status}":`));
+        console.log(`  状态: ${status.running ? chalk.green('运行中') : chalk.red('已停止')}`);
+        console.log(`  PID: ${status.pid || 'N/A'}`);
+        console.log(`  运行时间: ${status.uptime}秒`);
       } else if (options.add) {
         await addNewAgent();
       } else {

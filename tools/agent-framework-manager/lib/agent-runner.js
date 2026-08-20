@@ -118,15 +118,7 @@ export class AgentRunner extends EventEmitter {
       this.updateStats(responseTime);
       
       this.requestCount++;
-      this.stats.requests++;
-      this.stats.responses++;
       this.stats.lastResponseTime = responseTime;
-      
-      // 计算平均响应时间
-      if (this.stats.requests > 0) {
-        this.stats.averageResponseTime = 
-          (this.stats.averageResponseTime * (this.stats.requests - 1) + responseTime) / this.stats.requests;
-      }
       
       this.emit('taskCompleted', {
         name: this.config.name,
@@ -258,23 +250,16 @@ export class AgentRunner extends EventEmitter {
   }
 
   updateStats(responseTime) {
+    // 用旧计数计算增量均值（修复：首样本 Infinity + requests 双重计数）
+    const totalRequests = this.stats.requests + 1;
+    const totalTime = (this.stats.averageResponseTime * this.stats.requests) + responseTime;
     this.stats = {
-      requests: this.stats.requests + 1,
+      requests: totalRequests,
       responses: this.stats.responses + 1,
       errors: this.stats.errors,
-      averageResponseTime: this.calculateAverageResponseTime(responseTime),
+      averageResponseTime: totalTime / totalRequests,
       lastResponseTime: responseTime
     };
-  }
-
-  calculateAverageResponseTime(newResponseTime) {
-    if (this.stats.requests === 1) {
-      return newResponseTime;
-    }
-    
-    const totalRequests = this.stats.requests;
-    const totalTime = (this.stats.averageResponseTime * (totalRequests - 1)) + newResponseTime;
-    return totalTime / totalRequests;
   }
 
   isFatalError(error) {
