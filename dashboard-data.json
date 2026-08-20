@@ -1,6 +1,6 @@
 {
-  "lastUpdated": "2026-08-19T22:02:39Z",
-  "generatedAt": "2026-08-19 22:02 UTC (2026-8-20 06:02:39 CST)",
+  "lastUpdated": "2026-08-20T22:00:00Z",
+  "generatedAt": "2026-08-20 22:00 UTC (2026-8-21 06:00:40 CST)",
   "system": {
     "gateway": {
       "status": "running",
@@ -12,33 +12,34 @@
     "host": {
       "os": "Linux 6.8.0-71-generic (x64)",
       "hostname": "VM-0-5-ubuntu",
-      "uptime": "17 weeks, 16 hours, 42 minutes",
-      "loadAverage": "0.81, 0.60, 0.30",
+      "uptime": "120 days, 16 hours",
+      "loadAverage": "0.52, 0.15, 0.05",
       "disk": {
         "total": "50G",
-        "used": "32G",
-        "available": "16G",
-        "usage": "68%"
+        "used": "33G",
+        "available": "15G",
+        "usage": "69%"
       },
       "memory": {
-        "totalMB": 1936,
-        "usedMB": 1088,
-        "freeMB": 432,
-        "availableMB": 848,
-        "swapTotalMB": 10180,
-        "swapUsedMB": 889
+        "totalMB": 1935,
+        "usedMB": 1439,
+        "freeMB": 90,
+        "availableMB": 496,
+        "swapTotalMB": 10179,
+        "swapUsedMB": 970
       }
     },
     "model": "zai/glm-5.1"
   },
   "cronSummary": {
     "total": 21,
-    "ok": 18,
-    "error": 2,
+    "ok": 17,
+    "error": 3,
     "running": 1,
     "errorJobs": [
-      "84707ade (ai-neuroscience-research)",
-      "686ec55c (essay-generation-morning)"
+      "bb46cb70 (deep-exploration-evening @ UTC)",
+      "b0fd7e8d (key-development-3)",
+      "84707ade (ai-neuroscience-research)"
     ]
   },
   "cronJobs": [
@@ -47,7 +48,7 @@
       "name": "dashboard-update-morning",
       "schedule": "0 6 * * *",
       "status": "running",
-      "lastRun": "24h ago"
+      "lastRun": "1d ago"
     },
     {
       "id": "9b2a8701",
@@ -75,7 +76,7 @@
       "name": "github-creative-evening",
       "schedule": "0 19 * * * @ Asia/Shanghai",
       "status": "ok",
-      "lastRun": "10h ago"
+      "lastRun": "11h ago"
     },
     {
       "id": "265091b6",
@@ -95,8 +96,8 @@
       "id": "bb46cb70",
       "name": "deep-exploration-evening",
       "schedule": "0 12 * * * @ UTC",
-      "status": "ok",
-      "lastRun": "9h ago"
+      "status": "error",
+      "lastRun": "10h ago"
     },
     {
       "id": "13a2f284",
@@ -110,7 +111,7 @@
       "name": "tool-development-evening",
       "schedule": "0 22 * * * @ Asia/Shanghai",
       "status": "ok",
-      "lastRun": "7h ago"
+      "lastRun": "8h ago"
     },
     {
       "id": "ce2fb615",
@@ -124,7 +125,7 @@
       "name": "ai-neuroscience-research",
       "schedule": "30 22 * * * @ Asia/Shanghai",
       "status": "error",
-      "lastRun": "7h ago"
+      "lastRun": "8h ago"
     },
     {
       "id": "78eac6fc",
@@ -144,7 +145,7 @@
       "id": "b0fd7e8d",
       "name": "key-development-3",
       "schedule": "0 1 * * *",
-      "status": "ok",
+      "status": "error",
       "lastRun": "5h ago"
     },
     {
@@ -152,7 +153,7 @@
       "name": "knowledge-organization-morning",
       "schedule": "0 2 * * * @ Asia/Shanghai",
       "status": "ok",
-      "lastRun": "3h ago"
+      "lastRun": "4h ago"
     },
     {
       "id": "fd0515b0",
@@ -179,7 +180,7 @@
       "id": "686ec55c",
       "name": "essay-generation-morning",
       "schedule": "0 5 * * *",
-      "status": "error",
+      "status": "ok",
       "lastRun": "1h ago"
     },
     {
@@ -187,7 +188,7 @@
       "name": "essay-generation-morning",
       "schedule": "0 5 * * * @ Asia/Shanghai",
       "status": "ok",
-      "lastRun": "58m ago"
+      "lastRun": "57m ago"
     }
   ],
   "sessions": {
@@ -196,86 +197,38 @@
     "notable": [
       {
         "type": "cron (dashboard-update)",
-        "lastActive": "2m ago",
+        "lastActive": "just now",
         "model": "glm-5.1",
-        "context": "38k/205k (19%)"
+        "context": "45k/205k (22%)"
       },
       {
         "type": "main",
-        "lastActive": "14m ago",
+        "lastActive": "13m ago",
         "model": "glm-5-turbo",
-        "context": "n/a"
+        "context": "65k/205k (32%)"
       },
       {
         "type": "cron (essay-generation)",
         "lastActive": "58m ago",
-        "model": "glm-5.1",
-        "context": "46k/205k (23%)"
-      },
-      {
-        "type": "cron (essay-generation)",
-        "lastActive": "58m ago",
-        "model": "glm-5.1",
-        "context": "51k/205k (26%)"
-      },
-      {
-        "type": "cron (documentation)",
-        "lastActive": "2h ago",
-        "model": "glm-5.1",
-        "context": "35k/205k (18%)"
-      },
-      {
-        "type": "cron (project-testing)",
-        "lastActive": "3h ago",
         "model": "glm-5.1",
         "context": "48k/205k (24%)"
       },
       {
-        "type": "cron (knowledge-organization)",
-        "lastActive": "3h ago",
+        "type": "cron (essay-generation)",
+        "lastActive": "58m ago",
         "model": "glm-5.1",
-        "context": "51k/205k (26%)"
-      },
-      {
-        "type": "cron (knowledge-organization)",
-        "lastActive": "4h ago",
-        "model": "glm-5.1",
-        "context": "111k/205k (56%)"
-      },
-      {
-        "type": "cron (key-development-3)",
-        "lastActive": "4h ago",
-        "model": "glm-5.1",
-        "context": "77k/205k (38%)"
-      },
-      {
-        "type": "cron (key-development-2)",
-        "lastActive": "5h ago",
-        "model": "glm-5.1",
-        "context": "89k/205k (45%)"
-      },
-      {
-        "type": "cron (key-development-1)",
-        "lastActive": "6h ago",
-        "model": "glm-5.1",
-        "context": "49k/205k (25%)"
-      },
-      {
-        "type": "cron (ai-neuroscience-research)",
-        "lastActive": "7h ago",
-        "model": "glm-5.1",
-        "context": "63k/205k (32%)"
+        "context": "48k/205k (23%)"
       }
     ]
   },
   "git": {
     "repo": "robertsong2019/openclaw-workspace",
     "recentCommits": [
-      "544c24c memory: 08-20 essay-generation log",
-      "90b6d8c blog: 2026-08-20 in-text dates + asymmetric trust gate (Cycle 482)",
-      "f660eaa log: essay C-490 security-scanner-always-100 published",
-      "84fe900 docs: truth-sync ptm READMEs with 03:00 bugfix behavior (pipe-add, multi -k, diff cmd, empty-value semantics, testing sections)",
-      "fcc1069 ptm(bash): 0→29 hermetic tests; fix 3 real bugs"
+      "35f43c5 essay: 2026-08-21 silent ordering bugs + honest ties (published b638ffd)",
+      "4d66879 daily post 08-21: order-questions mention hygiene essay published (8d50e70, 200 OK)",
+      "08e63d5 docs: TUTORIAL-TEMPORAL-QA (C456-489 temporal QA family) + README drift fix (tests 9579→9768)",
+      "b667a98 afm: 0→29 hermetic tests; fix 8 real bugs",
+      "5a9db6a memory: 08-21 KO verify round (duplicate trigger, all checks pass)"
     ]
   }
 }
