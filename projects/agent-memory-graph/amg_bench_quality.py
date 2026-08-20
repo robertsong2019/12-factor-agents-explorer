@@ -1992,6 +1992,62 @@ def _cnt_proper_nouns(text: str) -> set[str]:
     return out
 
 
+def _cnt_normalize_entity(entity: str) -> str:
+    """Normalize entity names for cross-session deduplication.
+    
+    Handles variations like: 'apple' vs 'Apple' vs 'apples' vs 'Apples'
+    'Google' vs 'google' vs 'Google Maps'
+    'MacBook' vs 'macbook' vs 'MacBooks'
+    """
+    if not entity:
+        return ""
+    
+    # Normalize case
+    entity = entity.lower()
+    
+    # Remove pluralization (simple heuristic)
+    if entity.endswith('s') and len(entity) > 3:
+        # Check if likely plural (not possessive, not specific)
+        # TODO: Better plural detection needed for real edge cases
+        pass
+    
+    # Normalize common abbreviations and variants
+    entity = entity.replace(' inc', '').replace(' inc.', '')
+    entity = entity.replace(' llc', '').replace(' llc.', '')
+    entity = entity.replace(' corp', '').replace(' corporation', '')
+    entity = entity.replace(' company', '')
+    entity = entity.replace(' service', '')
+    entity = entity.replace(' app', '')
+    entity = entity.replace(' software', '')
+    
+    # Remove trailing punctuation
+    entity = entity.rstrip('.,;:!?')
+    
+    return entity.strip()
+
+
+def _cnt_deduplicate_entities(across_sessions: bool = True) -> callable:
+    """Create entity deduplication function for cross-session normalization."""
+    seen_entities = {}
+    
+    def normalize_and_dedupe(entity: str, session_id: str) -> str:
+        normalized = _cnt_normalize_entity(entity)
+        if not normalized:
+            return ""
+        
+        key = f"{session_id}:{normalized}" if across_sessions else normalized
+        
+        # Track entity variants to avoid double-counting
+        if key not in seen_entities:
+            seen_entities[key] = normalized
+            return normalized
+        
+        # Return first occurrence to avoid duplication
+        return seen_entities[key]
+    
+    return normalize_and_dedupe
+
+
 def _cnt_np_fam(question: str) -> tuple:
     """Content words of the counted NP (robust vs modifiers).
 
@@ -2146,6 +2202,10 @@ def _cnt_duration_sum(question: str, sessions: list[dict]):
     per_session = defaultdict(
         lambda: {'events': [], 'counts': set(), 'pnouns': set(),
                  'anchor_ok': False})
+    
+    # Cross-session entity deduplication
+    deduper = _cnt_deduplicate_entities(across_sessions=True)
+    seen_entities = set()
     # proper-noun anchors only — activity words like 'camping'
     # appear in gear-discussion sessions and pollute propagation
     cap_anchors = {w.lower()
@@ -2161,14 +2221,19 @@ def _cnt_duration_sum(question: str, sessions: list[dict]):
             if cap_are and cap_are.search(sent):
                 per_session[si]['anchor_ok'] = True
     # enrich signature from all non-intent sentences of anchor-ok
-    # sessions
+    # sessions with deduplicated entities
     for si, sent in _cnt_sents(sessions):
         sess = per_session[si]
         if not sess['anchor_ok']:
             continue
         if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
             continue
-        sess['pnouns'] |= _cnt_proper_nouns(sent)
+        # Apply entity normalization and deduplication
+        for pnoun in _cnt_proper_nouns(sent):
+            deduped = deduper(pnoun, si)
+            if deduped:
+                sess['pnouns'].add(deduped)
+                seen_entities.add(deduped)
 
     for si, sent in _cnt_sents(sessions):
         sess = per_session[si]
