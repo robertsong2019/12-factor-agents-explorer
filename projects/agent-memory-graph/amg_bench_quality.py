@@ -426,6 +426,7 @@ class LongMemEvalAdapter:
                  counting: bool = True,
                  pp_duration: bool = True,
                  order_sort: bool = True,
+                 pairwise_sort: bool = True,
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
                  recall_mode: str = "distinctive",
@@ -505,6 +506,7 @@ class LongMemEvalAdapter:
         self.counting = counting
         self.pp_duration = pp_duration
         self.order_sort = order_sort
+        self.pairwise_sort = pairwise_sort
         self.assistant_recall = assistant_recall
         self.recall_min_score = recall_min_score
         self.recall_mode = recall_mode
@@ -517,6 +519,10 @@ class LongMemEvalAdapter:
         self._messages: dict[str, dict] = {}       # message nodes only
         self._entities: dict[str, str] = {}        # entity name → node id
         self._session_dates: dict[str, str] = {}   # session id → YYYY-MM-DD
+        # C489: raw haystack date strings (minute granularity —
+        # "2023/03/10 (Fri) 00:07") before parse_lme_date truncates
+        # them; same-day session ORDER is the pairwise signal.
+        self._session_dates_raw: dict[str, str] = {}
         self._seq = 0                               # deterministic order
 
     # ── Phase 1: ingestion ─────────────────────────────────────────
@@ -544,6 +550,7 @@ class LongMemEvalAdapter:
         stats = {"sessions": 0, "messages": 0, "entities": 0, "edges": 0}
         if session_dates:
             for sid, dt in session_dates.items():
+                self._session_dates_raw[str(sid)] = str(dt)
                 canon = parse_lme_date(str(dt))
                 if canon:
                     self._session_dates[str(sid)] = canon
@@ -748,6 +755,45 @@ class LongMemEvalAdapter:
         """
         context, meta = self.retrieve_context(question, question_date)
         meta["context"] = context
+
+        # Cycle 489: pairwise "which happened first, X or Y?" (#078
+        # sibling family, 29 members) — two candidates extracted from
+        # the question's tail disjunction, each anchored to its
+        # earliest trustworthy report (fresh > vague-eventive >
+        # planning, C482 tiers at clause granularity + verb
+        # congruence from the question's did-I verb). Session times
+        # are MINUTE-granular raw haystack strings — same-day pairs
+        # resolve; a <24 h anchor gap is treated as unresolvable
+        # (fall-through: recommendation echoes routinely sit hours
+        # apart on the same day — C489 A/B). Anchors may be pulled to
+        # the in-clause adverbial/relative date ("last week",
+        # "since February 20") but only when a candidate keyword
+        # shares the clause. Decision matrix: both anchored → earlier
+        # one; one anchored + the other has ZERO user-line mentions
+        # → negative-existence ABSTAIN (the _abs ground truth);
+        # anything partial → fall through (the answer gates still
+        # own currently-correct cases). Runs BEFORE temporal_arith:
+        # the TA "first" kind claims this family too and mis-
+        # resolves 2 of them (C486 forensics) — pairwise's richer
+        # evidence (minutes, verb congruence) subsumes it, and the
+        # 5 TA-correct members re-answer identically here (C489
+        # census). After order_sort the forms are disjoint; the
+        # pipeline position is purely about the TA overlap.
+        if (self.pairwise_sort and self._session_dates
+                and pw_form(question)):
+            dated = []
+            for s in self._counting_sessions():
+                sid = s["session_id"]
+                dated.append((
+                    self._session_dates_raw.get(sid)
+                    or self._session_dates.get(sid, ""), s["turns"]))
+            w_ans, w_detail = answer_pairwise(question, dated,
+                                              question_date)
+            meta["pairwise"] = w_detail
+            if w_ans is not None:
+                meta["gate"] = "pairwise"
+                meta["abstained"] = w_ans == ABSTAIN_ANSWER
+                return w_ans, meta
 
         # Cycle 457: temporal-arithmetic path — duration/ordering
         # questions answered by calendar arithmetic on session dates
@@ -1013,6 +1059,8 @@ class LongMemEvalAdapter:
                 correct = pp_duration_judge(question, truth, predicted)
             elif meta.get("gate") == "order":
                 correct = order_judge(question, truth, predicted)
+            elif meta.get("gate") == "pairwise":
+                correct = pairwise_judge(question, truth, predicted)
             elif judge_fn is not None:
                 correct = bool(judge_fn(question, truth, predicted))
             else:
@@ -1105,6 +1153,7 @@ class LongMemEvalAdapter:
             "config": {"use_ppr": self.use_ppr,
                        "temporal_arith": self.temporal_arith,
                        "order_sort": self.order_sort,
+                       "pairwise_sort": self.pairwise_sort,
                        "max_context_tokens": self.max_context_tokens,
                        "abstain_score": self.abstain_score,
                        "abstain_entropy": self.abstain_entropy,
@@ -2996,6 +3045,376 @@ def order_judge(question: str, truth: str,
                for t, p in zip(tsegs, psegs))
 
 
+# ════════ Cycle 489: pairwise "which happened first" (#078) ════════
+# The 29-family gate C488 left out. Form: ^Which … first + tail
+# disjunction ", X or Y?" — candidates render VERBATIM from the
+# question (the judge is containment-based, so article/noun form
+# survives). Evidence lines are user-role only (C488 role law);
+# timestamps are the RAW haystack strings — minute granularity is
+# the whole point (same-day sessions are ordered by time-of-day,
+# date-only collapses them). Decision matrix (C489 A/B verified
+# +4/−0 on the 29): both anchored (>24 h apart) → earlier; one
+# anchored + other never mentioned in ANY user line → ABSTAIN
+# (negative existence — both _abs members); everything else falls
+# through untouched.
+
+_PW_TAIL_RE = re.compile(r',\s*([^,?]+?)\s+or\s+([^,?]+?)\s*\?\s*$')
+_PW_ORDER_EXCL = re.compile(r'order of|from first|to last|order from',
+                            re.I)
+
+
+def pw_form(question: str):
+    """Pairwise which-first gate (Cycle 489 / Research #078).
+
+    ``^Which`` + ``first`` + terminal disjunction ", X or Y?".
+    Returns ``(X, Y)`` or ``None``. Order-family phrasings
+    ("order of", "from first to last") are excluded — those route
+    to ``order_form`` (C488). Full-500 census: 0 non-temporal
+    matches — zero hijack surface.
+    """
+    q = question.strip()
+    if not re.match(r'(?i)^which\b', q):
+        return None
+    if not re.search(r'\bfirst\b', q, re.I):
+        return None
+    if _PW_ORDER_EXCL.search(q):
+        return None
+    m = _PW_TAIL_RE.search(q)
+    if not m:
+        return None
+    a, b = m.group(1).strip(), m.group(2).strip()
+    if len(a) < 3 or len(b) < 3:
+        return None
+    return a, b
+
+
+# question-framing words never anchor (the question's nouns carry
+# the event identity; "did I attend first" contributes nothing)
+_PW_FRAME_STOP = frozenset(
+    "narrator purchase purchases arrival malfunction start "
+    "started starting loss lose losing lost received receiving "
+    "receive attendance attend attended participation "
+    "participate participated the a an my our their his her one "
+    "first new upcoming event item task device for to of with "
+    "from in on at by and or did was were".split())
+_PW_TOKEN_RE = re.compile(r"[a-z0-9#$&'+-]+")
+
+
+def _pw_stems(word: str) -> list[str]:
+    """Surface + stripped variants (ing/ies/es/s/ed) — 'buying'
+    matches a 'bought'-clause's noun, 'plants' matches 'plant'."""
+    st = {word}
+    if word.endswith('ing') and len(word) > 5:
+        st.add(word[:-3])
+    if word.endswith('ies') and len(word) > 4:
+        st.add(word[:-3] + 'y')
+    elif word.endswith('es') and len(word) > 4:
+        st.add(word[:-2])
+    elif word.endswith('s') and len(word) > 3:
+        st.add(word[:-1])
+    if word.endswith('ed') and len(word) > 4:
+        st.add(word[:-2])
+    return sorted(st)
+
+
+def _pw_kws(phrase: str) -> list[list[str]]:
+    """Stem-group keyword list (≤4 content words, stop-stripped).
+    Every group must match somewhere in the line (any variant)."""
+    toks = [t.strip("'\"") for t in _PW_TOKEN_RE.findall(phrase.lower())]
+    words = [w for w in toks
+             if len(w) > 2 and w not in _PW_FRAME_STOP]
+    words = words[:4]
+    return [_pw_stems(w) for w in words] if words else []
+
+
+def _pw_line_match(kws, line: str) -> bool:
+    ll = line.lower()
+    return all(any(v in ll for v in grp) for grp in kws)
+
+
+# verb congruence: the question's did-I verb filters evidence
+# clauses — "did I finish X or Y first" ignores mere mentions of
+# X/Y in unrelated clauses (buying, wanting, recommending)
+_PW_VERB_RE = re.compile(
+    r'\bdid i\s+((?:\w+\s+){0,2}?\w+?)\s+(?:.*?\s+)?first\b'
+    r'|\bwere\s+(\w+ed)\s+first\b', re.I)
+_PW_VERB_MAP = {
+    'attend': ('attend', 'went to', 'participate'),
+    'got': ('got', 'bought', 'purchas', 'received'),
+    'get': ('got', 'bought', 'purchas', 'received'),
+    'buy': ('bought', 'purchas', 'order', 'got'),
+    'purchase': ('bought', 'purchas', 'order', 'got'),
+    'complete': ('complet', 'finish', 'done', 'fix', 'trimm'),
+    'finish': ('finish', 'complet', 'done', 'wrapp'),
+    'start': ('start', 'began', 'plant', 'sign up', 'launch'),
+    'set up': ('set up', 'install', 'configur', 'got'),
+    'setup': ('set up', 'install', 'configur', 'got'),
+    'take': ('took',),
+    'take care of': ('took', 'mainten', 'repair', 'care', 'clean'),
+    'join': ('join', 'sign up', 'became', 'enroll'),
+    'lose': ('lost', 'lost my', 'misplac'),
+}
+
+
+def _pw_qverbs(question: str):
+    """Question-verb → acceptable evidence-verb surfaces."""
+    m = _PW_VERB_RE.search(question)
+    if not m:
+        return None
+    v = (m.group(1) or m.group(2) or '').strip().lower()
+    v = re.sub(r'\s+(a|an|the|my|our)\b.*$', '', v).strip()
+    if v in _PW_VERB_MAP:
+        return _PW_VERB_MAP[v]
+    for k, vv in _PW_VERB_MAP.items():
+        if v.startswith(k.split()[0]) and k.split()[0] not in (
+                'take', 'set', 'setup'):
+            return vv
+    return None
+
+
+_PW_DT_RE = re.compile(
+    r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:\s*\([^)]*\))?\s+'
+    r'(\d{1,2}):(\d{2})')
+_PW_DATE_RE = re.compile(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})')
+
+
+def _pw_lines(dated: list) -> list[tuple]:
+    """(datetime, session_idx, line) for user-role lines.
+
+    Datetimes keep MINUTE granularity from the raw haystack
+    string — the same-day discriminator date-only ``_ord_lines``
+    throws away (C489's key forensic datum: haystack timestamps
+    like ``2023/05/30 (Fri) 07:08``).
+    """
+    out = []
+    for idx, (d, turns) in enumerate(dated):
+        txt = str(d or '').strip()
+        dt = None
+        m = _PW_DT_RE.match(txt)
+        if m:
+            try:
+                dt = datetime(int(m.group(1)), int(m.group(2)),
+                              int(m.group(3)), int(m.group(4)),
+                              int(m.group(5)))
+            except ValueError:
+                dt = None
+        if dt is None:
+            m2 = _PW_DATE_RE.match(txt)
+            if not m2:
+                continue
+            try:
+                dt = datetime(int(m2.group(1)), int(m2.group(2)),
+                              int(m2.group(3)))
+            except ValueError:
+                continue
+        for msg in turns or []:
+            if msg.get('role') != 'user':
+                continue
+            for line in re.split(r'[.\n]', str(msg.get('content', ''))):
+                s = line.strip()
+                if s:
+                    out.append((dt, idx, s))
+    return out
+
+
+_PW_SINCE_RE = re.compile(
+    r'\bsince\s+(' + '|'.join(_TA_MONTH_NUM) +
+    r')\w*\s+(\d{1,2})\b', re.I)
+_PW_NUMW = {'a': 1, 'an': 1, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
+            'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
+            'ten': 10}
+_PW_REL_RE = re.compile(
+    r'\b(?:' + '|'.join(_PW_NUMW) + r'|\d{1,2})\s+'
+    r'(day|week|month|year)s?\s+ago\b'
+    r'|\blast\s+(week|month|year)\b', re.I)
+
+
+def _pw_rel_delta(m) -> timedelta | None:
+    txt = m.group(0).lower()
+    m2 = re.match(r'last\s+(week|month|year)', txt)
+    if m2:
+        u = m2.group(1)
+        return {'week': timedelta(days=7), 'month': timedelta(days=30),
+                'year': timedelta(days=365)}[u]
+    m3 = re.match(r'(\d{1,2})\s+(day|week|month|year)', txt)
+    if m3:
+        n = int(m3.group(1))
+        u = m3.group(2)
+    else:
+        mw = re.match(r'([a-z]+)\s+(day|week|month|year)', txt)
+        if not mw:
+            return None
+        n = _PW_NUMW.get(mw.group(1))
+        if n is None:
+            return None
+        u = mw.group(2)
+    mult = {'day': 1, 'week': 7, 'month': 30, 'year': 365}[u]
+    return timedelta(days=n * mult)
+
+
+def _pw_rel_dt(dt, line, kws):
+    """Relative-duration override ("a month ago", "last week") —
+    ONLY when a candidate keyword shares the CLAUSE (anaphoric
+    "started it three weeks ago" stays on the session clock: the
+    pronoun's referent is unproven at clause level — C489 trace
+    c27434e8: the pronoun line shares its clause with "the
+    Japanese Zero", pulling the anchor wrong otherwise)."""
+    for m in _PW_REL_RE.finditer(line):
+        cs = _ord_clauses(line) or [line]
+        span = (m.start(), m.end())
+        for c in cs:
+            if c in line:
+                i = line.find(c)
+                if i <= span[0] and span[1] <= i + len(c):
+                    cl = c
+                    if any(any(v in cl.lower() for v in grp)
+                           for grp in kws):
+                        dl = _pw_rel_delta(m)
+                        if dl:
+                            return dt - dl
+    return dt
+
+
+def _pw_line_dt(dt, line, kws=None):
+    """Effective event datetime: in-line adverbial date > "since
+    <Month> <day>" > clause-gated relative duration > session
+    clock. Future-dated in-text dates (> session +14 d, next-year
+    typos) are distrusted (C482 asymmetry)."""
+    yh = str(dt.year)
+    itd = _line_adverbial_date(line, yh)
+    if itd is None:
+        m = _PW_SINCE_RE.search(line)
+        if m:
+            try:
+                itd = date(int(yh), _TA_MONTH_NUM[
+                    m.group(1)[:3].lower()], int(m.group(2))).isoformat()
+            except (ValueError, KeyError):
+                itd = None
+    if itd is not None:
+        try:
+            ev = datetime.strptime(itd, '%Y-%m-%d')
+            if not (ev > dt + timedelta(days=14)):
+                return ev
+        except ValueError:
+            pass
+    return _pw_rel_dt(dt, line, kws or [])
+
+
+_PW_EVENTIVE_RE = re.compile(
+    r'(attended|visited|went to|saw|watched|flew|got back|came back'
+    r'|helped|ordered|signed up|redeemed|used a|participated|'
+    r'participate|hiked|took part|completed|finished|started|'
+    r'been to|took my|took our|loving|enjoying|on a high|'
+    r'joined|bought|purchased|got|received|set up|installed|'
+    r'fixed|repaired|took care|maintenance|lost|broke|'
+    r'stopped working|dropped|planted|cleaned|washed)', re.I)
+
+
+def _pw_scan_anchor(kws, lines, window=None, qverbs=None):
+    """Earliest trustworthy (effective_dt, session_idx, line) for
+    one candidate. Tiers (C482/C488): fresh discourse deictics
+    (today/just/yesterday−1 d) outrank vague eventive pasts;
+    planning clauses never anchor. Verb congruence narrows the
+    eventive tier when the question names a did-I verb."""
+    fresh_hits, vague_hits = [], []
+    for dt, idx, line in lines:
+        if window and not (window[0] <= dt.date() <= window[1]):
+            continue
+        if not _pw_line_match(kws, line):
+            continue
+        cs = _ord_clauses(line) or [line]
+        windows = []
+        for j, c in enumerate(cs):
+            if _pw_line_match(kws, c):
+                windows.append(c)
+                if j + 1 < len(cs):
+                    windows.append(c + ' ' + cs[j + 1])
+        if not windows:
+            windows = [line]
+        hit = any(_PW_EVENTIVE_RE.search(w)
+                  and not _ORD_PLANNING_RE.search(w)
+                  for w in windows)
+        if qverbs:
+            hit = hit and any(
+                any(v in w.lower() for v in qverbs) for w in windows)
+        if _ORD_FRESH_RE.search(line):
+            base = _pw_line_dt(dt, line, kws)
+            rd = base - timedelta(days=1) \
+                if _ORD_YESTERDAY_RE.search(line) else base
+            fresh_hits.append((rd, idx, line))
+        elif hit:
+            vague_hits.append((_pw_line_dt(dt, line, kws), idx, line))
+    pool = fresh_hits or vague_hits
+    if not pool:
+        return None
+    pool.sort(key=lambda x: (x[0], x[1]))
+    return pool[0]
+
+
+def _pw_any_mention(kws, lines) -> bool:
+    return any(_pw_line_match(kws, ll) for _, _, ll in lines)
+
+
+def answer_pairwise(question: str, dated: list,
+                    question_date: str = "") -> tuple:
+    """Answer a pairwise which-first question (C489).
+
+    See :func:`pw_form` for the form contract and the module-level
+    C489 block for the decision matrix. ``dated`` carries RAW
+    haystack date strings (minute granularity via
+    ``_session_dates_raw``; bare dates degrade to date-only).
+
+    Returns ``(answer, detail)``; answer ``None`` = unresolved
+    (fall through — the answer gates own currently-correct
+    cases); ``ABSTAIN_ANSWER`` = negative-existence abstain.
+    """
+    cands = pw_form(question)
+    if not cands:
+        return None, {"form": "pairwise", "mode": "no-form"}
+    a_txt, b_txt = cands
+    a_kws, b_kws = _pw_kws(a_txt), _pw_kws(b_txt)
+    if not a_kws or not b_kws:
+        return None, {"form": "pairwise", "mode": "no-kws"}
+    qdate = _ord_qdate(question_date)
+    if _ord_window_needed(question) and qdate is None:
+        return None, {"form": "pairwise", "mode": "window-unresolvable"}
+    window = _ord_window(question, qdate)
+    qv = _pw_qverbs(question)
+    lines = _pw_lines(dated)
+    aa = _pw_scan_anchor(a_kws, lines, window, qv)
+    bb = _pw_scan_anchor(b_kws, lines, window, qv)
+    if aa and bb:
+        if abs((aa[0] - bb[0]).total_seconds()) <= 24 * 3600:
+            return None, {"form": "pairwise", "mode": "sub-24h-tie",
+                          "a": str(aa[0])[:16], "b": str(bb[0])[:16]}
+        win = a_txt if (aa[0], aa[1]) < (bb[0], bb[1]) else b_txt
+        return win, {"form": "pairwise", "mode": "both",
+                     "a": str(aa[0])[:16], "b": str(bb[0])[:16]}
+    if aa and not bb:
+        if not _pw_any_mention(b_kws, lines):
+            return ABSTAIN_ANSWER, {"form": "pairwise",
+                                    "mode": "neg-exist-B"}
+        return None, {"form": "pairwise", "mode": "B-unanchored"}
+    if bb and not aa:
+        if not _pw_any_mention(a_kws, lines):
+            return ABSTAIN_ANSWER, {"form": "pairwise",
+                                    "mode": "neg-exist-A"}
+        return None, {"form": "pairwise", "mode": "A-unanchored"}
+    return None, {"form": "pairwise", "mode": "neither"}
+
+
+def pairwise_judge(question: str, truth: str,
+                   predicted: str) -> bool:
+    """Pairwise answers render candidate text VERBATIM from the
+    question; truths are sentences ("I participated in the
+    charity bake sale first.") — containment/shared-keyword match
+    (``_ord_seg_match``) judges both directions. Abstentions never
+    reach here (evaluate's ``is_abs`` branch owns them)."""
+    if not truth or not predicted:
+        return False
+    return _ord_seg_match(truth, predicted)
+
+
 # ════════ Cycle 477: multi-session counting forms (#075 i3) ════════
 # Layered integration of the counting-aggregation prototype
 # (msagg_proto_v2.py): ONLY precision-≥0.5 mechanisms enter the
@@ -3819,6 +4238,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              temporal_arith: bool = True,
              counting: bool = True,
              pp_duration: bool = True,
+             pairwise_sort: bool = True,
              assistant_recall: bool = True,
              recall_mode: str = "distinctive",
              recall_seed_k: int = 40,
@@ -3853,6 +4273,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   temporal_arith=temporal_arith,
                   counting=counting,
                   pp_duration=pp_duration,
+                  pairwise_sort=pairwise_sort,
                   assistant_recall=assistant_recall,
                   recall_mode=recall_mode,
                   recall_seed_k=recall_seed_k)
