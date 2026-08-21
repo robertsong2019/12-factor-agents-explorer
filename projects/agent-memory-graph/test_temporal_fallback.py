@@ -170,8 +170,16 @@ class TestTemporalFullGraphFallback(unittest.TestCase):
             "Which book did I finish reading first, 'The Hate U "
             "Give' or 'The Nightingale'?")
         self.assertIn("nightingale", ans.lower())
-        self.assertEqual(meta["gate"], "temporal_arith")
-        self.assertEqual(meta["temporal"].get("fallback"), "full_graph")
+        # C489: pairwise which-first gate claims this family BEFORE
+        # temporal_arith (mis-resolves 2 of 29 via first-kind) —
+        # answer semantics unchanged.
+        self.assertIn(meta["gate"], ("temporal_arith", "pairwise"))
+        # fallback assertion only meaningful when temporal_arith owns
+        # the question (full-graph fallback mechanism itself is
+        # covered by test_days_between/test_ago_form fallbacks)
+        if meta["gate"] == "temporal_arith":
+            self.assertEqual(
+                meta["temporal"].get("fallback"), "full_graph")
 
     def test_disabled_path_untouched(self):
         a = self._adapter(

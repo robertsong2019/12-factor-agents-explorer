@@ -3455,6 +3455,16 @@ _CNT_GENERIC_HEADS = {
     'things', 'item', 'items', 'stuff', 'one', 'ones', 'time',
     'times'}
 
+# C490 (#079 F1): the question's own UNIT word ('How many DAYS...')
+# is a topic-uniform token — it appears in legal/congressional/
+# fitness sessions alike and passes ANY anchor gate. Measurement
+# units carry zero topical signal, so they never qualify as
+# anchors (distribution-based anchor eligibility).
+_CNT_UNIT_ANCHOR_STOP = {u.rstrip('s') for u in (
+    'day', 'days', 'week', 'weeks', 'hour', 'hours', 'month',
+    'months', 'year', 'years', 'minute', 'minutes', 'night',
+    'nights', 'time', 'times')}
+
 _CNT_STOP_Q = {
     'many', 'much', 'have', 'does', 'did', 'that', 'this', 'with',
     'from', 'about', 'what', 'which', 'there', 'been', 'were',
@@ -3761,12 +3771,23 @@ def _cnt_duration_sum(question: str, sessions: list[dict]):
                        else None))
     if want_unit is None:
         return None
-    anchors = _cnt_question_anchors(question)
+    # C490 F1: strip unit words from the anchor set BEFORE gate
+    # compilation — 'days' must not admit legal ('28 days to lodge
+    # an appeal') or congressional ('notify 15 days before') noise
+    # sessions (#079: 59vs17 and 90vs15 were both unit-key admits).
+    # C490 F2: generic geographic heads ('New York City' → 'city')
+    # are equally topic-uniform — a 'city council' sentence passes
+    # any 'city' gate. Removed from the FULL anchor set (not just
+    # cap_anchors — prototype gap caught by C490 unit test):
+    # 'york' carries the topical signal.
+    anchors = {a for a in _cnt_question_anchors(question)
+               if a.rstrip('s') not in _CNT_UNIT_ANCHOR_STOP}
+    anchors -= {'city', 'cities'} | _CNT_GENERIC_HEADS
     are = _cnt_anchor_re(anchors)
     per_session = defaultdict(
         lambda: {'events': [], 'counts': set(), 'pnouns': set(),
                  'anchor_ok': False})
-    
+
     # Cross-session entity deduplication
     deduper = _cnt_deduplicate_entities(across_sessions=True)
     seen_entities = set()

@@ -367,3 +367,75 @@ class TestCycle483UnitDiscipline(unittest.TestCase):
             "How many fish are there in total in both of my "
             "aquariums?", sess)
         self.assertEqual(ans, "17")   # 10+5+1 + 1
+
+
+class TestCycle490UnitAnchorHygiene(unittest.TestCase):
+    """C490 (#079 F1+F2): the question's own unit word must not
+    qualify as a topical anchor — 'days' is topic-uniform and
+    admits legal/congressional noise sessions through the gate."""
+
+    def test_unit_word_admits_no_noise_sessions(self):
+        # #079 social-media scenario: real events 10+7=17; legal
+        # session mentions '28 days'/'14 days' — pre-C490 every
+        # sentence containing 'days' passed the anchor gate.
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "I took a 10-day break from social media in "
+                    "mid-February.")}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "I also had a week-long break from social "
+                    "media back in mid-January.")}]},
+            {"session_id": "s3", "turns": [
+                {"role": "user", "content": (
+                    "My lawyer says I must lodge the Notice of "
+                    "Appeal form within 28 days. The timeframe "
+                    "is 14 days instead of 28 days for small "
+                    "claims.")}]}]
+        ans, _ = answer_counting(
+            "How many days did I take social media breaks in "
+            "total?", sess)
+        self.assertEqual(ans, "17 days")   # not 59
+
+    def test_unit_anchor_stripped_before_gate(self):
+        from amg_bench_quality import _cnt_question_anchors
+        from amg_bench_quality import _CNT_UNIT_ANCHOR_STOP
+        raw = _cnt_question_anchors(
+            "How many days did I take social media breaks in "
+            "total?")
+        self.assertIn("days", raw)          # raw anchors carry it
+        stripped = {a for a in raw
+                    if a.rstrip("s") not in _CNT_UNIT_ANCHOR_STOP}
+        self.assertNotIn("days", stripped)  # gate never sees it
+        self.assertIn("social", stripped)   # topical anchors stay
+
+    def test_real_anchor_still_gates_duration_events(self):
+        # hygiene must not over-prune: 'japan' anchors the events
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "I finally took that 7-day trip to Japan.")}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "The contractor said the job takes 30 days "
+                    "of work.")}]}]
+        ans, _ = answer_counting(
+            "How many days did I spend in Japan?", sess)
+        self.assertEqual(ans, "7 days")      # 30-day noise out
+
+    def test_generic_geo_head_cannot_propagate_anchor_ok(self):
+        # F2 hardening: 'city' from 'New York City' must not mark
+        # a session anchor_ok and admit its unrelated durations
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "I spent 5 days in New York City last "
+                    "spring.")}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "The city council meeting ran 21 days of "
+                    "hearings this year.")}]}]
+        ans, _ = answer_counting(
+            "How many days did I spend in New York City?", sess)
+        self.assertEqual(ans, "5 days")      # not 26

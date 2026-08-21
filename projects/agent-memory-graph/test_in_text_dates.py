@@ -150,7 +150,10 @@ class TestInTextDateRescue(unittest.TestCase):
         ans, meta = a.answer_extractive(
             "Which movie did I watch first, Parasite or Dune?", "")
         self.assertIn("Parasite", ans)
-        self.assertEqual(meta["gate"], "temporal_arith")
+        # C489: pairwise which-first gate claims this family BEFORE
+        # temporal_arith (in-clause adverbial dates rank top in its
+        # effective-date ladder) — answer semantics unchanged.
+        self.assertIn(meta["gate"], ("temporal_arith", "pairwise"))
 
     def test_same_session_no_dates_still_collapses(self):
         # no adverbial dates → day-granularity wall persists →
