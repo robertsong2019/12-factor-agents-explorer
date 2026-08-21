@@ -207,7 +207,11 @@ class TestAnswerPairwise(unittest.TestCase):
                            "family before.")]),
             ("2023/05/22 (Mon) 11:56",
              [turn("user", "I was just thinking about my solo trip "
-                           "to Europe last summer.")]))
+                           "to Europe again.")]))
+        # C494: 'last summer' (the original fixture wording) now
+        # calendar-pulls the Europe anchor to 2022-07-01 and
+        # correctly RESOLVES the pair — replaced with a duration-
+        # free echo line so the tie semantics stays covered.
         ans, detail = answer_pairwise(
             "Which happened first, my solo trip to Europe or the "
             "Grand Canyon with my family?", d)

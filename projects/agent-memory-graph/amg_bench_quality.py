@@ -3203,27 +3203,52 @@ def _pw_lines(dated: list) -> list[tuple]:
 
 _PW_SINCE_RE = re.compile(
     r'\bsince\s+(' + '|'.join(_TA_MONTH_NUM) +
-    r')\w*\s+(\d{1,2})\b', re.I)
+    r')\w*\s+(\d{1,2})(?:st|nd|rd|th)?\b', re.I)
+# C494: ordinal suffix ("since February 20th") — the bare
+# (\d{1,2})\b failed on '20th' (word char after digits).
 _PW_NUMW = {'a': 1, 'an': 1, 'one': 1, 'two': 2, 'three': 3, 'four': 4,
             'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9,
             'ten': 10}
 _PW_REL_RE = re.compile(
     r'\b(?:' + '|'.join(_PW_NUMW) + r'|\d{1,2})\s+'
     r'(day|week|month|year)s?\s+ago\b'
-    r'|\blast\s+(week|month|year)\b', re.I)
+    r'|\blast\s+(week|month|year)\b'
+    r'|\blast\s+summer\b'
+    r'|\ba\s+few\s+(day|week|month|year)s?\s+ago\b'
+    r'|\b(?:for\s+)?the\s+past\s+(?:' + '|'.join(_PW_NUMW) +
+    r'|\d{1,2})\s+(day|week|month|year)s?\b', re.I)
+# C494 surface widening (29-family residual forensics): 'last
+# summer' (calendar-anchored to July 1 of the previous year —
+# order-safe, ±2-month precision), 'a few <unit>s ago' (the
+# conventional 3 units), and 'for the past N <unit>s' (state-START
+# anchoring — "taking Spanish classes for the past three months"
+# starts 3 months back, not at the session clock). All remain
+# clause-gated by _pw_rel_dt (anaphora safety, C489 trace).
+_PW_UNIT_DAYS = {'day': 1, 'week': 7, 'month': 30, 'year': 365}
 
 
 def _pw_rel_delta(m) -> timedelta | None:
     txt = m.group(0).lower()
     m2 = re.match(r'last\s+(week|month|year)', txt)
     if m2:
-        u = m2.group(1)
-        return {'week': timedelta(days=7), 'month': timedelta(days=30),
-                'year': timedelta(days=365)}[u]
-    m3 = re.match(r'(\d{1,2})\s+(day|week|month|year)', txt)
+        return timedelta(days=_PW_UNIT_DAYS[m2.group(1)])
+    m3 = re.match(r'a\s+few\s+(day|week|month|year)', txt)
     if m3:
-        n = int(m3.group(1))
-        u = m3.group(2)
+        return timedelta(days=3 * _PW_UNIT_DAYS[m3.group(1)])
+    m4 = re.match(r'(?:for\s+)?the\s+past\s+([a-z]+|\d{1,2})\s+'
+                  r'(day|week|month|year)', txt)
+    if m4:
+        tok = m4.group(1)
+        n = _PW_NUMW.get(tok)
+        if n is None:
+            try:
+                n = int(tok)
+            except ValueError:
+                return None
+        return timedelta(days=n * _PW_UNIT_DAYS[m4.group(2)])
+    m5 = re.match(r'(\d{1,2})\s+(day|week|month|year)', txt)
+    if m5:
+        n, u = int(m5.group(1)), m5.group(2)
     else:
         mw = re.match(r'([a-z]+)\s+(day|week|month|year)', txt)
         if not mw:
@@ -3232,8 +3257,7 @@ def _pw_rel_delta(m) -> timedelta | None:
         if n is None:
             return None
         u = mw.group(2)
-    mult = {'day': 1, 'week': 7, 'month': 30, 'year': 365}[u]
-    return timedelta(days=n * mult)
+    return timedelta(days=n * _PW_UNIT_DAYS[u])
 
 
 def _pw_rel_dt(dt, line, kws):
@@ -3253,6 +3277,8 @@ def _pw_rel_dt(dt, line, kws):
                     cl = c
                     if any(any(v in cl.lower() for v in grp)
                            for grp in kws):
+                        if m.group(0).lower().startswith('last summer'):
+                            return datetime(dt.year - 1, 7, 1)
                         dl = _pw_rel_delta(m)
                         if dl:
                             return dt - dl
@@ -3285,13 +3311,18 @@ def _pw_line_dt(dt, line, kws=None):
 
 
 _PW_EVENTIVE_RE = re.compile(
-    r'(attended|visited|went to|saw|watched|flew|got back|came back'
+    r'(attended|attending|visited|went to|saw|watched|flew|got back|came back'
     r'|helped|ordered|signed up|redeemed|used a|participated|'
-    r'participate|hiked|took part|completed|finished|started|'
-    r'been to|took my|took our|loving|enjoying|on a high|'
+    r'participate|hiked|took part|completed|finished|started|starting|'
+    r'taking|been to|took my|took our|loving|enjoying|on a high|'
     r'joined|bought|purchased|got|received|set up|installed|'
     r'fixed|repaired|took care|maintenance|lost|broke|'
     r'stopped working|dropped|planted|cleaned|washed)', re.I)
+# C494: progressive gerunds attending/starting/taking join the
+# eventive surface — "I've been attending workshops", "starting
+# seeds indoors", "taking Spanish classes" are ongoing-PAST
+# reports (progressive + no future marker), not plans; planning
+# clauses stay vetoed by _ORD_PLANNING_RE at window granularity.
 
 
 def _pw_scan_anchor(kws, lines, window=None, qverbs=None):
@@ -3313,6 +3344,13 @@ def _pw_scan_anchor(kws, lines, window=None, qverbs=None):
                 windows.append(c)
                 if j + 1 < len(cs):
                     windows.append(c + ' ' + cs[j + 1])
+                # C494: backward window — the main verb governs
+                # its trailing list ("I've been attending ... , like
+                # the workshop on X" — 'attending' sits BEFORE the
+                # kw-bearing clause). Forward-only windows made the
+                # verb-congruence veto miss the governing verb.
+                if j > 0:
+                    windows.append(cs[j - 1] + ' ' + c)
         if not windows:
             windows = [line]
         hit = any(_PW_EVENTIVE_RE.search(w)
