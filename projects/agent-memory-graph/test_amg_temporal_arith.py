@@ -60,19 +60,19 @@ class TestFormParsing(unittest.TestCase):
             "charity events in a row?")
         self.assertEqual((kind, unit), ("since", "month"))
 
-    def test_first_classic(self):
-        kind, unit, a, b = temporal_arith_form(
+    def test_first_retired_classic(self):
+        # C493: TA first-kind retired. Full-500 forensics: pairwise
+        # (C489) owns the family; TA-first resolved only 3 residual
+        # members — 1 correct (redundant with the extractive answer
+        # gate) and 2 wrong. Zero-loss A/B (12/30 both arms, zero
+        # flips) -> the branch is retired, questions fall through.
+        self.assertIsNone(temporal_arith_form(
             "Which event happened first, my cousin's wedding or "
-            "Michael's engagement party?")
-        self.assertEqual(kind, "first")
-        self.assertIn("wedding", a.lower())
-        self.assertIn("engagement", b.lower())
+            "Michael's engagement party?"))
 
-    def test_first_who_variant(self):
-        kind, _, a, b = temporal_arith_form(
-            "Who did I meet first, Mark and Sarah or Tom?")
-        self.assertEqual(kind, "first")
-        self.assertIn("mark", a.lower())
+    def test_first_retired_who_variant(self):
+        self.assertIsNone(temporal_arith_form(
+            "Who did I meet first, Mark and Sarah or Tom?"))
 
     def test_not_temporal(self):
         for q in ("What is my favorite book?",
@@ -137,12 +137,14 @@ class TestAnswerTemporalArith(unittest.TestCase):
             lines, "2023/04/01 (Sat) 08:09")
         self.assertIsNone(ans)
 
-    def test_first_picks_earlier_anchor(self):
+    def test_first_falls_through_after_retirement(self):
+        # C493: first-family questions are not TA forms anymore —
+        # the answer path never sees a resolvable form for them.
         ans, detail = answer_temporal_arith(
             "Which event happened first, the Ancient Civilizations "
             "exhibition or my MoMA visit?", self.LINES)
-        self.assertIn("MoMA", ans)
-        self.assertEqual(detail["dates"], ["2023-01-22", "2023-01-15"])
+        self.assertIsNone(ans)
+        self.assertEqual(detail, {"form": None})
 
     def test_unresolved_anchor_returns_none(self):
         lines = [("I visited the MoMA", "2023-01-15")]
@@ -181,18 +183,21 @@ class TestTemporalArithJudge(unittest.TestCase):
         self.assertFalse(temporal_arith_judge(
             "How many days passed between X and Y?", "7 days.", "9 days"))
 
-    def test_first_containment_both_directions(self):
+    def test_first_judge_falls_back_to_exact(self):
+        # C493: with the TA first form retired the judge has no
+        # special first-kind branch — containment semantics come
+        # from exact_judge (normalized truth-in-predicted).
         q = ("Which event happened first, my cousin's wedding or "
              "Michael's engagement party?")
         self.assertTrue(temporal_arith_judge(
             q, "Michael's engagement party",
             "Michael's engagement party"))
-        # gold shorter, predicted anchor longer (question wording)
+        # gold shorter, predicted longer (superset still contains)
         self.assertTrue(temporal_arith_judge(
             q, "engagement party",
             "Michael's engagement party on the beach"))
 
-    def test_first_wrong_event(self):
+    def test_first_judge_wrong_event(self):
         q = ("Which event happened first, my cousin's wedding or "
              "Michael's engagement party?")
         self.assertFalse(temporal_arith_judge(

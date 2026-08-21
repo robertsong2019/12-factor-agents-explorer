@@ -777,8 +777,10 @@ class LongMemEvalAdapter:
         # resolves 2 of them (C486 forensics) — pairwise's richer
         # evidence (minutes, verb congruence) subsumes it, and the
         # 5 TA-correct members re-answer identically here (C489
-        # census). After order_sort the forms are disjoint; the
-        # pipeline position is purely about the TA overlap.
+        # census). C493 went further and RETIRED the TA "first"
+        # kind outright (zero-loss A/B, 12/30 both arms): the 3
+        # residual TA-first resolutions were 1 correct-but-
+        # redundant with the extractive answer gate + 2 wrong.
         if (self.pairwise_sort and self._session_dates
                 and pw_form(question)):
             dated = []
@@ -1505,9 +1507,12 @@ _TA_SINCE_RE = re.compile(
     r"how many (days?|weeks?|months?|years?)\s+have\s+passed\s+since\s+"
     r"(?:i\s+)?(.+?)\s*[?.!]*$",
     re.I | re.S)
-_TA_FIRST_RE = re.compile(
-    r"^(?:who|which\b[^,?]*)\b.*?\bfirst\s*,\s*(.+?)\s+or\s+(.+?)\s*[?.!]*$",
-    re.I | re.S)
+# Cycle 493: _TA_FIRST_RE ("Which happened first, X or Y?") RETIRED —
+# pairwise (C489) owns the family and runs earlier in the pipeline;
+# full-500 forensics showed TA-first resolved only 3 residual
+# members (1 correct-but-redundant with the extractive answer gate,
+# 2 wrong). Zero-loss A/B on the 30-q family slice (12/30 both
+# arms, zero flips) — first-form questions now fall through.
 
 # Cycle 482 forms: calendar-distance questions in new surface
 # clothes. Forensics on the 63 form-missed temporal questions:
@@ -1747,10 +1752,11 @@ def temporal_arith_form(question: str) -> tuple | None:
     """Classify a temporal-arithmetic question form.
 
     Returns ``(kind, unit, anchor_a, anchor_b)`` — kind ``"between"``/
-    ``"ago"``/``"since"`` carry a duration unit and two/one anchors;
-    ``"first"`` carries two event anchors and unit ``""``.
+    ``"ago"``/``"since"`` carry a duration unit and two/one anchors.
     ``None`` = not a temporal-arithmetic form (leave to the normal
     answer path; category labels are NOT trusted — C456 lesson 4).
+    The former ``"first"`` kind was retired in C493 (zero-loss A/B;
+    pairwise C489 owns the family).
     """
     q = question.strip()
     m = _TA_BEFORE_RE.match(q)
@@ -1773,9 +1779,6 @@ def temporal_arith_form(question: str) -> tuple | None:
     if m:
         return ("since", m.group(1).rstrip("s") or "day",
                 m.group(2).strip(), None)
-    m = _TA_FIRST_RE.match(q)
-    if m:
-        return ("first", "", m.group(1).strip(), m.group(2).strip())
     return None
 
 
@@ -1997,17 +2000,6 @@ def answer_temporal_arith(question: str,
                 best, best_key = (hits, eff), key
         return best
 
-    if kind == "first":
-        ra, rb = best_line(a), best_line(b)
-        detail["anchors"] = [bool(ra), bool(rb)]
-        if not ra or not rb:
-            return None, detail
-        if ra[1] == rb[1]:          # same session — day granularity
-            return None, detail    # cannot order within a session
-        earlier = a if ra[1] < rb[1] else b
-        detail["dates"] = [ra[1], rb[1]]
-        return earlier, detail
-
     if kind in ("ago", "since"):
         qd = parse_lme_date(question_date)
         ra = best_line(a)
@@ -2041,22 +2033,14 @@ def temporal_arith_judge(question: str, truth: str,
     Duration forms: every integer of the ground truth is an accepted
     value (the dataset itself accepts "7 days. 8 days (including the
     last day) is also acceptable") — the predicted integer must be
-    one of them. First-form: distinctive-keyword containment in
-    EITHER direction (question anchors and gold answers name the
-    same event with different word counts).
+    one of them. First-form questions retired in C493 fall back to
+    exact containment (below) when passed here.
     """
     if not truth or not predicted:
         return False
     form = temporal_arith_form(question)
     if form is None:
         return exact_judge(question, truth, predicted)
-    kind = form[0]
-    if kind == "first":
-        gold_ks = _anchor_keywords(truth)
-        pred_ks = _anchor_keywords(predicted)
-        return bool(pred_ks and gold_ks
-                    and (pred_ks[0] in _normalize(truth)
-                         or gold_ks[0] in _normalize(predicted)))
     golds = [int(x) for x in re.findall(r"\d+", str(truth))]
     preds = [int(x) for x in re.findall(r"\d+", str(predicted))]
     return bool(preds and golds and any(p in golds for p in preds))
