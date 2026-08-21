@@ -1,131 +1,191 @@
 #!/usr/bin/env python3
-"""
-Test suite for Project Dashboard Generator
+"""Hermetic test suite for Project Dashboard Generator.
+
+All fixtures are built in a tmp directory (real git init/commit), so the
+suite never depends on the layout of the surrounding workspace monorepo.
+Run: python3 -m pytest tests/ -q
 """
 
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+import pytest
+
+SCRIPT = Path(__file__).parent.parent / "project_dashboard.py"
+GIT_ENV = {
+    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+    **__import__("os").environ,
+}
 
 
 def run_dashboard(*args):
-    """Run dashboard with args and return output."""
-    script_dir = Path(__file__).parent.parent  # Go up to project-dashboard/
-    cmd = ['python3', str(script_dir / 'project_dashboard.py')] + list(args)
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    """Run dashboard CLI with args, return (code, stdout, stderr)."""
+    cmd = [sys.executable, str(SCRIPT)] + list(args)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     return result.returncode, result.stdout, result.stderr
 
 
-def test_basic_scan():
-    """Test basic workspace scan."""
-    print("✓ Testing basic scan...")
-    code, out, err = run_dashboard('projects/')
-    assert code == 0, f"Failed: {err}"
-    assert '# 📊 Project Dashboard' in out
-    assert 'agent-task-cli' in out
-    print("  ✓ Basic scan works")
+def git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, env=GIT_ENV, check=True,
+                   capture_output=True, timeout=30)
 
 
-def test_json_output():
-    """Test JSON output format."""
-    print("✓ Testing JSON output...")
-    code, out, err = run_dashboard('projects/', '-f', 'json')
-    assert code == 0, f"Failed: {err}"
-    
-    data = json.loads(out)
-    assert 'summary' in data
-    assert 'projects' in data
-    assert len(data['projects']) > 0
-    print("  ✓ JSON output works")
+@pytest.fixture()
+def ws(tmp_path):
+    """A hermetic workspace with 5 fixture projects."""
+    # 1. healthy-proj: git clean + README/CHANGELOG/CONTRIBUTING + tests/ → score ~100
+    p = tmp_path / "healthy-proj"
+    (p / "tests").mkdir(parents=True)
+    (p / "src").mkdir()
+    (p / "README.md").write_text("# healthy\n")
+    (p / "CHANGELOG.md").write_text("# changelog\n")
+    (p / "CONTRIBUTING.md").write_text("# contributing\n")
+    (p / "tests" / "test_main.py").write_text("def test_ok():\n    assert True\n")
+    (p / "src" / "main.py").write_text("print('hi')\n")
+    git(p, "init", "-q")
+    git(p, "add", "-A")
+    git(p, "commit", "-qm", "init")
+
+    # 2. dirty-proj: jest config + README, tracked file modified after commit → dirty
+    p = tmp_path / "dirty-proj"
+    p.mkdir()
+    (p / "package.json").write_text('{"name":"dirty"}\n')
+    (p / "jest.config.js").write_text("module.exports = {};\n")
+    (p / "README.md").write_text("# dirty\n// TODO: fix this later\n")
+    git(p, "init", "-q")
+    git(p, "add", "-A")
+    git(p, "commit", "-qm", "init")
+    (p / "README.md").write_text("# dirty edited\n// TODO: fix this later\n")
+
+    # 3. plain-py: packaging-only pyproject.toml, NO test evidence → has_tests must be False
+    p = tmp_path / "plain-py"
+    p.mkdir()
+    (p / "pyproject.toml").write_text("[build-system]\nrequires = [\"setuptools\"]\n")
+    (p / "app.py").write_text("print('no tests here')\n")
+
+    # 4. go-proj: go.mod + real *_test.go → has_tests=True, framework=go
+    p = tmp_path / "go-proj"
+    (p / "pkg").mkdir(parents=True)
+    (p / "go.mod").write_text("module example.com/go-proj\n\ngo 1.21\n")
+    (p / "main.go").write_text("package main\nfunc main() {}\n")
+    (p / "pkg" / "math.go").write_text("package pkg\nfunc Add(a, b int) int { return a + b }\n")
+    (p / "pkg" / "math_test.go").write_text("package pkg\nimport \"testing\"\nfunc TestAdd(t *testing.T) {}\n")
+
+    # 5. cargo-bare: Cargo.toml but no tests dir → has_tests must be False
+    p = tmp_path / "cargo-bare"
+    (p / "src").mkdir(parents=True)
+    (p / "Cargo.toml").write_text("[package]\nname = \"x\"\nversion = \"0.1.0\"\n")
+    (p / "src" / "main.rs").write_text("fn main() {}\n")
+
+    # noise: not-a-project (no indicators) and hidden dir must be excluded
+    (tmp_path / "not-a-project").mkdir()
+    (tmp_path / "not-a-project" / "notes.txt").write_text("hi\n")
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / ".hidden" / "package.json").write_text("{}\n")
+
+    return tmp_path
 
 
-def test_health_filter():
-    """Test minimum health score filter."""
-    print("✓ Testing health score filter...")
-    code, out, err = run_dashboard('projects/', '--min-health', '70')
-    assert code == 0, f"Failed: {err}"
-    
-    # Should only show high-health projects
-    code2, out2, err2 = run_dashboard('projects/', '-f', 'json', '--min-health', '70')
-    data = json.loads(out2)
-    
-    for project in data['projects']:
-        assert project['health_score'] >= 70, f"Low health project included: {project['name']}"
-    print("  ✓ Health filter works")
+def scan_json(ws):
+    code, out, err = run_dashboard(str(ws), "-f", "json")
+    assert code == 0, f"exit {code}: {err}"
+    return json.loads(out)
 
 
-def test_file_output():
-    """Test output to file."""
-    print("✓ Testing file output...")
-    import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.md') as f:
-        output_path = f.name
-    
-    try:
-        code, out, err = run_dashboard('projects/', '-o', output_path)
-        assert code == 0, f"Failed: {err}"
-        
-        content = Path(output_path).read_text()
-        assert '# 📊 Project Dashboard' in content
-        print("  ✓ File output works")
-    finally:
-        Path(output_path).unlink(missing_ok=True)
+def test_basic_scan_and_markdown(ws):
+    code, out, err = run_dashboard(str(ws))
+    assert code == 0, err
+    assert "# 📊 Project Dashboard" in out
+    for name in ("healthy-proj", "dirty-proj", "plain-py", "go-proj", "cargo-bare"):
+        assert name in out, f"{name} missing from markdown"
+    assert "not-a-project" not in out
+    assert "hidden" not in out
 
 
-def test_health_score_calculation():
-    """Test health score calculation logic."""
-    print("✓ Testing health score calculation...")
-    code, out, err = run_dashboard('projects/', '-f', 'json')
-    data = json.loads(out)
-    
-    for project in data['projects']:
-        score = project['health_score']
-        assert 0 <= score <= 100, f"Invalid score: {score}"
-        
-        # Verify score components
-        has_docs = project['has_docs']
-        has_tests = project['has_tests']
-        
-        # Projects with docs and tests should have decent scores
-        if has_docs and has_tests and project['git_status'] == 'clean':
-            assert score >= 60, f"Healthy project has low score: {project['name']} ({score})"
-    
-    print("  ✓ Health score calculation works")
+def test_json_output_and_sorting(ws):
+    data = scan_json(ws)
+    assert set(data["summary"]) >= {"total_projects", "total_files", "avg_health_score",
+                                    "with_tests", "with_docs"}
+    names = [p["name"] for p in data["projects"]]
+    assert set(names) == {"healthy-proj", "dirty-proj", "plain-py", "go-proj", "cargo-bare"}
+    scores = [p["health_score"] for p in data["projects"]]
+    assert scores == sorted(scores, reverse=True), "projects must be sorted by health desc"
 
 
-def main():
-    """Run all tests."""
-    print("\n🧪 Running Project Dashboard Tests\n")
-    print("=" * 50)
-    
-    tests = [
-        test_basic_scan,
-        test_json_output,
-        test_health_filter,
-        test_file_output,
-        test_health_score_calculation,
-    ]
-    
-    failed = 0
-    for test in tests:
-        try:
-            test()
-        except AssertionError as e:
-            print(f"  ✗ Failed: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ✗ Error: {e}")
-            failed += 1
-    
-    print("=" * 50)
-    if failed == 0:
-        print(f"\n✅ All {len(tests)} tests passed!\n")
-        return 0
-    else:
-        print(f"\n❌ {failed}/{len(tests)} tests failed\n")
-        return 1
+def test_healthy_project_scores_high(ws):
+    data = scan_json(ws)
+    by = {p["name"]: p for p in data["projects"]}
+    assert by["healthy-proj"]["git_status"] == "clean"
+    assert by["healthy-proj"]["has_tests"] is True
+    assert "README.md" in by["healthy-proj"]["doc_files"]
+    assert by["healthy-proj"]["health_score"] >= 90
+
+
+def test_dirty_project_detected(ws):
+    data = scan_json(ws)
+    by = {p["name"]: p for p in data["projects"]}
+    assert by["dirty-proj"]["git_status"] == "dirty"
+    assert by["dirty-proj"]["has_tests"] is True
+    assert by["dirty-proj"]["test_framework"] == "jest"
+    assert by["dirty-proj"]["todo_count"] >= 1
+
+
+def test_pyproject_without_pytest_is_not_tested(ws):
+    """Regression: packaging-only pyproject.toml must not award has_tests."""
+    data = scan_json(ws)
+    by = {p["name"]: p for p in data["projects"]}
+    assert by["plain-py"]["has_tests"] is False
+    assert by["plain-py"]["test_framework"] == ""
+
+
+def test_cargo_without_tests_dir_is_not_tested(ws):
+    """Regression: bare Cargo.toml must not award has_tests."""
+    data = scan_json(ws)
+    by = {p["name"]: p for p in data["projects"]}
+    assert by["cargo-bare"]["has_tests"] is False
+
+
+def test_go_real_test_file_detected(ws):
+    data = scan_json(ws)
+    by = {p["name"]: p for p in data["projects"]}
+    assert by["go-proj"]["has_tests"] is True
+    assert by["go-proj"]["test_framework"] == "go"
+
+
+def test_min_health_filter(ws):
+    data = scan_json(ws)
+    cutoff = min(p["health_score"] for p in data["projects"]) + 1
+    code, out, err = run_dashboard(str(ws), "-f", "json", "--min-health", str(cutoff))
+    assert code == 0, err
+    filtered = json.loads(out)["projects"]
+    assert filtered, "cutoff too aggressive for this fixture"
+    assert all(p["health_score"] >= cutoff for p in filtered)
+
+
+def test_file_output(ws, tmp_path_factory):
+    out_file = ws.parent / "dash.md"
+    code, out, err = run_dashboard(str(ws), "-o", str(out_file))
+    assert code == 0, err
+    content = out_file.read_text()
+    assert "# 📊 Project Dashboard" in content
+    assert "healthy-proj" in content
+
+
+def test_missing_workspace_errors_gracefully(tmp_path):
+    code, out, err = run_dashboard(str(tmp_path / "nope"))
+    assert code == 1
+    assert "not found" in err.lower()
+    assert "Traceback" not in err, "must not crash with a traceback"
+
+
+def test_health_score_bounds(ws):
+    for p in scan_json(ws)["projects"]:
+        assert 0 <= p["health_score"] <= 100, f"{p['name']}: {p['health_score']}"
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(pytest.main([__file__, "-q"]))

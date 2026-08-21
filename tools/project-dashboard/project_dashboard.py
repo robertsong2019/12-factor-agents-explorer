@@ -187,29 +187,57 @@ class ProjectDashboard:
         return "unknown"
     
     def _detect_tests(self, path: Path) -> tuple[bool, str]:
-        """Detect test framework."""
+        """Detect test framework.
+
+        A file that merely exists (pyproject.toml, Cargo.toml, go.mod)
+        does NOT prove tests are wired up — verify actual test evidence
+        before awarding has_tests (worth 25 health points).
+        """
+        # Config files that by themselves prove a test framework is set up
         test_indicators = {
-            'pytest': ['pytest.ini', 'pyproject.toml'],
-            'unittest': ['tests/', 'test/'],
-            'jest': ['jest.config.js', 'jest.config.ts'],
+            'pytest': ['pytest.ini', 'conftest.py'],
+            'jest': ['jest.config.js', 'jest.config.ts', 'jest.config.cjs'],
             'mocha': ['.mocharc.js', '.mocharc.json'],
             'vitest': ['vitest.config.ts', 'vitest.config.js'],
-            'cargo': ['Cargo.toml'],
-            'go': ['go.mod'],
         }
-        
+
         for framework, indicators in test_indicators.items():
             for ind in indicators:
                 if (path / ind).exists():
                     return True, framework
-        
-        # Check for test directories
+
+        # pyproject.toml only counts when pytest is actually configured inside
+        pyproject = path / 'pyproject.toml'
+        if pyproject.exists():
+            try:
+                if 'pytest' in pyproject.read_text(encoding='utf-8', errors='ignore'):
+                    return True, 'pytest'
+            except Exception:
+                pass
+
+        # Cargo: only when a tests/ directory exists alongside
+        if (path / 'Cargo.toml').exists() and (path / 'tests').is_dir():
+            return True, 'cargo'
+
+        # Go: only when at least one *_test.go file exists
+        if self._has_go_tests(path):
+            return True, 'go'
+
+        # Generic test directories
         test_dirs = ['tests', 'test', '__tests__', 'spec']
         for td in test_dirs:
-            if (path / td).exists() and (path / td).is_dir():
+            if (path / td).is_dir():
                 return True, "generic"
-        
+
         return False, ""
+
+    def _has_go_tests(self, path: Path) -> bool:
+        """Check for any *_test.go file (respecting IGNORE_DIRS)."""
+        for root, dirs, files in os.walk(path):
+            dirs[:] = [d for d in dirs if d not in self.IGNORE_DIRS]
+            if any(f.endswith('_test.go') for f in files):
+                return True
+        return False
     
     def _count_todos(self, path: Path) -> tuple[int, int]:
         """Count TODO and FIXME comments."""
@@ -508,6 +536,9 @@ def main():
     args = parser.parse_args()
     
     dashboard = ProjectDashboard(args.workspace)
+    if not dashboard.workspace.is_dir():
+        print(f"Error: workspace not found: {dashboard.workspace}", file=sys.stderr)
+        sys.exit(1)
     projects = dashboard.scan()
     
     # Filter by minimum health score
