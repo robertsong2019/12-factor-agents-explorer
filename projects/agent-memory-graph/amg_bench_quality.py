@@ -3396,6 +3396,29 @@ _PW_GENERIC = frozenset(
     'book party meeting sale'.split())
 
 
+# C496 F6: anaphora purchase-report join — the kw-less
+# sentence DIRECTLY AFTER a full-matching kw line pair reports
+# the pair-item's purchase with a BARE QUANTIFIED object + price
+# ("I got a set of 10 for $25 about a month ago", 6ed717ea: the
+# 'set of 10' anaphorically resumes 'those training pads').
+# Discriminators vs poison: (a) NUMERIC of-complement only —
+# 'a pack of dental chews' names a new item and stays out;
+# (b) line-level rule — intra-sentence anaphora ('started it
+# three weeks ago', c27434e8) lives in the in-line branch whose
+# _pw_rel_dt clause gate still holds; (c) question-verb
+# congruence + realized-purchase price signature; (d) planning
+# veto and kw-hit exclusivity on the event line.
+_PW_ANAPHOR_EV_RE = re.compile(
+    r'\b(?:got|bought|ordered|purchased)\b[^.!?]{0,40}?'
+    r'\b(?:a|an|another|some)\s+'
+    r'(?:set|pack|box|pair|bag|bunch|dozen|bottle)\b'
+    r'(?:\s+of\s+\d{1,3})?(?!\s+of\b)'
+    r'[^.!?]{0,30}?\bfor\s+\$\s?\d', re.I)
+
+# URL debris from _pw_lines' sentence split (Chewy.com → 'com')
+_PW_DEBRIS_RE = re.compile(r'[a-z]{2,4}\d{0,2}', re.I)
+
+
 def _pw_scan_anchor(kws, lines, window=None, qverbs=None,
                     weak=frozenset()):
     """Earliest trustworthy (effective_dt, session_idx, line) for
@@ -3484,6 +3507,38 @@ def _pw_scan_anchor(kws, lines, window=None, qverbs=None,
             if jw:
                 vague_hits.append((join_dt(dt, T), idx, T))
                 break
+        # F6 (C496): anaphora purchase-report join — a full-
+        # matching pair (or full-matching line) followed by a
+        # kw-less purchase-report sentence whose bare quantified
+        # object + price resume the pair item; its relative
+        # duration anchors the candidate. Up to one URL-debris
+        # fragment ("com" from Chewy.com's split) may sit
+        # between (C496 trace: line[256] = 'com').
+        pair_ok = (
+            _pw_line_match(kws, line)
+            or (i > 0 and lines[i - 1][1] == idx
+                and _cl_kw_hits(kws, lines[i - 1][2])
+                and _pw_line_match(
+                    kws, lines[i - 1][2] + ' ' + line)))
+        j = i + 1
+        if (j + 1 < n and lines[j][1] == idx
+                and _PW_DEBRIS_RE.fullmatch(lines[j][2].strip())):
+            j += 1  # skip the single URL fragment
+        if (pair_ok and j < n and lines[j][1] == idx):
+            nxt = lines[j][2]
+            if (not _cl_kw_hits(kws, nxt)
+                    and _PW_ANAPHOR_EV_RE.search(nxt)
+                    and not _ORD_PLANNING_RE.search(nxt)
+                    and (not qverbs
+                         or any(v in nxt.lower() for v in qverbs))):
+                m = _PW_REL_RE.search(nxt)
+                dl = _pw_rel_delta(m) if m else None
+                if dl:
+                    vague_hits.append(
+                        (dt - dl, idx,
+                         lines[i - 1][2] + ' ' + line + ' ' + nxt
+                         if i > 0 else line + ' ' + nxt))
+                    continue
     pool = fresh_hits or vague_hits
     if not pool:
         return None
