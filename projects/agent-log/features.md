@@ -41,7 +41,7 @@
 - [x] **F15**: `clean` command — remove old/empty log files (--dry-run, --age) ✅ 2026-05-19
 
 ### Testing & Quality
-- [ ] **F16**: Unit tests for each command (Bats framework)
+- [x] **F16**: Unit tests for each command (Bats framework) ✅ 2026-08-22 (18 bats tests incl. 10 regression tests for 4 real bugs: help DOA, clean data loss, find -j JSON, escaping)
 - [x] **F17**: Integration tests with sample fixture data ✅ 2026-05-30
 - [ ] **F18**: Performance benchmarks for large log sets
 

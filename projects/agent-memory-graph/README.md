@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-9768-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-9801-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -108,7 +108,7 @@ agent-memory-graph 的定位：**beyond recall — agency-grade graph memory —
 | **memorywire** | ✅ 5ops×4types | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **零依赖** | ✅ 仅 Python 标准库 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **LoCoMo Score** | 未测 | 49.0% | N/A | N/A | **92.21%** | 90.2% |
-| **Tests** | **9768** | ~500 | ~300 | ~800 | N/A | N/A |
+| **Tests** | **9801** | ~500 | ~300 | ~800 | N/A | N/A |
 
 ### 独特价值
 
@@ -2296,7 +2296,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-8505 → **9519 个测试**覆盖所有 API（**467 个 cycle，296 天零回滚**）。
+8505 → **9801 个测试**覆盖所有 API（**496 个 cycle，299 天零回滚**）。
 
 ## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
 
@@ -4067,6 +4067,38 @@ form 匹配但窗口内失败时（锚点缺失 OR 两锚点经 mirror/advice �
 #### speaker-recall 种子广度 — `recall_seed_k` (Cycle 473)
 
 取证：ssa evhit miss 12 题中 10 题 `ev_in_candidates=0`——证据消息有 7-16 个关键词命中，但权重序 `LIMIT 5` 永远浮不出。`recall_seed_k=40` 经 `recall_form` 手术式限定（恰匹配 48/500 题、全部 ssa）；全局 k=40 对照被否：temporal-133 exact 36→14（mirror/advice 行淹没窗口）。ssa-56 evhit 0.786→0.929，temporal 零翻转——**定向扩宽优于全局扩宽**。
+
+### Multi-session 锚定纪律、官方基准刷新与 pairwise 收尾 (Cycles 490-496)
+
+> Cycles 474-489 的 temporal QA 家族（session 上下文过滤、past-perfect 路径、order-family/pairwise N-锚点）详见[Tutorial：Temporal QA 零 LLM 时间推理](TUTORIAL-TEMPORAL-QA.md)。本节覆盖其后七轮：multi_session 0.045→0.120 的锚定纪律移植、full-500 官方刷新（exact 0.204→**0.284**）、以及 pairwise 家族三连收尾（temporal-133 0.481→0.571、first-family 12→24/30）。
+
+#### `_cnt_question_anchors` 单位词锄除 — 锚定卫生 (Cycle 490)
+
+multi_session 计数的锚点集在编译前先剔除问题自身携带的单位词（`_CNT_STOP_Q` 话题均匀词、`_CNT_GENERIC_HEADS` 泛化地理头词）——“问 days 的题里每个锚点候选都命中 'days'” 是噪声不是信号。三个具名失效按预测修复（camping 18→8、social-media 59→17、Hawaii+NYC 90→15）；泛化头词从完整锚集（而非仅 cap_anchors）移除是超出原型的加固，由 C490 单测抓到原型缺口。multi_session 9→12/133，counting fired-precision 0.32→0.46。
+
+#### `_cnt_total_sum` 金额锚定纪律移植 (Cycle 491)
+
+旧的无门控求和吞下 haystack 里每一个 `$`：收入行（$50k）、L-visa 法定费（$4500×2）、手表/餐厅消费全部污染总额（$56355 vs GT $5850）。从 duration_sum 移植同构器官：(a) 锚点门——问题 token 减去金额单位词，连字符头拆分（bike-related→bike），单复数双形匹配；(b) 会话传播——一句非意图锚点命中点亮整个会话，意图句（planning）不能点亮；(c) 价格区间对跳过（$50 to $200 = 预算非消费）。四个具名总额全部精确（$2440→$185 / $56355→$5850 / $8750→$3750 / $8940→$720），multi_session 12→16/133 零损失零门控翻转。
+
+#### full-500 官方 reference 刷新 (Cycle 492)
+
+C481 后首次官方刷新，收 C482-C491 十 cycle 逾期债：exact **0.204→0.284**（+40 净：temporal 0.271→**0.481** = C485-489 五连全量兑现，multi_session 0.045→**0.120** = C490/C491 两连，ssu/kupdate 各 +1）；llm 0.256→0.296；evhit 0.910→0.912。C484/C485 的 needs_verification 债随刷新清偿（答案侧零回归；检索 hit -3 为检索侧唯一变更且证据命中反升）。
+
+#### temporal_arith first-kind 退役 (Cycle 493)
+
+删除型 cycle 也要 A/B：monkeypatch 双臂 + 生产验证 30 题切片 **12/30 = 12/30 零翻转**才提交。取证：500 题中 30 题匹配 first-regex，pairwise 截获 11（8 对）；TA-first 仅解析 3（1/3 精度）——唯一正确项经普通 extractive answer gate 等价重答，两个错误项哪边都错。删除 `_TA_FIRST_RE` + form/answer/judge 三分支死代码。C479 先例第二案：“更准机制已前置”只是推断，双验证才是证据。
+
+#### pairwise 锚面扩展 — `_PW_EVENTIVE_RE` / `_PW_SINCE_RE` / 粗相对时长 (Cycle 494)
+
+29-family 残余 14 错分解后修三个表面缺口：(a) 进行时 gerund（attending/starting/taking）入事件词表——进行时是“正在发生的过去汇报”，planning veto 完好；(b) `since February 20th` 序数后缀（裸 `(\d{1,2})\b` 在 '20th' 上失配）；(c) 粗相对时长日历锚：last summer→上年 7 月 1 日、a few N ago→3 单位、for the past N→状态起点回拉。加 `_pw_scan_anchor` 向后窗口（主句动词统辖尾列表）。first-family 12→16、temporal 64→68（+4/−0）。
+
+#### 从句粒度 + 跨行锚点对 (Cycle 495)
+
+clause 是意图的最小单位：同一行可以既 plan 一个事件又新鲜汇报另一个；相对从句窗口 + 跨行锚点 join。7 个具名修复全胜零翻转——first-family 16→**23**/30、temporal 68→**75**/133（+7/−0）。
+
+#### `_pw` F6 anaphora 购买汇报 join (Cycle 496)
+
+kw 对全命中后，无 kw 的购买汇报句（“We got her for $500”之类裸量词 NP + 价格宾语）可回指续接 pair item——四重判别式防毒，行内 anaphora（“started it 3 weeks ago” 继续按会话时钟）构造上不受影响。firstfam 23→24、temporal 75→**76**/133；套件 9790→9801。
 
 ---
 

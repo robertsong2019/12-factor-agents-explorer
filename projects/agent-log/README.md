@@ -69,6 +69,20 @@ agent-log stats
 | `cron` | List all cron job runs |
 | `stats` | Show session statistics |
 
+## Testing
+
+```bash
+# Full bats suite (18 tests, fully sandboxed — HOME is overridden to a fixture dir)
+bats test/commands.bats test/bugfixes.test.bats
+```
+
+`test/commands.bats` covers each command's contract on fixture data; `test/bugfixes.test.bats` is a regression suite pinning four real bugs found on 2026-08-22:
+
+1. **help/usage DOA** — `agent-log help` and unknown commands printed 0 bytes (the extraction sed grabbed a `## Usage` heading that didn't exist in the emitted text)
+2. **clean data loss** — files whose last line lacked a trailing newline were miscounted as empty by `wc -l == 0` and deleted; emptiness now requires a zero-byte file
+3. **find -j invalid JSON** — multi-result JSON output concatenated objects without commas
+4. **JSON injection** — unescaped quotes/newlines in query/keyword/pattern/content could break machine-parseable output; all interpolated strings now go through `esc_json`
+
 ## How It Works
 
 ```
