@@ -3074,13 +3074,16 @@ def pw_form(question: str):
 
 # question-framing words never anchor (the question's nouns carry
 # the event identity; "did I attend first" contributes nothing)
+# C495: 'trip' joins the stops — "which trip did I take first"
+# contributes the FRAMING noun; evidence lines say "went on a
+# two-week trip to Europe" and partial-kw matching takes over
 _PW_FRAME_STOP = frozenset(
     "narrator purchase purchases arrival malfunction start "
     "started starting loss lose losing lost received receiving "
     "receive attendance attend attended participation "
     "participate participated the a an my our their his her one "
     "first new upcoming event item task device for to of with "
-    "from in on at by and or did was were".split())
+    "from in on at by and or did was were trip".split())
 _PW_TOKEN_RE = re.compile(r"[a-z0-9#$&'+-]+")
 
 
@@ -3101,9 +3104,19 @@ def _pw_stems(word: str) -> list[str]:
     return sorted(st)
 
 
+# C495 F4: purpose clauses in candidate TAILS are modifier
+# noise for kw extraction — "a charity 5K run to raise money"
+# anchors on charity+run, not on raise/money (213fd887)
+_PW_PURPOSE_RE = re.compile(
+    r'\s+to\s+(raise|buy|get|help|support|celebrate|commemorate|'
+    r'donate|find|learn|improve)\b', re.I)
+
+
 def _pw_kws(phrase: str) -> list[list[str]]:
     """Stem-group keyword list (≤4 content words, stop-stripped).
-    Every group must match somewhere in the line (any variant)."""
+    Every group must match somewhere in the line (any variant).
+    Purpose-clause tails are pruned first (C495 F4)."""
+    phrase = _PW_PURPOSE_RE.split(phrase)[0] or phrase
     toks = [t.strip("'\"") for t in _PW_TOKEN_RE.findall(phrase.lower())]
     words = [w for w in toks
              if len(w) > 2 and w not in _PW_FRAME_STOP]
@@ -3133,7 +3146,7 @@ _PW_VERB_MAP = {
     'start': ('start', 'began', 'plant', 'sign up', 'launch'),
     'set up': ('set up', 'install', 'configur', 'got'),
     'setup': ('set up', 'install', 'configur', 'got'),
-    'take': ('took',),
+    'take': ('took', 'went'),  # C495: 'take a trip' surfaces as 'went on/to'
     'take care of': ('took', 'mainten', 'repair', 'care', 'clean'),
     'join': ('join', 'sign up', 'became', 'enroll'),
     'lose': ('lost', 'lost my', 'misplac'),
@@ -3317,7 +3330,11 @@ _PW_EVENTIVE_RE = re.compile(
     r'taking|been to|took my|took our|loving|enjoying|on a high|'
     r'joined|bought|purchased|got|received|set up|installed|'
     r'fixed|repaired|took care|maintenance|lost|broke|'
-    r'stopped working|dropped|planted|cleaned|washed)', re.I)
+    r'stopped working|dropped|planted|cleaned|washed'
+    # C495: 'went' bare ("went on a two-week trip"), precise
+    # 'did a/it/my/the' (never bare 'did' — question-form safe),
+    # 'had a meeting' (1a1dc16d rel-clause eventive)
+    r'|\bdid (?:a|it|my|the)\b|had a meeting|\bwent\b)', re.I)
 # C494: progressive gerunds attending/starting/taking join the
 # eventive surface — "I've been attending workshops", "starting
 # seeds indoors", "taking Spanish classes" are ongoing-PAST
@@ -3325,47 +3342,148 @@ _PW_EVENTIVE_RE = re.compile(
 # clauses stay vetoed by _ORD_PLANNING_RE at window granularity.
 
 
-def _pw_scan_anchor(kws, lines, window=None, qverbs=None):
+# ── C495: clause-granular + cross-line anchor scanning ─────────
+
+
+def _cl_kw_hits(kws, clause: str) -> list[int]:
+    """Indices of kw groups hitting this clause (partial ok)."""
+    ll = clause.lower()
+    return [i for i, grp in enumerate(kws)
+            if any(v in ll for v in grp)]
+
+
+def _pw_hit_windows(kws, text: str) -> list[str]:
+    """Eventive clause windows anchored at ANY kw-hitting clause
+    (C494 anchored only at full-kw clauses — a strict subset).
+    Appositive evidence: "Rachel, who I had a meeting with on
+    April 10th" — the kw clause and the eventive rel-clause are
+    separate, ±1-clause windows bridge them (F3)."""
+    cs = _ord_clauses(text) or [text]
+    wins = []
+    for j, c in enumerate(cs):
+        if not _cl_kw_hits(kws, c):
+            continue
+        wins.append(c)
+        if j + 1 < len(cs):
+            wins.append(c + ' ' + cs[j + 1])
+        if j > 0:
+            wins.append(cs[j - 1] + ' ' + c)
+    if not wins:
+        wins = [text]
+    return [w for w in wins
+            if _PW_EVENTIVE_RE.search(w)
+            and not _ORD_PLANNING_RE.search(w)]
+
+
+# C495 F5: planning veto waived by a subordinate/relative PAST —
+# "planning to buy a charger, since I lost my old one two weeks
+# ago" (78cf46a3), "lens that I got a month ago" under 'interested
+# in' (b4a80587). The past event is reported INSIDE the plan
+# sentence; kw-scoped planning still vetoes clean plans.
+_PW_SUB_RE = re.compile(
+    r'\b(since|because|after|when)\b[^,]{0,60}?(?:'
+    + _PW_EVENTIVE_RE.pattern + r')'
+    r'|\b(?:that|which|who)\s+(?:i\s+|we\s+|they\s+|he\s+|she\s+)?'
+    r'(?:got|bought|ordered|received|lost|started|joined|fixed|'
+    r'planted|signed up|attended)', re.I)
+
+# C495: generic candidate nouns — a relative-date pull inside a
+# CROSS-LINE join must sit in a clause with candidate-UNIQUE kw
+# (c27434e8: 'model' shared across Ferrari/Zero questions only
+# by words[:4] truncation — insufficient distinctiveness)
+_PW_GENERIC = frozenset(
+    'model event item task device trip gift project game show '
+    'book party meeting sale'.split())
+
+
+def _pw_scan_anchor(kws, lines, window=None, qverbs=None,
+                    weak=frozenset()):
     """Earliest trustworthy (effective_dt, session_idx, line) for
     one candidate. Tiers (C482/C488): fresh discourse deictics
     (today/just/yesterday−1 d) outrank vague eventive pasts;
-    planning clauses never anchor. Verb congruence narrows the
-    eventive tier when the question names a did-I verb."""
+    planning clauses never anchor (kw-scoped, C495 F5-waivable).
+    Verb congruence narrows the eventive tier when the question
+    names a did-I verb.
+
+    C495: (F3) clause windows anchor at any kw-hit clause;
+    (F1) cross-line joins — same-session adjacent lines each
+    contributing ≥1 kw group, joined text must full-match;
+    (F5) subordinate-past waiver of the planning veto. Join
+    relative-date pulls require kw unique to this candidate
+    (``weak`` guard)."""
     fresh_hits, vague_hits = [], []
-    for dt, idx, line in lines:
+    n = len(lines)
+
+    def join_dt(dt, T):
+        # weak-kw guard: relative-date pulls in a JOIN must sit
+        # in a clause hitting a kw group unique to this candidate
+        base = _pw_line_dt(dt, T, kws)
+        if base != dt:
+            cs = _ord_clauses(T) or [T]
+            for m in _PW_REL_RE.finditer(T):
+                for c in cs:
+                    if c in T:
+                        i0 = T.find(c)
+                        if i0 <= m.start() and m.end() <= i0 + len(c):
+                            hits = {g[0] for g in kws
+                                    if any(v in c.lower() for v in g)}
+                            if hits and hits <= weak:
+                                return dt  # session clock
+                            break
+        return base
+
+    def waiver_ok(T):
+        cs = _ord_clauses(T) or [T]
+        plan_kw = any(_ORD_PLANNING_RE.search(c)
+                      and _cl_kw_hits(kws, c) for c in cs)
+        return plan_kw and bool(_PW_SUB_RE.search(T))
+
+    for i, (dt, idx, line) in enumerate(lines):
         if window and not (window[0] <= dt.date() <= window[1]):
             continue
-        if not _pw_line_match(kws, line):
+        if not _cl_kw_hits(kws, line):
             continue
-        cs = _ord_clauses(line) or [line]
-        windows = []
-        for j, c in enumerate(cs):
-            if _pw_line_match(kws, c):
-                windows.append(c)
-                if j + 1 < len(cs):
-                    windows.append(c + ' ' + cs[j + 1])
-                # C494: backward window — the main verb governs
-                # its trailing list ("I've been attending ... , like
-                # the workshop on X" — 'attending' sits BEFORE the
-                # kw-bearing clause). Forward-only windows made the
-                # verb-congruence veto miss the governing verb.
-                if j > 0:
-                    windows.append(cs[j - 1] + ' ' + c)
-        if not windows:
-            windows = [line]
-        hit = any(_PW_EVENTIVE_RE.search(w)
-                  and not _ORD_PLANNING_RE.search(w)
-                  for w in windows)
-        if qverbs:
-            hit = hit and any(
-                any(v in w.lower() for v in qverbs) for w in windows)
-        if _ORD_FRESH_RE.search(line):
-            base = _pw_line_dt(dt, line, kws)
-            rd = base - timedelta(days=1) \
-                if _ORD_YESTERDAY_RE.search(line) else base
-            fresh_hits.append((rd, idx, line))
-        elif hit:
-            vague_hits.append((_pw_line_dt(dt, line, kws), idx, line))
+        if _pw_line_match(kws, line):
+            # fresh discourse deictics anchor without eventive
+            # evidence (C488 tier discipline)
+            if _ORD_FRESH_RE.search(line):
+                base = _pw_line_dt(dt, line, kws)
+                rd = base - timedelta(days=1) \
+                    if _ORD_YESTERDAY_RE.search(line) else base
+                fresh_hits.append((rd, idx, line))
+                continue
+            wins = _pw_hit_windows(kws, line)
+            if qverbs:
+                wins = [w for w in wins
+                        if any(v in w.lower() for v in qverbs)]
+            if wins:
+                vague_hits.append(
+                    (_pw_line_dt(dt, line, kws), idx, line))
+                continue
+            if waiver_ok(line):
+                vague_hits.append(
+                    (_pw_line_dt(dt, line, kws), idx, line))
+                continue
+        # F1: cross-line joins — even from partial lines (the
+        # kw-completing partner is often a non-matching line)
+        joins = []
+        if i + 1 < n and lines[i + 1][1] == idx \
+                and _cl_kw_hits(kws, lines[i + 1][2]):
+            joins.append(line + ' ' + lines[i + 1][2])
+        if i > 0 and lines[i - 1][1] == idx \
+                and _cl_kw_hits(kws, lines[i - 1][2]):
+            joins.append(lines[i - 1][2] + ' ' + line)
+        for T in joins:
+            if not _pw_line_match(kws, T):
+                continue
+            jw = _pw_hit_windows(kws, T) or (
+                [T] if waiver_ok(T) else [])
+            if qverbs:
+                jw = [w for w in jw
+                      if any(v in w.lower() for v in qverbs)]
+            if jw:
+                vague_hits.append((join_dt(dt, T), idx, T))
+                break
     pool = fresh_hits or vague_hits
     if not pool:
         return None
@@ -3374,7 +3492,22 @@ def _pw_scan_anchor(kws, lines, window=None, qverbs=None):
 
 
 def _pw_any_mention(kws, lines) -> bool:
-    return any(_pw_line_match(kws, ll) for _, _, ll in lines)
+    """Full-kw mention anywhere — single line OR same-session
+    adjacent line pair (C495: "8 prime lens" + next line's 50mm
+    lens talk; mention checks do NOT apply the planning veto —
+    planned-but-unrealized still counts as existence-evidence
+    for the neg-exist abstain gate, by design)."""
+    if any(_pw_line_match(kws, ll) for _, _, ll in lines):
+        return True
+    n = len(lines)
+    for i in range(n - 1):
+        if lines[i][1] != lines[i + 1][1]:
+            continue
+        a, b_ = lines[i][2], lines[i + 1][2]
+        if (_cl_kw_hits(kws, a) and _cl_kw_hits(kws, b_)
+                and _pw_line_match(kws, a + ' ' + b_)):
+            return True
+    return False
 
 
 def answer_pairwise(question: str, dated: list,
@@ -3403,8 +3536,19 @@ def answer_pairwise(question: str, dated: list,
     window = _ord_window(question, qdate)
     qv = _pw_qverbs(question)
     lines = _pw_lines(dated)
-    aa = _pw_scan_anchor(a_kws, lines, window, qv)
-    bb = _pw_scan_anchor(b_kws, lines, window, qv)
+    # C495: weak kw groups (shared with the OTHER candidate, or
+    # generic nouns) cannot pull relative dates in cross-line
+    # joins — uniqueness is the anaphora-safety substitute there
+    def _weak(kws, other):
+        ow = ' '.join(' '.join(g) for g in other).lower()
+        return frozenset(
+            g[0] for g in kws
+            if g[0] in _PW_GENERIC
+            or any(v in ow for v in g))
+    aa = _pw_scan_anchor(a_kws, lines, window, qv,
+                         weak=_weak(a_kws, b_kws))
+    bb = _pw_scan_anchor(b_kws, lines, window, qv,
+                         weak=_weak(b_kws, a_kws))
     if aa and bb:
         if abs((aa[0] - bb[0]).total_seconds()) <= 24 * 3600:
             return None, {"form": "pairwise", "mode": "sub-24h-tie",
