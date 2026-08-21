@@ -18,6 +18,17 @@ JSON_OUTPUT=0
 
 die() { echo -e "${RED}Error:${RESET} $*" >&2; exit 1; }
 
+# ── Helper: escape a string for embedding in JSON output ──
+esc_json() {
+  local s="$1"
+  s="${s//\\\\/\\\\\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\t'/\\t}"
+  s="${s//$'\r'/}"
+  printf '%s' "$s"
+}
+
 # ── Helper: build JSON result for search ──
 build_search_json() {
   local query="$1" stype="$2"
@@ -25,7 +36,7 @@ build_search_json() {
   local items=("$@")
   local count=${#items[@]}
   printf '{"command":"search","query":"%s","type":"%s","file_count":%d,"results":[%s]}\n' \
-    "$query" "$stype" "$count" "$(IFS=,; echo "${items[*]}")"
+    "$(esc_json "$query")" "$stype" "$count" "$(IFS=,; echo "${items[*]+${items[*]}}")"
 }
 
 # ── Commands ──
@@ -219,7 +230,7 @@ cmd_summary() {
     done
   elif [[ $JSON_OUTPUT -eq 1 ]]; then
     printf '{"command":"summary","days":%s,"keyword":"%s","total_files":%d,"total_lines":%d,"entries":[%s]}\n' \
-      "$days" "$keyword" "$total_files" "$total_lines" "$(IFS=,; echo "${json_entries[*]+${json_entries[*]}}")"
+      "$days" "$(esc_json "$keyword")" "$total_files" "$total_lines" "$(IFS=,; echo "${json_entries[*]+${json_entries[*]}}")"
   else
     echo; echo -e "  ${YELLOW}Total:${RESET} $total_files files, $total_lines lines"
     if [[ -f "$WORKSPACE/MEMORY.md" ]]; then
@@ -308,11 +319,10 @@ cmd_clean() {
   [[ $dry_run -eq 1 ]] && echo -e "  ${YELLOW}(dry run — no files deleted)${RESET}"
   echo
 
-  # Remove empty files
+  # Remove empty files (size 0; wc -l misses content without trailing newline)
   for f in "$MEMORY_DIR"/*.md; do
     [[ -f "$f" ]] || continue
-    local lines; lines=$(wc -l < "$f")
-    if [[ $lines -eq 0 ]]; then
+    if [[ ! -s "$f" ]]; then
       local sz; sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
       echo -e "  ${RED}empty:${RESET} $(basename "$f")"
       [[ $dry_run -eq 0 ]] && rm "$f"
@@ -431,7 +441,7 @@ cmd_find() {
     count=$((count + 1))
 
     if [[ $json_out -eq 1 ]]; then
-      json_items+="{\"file\":\"$rel\",\"lines\":$lines,\"modified\":\"$mod_date\"}"
+      json_items+=("{\"file\":\"$(esc_json "$rel")\",\"lines\":$lines,\"modified\":\"$mod_date\"}")
     else
       printf "  ${GREEN}%s${RESET} %5d lines  %s\n" "$mod_date" "$lines" "$(basename "$f")"
     fi
@@ -439,7 +449,7 @@ cmd_find() {
 
   if [[ $json_out -eq 1 ]]; then
     printf '{"command":"find","pattern":"%s","after":"%s","before":"%s","count":%d,"results":[%s]}\n' \
-      "$pattern" "$date_after" "$date_before" "$count" "${json_items[*]+${json_items[*]}}"
+      "$(esc_json "$pattern")" "$date_after" "$date_before" "$count" "$(IFS=,; echo "${json_items[*]+${json_items[*]}}")"
   else
     echo -e "  ${YELLOW}Found:${RESET} $count sessions"
   fi
@@ -522,7 +532,7 @@ cmd_session() {
   if [[ $json_out -eq 1 ]]; then
     local content; content=$(cat "$target" | head -100)
     printf '{"command":"session","file":"%s","lines":%d,"size":%d,"modified":"%s","content":"%s"}\n' \
-      "${target#$HOME/}" "$lines" "$size" "$mod" "${content//\"/\\\"}"
+      "$(esc_json "${target#$HOME/}")" "$lines" "$size" "$mod" "$(esc_json "$content")"
   else
     echo -e "${CYAN}📋 Session: $(basename "$target")${RESET}"
     echo -e "  ${GRAY}Modified: $mod | $lines lines | $size bytes${RESET}"
@@ -586,7 +596,34 @@ cmd_trend() {
 # ── Main ──
 
 usage() {
-  sed -n '/^## Usage/,/^## /p' "$0" | head -n -1 | sed 's/^## //;s/^# //' | tail -n +2
+  cat <<'EOF'
+agent-log — Search, filter, and summarize OpenClaw session logs
+
+Usage: agent-log <command> [args]
+
+Commands:
+  search <query> [-r|--regex] [-o FILE] [-j|--json] [--from DATE] [--to DATE]
+      Search memory + session logs (text or regex)
+  today                      Show today's daily notes + session activity
+  date YYYY-MM-DD            Show notes for a specific date
+  summary [DAYS] [-k|--keyword KW] [-t|--types] [--csv] [--md] [-j|--json]
+      Activity summary with line counts per day
+  trend [DAYS] [-j|--json]   Activity sparkline trend
+  stats [--md] [-j|--json]   Workspace statistics
+  sessions [-j|--json]       List recent session files
+  session <id> [-j|--json]   Show one session by name/pattern
+  find <pattern> [-a DATE] [-b DATE] [-j|--json]
+      Find sessions by pattern and/or date range
+  grep <pattern>             Grep across session logs
+  tail [-n N] [-f]           Tail the most recent session
+  cron                       List OpenClaw cron jobs
+  clean [-n|--dry-run] [-a|--age DAYS]
+      Remove empty / old daily note files
+  help                       Show this help
+
+Environment:
+  OPENCLAW_WORKSPACE         Workspace root (default: ~/.openclaw/workspace)
+EOF
 }
 
 case "${1:-help}" in
