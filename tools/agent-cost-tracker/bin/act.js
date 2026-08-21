@@ -6,7 +6,7 @@
 
 import { program } from 'commander';
 import chalk from 'chalk';
-import { fileURLToPath } from 'path';
+import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync } from 'fs';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';

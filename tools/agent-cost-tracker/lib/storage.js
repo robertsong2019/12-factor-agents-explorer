@@ -89,7 +89,8 @@ export function clearLogs(beforeDate = null) {
   if (beforeDate) {
     const logs = getLogs({ before: beforeDate });
     const ids = logs.map(log => log.id);
-    return deleteLogs(ids);
+    deleteLogs(ids);
+    return ids.length;  // 返回删除条数
   } else {
     config.set('logs', []);
     return 0;
