@@ -3465,6 +3465,14 @@ _CNT_UNIT_ANCHOR_STOP = {u.rstrip('s') for u in (
     'months', 'year', 'years', 'minute', 'minutes', 'night',
     'nights', 'time', 'times')}
 
+# C491 (#079 residual bucket 1): money-question unit words are
+# topic-uniform the same way — 'money'/'raise'/'total' appear in
+# every $-bearing sentence and admit nothing topical.
+_CNT_MONEY_ANCHOR_STOP = {
+    'money', 'raise', 'spend', 'spent', 'total', 'expense',
+    'since', 'start', 'participate', 'attending', 'attend',
+    'through', 'event'}
+
 _CNT_STOP_Q = {
     'many', 'much', 'have', 'does', 'did', 'that', 'this', 'with',
     'from', 'about', 'what', 'which', 'there', 'been', 'were',
@@ -3963,12 +3971,50 @@ def _cnt_total_sum(question: str, sessions: list[dict]):
     if not _cnt_money_q(question.lower()):
         return None      # unit discipline — never sum $ into
     # hours/fish/course questions (Cycle 483)
+    # C491 (#079): anchor-discipline transplant from duration_sum.
+    # The old gateless sum admitted EVERY $ in the haystack —
+    # watch purchases, L-visa legal fee text and income
+    # statements polluted the totals ($56355 vs GT $5850 =
+    # $50k income line; $8940 vs GT $720 = $4500 visa fees).
+    # Anchors: question tokens minus money-unit words (C490 F1
+    # principle: the question's own unit vocabulary carries zero
+    # topical signal), hyphen heads split ('bike-related' →
+    # 'bike'), singular/plural forms both match ('workshops' →
+    # 'workshop').
+    anchors = set()
+    for a in _cnt_question_anchors(question):
+        base = a.split('-')[0]
+        if (base.rstrip('s') in _CNT_MONEY_ANCHOR_STOP
+                or base.rstrip('s') in _CNT_UNIT_ANCHOR_STOP
+                or len(base) < 4):
+            continue
+        for form in (base, _cnt_sing(base)):
+            anchors.add(form)
+    are = _cnt_anchor_re(anchors) if anchors else None
+    # session-level propagation: ONE non-intent anchor mention
+    # lights the session (the $25 bike-chain sentence has no
+    # 'bike', but its sibling 'bike lights' sentence does);
+    # intent sentences can't light (planning mentions leak).
+    ok_sessions = set()
+    if are:
+        for si, sent in _cnt_sents(sessions):
+            if are.search(sent) and not _CNT_INTENT_RE.search(sent):
+                ok_sessions.add(si)
     amts = set()
     for si, sent in _cnt_sents(sessions):
         if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
             continue
+        if are and not are.search(sent) and si not in ok_sessions:
+            continue
+        # price-range pairs ("$50 to $200", "$100-$200") are
+        # budgets, not spent amounts — skip both endpoints
+        skip = [(rm.start(), rm.end()) for rm in re.finditer(
+            r'\$\s?\d[\d,]*(?:\.\d+)?\s*(?:to|[-\u2013])\s*'
+            r'\$?\s?\d[\d,]*(?:\.\d+)?', sent)]
         for m2 in re.finditer(
                 r'\$\s?(\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?)', sent):
+            if any(s <= m2.start() < e for s, e in skip):
+                continue
             amts.add(m2.group(1))
     if not amts:
         return None

@@ -439,3 +439,113 @@ class TestCycle490UnitAnchorHygiene(unittest.TestCase):
         ans, _ = answer_counting(
             "How many days did I spend in New York City?", sess)
         self.assertEqual(ans, "5 days")      # not 26
+
+
+class TestCycle491MoneyAnchorDiscipline(unittest.TestCase):
+    """C491 (#079 residual bucket 1): total_sum anchor transplant.
+
+    The old gateless sum admitted every $ in the haystack — income
+    statements, visa-fee legal text, watch purchases. Anchors now
+    gate sentences (session-propagated), money-unit words carry
+    no topical signal, price ranges are budgets not spends."""
+
+    def test_income_and_fares_excluded(self):
+        # $56355 vs GT $5850 was a $50k income line + rail fares
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "I recently participated in a charity walk "
+                    "and managed to raise $250 through "
+                    "sponsors.")}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "They are likely to have a stable income of "
+                    "over $50,000 per year and at least some "
+                    "disposable income.")}]},
+            {"session_id": "s3", "turns": [
+                {"role": "user", "content": (
+                    "A single train ticket costs $5, and I "
+                    "usually buy a monthly pass for $100.")}]}]
+        ans, _ = answer_counting(
+            "How much money did I raise in total through all "
+            "the charity events I participated in?", sess)
+        self.assertEqual(ans, "$250")       # not $50355
+
+    def test_legal_fee_text_excluded(self):
+        # $8940 vs GT $720 included L-visa statutory fee text
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "It was a two-day workshop, and I paid $200 "
+                    "to attend.")}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "NOTE: A petitioner that seeks initial "
+                    "approval must submit an additional fee of "
+                    "$4,500. This $4,500 fee is mandated by "
+                    "Public Law 114-113.")}]}]
+        ans, _ = answer_counting(
+            "How much total money did I spend on attending "
+            "workshops in the last four months?", sess)
+        self.assertEqual(ans, "$200")        # not $4700
+
+    def test_session_propagation_admits_anchorless_sibling(self):
+        # the $25 chain sentence has no 'bike' — its sibling does
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "The mechanic told me to replace the chain, "
+                    "which cost me $25.")},
+                {"role": "user", "content": (
+                    "I also got a new set of bike lights "
+                    "installed, which were $40.")}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "I saw a business class ticket for $3,300, "
+                    "but I'm hoping to find something cheaper.")
+                }]}]
+        ans, _ = answer_counting(
+            "How much total money have I spent on bike-related "
+            "expenses since the start of the year?", sess)
+        self.assertEqual(ans, "$65")         # 25+40, not 3365
+
+    def test_intent_sentence_cannot_light_session(self):
+        # planning mention must not propagate to real amounts
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "I'm planning to buy a racing bike next "
+                    "year.")},
+                {"role": "user", "content": (
+                    "The hotel in Tokyo cost me around $2,000 "
+                    "for the week.")}]}]
+        ans, _ = answer_counting(
+            "How much total money have I spent on bike-related "
+            "expenses since the start of the year?", sess)
+        self.assertIsNone(ans)                # no anchored amounts
+
+    def test_price_range_pair_skipped(self):
+        # "$50 to $200" is a budget range, not two spends
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "Speaking of my bike, I've been spending "
+                    "around $50 to $200 on gear each season, "
+                    "but last month's repair was $30.")}]}]
+        ans, _ = answer_counting(
+            "How much total money have I spent on bike-related "
+            "expenses since the start of the year?", sess)
+        self.assertEqual(ans, "$30")         # not $280
+
+    def test_hyphen_and_plural_anchor_forms(self):
+        # 'bike-related' anchors 'bike'; 'workshops' anchors
+        # singular 'workshop' mentions
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "The workshop fee was $500 and well worth "
+                    "it.")}]}]
+        ans, _ = answer_counting(
+            "How much total money did I spend on attending "
+            "workshops?", sess)
+        self.assertEqual(ans, "$500")
