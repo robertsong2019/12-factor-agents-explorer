@@ -43,7 +43,7 @@
 ### Testing & Quality
 - [x] **F16**: Unit tests for each command (Bats framework) ✅ 2026-08-22 (18 bats tests incl. 10 regression tests for 4 real bugs: help DOA, clean data loss, find -j JSON, escaping)
 - [x] **F17**: Integration tests with sample fixture data ✅ 2026-05-30
-- [ ] **F18**: Performance benchmarks for large log sets
+- [x] **F18**: Performance benchmarks for large log sets — `test/bench.sh` (365-day synthetic corpus, per-command timing + thresholds) + `test/bench.test.bats` (4 smoke tests) ✅ 2026-08-22
 
 ## Priorities
 **Round 1 (Core UX):** F1, F4, F10 — Improve search and add JSON output
