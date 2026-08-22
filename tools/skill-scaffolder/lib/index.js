@@ -51,7 +51,7 @@ function generateSkillMd(name, description, template) {
 
 Set environment variable:
 \`\`\`bash
-export ${name.toUpperCase()}_API_KEY="your-key-here"
+export ${name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY="your-key-here"
 \`\`\`
 
 ## Error Handling

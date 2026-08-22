@@ -59,6 +59,7 @@ program
       } else {
         console.log(chalk.yellow('⚠️  发现问题:'));
         result.issues.forEach(i => console.log(chalk.yellow(`   - ${i}`)));
+        process.exitCode = 1;
       }
     } catch (err) {
       console.error(chalk.red(`❌ 验证失败: ${err.message}`));
