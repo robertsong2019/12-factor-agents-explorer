@@ -432,6 +432,8 @@ class LongMemEvalAdapter:
                  pairwise_sort: bool = True,
                  ecm: bool = True,
                  pref_abstain: bool = True,
+                 role_answer: bool = True,
+                 role_margin: int = 0,
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
                  recall_mode: str = "distinctive",
@@ -514,6 +516,13 @@ class LongMemEvalAdapter:
         self.pairwise_sort = pairwise_sort
         self.ecm = ecm
         self.pref_abstain = pref_abstain
+        # Cycle 501: role-aware answer face (echo pathology fix) —
+        # see _user_fact_form. role_margin: how many keyword hits a
+        # user line may trail the top assistant line by and still
+        # win (0 = must tie; the -seq tie-break hands equal-hit
+        # tops to the LATEST message, routinely the advice reply).
+        self.role_answer = role_answer
+        self.role_margin = role_margin
         self.assistant_recall = assistant_recall
         self.recall_min_score = recall_min_score
         self.recall_mode = recall_mode
@@ -991,7 +1000,48 @@ class LongMemEvalAdapter:
             return ABSTAIN_ANSWER, meta
         meta["abstained"] = False
         # First context line = best-ranked message ([role] prefix).
-        best_line = context.split("\n", 1)[0]
+        lines = context.split("\n")
+        best_line = lines[0]
+        # Cycle 501: role-aware answer face. User-fact questions
+        # ("What color did I repaint my bedroom walls?") are
+        # answered by the best-ranked line, but assistant advice
+        # routinely out-hits the terse user fact statement (advice
+        # discusses the topic extensively) → the gate echoes
+        # "Mint is a fantastic app…" while the GT lives in a user
+        # line. C499 forensics: 257/302 answer-gate questions wrong
+        # while answer_session_hit is near-universal — retrieval
+        # finds the session, extraction picks the wrong speaker.
+        # Fix: for first-person fact questions NOT claimed by any
+        # specialized family (gate ORDER is a correctness face —
+        # C482/C488; pairwise/ECM/TA/counting own their forms even
+        # on fall-through, speaker-recall owns you-addressed
+        # forms, C498 owns advice requests), when the top line is
+        # an assistant line and a user line TIES its keyword
+        # evidence (margin) with floor 2, the user line wins — at
+        # equal evidence strength the user's own statement is the
+        # fact source. Sim: 21 wins / 1 loss over the answer-gate
+        # population (C501 /tmp/c501/sim.json).
+        if (self.role_answer and _user_fact_form(question)
+                and not _answer_form_claimed(question)
+                and best_line.startswith("[assistant")):
+            kws = meta.get("keywords") or _keywords(question)
+            top_hits = _keyword_hits(
+                best_line.split("] ", 1)[-1], kws)
+            best_u, best_u_hits = None, -1
+            for ln in lines[1:]:
+                if not ln.startswith("[user"):
+                    continue
+                h = _keyword_hits(ln.split("] ", 1)[-1], kws)
+                if h > best_u_hits:
+                    best_u, best_u_hits = ln, h
+            meta["role_answer"] = {
+                "top_hits": top_hits,
+                "user_hits": max(best_u_hits, 0),
+                "override": bool(
+                    best_u is not None and best_u_hits >= 2
+                    and best_u_hits >= top_hits - self.role_margin)}
+            if meta["role_answer"]["override"]:
+                best_line = best_u
         return best_line.split("] ", 1)[-1], meta
 
     def _counting_sessions(self) -> list[dict]:
@@ -3653,6 +3703,41 @@ def pref_form(question: str) -> bool:
             and not _PREF_EXCLUDE_RE.search(question))
 
 
+# Cycle 501: role-aware answer face — form gates. First-person
+# fact questions are answered from the best-ranked context line,
+# but assistant advice out-hits the terse user fact statement and
+# the answer gate echoes advice text ("Mint is a fantastic app…")
+# while the GT lives in a user line. Two guards keep the user-line
+# override surgical:
+#   1. _user_fact_form — first-person pronoun present AND not a
+#      you-addressed recall form (C468 owns assistant-side
+#      recall) AND not an advice request (C498 abstains those);
+#   2. _answer_form_claimed — questions claimed by a specialized
+#      answer family (ECM/pairwise/temporal_arith/counting) keep
+#      their fall-through behavior untouched: gate ORDER is a
+#      correctness face (C482/C488) — the family that claims a
+#      form owns it even when it cannot resolve it.
+_ROLE_USER_FACT_RE = re.compile(r"\b(?:I|my|me|we|our)\b", re.I)
+
+
+def _user_fact_form(question: str) -> bool:
+    """True for first-person fact questions (Cycle 501)."""
+    return bool(_ROLE_USER_FACT_RE.search(question)
+                and not recall_form(question)
+                and not pref_form(question))
+
+
+def _answer_form_claimed(question: str) -> bool:
+    """True when a specialized answer family claims *question*.
+
+    Cycle 501 guard — see module comment above. Order of the
+    checks is irrelevant (pure predicates)."""
+    return bool(ecm_form(question) or pw_form(question)
+                or temporal_arith_form(question)
+                or counting_form(question) or recall_form(question)
+                or pref_form(question))
+
+
 _ECM_GATE_A_RE = re.compile(
     r"^who did i (meet|get to know) first,\s*(.+?)\s+or\s+(.+?)\?$",
     re.I)
@@ -5292,6 +5377,8 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              pairwise_sort: bool = True,
              ecm: bool = True,
              pref_abstain: bool = True,
+             role_answer: bool = True,
+             role_margin: int = 0,
              assistant_recall: bool = True,
              recall_mode: str = "distinctive",
              recall_seed_k: int = 40,
@@ -5329,6 +5416,8 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   pairwise_sort=pairwise_sort,
                   ecm=ecm,
                   pref_abstain=pref_abstain,
+                  role_answer=role_answer,
+                  role_margin=role_margin,
                   assistant_recall=assistant_recall,
                   recall_mode=recall_mode,
                   recall_seed_k=recall_seed_k)
@@ -5485,6 +5574,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-pp-duration", action="store_true",
                         help="Disable the Cycle 486 past-perfect "
                              "duration path (pre-C486 baseline)")
+    parser.add_argument("--no-role-answer", action="store_true",
+                        help="Disable the Cycle 501 role-aware answer "
+                             "face (user-line selection for first-"
+                             "person fact questions)")
     parser.add_argument("--mode", choices=("extract", "eval"),
                         default="extract",
                         help="extract = pre-C454 row dump (default); "
@@ -5519,6 +5612,7 @@ def main(argv: list[str] | None = None) -> int:
         counting=not args.no_counting,
         pp_duration=not args.no_pp_duration,
         assistant_recall=not args.no_assistant_recall,
+        role_answer=not args.no_role_answer,
         recall_mode=args.recall_mode)
 
     if args.mode == "eval":
@@ -5538,6 +5632,7 @@ def main(argv: list[str] | None = None) -> int:
             counting=not args.no_counting,
             pp_duration=not args.no_pp_duration,
             assistant_recall=not args.no_assistant_recall,
+            role_answer=not args.no_role_answer,
             recall_mode=args.recall_mode,
             judge_mode=args.judge)
         with open(args.output, "w", encoding="utf-8") as f:
