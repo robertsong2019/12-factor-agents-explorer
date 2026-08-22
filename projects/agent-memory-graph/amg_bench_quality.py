@@ -78,6 +78,8 @@ __all__ = [
     "order_form",
     "answer_order",
     "order_judge",
+    "ecm_form",
+    "answer_ecm",
     "recall_form",
     "answer_speaker_recall",
     "load_longmemeval_data",
@@ -427,6 +429,7 @@ class LongMemEvalAdapter:
                  pp_duration: bool = True,
                  order_sort: bool = True,
                  pairwise_sort: bool = True,
+                 ecm: bool = True,
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
                  recall_mode: str = "distinctive",
@@ -507,6 +510,7 @@ class LongMemEvalAdapter:
         self.pp_duration = pp_duration
         self.order_sort = order_sort
         self.pairwise_sort = pairwise_sort
+        self.ecm = ecm
         self.assistant_recall = assistant_recall
         self.recall_min_score = recall_min_score
         self.recall_mode = recall_mode
@@ -755,6 +759,28 @@ class LongMemEvalAdapter:
         """
         context, meta = self.retrieve_context(question, question_date)
         meta["context"] = context
+
+        # Cycle 497: neither-family ECM (Research #082) — "Who did
+        # I meet first, X or Y?" / "Who became a parent first…".
+        # STRICT gate census over 500: fires exactly the 4 family
+        # members, zero collisions. Runs BEFORE pairwise — forms are
+        # mutually exclusive ("who did I <V> first" vs "which …
+        # first"), C488 precedent: the family's own renderer claims
+        # it first when two form families overlap (gate ORDER is a
+        # correctness face — C482 lesson). Full-haystack sentence
+        # scan (C472 lesson); fall-through preserved.
+        if (self.ecm and self._session_dates
+                and ecm_form(question)):
+            dated = [
+                (self._session_dates.get(s["session_id"], ""),
+                 s["turns"]) for s in self._counting_sessions()]
+            e_ans, e_detail = answer_ecm(question, dated,
+                                         question_date)
+            meta["ecm"] = e_detail
+            if e_ans is not None:
+                meta["gate"] = "ecm"
+                meta["abstained"] = e_ans == ABSTAIN_ANSWER
+                return e_ans, meta
 
         # Cycle 489: pairwise "which happened first, X or Y?" (#078
         # sibling family, 29 members) — two candidates extracted from
@@ -3565,6 +3591,335 @@ def _pw_any_mention(kws, lines) -> bool:
     return False
 
 
+# ── Cycle 497: Event-Centric Comparison Matcher (ECM) ───────────
+# "neither family" (Research #082): "Who did I meet first, X or Y?"
+# / "Who became a parent first, X or Y?" — four walls no prior
+# mechanism crosses (neither order-family C488 nor pairwise C489):
+#   W1 descriptive-NP entities ("the woman selling jam" ↔ "a jam
+#      maker" — no name token to index; ≥2 content-word overlap +
+#      window-time resolvable are the dual discriminant);
+#   W2 event-surface diversity ("met" never appears — "had a
+#      conversation with"; "became a parent" surfaces as
+#      "adopted"/"twins were born" — VERBMAP);
+#   W3 cross-TURN anaphora join (Rachel's name is 8 turns away
+#      from her twins' birth date; join key = relation NP +
+#      shared proper nouns);
+#   W4 vague durations are ORDINAL scalars ("a few months ago" 90d
+#      > "about a month ago" 30d — calendar anchoring would be
+#      pseudo-precision; the local counter-example to the
+#      temporal-anchoring dogma);
+#   W5 abstain twins (never-mentioned candidate → ABSTAIN, C489
+#      negative-existence semantics; verb-face gates block the
+#      same-name decoy sessions).
+# Zero-hijack (census 500): the STRICT gate fires exactly the 4
+# family members — C488 precedent. Runs BEFORE pairwise: forms are
+# mutually exclusive ("who did I <V> first" vs "which … first").
+_ECM_GATE_A_RE = re.compile(
+    r"^who did i (meet|get to know) first,\s*(.+?)\s+or\s+(.+?)\?$",
+    re.I)
+_ECM_GATE_B_RE = re.compile(
+    r"^who (became a parent|got married|moved out|graduated) first,"
+    r"\s*(.+?)\s+or\s+(.+?)\?$", re.I)
+
+_ECM_VERBMAP = {
+    "meet": [r"\bmet\b", r"\bmeet\b", r"\bconversation with\b",
+             r"\bran into\b", r"\bstruck up\b"],
+    "get to know": [r"\bmet\b", r"\bconversation with\b"],
+    "became a parent": [r"\badopted\b", r"\bborn\b",
+                        r"\bgave birth\b", r"\bwelcomed\b"],
+    "got married": [r"\bwedding\b", r"\bmarried\b"],
+    "moved out": [r"\bmoved\b"],
+    "graduated": [r"\bgraduated\b"],
+}
+
+_ECM_STOP = set('''a an the i my me of at on in to from and or who whom
+did do does with was were is are that this it her his their she he
+they guy girl woman man named who's selling maker from'''.split())
+
+_ECM_RELNOUNS = [
+    "sister-in-law", "brother", "sister", "cousin", "friend",
+    "mother", "father", "aunt", "uncle", "wife", "husband",
+    "partner", "colleague", "neighbor", "boss"]
+
+_ECM_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday",
+                  "friday", "saturday", "sunday"]
+_ECM_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["january", "february", "march", "april", "may", "june", "july",
+     "august", "september", "october", "november", "december"])}
+
+_ECM_NUMWORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3,
+                 "four": 4, "five": 5, "six": 6}
+
+
+def _ecm_resolve_days(text: str, anchor) -> int | None:
+    """Text → days-before-anchor scalar (larger = earlier).
+
+    Vague-duration track (W4) and calendar track unify on one
+    ordinal scalar; ``None`` when no time expression resolves.
+    """
+    t = text.lower()
+    m = re.search(r"\b(?:a few|several) months ago\b", t)
+    if m:
+        return 90
+    m = re.search(
+        r"\b(?:about|around|roughly)? ?(\d+|a|an|one|two|three|four|"
+        r"five|six) months? ago\b", t)
+    if m:
+        n = _ECM_NUMWORDS.get(m.group(1), m.group(1))
+        return int(n) * 30
+    m = re.search(r"\b(?:a few|several) weeks ago\b", t)
+    if m:
+        return 21
+    m = re.search(
+        r"\b(?:a couple of|about |around )?(\d+|a|one|two|three|four|"
+        r"five) weeks? ago\b", t)
+    if m:
+        n = _ECM_NUMWORDS.get(m.group(1), m.group(1))
+        return int(n) * 7
+    m = re.search(r"\blast week\b", t)
+    if m:
+        return 7
+    m = re.search(r"\blast weekend\b", t)
+    if m:
+        return 4
+    m = re.search(
+        r"\blast (monday|tuesday|wednesday|thursday|friday|saturday|"
+        r"sunday)\b", t)
+    if m:
+        wd = _ECM_WEEKDAYS.index(m.group(1))
+        d = 1
+        while (anchor - timedelta(days=d)).weekday() != wd:
+            d += 1
+        return d
+    m = re.search(r"\b(?:a few|several) days ago\b", t)
+    if m:
+        return 3
+    m = re.search(r"\b(\d+|a|one|two|three) days? ago\b", t)
+    if m:
+        n = _ECM_NUMWORDS.get(m.group(1), m.group(1))
+        return int(n)
+    m = re.search(r"\blast month\b", t)
+    if m:
+        return 30
+    m = re.search(
+        r"\bin (january|february|march|april|may|june|july|august|"
+        r"september|october|november|december)\b", t)
+    if m:
+        mm = _ECM_MONTHS[m.group(1)]
+        if anchor.month > mm:
+            try:
+                dt = anchor.replace(month=mm, day=15)
+                return (anchor - dt).days
+            except ValueError:
+                pass
+    m = re.search(
+        r"\bon (january|february|march|april|may|june|july|august|"
+        r"september|october|november|december) (\d+)(?:st|nd|rd|th)?\b",
+        t)
+    if m:
+        mm, dd = _ECM_MONTHS[m.group(1)], int(m.group(2))
+        try:
+            dt = anchor.replace(month=mm, day=dd)
+            if dt <= anchor:
+                return (anchor - dt).days
+        except ValueError:
+            pass
+    return None
+
+
+def _ecm_sentences(turn_text: str) -> list[str]:
+    """Sentence split at prototype contract (>5 chars — #082 kept
+    verbatim; the production ``_split_sentences`` floor of 10 would
+    drop short date fragments)."""
+    parts = re.split(r"(?<=[.!?])\s+", turn_text.replace("\n", " "))
+    return [p.strip() for p in parts if len(p.strip()) > 5]
+
+
+def _ecm_content_words(np: str) -> set[str]:
+    words = re.findall(r"[a-z]+", np.lower())
+    return {w for w in words
+            if w not in _ECM_STOP and len(w) > 2
+            and w not in _ECM_RELNOUNS}
+
+
+def _ecm_is_name_entity(np: str) -> bool:
+    toks = re.findall(r"[A-Za-z][a-z]+", np)
+    return bool(toks) and all(t[0].isupper() for t in toks)
+
+
+def _ecm_hits(pats, s) -> bool:
+    return any(re.search(p, s, re.I) for p in pats)
+
+
+def _ecm_window_text(recs, i, span=1) -> str:
+    """Sentence ± adjacent same-turn sentences (sentence-window,
+    LlamaIndex small-to-big lineage — applied at MATCH time, not
+    just return time: the jam case's time expression and NP sit in
+    neighbouring sentences)."""
+    si, ti, xi, s, _ = recs[i]
+    out = [s]
+    for j in (i - 1, i + 1):
+        if 0 <= j < len(recs):
+            sj, tj, xj, sj_txt, _ = recs[j]
+            if (sj, tj) == (si, ti) and abs(xj - xi) <= span:
+                out.append(sj_txt)
+    return " ".join(out)
+
+
+def _ecm_build_recs(dated: list) -> list[tuple]:
+    """(sess_idx, turn_idx, sent_idx, sentence, session_date) over
+    all USER turns of the full haystack (C472 full-graph lesson)."""
+    recs = []
+    for si, (date_str, turns) in enumerate(dated):
+        iso = parse_lme_date(str(date_str)) if date_str else ""
+        d = None
+        if iso:
+            try:
+                d = datetime.strptime(iso, "%Y-%m-%d").date()
+            except ValueError:
+                d = None
+        for ti, turn in enumerate(turns or []):
+            if (turn or {}).get("role") != "user":
+                continue
+            for xi, s in enumerate(
+                    _ecm_sentences((turn or {}).get("content", ""))):
+                recs.append((si, ti, xi, s, d))
+    return recs
+
+
+def _ecm_find_entity(entity, recs, verb_pats):
+    """(best_days_ago, evidence_sentence) or None for one entity.
+
+    Name entities keep the verb face (W5 — same-name decoys carry
+    no event verbs); descriptive NPs skip it (W1+W2 — "conversation
+    with" carries no "met"; the ≥2 content-word overlap plus a
+    resolvable window time are the discriminants)."""
+    if _ecm_is_name_entity(entity):
+        name_toks = {t.lower()
+                     for t in re.findall(r"[A-Za-z][a-z]+", entity)}
+        cands = []
+        for i, (si, ti, xi, s, d) in enumerate(recs):
+            if d is None:
+                continue
+            low = s.lower()
+            n_hit = sum(1 for t in name_toks
+                        if re.search(r"\b" + t + r"\b", low))
+            if n_hit and _ecm_hits(verb_pats, s):
+                w = _ecm_window_text(recs, i)
+                days = (_ecm_resolve_days(w, d)
+                        or _ecm_resolve_days(s, d))
+                if days is not None:
+                    cands.append((n_hit, days, s))
+        if not cands:
+            return None
+        cands.sort(key=lambda c: -c[0])
+        return cands[0][1], cands[0][2]
+    cw = _ecm_content_words(entity)
+    best = None
+    for i, (si, ti, xi, s, d) in enumerate(recs):
+        if d is None:
+            continue
+        w = _ecm_window_text(recs, i)
+        wl = w.lower()
+        ov = sum(1 for t in cw if re.search(r"\b" + t + r"\b", wl))
+        if ov >= 2 or (cw and ov == len(cw)):
+            days = _ecm_resolve_days(w, d)
+            if days is not None and (best is None or ov > best[0]):
+                best = (ov, days, s)
+    return None if not best else (best[1], best[2])
+
+
+def _ecm_anaphora_join(entity, recs, verb_pats):
+    """W3 cross-turn join: a name-bearing sentence without a date
+    joins (same session) a date-bearing sentence that shares a
+    relation NP or a proper noun. Name sentences are exempt from
+    the verb face ("sister-in-law, Rachel, is doing great" has no
+    event verb); the DATE sentence must carry it."""
+    name_toks = {t.lower()
+                 for t in re.findall(r"[A-Za-z][a-z]+", entity)}
+    for i, (si, ti, xi, s, d) in enumerate(recs):
+        if d is None:
+            continue
+        low = s.lower()
+        if not sum(1 for t in name_toks
+                   if re.search(r"\b" + t + r"\b", low)):
+            continue
+        keys = {n for n in _ECM_RELNOUNS if n in low}
+        proper = set(re.findall(r"\b[A-Z][a-z]+\b", s))
+        for j, (sj, tj, xj, sj_txt, dj) in enumerate(recs):
+            if sj != si or dj is None:
+                continue
+            if not _ecm_hits(verb_pats, sj_txt):
+                continue
+            jl = sj_txt.lower()
+            share_rel = any(n in jl for n in keys)
+            share_proper = bool(
+                proper & set(re.findall(r"\b[A-Z][a-z]+\b", sj_txt))
+                - {t.capitalize() for t in name_toks})
+            if share_rel or share_proper:
+                days = _ecm_resolve_days(sj_txt, dj)
+                if days is not None:
+                    return days, sj_txt
+    return None
+
+
+def ecm_form(question: str):
+    """(verb, entity_a, entity_b) for an ECM comparison form, else
+    ``None``."""
+    q = question.strip()
+    m = _ECM_GATE_A_RE.match(q)
+    if not m:
+        m = _ECM_GATE_B_RE.match(q)
+    if not m:
+        return None
+    return m.group(1).lower(), m.group(2).strip(), m.group(3).strip()
+
+
+def answer_ecm(question: str, dated: list,
+               question_date: str = "") -> tuple:
+    """Answer a neither-family comparison question (Cycle 497).
+
+    ``dated``: ``[(date_str, turns)]`` over the FULL ingested
+    haystack. Returns ``(answer, detail)`` — answer ``None`` =
+    unresolved fall-through; ``ABSTAIN_ANSWER`` = negative-
+    existence abstain (one side has no evidence at all).
+    """
+    form = ecm_form(question)
+    if not form:
+        return None, {"form": "ecm", "mode": "no-form"}
+    verb, e1, e2 = form
+    vp = _ECM_VERBMAP.get(verb)
+    if not vp:
+        return None, {"form": "ecm", "mode": "no-verbmap"}
+    recs = _ecm_build_recs(dated)
+    r1 = _ecm_find_entity(e1, recs, vp)
+    r2 = _ecm_find_entity(e2, recs, vp)
+    if r1 is None and _ecm_is_name_entity(e1):
+        r1 = _ecm_anaphora_join(e1, recs, vp)
+        if r1 is not None:
+            r1 = r1 + ("anaphora",)
+    if r2 is None and _ecm_is_name_entity(e2):
+        r2 = _ecm_anaphora_join(e2, recs, vp)
+        if r2 is not None:
+            r2 = r2 + ("anaphora",)
+    detail = {"form": "ecm", "verb": verb,
+              "e1": e1, "e2": e2,
+              "a_days": r1[0] if r1 else None,
+              "b_days": r2[0] if r2 else None,
+              "a_mode": r1[2] if r1 and len(r1) > 2 else "direct",
+              "b_mode": r2[2] if r2 and len(r2) > 2 else "direct"}
+    if r1 is None or r2 is None:
+        missing = e1 if r1 is None else e2
+        return ABSTAIN_ANSWER, {**detail, "mode": "neg-exist",
+                                "missing": missing}
+    d1, ev1 = r1[0], r1[1]
+    d2, ev2 = r2[0], r2[1]
+    if d1 == d2:
+        return None, {**detail, "mode": "tie"}
+    win, days = (e1, d1) if d1 > d2 else (e2, d2)
+    return win, {**detail, "mode": "compare", "winner_days": days}
+
+
 def answer_pairwise(question: str, dated: list,
                     question_date: str = "") -> tuple:
     """Answer a pairwise which-first question (C489).
@@ -4116,10 +4471,11 @@ def _cnt_unit_sum(question: str, sessions: list[dict]):
         r'\b(\d+(?:\.\d+)?|one|two|three|four|five|six|seven'
         r'|eight|nine|ten|eleven|twelve|fifteen|twenty)\s+'
         r'(' + unit + r's?)\b', re.I)
-    seen = set()
+    sents = list(_cnt_sents(sessions))
+    seen = set()          # (n, entity) pairs already summed
     total = 0.0
     found = False
-    for si, sent in _cnt_sents(sessions):
+    for idx, (si, sent) in enumerate(sents):
         # clause-level gating: a question sentence may carry the
         # count in a declarative relative clause ("…similar to
         # Celeste, which took me 10 hours to complete?") — only
@@ -4146,14 +4502,35 @@ def _cnt_unit_sum(question: str, sessions: list[dict]):
                 n = _cnt_num(em.group(1))
                 if n is None or n <= 0:
                     continue
-                caps = frozenset(
-                    w.lower() for w in
-                    re.findall(r'\b[A-Z][a-z]{2,}\b', sent)
-                    if w.lower() not in _CNT_CAP_STOP)
-                key = (round(n, 2), caps)
-                if key in seen:
-                    continue
-                seen.add(key)
+                # C497b: window-scoped ENTITY-PAIR dedup — the
+                # proper noun often sits in a NEIGHBOURING sentence
+                # ("my recent trip to Outer Banks … it only took me
+                # four hours" — pronoun cataphora), so the OLD
+                # whole-sentence signature split one statement into
+                # (4, ∅) vs (4, {outer, banks}) and double-counted
+                # it (driving aae3761f: 19 vs GT 15). ±1
+                # same-session sentences join the signature
+                # (#082 ECM W5 lineage) and dedup fires on ANY
+                # shared (n, entity) pair — a set-equality match
+                # would still miss {outer, banks, north, carolina}
+                # vs {outer, banks}.
+                caps = set()
+                for j in (idx - 1, idx, idx + 1):
+                    if 0 <= j < len(sents) and sents[j][0] == si:
+                        caps.update(
+                            w.lower() for w in re.findall(
+                                r'\b[A-Z][a-z]{2,}\b', sents[j][1])
+                            if w.lower() not in _CNT_CAP_STOP)
+                n_r = round(n, 2)
+                pairs = {(n_r, w) for w in caps}
+                if pairs:
+                    if pairs & seen:
+                        continue   # same number + same entity
+                    seen |= pairs
+                else:
+                    if (n_r, frozenset()) in seen:
+                        continue  # nounless repeat (legacy key)
+                    seen.add((n_r, frozenset()))
                 total += n
                 found = True
     if not found:
@@ -4527,6 +4904,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              counting: bool = True,
              pp_duration: bool = True,
              pairwise_sort: bool = True,
+             ecm: bool = True,
              assistant_recall: bool = True,
              recall_mode: str = "distinctive",
              recall_seed_k: int = 40,
@@ -4562,6 +4940,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   counting=counting,
                   pp_duration=pp_duration,
                   pairwise_sort=pairwise_sort,
+                  ecm=ecm,
                   assistant_recall=assistant_recall,
                   recall_mode=recall_mode,
                   recall_seed_k=recall_seed_k)

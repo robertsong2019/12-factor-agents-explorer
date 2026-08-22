@@ -549,3 +549,77 @@ class TestCycle491MoneyAnchorDiscipline(unittest.TestCase):
             "How much total money did I spend on attending "
             "workshops?", sess)
         self.assertEqual(ans, "$500")
+
+
+class TestCycle497WindowEntityPairDedup(unittest.TestCase):
+    """C497b: (n, entity)-pair dedup with ±1-sentence window.
+
+    The old whole-sentence signature split one statement into
+    (4, ∅) vs (4, {outer, banks}) when the proper noun sat in a
+    NEIGHBOURING sentence (pronoun cataphora) and double-counted
+    it (driving aae3761f: 19 vs GT 15). Any shared (n, entity)
+    pair now deduplicates; nounless repeats keep the legacy key.
+    """
+
+    def test_cataphora_neighbor_noun_dedups(self):
+        # "my recent trip to Outer Banks … it only took me four
+        # hours" + "My last trip to Outer Banks only took about
+        # four hours" — one trip, two sentences, noun one hop away
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "I've had some great experiences with coastal "
+                    "trips, like my recent trip to Outer Banks in "
+                    "North Carolina - it only took me four hours to "
+                    "drive there from my place.")},
+                {"role": "user", "content": (
+                    "My last trip to Outer Banks only took about "
+                    "four hours, so I can handle the drive.")}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "I drove for five hours to get to the mountains "
+                    "in Tennessee on my camping trip.")}]},
+        ]
+        ans, _ = answer_counting(
+            "How many hours in total did I spend driving?", sess)
+        self.assertEqual(ans, "9")  # 4 (deduped) + 5
+
+    def test_same_sentence_dedup_still_works(self):
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "It took me 30 hours to finish The Last of Us "
+                    "Part 2.")}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "I mentioned before that The Last of Us Part 2 "
+                    "took me about 30 hours.")}]},
+        ]
+        ans, _ = answer_counting(
+            "How many hours in total did I spend gaming?", sess)
+        self.assertEqual(ans, "30")
+
+    def test_same_number_different_entities_both_count(self):
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "The drive to Asheville took four hours.")}]},
+            {"session_id": "s2", "turns": [
+                {"role": "user", "content": (
+                    "The drive to Savannah also took four hours.")}]},
+        ]
+        ans, _ = answer_counting(
+            "How many hours in total did I spend driving?", sess)
+        self.assertEqual(ans, "8")
+
+    def test_nounless_repeat_legacy_key(self):
+        sess = [
+            {"session_id": "s1", "turns": [
+                {"role": "user", "content": (
+                    "It took four hours.")},
+                {"role": "user", "content": (
+                    "Yeah, it took four hours total.")}]},
+        ]
+        ans, _ = answer_counting(
+            "How many hours in total did it take?", sess)
+        self.assertEqual(ans, "4")
