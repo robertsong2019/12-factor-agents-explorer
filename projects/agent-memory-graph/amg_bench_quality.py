@@ -80,6 +80,7 @@ __all__ = [
     "order_judge",
     "ecm_form",
     "answer_ecm",
+    "pref_form",
     "recall_form",
     "answer_speaker_recall",
     "load_longmemeval_data",
@@ -430,6 +431,7 @@ class LongMemEvalAdapter:
                  order_sort: bool = True,
                  pairwise_sort: bool = True,
                  ecm: bool = True,
+                 pref_abstain: bool = True,
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
                  recall_mode: str = "distinctive",
@@ -511,6 +513,7 @@ class LongMemEvalAdapter:
         self.order_sort = order_sort
         self.pairwise_sort = pairwise_sort
         self.ecm = ecm
+        self.pref_abstain = pref_abstain
         self.assistant_recall = assistant_recall
         self.recall_min_score = recall_min_score
         self.recall_mode = recall_mode
@@ -759,6 +762,23 @@ class LongMemEvalAdapter:
         """
         context, meta = self.retrieve_context(question, question_date)
         meta["context"] = context
+
+        # Cycle 498: preference honest abstention (Research #080
+        # candidate A) — advice-request forms are generation-native:
+        # the GT is a synthesized meta-description ("The user would
+        # prefer…"), the category-entity vocabulary gap makes the
+        # retrieval bridge lexically unreachable (unique-lexical-best
+        # 4/30, arm F), and echoing retrieved suggestion text is a
+        # category error (correct_llm 1/30 = judge leniency). A
+        # zero-LLM pipeline cannot compose a personalized response
+        # → abstain honestly instead of fabricating one. Census over
+        # full-500: fires 29/30 preference questions, ZERO of the
+        # other 470 (zero hijack); third instance of C448-style
+        # answer-side abstention.
+        if self.pref_abstain and pref_form(question):
+            meta["gate"] = "pref"
+            meta["abstained"] = True
+            return ABSTAIN_ANSWER, meta
 
         # Cycle 497: neither-family ECM (Research #082) — "Who did
         # I meet first, X or Y?" / "Who became a parent first…".
@@ -3614,6 +3634,25 @@ def _pw_any_mention(kws, lines) -> bool:
 # Zero-hijack (census 500): the STRICT gate fires exactly the 4
 # family members — C488 precedent. Runs BEFORE pairwise: forms are
 # mutually exclusive ("who did I <V> first" vs "which … first").
+_PREF_RE = re.compile(
+    r'\b((?:recommend|suggest)(?:ations?|ions?|s)?|tips?|advice|any ideas|'
+    r'what should|do you think|what do you think)\b', re.I)
+# Past-tense participles ("you recommended…" / "you suggested…") and
+# interrogative past-action recall ("did you recommend…") ask ABOUT
+# a past recommendation — factual recall (ssa category), not an
+# advice request; the stem above deliberately excludes them
+# (recommended/suggested/recommending → no boundary match).
+_PREF_EXCLUDE_RE = re.compile(r'\bdid you (recommend|suggest)', re.I)
+
+
+def pref_form(question: str) -> bool:
+    """True when *question* is an advice-request form ("any
+    recommendations?" / "what should…" / "do you think…", Research
+    #080). Used by the C498 honest-abstention gate."""
+    return (bool(_PREF_RE.search(question))
+            and not _PREF_EXCLUDE_RE.search(question))
+
+
 _ECM_GATE_A_RE = re.compile(
     r"^who did i (meet|get to know) first,\s*(.+?)\s+or\s+(.+?)\?$",
     re.I)
@@ -4905,6 +4944,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              pp_duration: bool = True,
              pairwise_sort: bool = True,
              ecm: bool = True,
+             pref_abstain: bool = True,
              assistant_recall: bool = True,
              recall_mode: str = "distinctive",
              recall_seed_k: int = 40,
@@ -4941,6 +4981,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   pp_duration=pp_duration,
                   pairwise_sort=pairwise_sort,
                   ecm=ecm,
+                  pref_abstain=pref_abstain,
                   assistant_recall=assistant_recall,
                   recall_mode=recall_mode,
                   recall_seed_k=recall_seed_k)
