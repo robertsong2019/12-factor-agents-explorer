@@ -4373,6 +4373,9 @@ def counting_form(question: str) -> str | None:
              and re.search(r'\b(spend|spent|take|took)\b', ql)
              and ql.startswith('how')):
         return "duration_sum"
+    if re.match(r'^what (?:is|was) the total '
+               r'(?:amount|cost|price)\b', ql):
+        return "item_total"   # C500: enumerated-item money sum
     if re.match(r'^how (much|many)\b', q, re.I) \
             and re.search(r'\btotal\b', ql):
         if re.search(r'\bhow many (hours|years|months)\b', ql):
@@ -4659,6 +4662,349 @@ def _cnt_total_sum(question: str, sessions: list[dict]):
     return f"${total:g}"
 
 
+# C500: enumerated-item money aggregation ("What is the total
+# cost of A and B"). Decorative modifiers carry no item identity
+# — the evidence says "Coach handbag" for the question's "designer
+# handbag"; generic container nouns ("products", "items") are
+# anchor-poisoned exactly like unit words (#079 discipline).
+_CNT_ITEM_MOD_DROP = frozenset({
+    'new', 'designer', 'high-end', 'luxury', 'expensive', 'nice',
+    'recent', 'recently', 'favorite', 'big', 'small', 'certain',
+    'different', 'various', 'good', 'great', 'best', 'top'})
+_CNT_ITEM_KW_STOP = frozenset({
+    'my', 'me', 'i', 'the', 'a', 'an', 'and', 'or', 'of', 'for',
+    'on', 'in', 'to', 'at', 'from', 'with', 'her', 'his', 'our',
+    'their', 'that', 'this', 'these', 'those', 'some', 'any',
+    'past', 'last', 'next', 'few', 'couple', 'month', 'months',
+    'week', 'weeks', 'day', 'days', 'year', 'years', 'products',
+    'product', 'items', 'item', 'stuff', 'supplies', 'money',
+    'amount', 'price', 'cost', 'gifts', 'gift', 'purchased',
+    'bought', 'got', 'spent', 'paid'}) | _CNT_ITEM_MOD_DROP
+# anaphora/apposition faces license binding a $ from a
+# NEIGHBOURING clause or sentence ("which was $20", "it was $25",
+# "totaling $100", "I remember it cost me $120")
+_CNT_ITEM_COST_FACE = re.compile(
+    r"\b(?:which\s+(?:was|were|cost(?:ed)?)|that\s+(?:was|were)"
+    r"|it\s+(?:was|is|cost|costed)|cost\s+me|costed|totaling"
+    r"|worth|i\s+(?:paid|spent|purchased|bought|invested)\b"
+    r"|(?:was|is|are|were)\s+(?:about\s+|around\s+)?\$)",
+    re.I)
+# strong past-cost faces may anchor against an INTERROGATIVE
+# neighbour ("can I claim the cost of the car cover …? /
+# I remember it cost me $120")
+_CNT_ITEM_STRONG_FACE = re.compile(
+    r"\b(?:i\s+remember|it\s+cost\s+me|cost\s+me|i\s+paid)\b",
+    re.I)
+# aggregate/summary statements are not per-item prices
+_CNT_ITEM_SUMMARY_RE = re.compile(
+    r"\btotal(?:ed)?\s+(?:of\s+)?\$|per\s+(?:month|week|year)\b"
+    r"|\ba\s+(?:month|week|year)\b|\bmonthly\b|\bon\s+average\b",
+    re.I)
+# optional debug hook: set to a list to collect bind traces
+_ITEM_TOTAL_TRACE = None
+_CNT_ITEM_RANGE_RE = re.compile(
+    r'\$\s?\d[\d,]*(?:\.\d+)?\s*(?:to|[-\u2013])\s*'
+    r'\$?\s?\d[\d,]*(?:\.\d+)?')
+
+
+def _cnt_item_list(question: str) -> list[set[str]]:
+    """Question's enumerated items as keyword sets (C500).
+
+    ``"the car cover and detailing spray I purchased"`` →
+    ``[{car, cover}, {detailing, spray}]``. Returns ``[]`` when
+    the tail parses to no usable item (money-word tails like
+    "money I earned from selling my products" are refused).
+    """
+    ql = ' '.join(question.lower().split())
+    m = re.search(
+        r'\b(?:amount|cost|price)\b.*?\b(?:of|on|for)\s+(.+)$', ql)
+    if not m:
+        return []
+    rest = m.group(1)
+    # strip trailing relative clause ("… I purchased/got …")
+    rest = re.split(
+        r"\bi\s+(?:purchased|bought|got|spent|paid|earned|could"
+        r"|have|'ve|usually)\b", rest)[0]
+    # strip trailing time-window PPs ("in the past few months")
+    rest = re.split(
+        r'\b(?:in|over|during|within|across)\s+(?:the|a)\s+'
+        r'(?:past|last|next)\b', rest)[0]
+    parts = [p.strip(" .?!") for p in rest.split(',')]
+    parts = [p for p in parts if p]
+    chunks = []
+    if len(parts) >= 2:
+        last = re.sub(r'^(?:and|plus)\s+', '', parts[-1])
+        chunks = parts[:-1] + ([last] if last else [])
+    elif parts:
+        p = parts[0]
+        if ' and ' in p:
+            a, b = p.split(' and ', 1)
+            if a.strip(" .?!") and b.strip(" .?!"):
+                chunks = [a, b]
+            else:
+                chunks = [p]
+        else:
+            chunks = [p]
+    out = []
+    for ch in chunks:
+        kws = []
+        for w in re.findall(r"[a-z][a-z'-]*", ch):
+            # possessive marker is not identity: "lola's" →
+            # "lola" (question says "Lola's vet visit", evidence
+            # says "took Lola to the vet")
+            w = w.split("'")[0]
+            if w in _CNT_ITEM_KW_STOP or len(w) < 2:
+                continue
+            kws.append(w)
+        if kws:
+            out.append(set(kws))
+    return out
+
+
+def _cnt_item_money(sent: str) -> list[float]:
+    """Non-range $ values in a sentence."""
+    skip = [(rm.start(), rm.end())
+            for rm in _CNT_ITEM_RANGE_RE.finditer(sent)]
+    vals = []
+    for m2 in re.finditer(
+            r'\$\s?(\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?)', sent):
+        if any(s <= m2.start() < e for s, e in skip):
+            continue
+        vals.append(float(m2.group(1).replace(',', '')))
+    return vals
+
+
+def _cnt_item_total(question: str, sessions: list[dict]):
+    """Sum per-item prices for enumerated "total cost" questions.
+
+    Cycle 500 ("What is the total cost of A and B I got?").
+    Binding tiers, strictest first (first tier that resolves an
+    item wins; every item must resolve or the question falls
+    through untouched):
+
+    T1 — same clause: the clause carries all item kws (len<=2),
+         len-1 of them (len>=3, "Lola's vet visit" → lola+vet),
+         or the head noun, plus a non-range $ (chews "are $10 a
+         pack", "food bowl … for $15").
+    T2 — adjacent clause, same sentence: kw clause + cost-face
+         clause ("…flea and tick collar …, which was $20").
+    T3 — adjacent sentence, same turn: kw sentence followed by a
+         cost-face sentence ("…for my coworker's baby shower. /
+         …totaling $100"); an interrogative kw anchor is licensed
+         only by a strong past-cost face (car cover $120).
+    T4a — turn-unique: kws on a declarative, item-exclusive
+         sentence of the turn + the turn's surviving $ values
+         collapse to one number (Lola's vet visit ← $50).
+    T4b — session-unique: same predicate scoped to the session;
+         the price may sit in another turn ("high-end skincare"
+         ← the only $500 session).
+
+    Conflicting distinct values for one item resolve only when a
+    purchase-verb face uniquely backs one of them; otherwise the
+    question abstains from this form (returns None).
+    """
+    items = _cnt_item_list(question)
+    if not items:
+        return None
+    # per (session, turn) sentence lists — T3 needs turn locality
+    turns: list[list[tuple[int, str]]] = []
+    for si, s in enumerate(sessions):
+        for t in s.get('turns', []):
+            if t.get('role') != 'user':
+                continue
+            sents = [m.group(0).strip() for m in re.finditer(
+                r'[^.!?]*[.!?]?', t.get('content', ''))]
+            sents = [x for x in sents if x]
+            if sents:
+                turns.append([(si, x) for x in sents])
+
+    def kw_hits(clause: str, kws: set[str]) -> int:
+        low = clause.lower()
+        return sum(1 for k in kws
+                   if re.search(r'\b' + re.escape(k) + r's?\b', low))
+
+    def bind(kws: set[str], idx: int, trace=None) -> float | None:
+        # head = longest kw (most specific token: "medication">
+        # "flea", "cover">"car", "chews">"dental") — used only
+        # as T1's last-resort identity signal
+        head = max(kws, key=len)
+        others = items[:idx] + items[idx + 1:]
+
+        def foreign_full(cl: str) -> bool:
+            # another enumerated item fully named in this scope
+            # → the scope cannot be attributed to item idx alone
+            return any(kw_hits(cl, o) == len(o) for o in others)
+
+        vals: dict[float, str] = {}       # value -> backing face
+        for sent_list in turns:
+            for si, sent in sent_list:
+                if _CNT_ITEM_SUMMARY_RE.search(sent):
+                    continue
+                clauses = [c.strip() for c in re.split(r'[,;]', sent)
+                           if c.strip()]
+                for ci, cl in enumerate(clauses):
+                    if cl.endswith('?') \
+                            or _CNT_INTENT_RE.search(cl):
+                        continue
+                    hits = kw_hits(cl, kws)
+                    mvals = _cnt_item_money(cl)
+                    ok_t1 = (hits == len(kws)
+                             or (len(kws) >= 3 and hits >= len(kws) - 1)
+                             or re.search(r'\b' + re.escape(head)
+                                          + r's?\b', cl, re.I))
+                    if mvals and ok_t1 and not foreign_full(cl):
+                        for v in mvals:
+                            vals[v] = 't1'
+                        if trace is not None:
+                            trace.append(f'T1 {mvals} :: {cl[:80]}')
+                        continue
+                    # T2: same sentence, any-clause co-occurrence
+                    # — the kw clause and the $ clause may be
+                    # separated by intervening clauses (dental
+                    # chews … teeth, and the chews are $10 a
+                    # pack); same-sentence proximity outranks
+                    # cross-sentence anaphora (T3)
+                    if mvals and _CNT_ITEM_COST_FACE.search(cl):
+                        if any(not foreign_full(c2)
+                               and (kw_hits(c2, kws) == len(kws)
+                                    or (len(kws) >= 3
+                                        and kw_hits(c2, kws)
+                                        >= len(kws) - 1))
+                               for c2 in clauses):
+                            for v in mvals:
+                                vals.setdefault(v, 't2')
+                            if trace is not None:
+                                trace.append(
+                                    f'T2 {mvals} :: {cl[:80]}')
+        # T3: adjacent sentences within the turn — the $
+        # evidence is evaluated per CLAUSE of cur (a trailing
+        # "and I want to make sure…" clause must not poison the
+        # purchase clause)
+        if not vals:
+            for sent_list in turns:
+                for k in range(1, len(sent_list)):
+                    si, prev = sent_list[k - 1]
+                    si2, cur = sent_list[k]
+                    if si != si2 or _CNT_ITEM_SUMMARY_RE.search(cur):
+                        continue
+                    strong = None
+                    for cl in re.split(r'[,;]', cur):
+                        cl = cl.strip()
+                        if not cl or cl.endswith('?') \
+                                or _CNT_INTENT_RE.search(cl):
+                            continue
+                        if not _CNT_ITEM_COST_FACE.search(cl):
+                            continue
+                        mvals = _cnt_item_money(cl)
+                        if not mvals:
+                            continue
+                        if strong is None:
+                            strong = bool(
+                                _CNT_ITEM_STRONG_FACE.search(cur))
+                            if prev.endswith('?') and not strong:
+                                break
+                        h = kw_hits(prev, kws)
+                        if h == len(kws) or (len(kws) >= 3
+                                             and h >= len(kws) - 1) \
+                                or (strong and h >= 1) \
+                                or (len(kws) == 1 and h >= 1):
+                            for v in mvals:
+                                vals.setdefault(v, 't3')
+                            if trace is not None:
+                                trace.append(
+                                    f'T3 {mvals} strong={strong}'
+                                    f' :: {cl[:60]}')
+        # T4a: turn-unique fallback — item kws meet the standard
+        # predicate in some sentence of the turn, and the turn's
+        # non-skipped $ values collapse to one distinct number
+        # (Lola's vet visit ← the turn's only $50). Skipping is
+        # CLAUSE-level: a purpose clause ("and I want to make
+        # sure…") must not hide the purchase clause's $ in the
+        # same sentence.
+        if not vals:
+            for sent_list in turns:
+                # kw predicate must hold on a DECLARATIVE,
+                # item-exclusive sentence of the turn
+                if not any(
+                        not s2.endswith('?') and not foreign_full(s2)
+                        and (kw_hits(s2, kws) == len(kws)
+                             or (len(kws) >= 3
+                                 and kw_hits(s2, kws) >= len(kws) - 1))
+                        for _, s2 in sent_list):
+                    continue
+                cand = {}
+                for _, s2 in sent_list:
+                    if s2.endswith('?'):
+                        continue
+                    for cl in re.split(r'[,;]', s2):
+                        cl = cl.strip()
+                        if (not cl or cl.endswith('?')
+                                or _CNT_INTENT_RE.search(cl)
+                                or _CNT_ITEM_SUMMARY_RE.search(cl)):
+                            continue
+                        for v in _cnt_item_money(cl):
+                            cand[v] = 't4'
+                if len(cand) == 1:
+                    vals.update(cand)
+                    if trace is not None:
+                        trace.append(f'T4a {list(cand)}')
+        # T4b: session-unique fallback — scoped to the SESSION;
+        # the same kw predicate must hold somewhere in it, and
+        # its non-skipped $ values must collapse to one number
+        # (price sentence in a different turn than the kw one)
+        if not vals:
+            by_sess: dict[int, list[str]] = {}
+            for sent_list in turns:
+                for si, s2 in sent_list:
+                    by_sess.setdefault(si, []).append(s2)
+            for s2s in by_sess.values():
+                # kw predicate on a declarative, item-exclusive
+                # sentence somewhere in the session
+                if not any(
+                        not s2.endswith('?') and not foreign_full(s2)
+                        and (kw_hits(s2, kws) == len(kws)
+                             or (len(kws) >= 3
+                                 and kw_hits(s2, kws) >= len(kws) - 1))
+                        for s2 in s2s):
+                    continue
+                cand = {}
+                for s2 in s2s:
+                    if s2.endswith('?'):
+                        continue
+                    for cl in re.split(r'[,;]', s2):
+                        cl = cl.strip()
+                        if (not cl or cl.endswith('?')
+                                or _CNT_INTENT_RE.search(cl)
+                                or _CNT_ITEM_SUMMARY_RE.search(cl)):
+                            continue
+                        for v in _cnt_item_money(cl):
+                            cand[v] = 't4'
+                if len(cand) == 1:
+                    vals.update(cand)
+                    if trace is not None:
+                        trace.append(f'T4b {list(cand)}')
+        if not vals:
+            return None
+        if len(vals) == 1:
+            return next(iter(vals))
+        # conflict: a unique same-clause (T1) value outranks
+        # anaphora-tier readings
+        backed = {v for v, f in vals.items() if f == 't1'}
+        if len(backed) == 1:
+            return backed.pop()
+        return None            # ambiguous — fall through
+
+    total = 0.0
+    dbg = _ITEM_TOTAL_TRACE if _ITEM_TOTAL_TRACE is not None \
+        else None
+    for idx, kws in enumerate(items):
+        v = bind(kws, idx, dbg)
+        if v is None:
+            return None
+        total += v
+    return f"${round(total, 2):g}"
+
+
 def _cnt_number_total(question: str, sessions: list[dict]):
     fam, subtypes = _cnt_np_fam(question)
     if not fam:
@@ -4840,6 +5186,7 @@ def answer_counting(question: str,
         return None, {}
     fn = {"duration_sum": _cnt_duration_sum,
           "total_sum": _cnt_total_sum,
+          "item_total": _cnt_item_total,
           "unit_sum": _cnt_unit_sum,
           "freq_days": _cnt_freq_days,
           "number_total": _cnt_number_total,
