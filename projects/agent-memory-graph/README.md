@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-9801-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-9872-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -108,7 +108,7 @@ agent-memory-graph 的定位：**beyond recall — agency-grade graph memory —
 | **memorywire** | ✅ 5ops×4types | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **零依赖** | ✅ 仅 Python 标准库 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **LoCoMo Score** | 未测 | 49.0% | N/A | N/A | **92.21%** | 90.2% |
-| **Tests** | **9801** | ~500 | ~300 | ~800 | N/A | N/A |
+| **Tests** | **9872** | ~500 | ~300 | ~800 | N/A | N/A |
 
 ### 独特价值
 
@@ -2296,7 +2296,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-8505 → **9801 个测试**覆盖所有 API（**496 个 cycle，299 天零回滚**）。
+8505 → **9872 个测试**覆盖所有 API（**501 个 cycle，300 天零回滚**）。
 
 ## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
 
@@ -4099,6 +4099,28 @@ clause 是意图的最小单位：同一行可以既 plan 一个事件又新鲜�
 #### `_pw` F6 anaphora 购买汇报 join (Cycle 496)
 
 kw 对全命中后，无 kw 的购买汇报句（“We got her for $500”之类裸量词 NP + 价格宾语）可回指续接 pair item——四重判别式防毒，行内 anaphora（“started it 3 weeks ago” 继续按会话时钟）构造上不受影响。firstfam 23→24、temporal 75→**76**/133；套件 9790→9801。
+
+### Neither-family ECM、偏好诚实弃权、官方刷新 0.316 与角色感知答案面 (Cycles 497-501)
+
+#### ECM neither-family matcher (Cycle 497)
+
+Research #082 五决策生产化：strict form gate（“who did I V first, X or Y” 严格形态门）+ 序数标量轨/日历轨 + 描述 NP 免动词门 + 人名保动词门 + 跨 turn anaphora join + 负存在弃权孪生；`unit_sum` 加 (n, entity) 去重修 cataphora 双计。temporal 76→**80**/133（0.602）、firstfam 24→**28**/30、multi 16→17；翻转恰为 #082 oracle 四题，零劫持。+27 `test_ecm.py`，套件 9801→9828。锚点：`ecm_form` amg_bench_quality.py:3990、门正则 `_ECM_GATE_A_RE`/`_ECM_GATE_B_RE`:3741/:3744、`_ECM_VERBMAP`:3748、族间互锁 :3735。
+
+#### preference 诚实弃权与 shipped-gate census (Cycle 498)
+
+advice 请求形态（`_PREF_RE`:3687 精确后缀集——刻意排除过去分词 recommended/suggested（“did you recommend…” 属事实寻回而非建议请求），词形坑 suggestion=suggest+ion 非 atation；`pref_form`:3698、`pref_abstain` 旗标 :518/:787）诚实弃权而非硬答：pref-30 answered 30→1、abstained 0→29（exact 0.000 为结构性零，非退步）。**出厂 gate 全量普查（500 题）：fire 29/30 pref + 0/470 其他**——根因发现：naive `recommend\w*` 词干普查正则与实现漂移，会劫持 14 道 ssa 助手召回题且首查不可见，精确后缀集修复（shipped-gate census 纪律：普查必须跑出厂 gate 本体）。+15 `test_pref_abstain.py`，套件 9847。
+
+#### full-500 官方基准刷新 (Cycle 499)
+
+exact 0.284→**0.316**（+17/−1）：temporal 0.481→**0.602**（+16，C494-497 pairwise/锚点/anaphora/ECM 四连全量兑现）、multi_session 0.120→0.128（+1）、ssu 0.343→0.329（−1 = 86f00804 窗方差书名出窗，C481 先例非机制）；llm 0.296→0.318、hit 0.390→0.394、abstain 0.032→**0.086**（pref 29 弃权入口径——诚实弃权是特性而非损失）、evhit 0.910 平。收 C493-C498 六 cycle 刷新债。
+
+#### `item_total` 枚举金额聚合 (Cycle 500)
+
+“What is the total amount/cost/price…” 21 错簇：题目侧 item 枚举 + 证据绑定四层（T1 同从句 / T2 同句任意从句 / T3 相邻句 anaphora / T4a-b turn/session 唯一）+ foreign-full 守卫 + 区间价/周期价/汇总句排除。族标签 :4463、求解 `_cnt_item_total`:4862、分派表 :5274。multi_session 17→**22**/133（0.128→0.166，+5/−0 全中预测）、temporal/firstfam 零漂移；普查 gate 触发 8 题全为此前错题（5 可解 + 3 设计性弃权），零劫持 number_total/duration_sum 既有正确。+15 `test_item_total.py`，套件 9862。
+
+#### role-aware answer face——echo pathology 修复 (Cycle 501)
+
+第一人称事实题的 GT 常藏在简短用户行，而助手 advice 行 kw 命中更高，答案门回显 advice 文本（“Mint is a fantastic app…”）。user-line 选择仅在两守卫下出手：`_user_fact_form`:3723（`_ROLE_USER_FACT_RE`:3720 第一人称代词 + 非 you 寻回形态（C468 管助手侧）+ 非 advice 请求（C498 已弃权））与 `_answer_form_claimed`:3730（被 ECM/pairwise/temporal_arith/counting 专业族 claim 的形态不动 fall-through——**gate 顺序即正确性面**，C482/C488 教训）；竞争时 margin 0、floor 2。full-500 163→**183**/500（exact 0.326→**0.366**，+20/−0：ssu 12、kupdate 5、multi 2、temporal 1）；base arm 精确复现 C499+C500（158+5=163）。+10 `test_role_answer.py`，套件 **9872**。
 
 ---
 

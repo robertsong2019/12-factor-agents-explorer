@@ -49,6 +49,14 @@ skill-create validate ./my-skill
 | mcp | MCP Server，含工具定义模板 |
 | coding | 编码辅助，含代码模式模板 |
 
+## Testing
+
+```bash
+npm test   # node --test test/*.test.js — 29 tests
+```
+
+`test/skill-scaffolder.test.js` covers the library API (create/list/validate); `test/cli.test.js` is a real-process e2e suite (`spawnSync`) covering help/version, templates, all `new` exit paths, validate exit codes — plus regressions for two bugs fixed on 2026-08-23: (A) `validate` exited 0 on an invalid skill; (B) the api template generated invalid env-var names (hyphens) for kebab-case skill names. All runs are sandboxed to a tmpdir.
+
 ## 设计原则
 
 - **零依赖生成**: 只需 fs-extra（Node 内置即可工作）

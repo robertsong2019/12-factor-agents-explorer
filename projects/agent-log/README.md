@@ -72,8 +72,12 @@ agent-log stats
 ## Testing
 
 ```bash
-# Full bats suite (18 tests, fully sandboxed — HOME is overridden to a fixture dir)
+# Full bats suite (22 tests, fully sandboxed — HOME is overridden to a fixture dir)
 bats test/commands.bats test/bugfixes.test.bats
+
+# Performance benchmarks (F18) — 365-day synthetic corpus, per-command timing + thresholds
+bash test/bench.sh          # full benchmark run
+bats test/bench.test.bats   # 4 smoke tests
 ```
 
 `test/commands.bats` covers each command's contract on fixture data; `test/bugfixes.test.bats` is a regression suite pinning four real bugs found on 2026-08-22:
