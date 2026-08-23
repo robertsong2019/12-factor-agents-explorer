@@ -3,6 +3,14 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "sa-test-"));
+
+// Override archive dir for tests — MUST be set before require():
+// archive.js captures SESSION_ARCHIVE_DIR at module load time.
+// (Previously set after require, so every run wrote fixtures into the
+// real ~/.openclaw/session-archives/ directory.)
+process.env.SESSION_ARCHIVE_DIR = TMP_DIR;
+
 const {
   archiveSession,
   listArchives,
@@ -16,11 +24,6 @@ const {
   mergeArchives,
   diffArchives,
 } = require("./archive");
-
-const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "sa-test-"));
-
-// Override archive dir for tests
-process.env.SESSION_ARCHIVE_DIR = TMP_DIR;
 
 // Clean slate
 for (const f of fs.readdirSync(TMP_DIR)) fs.rmSync(path.join(TMP_DIR, f), { force: true });

@@ -7,9 +7,22 @@
     "session-archiver": "./bin/cli.js"
   },
   "scripts": {
-    "test": "node --test lib/*.test.js",
+    "test": "node --test lib/*.test.js test/*.test.js",
     "start": "node bin/cli.js"
   },
-  "keywords": ["openclaw", "session", "archive", "cli"],
-  "license": "MIT"
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0"
+  },
+  "keywords": [
+    "openclaw",
+    "session",
+    "archive",
+    "cli"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0"
+  }
 }

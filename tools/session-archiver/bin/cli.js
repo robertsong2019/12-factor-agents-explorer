@@ -11,7 +11,7 @@
  *   session-archiver clean [--days N]  Remove archives older than N days (default 90)
  */
 
-const { Command } = require("commander");
+const { Command, InvalidArgumentError } = require("commander");
 const {
   archiveSession,
   listArchives,
@@ -24,7 +24,6 @@ const {
   listLiveSessions,
   fetchSessionHistory,
 } = require("../lib/openclaw-api");
-const chalk = require("chalk");
 const path = require("path");
 
 // Fallback chalk for environments without it
@@ -38,8 +37,17 @@ let c = {
   gray: (s) => s,
 };
 try {
-  c = chalk;
+  c = require("chalk");
 } catch (_) {}
+
+// Commander coercion: reject non-numeric values instead of silently producing NaN
+function parseNum(v) {
+  const n = parseInt(v, 10);
+  if (Number.isNaN(n) || n < 0) {
+    throw new InvalidArgumentError("expected a non-negative integer");
+  }
+  return n;
+}
 
 const program = new Command();
 
@@ -52,10 +60,10 @@ program
 program
   .command("list")
   .description("List archived sessions")
-  .option("-l, --limit <n>", "Max results", "20")
+  .option("-l, --limit <n>", "Max results", parseNum, 20)
   .option("--json", "Output as JSON")
   .action(async (opts) => {
-    const archives = listArchives({ limit: parseInt(opts.limit) });
+    const archives = listArchives({ limit: opts.limit });
     if (opts.json) {
       console.log(JSON.stringify(archives, null, 2));
       return;
@@ -111,9 +119,11 @@ program
         console.log(c.green(`✓ Archived ${result.id.slice(0, 12)}… (${result.messageCount} messages)`));
       } else {
         console.log(c.red("Specify --all or --id <session-id>"));
+        process.exitCode = 1;
       }
     } catch (err) {
       console.error(c.red(`Error: ${err.message}`));
+      process.exitCode = 1;
     }
   });
 
@@ -121,10 +131,10 @@ program
 program
   .command("search <query>")
   .description("Full-text search across archived sessions")
-  .option("-l, --limit <n>", "Max results", "10")
+  .option("-l, --limit <n>", "Max results", parseNum, 10)
   .option("--json", "Output as JSON")
   .action((query, opts) => {
-    const results = searchArchives(query, { limit: parseInt(opts.limit) });
+    const results = searchArchives(query, { limit: opts.limit });
     if (opts.json) {
       console.log(JSON.stringify(results, null, 2));
       return;
@@ -151,7 +161,14 @@ program
   .option("-f, --format <fmt>", "Output format: markdown, html, json", "markdown")
   .option("-o, --output <file>", "Output file (default: stdout)")
   .action((id, opts) => {
-    const content = exportSession(id, opts.format);
+    let content;
+    try {
+      content = exportSession(id, opts.format);
+    } catch (err) {
+      console.error(c.red(`Error: ${err.message}`));
+      process.exitCode = 1;
+      return;
+    }
     if (opts.output) {
       require("fs").writeFileSync(opts.output, content, "utf-8");
       console.log(c.green(`✓ Exported to ${opts.output}`));
@@ -176,10 +193,10 @@ program.command("stats").description("Show archive statistics").action(() => {
 program
   .command("clean")
   .description("Remove archives older than N days")
-  .option("--days <n>", "Days threshold", "90")
+  .option("--days <n>", "Days threshold", parseNum, 90)
   .option("--dry-run", "Show what would be deleted")
   .action((opts) => {
-    const result = cleanOldArchives(parseInt(opts.days), opts.dryRun);
+    const result = cleanOldArchives(opts.days, opts.dryRun);
     if (opts.dryRun) {
       console.log(c.yellow(`Would remove ${result.count} archives (older than ${opts.days} days)`));
     } else {

@@ -165,7 +165,9 @@ function exportSession(id, format = "markdown") {
   const filePath = path.join(ARCHIVE_DIR, `${id}.json`);
   if (!fs.existsSync(filePath)) {
     // Try partial match
-    const files = fs.readdirSync(ARCHIVE_DIR).filter((f) => f.startsWith(id));
+    const files = fs.readdirSync(ARCHIVE_DIR).filter(
+      (f) => f.endsWith(".json") && f.startsWith(id)
+    );
     if (files.length === 0) throw new Error(`Archive not found: ${id}`);
     return exportSession(files[0].replace(".json", ""), format);
   }
@@ -199,20 +201,22 @@ function toMarkdown(data) {
 }
 
 function toHtml(data) {
-  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Session: ${data.label || data.id}</title>
+  const escLabel = escapeHtml(String(data.label || data.id));
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Session: ${escLabel}</title>
 <style>body{font-family:system-ui;max-width:800px;margin:0 auto;padding:20px;color:#333}
 .user{background:#e3f2fd;padding:12px;border-radius:8px;margin:8px 0}
 .assistant{background:#f1f8e9;padding:12px;border-radius:8px;margin:8px 0}
 .system{background:#fff3e0;padding:12px;border-radius:8px;margin:8px 0;font-style:italic}
 .tool{background:#fce4ec;padding:12px;border-radius:8px;margin:8px 0;font-family:monospace;font-size:0.9em}
 pre{white-space:pre-wrap;word-wrap:break-word}</style></head><body>
-<h1>${data.label || data.id}</h1>
+<h1>${escLabel}</h1>
 <p>Archived: ${data.archivedAt} | Messages: ${data.messageCount}</p><hr>`;
 
   for (const msg of data.history || []) {
-    const role = (msg.role || "unknown").toLowerCase();
+    const role = String(msg.role || "unknown").toLowerCase();
+    const roleClass = role.replace(/[^a-z0-9-]/g, "") || "unknown";
     const text = msg.content || msg.text || "";
-    html += `<div class="${role}"><strong>${role}</strong><pre>${escapeHtml(text)}</pre></div>`;
+    html += `<div class="${roleClass}"><strong>${escapeHtml(role)}</strong><pre>${escapeHtml(text)}</pre></div>`;
   }
   html += `</body></html>`;
   return html;
