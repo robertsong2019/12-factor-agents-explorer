@@ -445,7 +445,8 @@ class LongMemEvalAdapter:
                  ppr_top: int = 15,
                  seed_recall_k: int = 5,
                  recall_seed_k: int = 40,
-                 sidechannel: bool = False):
+                 sidechannel: bool = False,
+                 where_loc: bool = True):
         """Args:
             mg: MemoryGraph to ingest into (default: fresh in-memory).
             use_ppr: Enable PersonalizedPageRank expansion (multi-hop).
@@ -540,6 +541,7 @@ class LongMemEvalAdapter:
         # import-time cost stays zero and the lexical default is
         # untouched (zero-dep hermetic tests rely on that).
         self.sidechannel = sidechannel
+        self.where_loc = where_loc
         self._side_engine = None
         self._side_probed = False
         # Adapter-side bookkeeping (avoids depending on repo getter
@@ -1049,6 +1051,28 @@ class LongMemEvalAdapter:
                 meta["gate"] = "speaker_recall"
                 meta["abstained"] = False
                 return r_ans, meta
+
+        # Cycle 508: where-form locative extraction (#084) —
+        # "Where did I …" questions: retrieval bridges the answer
+        # session but the echo path returns an advice/echo line, not
+        # the user's location statement. Locative sentence selection
+        # over retrieved sessions (user-role + first-person + window
+        # + rank priors); returns the whole winning sentence so
+        # containment judging passes. Runs after speaker_recall,
+        # before the answer gates: strict start-with-where form,
+        # zero family overlap (census 19/500); no locative candidate
+        # -> fall-through untouched (C488 lesson). Sim A/B (mini =
+        # all 19 full-500 where-qs, 3 hash seeds stable): +4 fixes
+        # (Target/Serenity Yoga/IKEA/Oahu), 0 regressions.
+        if self.where_loc and where_form(question):
+            w_ans, w_detail = answer_where(
+                question, self._counting_sessions(),
+                meta.get("retrieved_ids", []), self._nodes, context)
+            meta["where"] = w_detail
+            if w_ans is not None:
+                meta["gate"] = "where"
+                meta["abstained"] = False
+                return w_ans, meta
 
         conf = meta["confidence"]
         if not meta["messages_retrieved"]:
@@ -2053,6 +2077,143 @@ def answer_speaker_recall(question: str,
     if best[0] < weighted_floor:
         return None, detail
     return best[1], detail
+
+
+# ── Cycle 508: where-form locative extraction (Research #084) ──────
+
+_WHERE_QUESTION_RE = re.compile(r"^\s*where\b", re.I)
+_WHERE_PREP = r"(?:at|in|from|to|near|inside|outside|onto|on|under)"
+_WHERE_DET = r"(?:(?:the|a|an|my|our)\s+)?"
+# Case-SENSITIVE proper-noun run — re.I here also matches lowercase
+# verb junk ("mix up my routine"), which cost a Denver regression
+# in the C508 sim (v2 lesson).
+_WHERE_PROPER_RE = re.compile(
+    _WHERE_PREP + r"\s+" + _WHERE_DET + r"((?:[A-Z][\w'&.\-]*\s?){1,4})")
+_WHERE_COMMON_RE = re.compile(
+    _WHERE_PREP + r"\s+" + _WHERE_DET + r"("
+    r"suburbs?|cities|downtown|countryside|mountains?|beaches?|"
+    r"campus|office|gyms?|garage|bedrooms?|closets?|kitchens?|"
+    r"yard|balcony|basement|attic|beds?|shelves?|shelf|walls?|"
+    r"desks?|drawers?|cars?|bags?|backpacks?|cabinets?"
+    r")\b", re.I)
+_WHERE_TRAIL = frozenset({
+    "and", "or", "the", "a", "an", "my", "our", "of", "in", "on",
+    "at", "to", "is", "was", "are", "were", "it", "its", "it's",
+    "been", "being", "so", "but", "because", "while", "when",
+    "where", "who", "that", "which", "since", "for", "with", "as",
+    "by", "near", "from", "up", "out", "if"})
+_WHERE_TIMES = frozenset({
+    "monday", "tuesday", "wednesday", "thursday", "friday",
+    "saturday", "sunday", "weekend", "january", "february",
+    "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december", "today",
+    "tomorrow", "yesterday", "morning", "afternoon", "evening",
+    "night", "week", "day", "month", "year", "time"})
+_WHERE_EVID_RE = re.compile(
+    r"\b(?:remember|actually|just|recently|currently|finally)\b",
+    re.I)
+_WHERE_FP_RE = re.compile(r"\b(?:I|I'm|I've|I'll|we|my|me)\b")
+
+
+def where_form(question: str) -> bool:
+    """True for where-questions (STRICT: must START with "where").
+
+    Census over full-500: exactly the 19 where-questions match (all
+    currently land in the echo path, gate=answer); no other form
+    family starts with "where" — zero hijack surface (C482/C488
+    lesson). Mid-sentence "where" ("Do you remember where…") stays
+    negative: those are recall forms owned by speaker_recall.
+    """
+    return bool(_WHERE_QUESTION_RE.search(question))
+
+
+def _where_is_time(word: str) -> bool:
+    return word.lower().rstrip("s") in _WHERE_TIMES
+
+
+def _where_loc_candidates(sent: str) -> list[tuple[str, int]]:
+    """Locative spans in *sent* with strength (3 multi-token
+    proper, 2 single proper, 1 common noun)."""
+    out: list[tuple[str, int]] = []
+    for m in _WHERE_PROPER_RE.finditer(sent):
+        toks = m.group(1).strip().split()
+        while toks and (toks[-1].lower() in _WHERE_TRAIL
+                        or _where_is_time(toks[-1])):
+            toks.pop()
+        if not toks or all(_where_is_time(w) for w in toks):
+            continue
+        span = " ".join(toks)
+        if len(span) >= 3:
+            out.append((span, 3 if len(toks) >= 2 else 2))
+    for m in _WHERE_COMMON_RE.finditer(sent):
+        out.append((m.group(1).lower(), 1))
+    return out
+
+
+def answer_where(question: str, sessions: list[dict],
+                 retrieved_ids: list[str], nodes: dict,
+                 context: str) -> tuple[str | None, dict]:
+    """Locative sentence selection for where-questions (Cycle 508).
+
+    "Where did I …" questions: retrieval bridges the answer session
+    (answer_session_hit 13/15 on wrong where-qs) but the echo path
+    returns the best-ranked LINE, which for where-facts is routine-
+    ly an advice/echo sentence about the topic, not the user's
+    location statement. This scans turns of RETRIEVED sessions only
+    — the C472 full-graph lesson does NOT transfer: an all-haystack
+    scan admits kh>=1 question-echoing distractors from unretrieved
+    sessions (C508 sim A/B: 4 fixes -> 3 + 1 regression). Scoring:
+    ``2*keyword_hits + 3*user_role + 2*first_person + 1*evidential
+    + loc_strength + 3*in_window + session_rank_bonus``; the winning
+    sentence is returned WHOLE so containment judging passes (GT
+    phrases live mid-sentence). Questions and loc-less sentences
+    never compete; no locative candidate anywhere -> None
+    (fall-through to the answer gates, untouched).
+
+    Returns ``(answer_or_None, detail)``.
+    """
+    kws = _keywords(question)
+    sess_rank: dict[str, int] = {}
+    for nid in retrieved_ids:
+        node = nodes.get(nid)
+        sid = node.get("session_id") if node else None
+        if sid and sid not in sess_rank:
+            sess_rank[sid] = len(sess_rank)
+    window_texts = {ln.split("] ", 1)[-1].strip()
+                    for ln in (context or "").split("\n") if "] " in ln}
+    cands: list[dict] = []
+    for s in sessions:
+        rank = sess_rank.get(s["session_id"], None)
+        if rank is None:
+            continue
+        for turn in s["turns"]:
+            role = turn.get("role", "?")
+            for sent in _split_sentences(str(turn.get("content", ""))):
+                if sent.rstrip().endswith("?"):
+                    continue
+                locs = _where_loc_candidates(sent)
+                if not locs:
+                    continue
+                kh = _keyword_hits(sent, kws)
+                score = (kh * 2
+                         + (3 if role == "user" else 0)
+                         + (2 if _WHERE_FP_RE.search(sent) else 0)
+                         + (1 if _WHERE_EVID_RE.search(sent) else 0)
+                         + max(sc for _, sc in locs)
+                         + (3 if sent.strip() in window_texts else 0)
+                         + max(0, 2 - rank))
+                cands.append({"role": role, "kh": kh, "score": score,
+                              "sent": sent})
+    if not cands:
+        return None, {"sessions": len(sess_rank), "cands": 0}
+    cands.sort(key=lambda c: -c["score"])
+    best = cands[0]
+    detail = {"sessions": len(sess_rank), "cands": len(cands),
+              "best": {"role": best["role"], "kh": best["kh"],
+                       "score": best["score"]},
+              "top3": [(c["role"], c["score"], c["sent"][:80])
+                       for c in cands[:3]]}
+    return best["sent"], detail
 
 
 def parse_lme_date(text: str) -> str:
