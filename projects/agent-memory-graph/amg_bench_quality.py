@@ -4718,10 +4718,11 @@ def _cnt_deduplicate_entities(across_sessions: bool = True) -> callable:
 def _cnt_np_fam(question: str) -> tuple:
     """Content words of the counted NP (robust vs modifiers).
 
-    Returns ``(family, subtypes)`` — family is the full morph set of
+    Returns ``(family, subtypes, head0)`` — family is the full morph set of
     every content word; subtypes is the conjoined head list when
-    the question counts "X and Y" separately (each needs evidence
-    or the mechanism abstains — conjunctive completeness).
+    the question counts "X and Y" separately; head0 is the first
+    content word of the NP (used by C507 entity-split to distinguish
+    "views on A and B" from "tetras and guppies").
     """
     ql = question.lower()
     m = re.match(r'^how many ([a-z][\w\s-]{1,60}?)'
@@ -4731,14 +4732,14 @@ def _cnt_np_fam(question: str) -> tuple:
                  r'|after|last|this|due)\b|[?.])', ql)
     if not m:
         m = re.match(r'^what (?:is|was) the total number of '
-                     r'([a-z][\w\s-]{1,60}?)'
+                     r'([a-z][\w\s-]{1,90}?)'
                      r'(?:\s+i\b|\s+(?:do|did|have|has)\s+i'
                      r'|\bthat\b|,|\bby\b|\bfrom\b|[?.])', ql)
     if not m:
-        return None, None
+        return None, None, None
     np = m.group(1)
     parts = re.split(r'\s+and\s+|,\s+|\s+or\s+', np)
-    subs, fam = [], set()
+    subs, fam, head0 = [], set(), None
     for part in parts:
         ws = [w for w in re.findall(r"[a-z][\w-]+", part)
               if w not in _CNT_STOP_Q
@@ -4746,11 +4747,18 @@ def _cnt_np_fam(question: str) -> tuple:
         if not ws:
             continue
         h = ws[-1]
+        if head0 is None:
+            head0 = ws[0]
         for w in ws:
             fam |= {w, _cnt_sing(w), w + 's', _cnt_sing(w) + 's'}
+            # C507: -es / -ies plurals (lunches, boxes, cities)
+            if w.endswith(('s', 'x', 'z', 'ch', 'sh')):
+                fam |= {w + 'es', _cnt_sing(w) + 'es'}
+            elif w.endswith('y') and len(w) > 2 and w[-2] not in 'aeiou':
+                fam.add(w[:-1] + 'ies')
         if len(parts) >= 2 and h not in subs:
             subs.append(h)
-    return fam, (subs if len(subs) >= 2 else None)
+    return fam, (subs if len(subs) >= 2 else None), head0
 
 
 def _cnt_anchor_re(anchors: set[str]):
@@ -5450,7 +5458,9 @@ _WEEKDAY_RE = re.compile(
 
 # families whose hyponyms are true species (per-species max
 # aggregation is valid); NOT generic hypernyms like course/event
-_CNT_SPECIES_FAMS = frozenset({'fish'})
+# families whose hyponyms are true species (per-species max
+# aggregation is valid); NOT generic hypernyms like course/event
+_CNT_SPECIES_FAMS = frozenset({'fish', 'sibling'})
 
 
 def _cnt_freq_days(question: str, sessions: list[dict]):
@@ -5873,50 +5883,118 @@ def _cnt_item_total(question: str, sessions: list[dict]):
     return f"${round(total, 2):g}"
 
 
+# C507: ordinal lookup (limited, used only in P5)
+_CNT_ORDINAL = {
+    'first': 1, 'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5,
+    'sixth': 6, 'seventh': 7, 'eighth': 8, 'ninth': 9, 'tenth': 10,
+    'eleventh': 11, 'twelfth': 12, 'thirteenth': 13, 'fourteenth': 14,
+    'fifteenth': 15, 'sixteenth': 16, 'seventeenth': 17,
+    'eighteenth': 18, 'nineteenth': 19, 'twentieth': 20}
+_CNT_RATE_RE = re.compile(
+    r'\b(?:a|per|each)\s+(?:week|day|month|year)s?\b', re.I)
+_CNT_NUMW_PRE = (r'one|two|three|four|five|six|seven|eight|nine|ten'
+                  r'|eleven|twelve|fifteen|twenty')
+_CNT_PRE_NOUN_RE_TPL = (
+    r'\b(\d{1,3}(?:,\d{3})*|' + _CNT_NUMW_PRE + r')\b'
+    r'[^\w]{0,3}(?:\w+\s+){0,2}(%(HEADS)s)\b')
+
+
 def _cnt_number_total(question: str, sessions: list[dict]):
-    fam, subtypes = _cnt_np_fam(question)
+    fam, subtypes, head0 = _cnt_np_fam(question)
     if not fam:
         return None
     fam = {f for f in fam if len(f) >= 3}
+    # pre-hyponym fam for own_re (P4/P5 must use question's own
+    # head, not hyponym heads — blocks "Expand on module 4")
+    own = set(fam)
     for w in list(fam):
         fam |= _CNT_HYPONYM.get(w, set()) \
             | _CNT_HYPONYM.get(_cnt_sing(w), set())
+    fam_re = '|'.join(re.escape(f) for f in
+                      sorted(fam, key=len, reverse=True))
+    own_re = '|'.join(re.escape(f) for f in
+                      sorted(own, key=len, reverse=True)) or fam_re
+    fam_gate = re.compile(r'\b(' + fam_re + r')\b', re.I)
+    pre_re = re.compile(_CNT_PRE_NOUN_RE_TPL % {'HEADS': fam_re}, re.I)
+
+    def _collect(sent: str, own: str) -> list[float]:
+        """Pre-noun (+rate-filter) + post-noun-of + ordinal counts.
+        *own* is own_re: P4/P5 restrict heads to question-own fam."""
+        vals = []
+        for em in pre_re.finditer(sent):
+            n = _cnt_num(em.group(1).replace(',', ''))  # C507 comma
+            if n is None or n >= 1000000:
+                continue
+            after = sent[em.end(1):em.start(2)] \
+                .strip().lower().strip(' -')
+            parts = after.split()
+            if parts and parts[0].rstrip('s') in {
+                    u.rstrip('s')
+                    for u in _CNT_UNIT_BLACKLIST}:
+                continue
+            # C507 P3: span-level rate filter
+            if _CNT_RATE_RE.search(
+                    sent[max(0, em.start()):em.end() + 34]):
+                continue
+            vals.append(n)
+        # C507 P4: post-noun numbering ("episode 12 of the X")
+        # own_re only — hyponym heads excluded (imperative guard)
+        for em in re.finditer(
+                r'\b(' + own + r')\s+(\d{1,3})\b\s+of\b',
+                sent, re.I):
+            n = float(em.group(2))
+            if n < 1000:
+                vals.append(n)
+        # C507 P5: ordinal counting ("the third meal")
+        for em in re.finditer(
+                r'\b(?:the\s+)?(' + '|'.join(_CNT_ORDINAL)
+                + r')\s+(' + own + r')\b', sent, re.I):
+            vals.append(float(_CNT_ORDINAL[em.group(1).lower()]))
+        return vals
+
+    # C507 P6: head-anchored entity split (head0 not in subtypes)
+    if subtypes and head0 and head0 not in subtypes:
+        per = defaultdict(set)
+        for s_ in subtypes:
+            sre = re.compile(r'\b' + re.escape(s_) + r's?\b', re.I)
+            for si, sent in _cnt_sents(sessions):
+                if sent.endswith('?'):
+                    continue
+                if not sre.search(sent) or not fam_gate.search(sent):
+                    continue
+                # Clause-level intent + comma-thousands protection
+                clauses = [c.strip() for c in
+                           re.split(r'[,;](?!\d)', sent)
+                           if c.strip()]
+                for cl in clauses:
+                    if cl.endswith('?') \
+                            or _CNT_INTENT_RE.search(cl):
+                        continue
+                    if not fam_gate.search(cl):
+                        continue
+                    for v in _collect(cl, own_re):
+                        per[s_].add(v)
+        if per and all(per.get(s_) for s_ in subtypes):
+            return str(int(sum(max(v) for v in per.values())))
+        return None
+
+    # Existing paths with P1-P5 upgrades
     sub_counts, all_counts = defaultdict(set), set()
     for si, sent in _cnt_sents(sessions):
         low = sent.lower()
         if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
             continue
-        if not any(re.search(r'\b' + re.escape(f) + r'\b', low)
-                   for f in fam):
+        if not fam_gate.search(low):
             continue
         if subtypes:
             for s_ in subtypes:
                 if re.search(r'\b' + re.escape(s_) + r's?\b', low):
-                    for em in re.finditer(
-                            r'\b(\d{1,3}(?:,\d{3})*|one|two|three'
-                            r'|four|five|six|seven|eight|nine|ten'
-                            r'|eleven|twelve|fifteen|twenty)\b'
-                            r'[^\w]{0,3}(?:\w+\s+){0,2}'
-                            + re.escape(s_) + r's?\b', sent, re.I):
-                        n = _cnt_num(em.group(1))
-                        if n and n < 10000:
-                            sub_counts[s_].add(n)
+                    for v in _collect(sent, own_re):
+                        if v < 10000:
+                            sub_counts[s_].add(v)
         else:
-            for em in re.finditer(
-                    r'\b(\d{1,3}(?:,\d{3})*|one|two|three|four'
-                    r'|five|six|seven|eight|nine|ten|eleven|twelve'
-                    r'|fifteen|twenty)\b[^\w]{0,3}(?:\w+\s+){0,2}('
-                    + '|'.join(sorted(fam)) + r')\b', sent, re.I):
-                n = _cnt_num(em.group(1))
-                if n and n < 1000000:
-                    after = sent[em.end(1):em.start(2)] \
-                        .strip().lower().strip(' -')
-                    parts = after.split()
-                    if parts and parts[0].rstrip('s') in {
-                            u.rstrip('s')
-                            for u in _CNT_UNIT_BLACKLIST}:
-                        continue
-                    all_counts.add(n)
+            for v in _collect(sent, own_re):
+                all_counts.add(v)
     if subtypes:
         vals = []
         for s_ in subtypes:
@@ -5924,13 +6002,7 @@ def _cnt_number_total(question: str, sessions: list[dict]):
                 return None      # conjunctive completeness
             vals.append(max(sub_counts[s_]))
         return str(int(sum(vals)))
-    # Cycle 483 species sum: hyponym-carrying families (fish)
-    # aggregate per-species maxima; singular mentions ("a pleco",
-    # "my betta") count as one specimen; adjacent subtype names
-    # ("pleco catfish") are one species, not two. Allowlisted
-    # families ONLY — generic hyponym keys like 'course' →
-    # {module, class, program} would misroute (C483 A/B caught
-    # courses 20→14 preemption).
+    # Cycle 483 species sum: hyponym-carrying families (fish, sibling)
     speciesable = {w for w in fam
                    if w in _CNT_SPECIES_FAMS
                    or _cnt_sing(w) in _CNT_SPECIES_FAMS}
@@ -5941,11 +6013,9 @@ def _cnt_number_total(question: str, sessions: list[dict]):
         species = defaultdict(set)
         adjacent = set()
         for si, sent in _cnt_sents(sessions):
-            # clause-level intent gate: counts may live in a factual
-            # trailing clause of a planning sentence ("I'm thinking
-            # of adding plants to my tank, which currently has 10
-            # neon tetras") — only intent clauses are skipped
-            clauses = [c.strip() for c in re.split(r'[,;]', sent) if c.strip()]
+            clauses = [c.strip() for c in
+                       re.split(r'[,;](?!\d)', sent)
+                       if c.strip()]
             for cl in clauses:
                 if cl.endswith('?') or _CNT_INTENT_RE.search(cl):
                     continue
