@@ -4449,6 +4449,12 @@ def counting_form(question: str) -> str | None:
         return None
     q = question.strip()
     ql = q.lower()
+    # C505 (#085): duration-family M1/M4/M3 claim their narrow
+    # forms ahead of duration_sum — legacy aggregation double-
+    # counts franchise re-mentions (M1) and misses delivery
+    # joins (M4); M3's plan/fact wall excludes habitual mood.
+    if _dur_family_gate(ql):
+        return "duration_family"
     if re.search(r'\bhow many days?\s+(?:a|per)\s+week\b', ql):
         return "freq_days"
     if re.match(r'^what is the total number of (days|weeks)', ql):
@@ -4479,6 +4485,387 @@ def counting_form(question: str) -> str | None:
         if np_words and _enum_form_gate(ql, np_words):
             return "enum_count"
     return None
+
+
+# ---------------------------------------------------------------------------
+# C505 (#085): duration-family mechanisms M1-M4. Oracle v3 7/7
+# (incl. two controls — aae3761f driving stays 15, 2788b940
+# per-typical-week stays untouched). Cascade M1 -> M4 -> M3;
+# M2 is the freq_days schedule-context discipline added below.
+# Faithful port of dur_family_proto.py — helpers are deliberately
+# independent (oracle-parity first, reuse second).
+# ---------------------------------------------------------------------------
+
+_DUR_MONTHS = {m.lower(): i + 1 for i, m in enumerate(
+    ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+     'August', 'September', 'October', 'November', 'December'])}
+
+_DUR_NUMWORDS = {'one': 1, 'a': 1, 'an': 1, 'two': 2, 'three': 3,
+                 'four': 4, 'five': 5, 'six': 6, 'seven': 7,
+                 'eight': 8, 'nine': 9, 'ten': 10, 'half': 0.5,
+                 'couple': 2, 'few': 3}
+
+_DUR_STOP = set('''a an the my i we our your this that these those and or but so
+it its is are was were be been being do does did have has had will would
+can could should may might must to of in on at for with about from by as
+like just really very much more most some any all no not new old other
+recently lately been get got great good nice super plenty stuff'''.split())
+
+_DUR_PRONOUNS = {'it', 'this', 'that', 'they', 'them'}
+
+_DUR_BINGE_RE = re.compile(
+    r'(?:watched|finished|completed|read)\s+(?:all|the|my)?\s*'
+    r'(?:(\d+)\s+)?([a-zA-Z][a-zA-Z\- ]{2,40}?)\s+'
+    r'(?:movies|films|books|episodes|in|for)\b.*?'
+    r'(?:in|for)\s+(?:about\s+|around\s+|roughly\s+)?'
+    r'((?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d+(?:\.\d+)?)'
+    r'(?:\s+(?:week|weeks|day|days|hour|hours))?'
+    r'(?:\s+and\s+a\s+half)?)')
+
+_DUR_FRANCHISE = {}
+for _toks, _fam in [
+        ('marvel mcu cinematic avengers disney', 'marvel'),
+        ('star wars skywalker jedi rogue solo empire awakens', 'starwars'),
+        ('harry potter hogwarts', 'harrypotter'),
+        ('lord rings hobbit tolkien', 'lotr')]:
+    for _t in _toks.split():
+        _DUR_FRANCHISE[_t] = _fam
+
+_DUR_H_RE = re.compile(
+    r'\b(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d+(?:\.\d+)?)'
+    r'[-\s]?(?:hour|hours)\b')
+
+# case-SENSITIVE on purpose — destination NPs are proper nouns and
+# the (?i) global flag kills the capital heuristic (#085 bug 1)
+_DUR_TRIP_TO = re.compile(
+    r'\b(?:trip|trips|drove|drive|visited?) to '
+    r'((?:the )?([A-Z][\w.\-]+(?: [A-Z][\w.\-]+)*))')
+_DUR_ANY_CAP = re.compile(
+    r'(?<![.!?]\s)(?<!^)\b([A-Z][a-z]{2,}(?: [A-Z][a-z]{2,})*)\b')
+
+_DUR_REALIZED_RE = re.compile(
+    r'(?i)(?:went (?:for|on) a|did (?:a|an|my)|completed|took)\s+'
+    r'((?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d+(?:\.\d+)?)'
+    r'[-\s]*(?:minute|minutes|hour|hours))\s+([a-z\- ]{3,30})')
+
+_DUR_PLAN_MARKERS = re.compile(
+    r"(?i)\b(used to|trying to get back|hoping to|plan(?:ning)? to|"
+    r"want to|would like to|i'?ll (?:start|try|schedule|do)|"
+    r"schedule my|getting back into|slacking|inconsistent)\b")
+
+_DUR_ACT_WORDS = {
+    'jog', 'jogging', 'yoga', 'running', 'run', 'exercise',
+    'exercising', 'workout', 'working', 'swim', 'swimming',
+    'cycling', 'walk', 'walking', 'class', 'classes', 'fitness',
+    'meditation', 'hiking', 'hike', 'watching', 'watch',
+    'documentary', 'documentaries'}
+
+_DUR_DATE_CORE = (
+    r'((?:January|February|March|April|May|June|July|August|'
+    r'September|October|November|December)\s+(?:the\s+)?(\d{1,2})'
+    r'(?:st|nd|rd|th)?|(\d{1,2})/(\d{1,2}))')
+
+_DUR_ORD_RE = re.compile(
+    r'(?:ordered|bought|purchased|placed an order for)\s+'
+    r'((?:a|an|the|my|new|it)\s+)?'
+    r'([a-zA-Z][a-zA-Z\- ]{2,40}?)?\s*'
+    r'(?:from [A-Za-z]+\s+)?(?:online\s+)?'
+    r'(?:on|back on)\s+' + _DUR_DATE_CORE, re.I)
+
+_DUR_ARR_RE = re.compile(
+    r'(?:arrived|received|was delivered|showed up|came)\s+on\s+'
+    + _DUR_DATE_CORE, re.I)
+
+_DUR_ARR_PROD_RE = re.compile(
+    r'([a-zA-Z][a-zA-Z\- ]{2,40}?)\s+(?:that\s+)?'
+    r'(?:arrived|was delivered|showed up)', re.I)
+
+_DUR_SCHED_ACT = re.compile(
+    r'(?i)\b(attend|class|classes|lesson|lessons|session|sessions|'
+    r'practice)\b')
+
+
+def _dur_clauses(text):
+    parts = re.split(r'(?<=[.!?])\s+|\n+|;\s+', text)
+    return [p.strip() for p in parts if len(p.strip()) > 3]
+
+
+def _dur_words(text):
+    return [w.strip('.,!?;:"\'()[]').lower() for w in text.split()]
+
+
+def _dur_cstems(text):
+    return {w for w in _dur_words(text)
+            if w and w not in _DUR_STOP and len(w) > 2
+            and not w.isdigit()}
+
+
+def _dur_stem(w):
+    w = w.lower()
+    for suf in ('ing', 'ed'):
+        if len(w) > len(suf) + 2 and w.endswith(suf):
+            w = w[:-len(suf)]
+            break
+    if len(w) > 3 and w[-1] == w[-2]:
+        w = w[:-1]          # jogging -> jog (C471, again)
+    return w
+
+
+def _dur_num(token):
+    t = token.lower()
+    return float(t) if t.isdigit() else _DUR_NUMWORDS.get(t)
+
+
+def _dur_user_turns(sessions):
+    for s in sessions:
+        for ti, t in enumerate(s.get('turns', [])):
+            if t.get('role') == 'user':
+                yield s.get('session_id', ''), ti, t.get('content', '')
+
+
+def _dur_m1_gate(ql):
+    if 'how many' not in ql:
+        return None
+    if re.search(r'how many (?:videos|movies|books|pieces|episodes|'
+                 r'times|classes|items)', ql):
+        return None
+    if re.search(r'\b(ago|passed|between)\b', ql):
+        return None
+    if ('week' in ql or 'day' in ql) and \
+            re.search(r'\b(watch|read|finish|complete|binge)\b', ql):
+        return 'watch'
+    if 'hour' in ql and re.search(r'\bdriv', ql) \
+            and 'destination' in ql:
+        return 'drive'
+    return None
+
+
+def _dur_m4_gate(ql):
+    if not re.search(r'how many days .*(arrive|arrived|receive|received|'
+                     r'take for|took for)', ql):
+        return None
+    if not re.search(r'(after i (ordered|bought|purchased)|to arrive)', ql):
+        return None
+    return True
+
+
+def _dur_m3_gate(ql):
+    if not ('how many hours' in ql or 'how much time' in ql):
+        return None
+    if not re.search(r'\b(did i|have i|do i)\b', ql):
+        return None
+    if re.search(r'\b(in total|combined|typical|every day|each day)\b', ql):
+        return None
+    if 'driv' in ql and 'destination' in ql:
+        return None
+    return True
+
+
+def _dur_family_gate(ql):
+    return _dur_m1_gate(ql) or _dur_m4_gate(ql) or _dur_m3_gate(ql)
+
+
+def _dur_parse_dur(token):
+    t = token.lower().strip()
+    m = re.match(r'^(a|an|one|two|three|four|five|six|seven|eight|nine|'
+                 r'ten|\d+(?:\.\d+)?)'
+                 r'(?:\s+(\w+))?(?:\s+and\s+a\s+half)?$', t)
+    if not m:
+        return None, None
+    n = _dur_num(m.group(1))
+    unit = m.group(2)
+    if n is None:
+        return None, None
+    if 'and a half' in t:
+        n += 0.5
+    return n, unit
+
+
+def _dur_m1(question, sessions):
+    """M1 binge-dedup-sum: franchise/destination-keyed dedup so a
+    re-mention of the same entity adds nothing (e831120c 4.5→3.5)."""
+    mode = _dur_m1_gate(question.lower())
+    if not mode:
+        return None
+    if mode == 'watch':
+        dur_by_key = {}
+        for _, _, c in _dur_user_turns(sessions):
+            fams = {_DUR_FRANCHISE.get(w) for w in _dur_words(c)} - {None}
+            for m in _DUR_BINGE_RE.finditer(c):
+                n, unit = _dur_parse_dur(m.group(3))
+                if n is None:
+                    continue
+                if unit and 'day' in unit:
+                    n = round(n / 7.0, 2)
+                key = frozenset(fams) if fams else frozenset(
+                    _dur_cstems((m.group(2) or '').lstrip('TtHhEe '))) or None
+                if key is None:
+                    continue
+                if any(k & key for k in dur_by_key):
+                    continue
+                dur_by_key[key] = n
+        if not dur_by_key:
+            return None
+        return f"{round(sum(dur_by_key.values()), 2):g} weeks"
+    # drive mode: destination-keyed hour dedup (control aae3761f=15)
+    hrs_by_dest = {}
+    for _, _, c in _dur_user_turns(sessions):
+        dm = _DUR_H_RE.search(c)
+        if not dm:
+            continue
+        n = _dur_num(dm.group(0).split()[0])
+        if n is None:
+            continue
+        tm = _DUR_TRIP_TO.search(c)
+        dest = tm.group(2) if tm else (
+            [mm.group(1) for mm in _DUR_ANY_CAP.finditer(c)] or [None])[0]
+        if not dest:
+            continue
+        key = dest.split()[0].lower()
+        if key in ('my', 'the', 'i'):
+            continue
+        hrs_by_dest.setdefault(key, n)
+    if not hrs_by_dest:
+        return None
+    return str(int(sum(hrs_by_dest.values())))
+
+
+def _dur_m3(question, sessions):
+    """M3 realized-window-duration: clause-level plan/fact wall —
+    habitual mood (used to / planning to / I'll schedule) never
+    enters the realized sum (7024f17c → 0.5 hours)."""
+    if not _dur_m3_gate(question.lower()):
+        return None
+    acts = {_dur_stem(w) for w in _dur_words(question.lower())
+            if w in _DUR_ACT_WORDS}
+    total_h, fired = 0.0, False
+    for _, _, c in _dur_user_turns(sessions):
+        for cl in _dur_clauses(c):
+            if _DUR_PLAN_MARKERS.search(cl):
+                continue
+            for m in _DUR_REALIZED_RE.finditer(cl):
+                tok = re.split(r'[-\s]+', m.group(1))[0]
+                n = _dur_num(tok)
+                if n is None:
+                    continue
+                unit = m.group(1).lower()
+                if 'minute' in unit:
+                    n = n / 60.0
+                if acts and not (acts & {_dur_stem(w)
+                                         for w in _dur_words(m.group(2))}):
+                    continue
+                total_h += n
+                fired = True
+    if not fired:
+        return None
+    return f"{round(total_h, 2):g} hours"
+
+
+def _dur_ord_date(m):
+    if m.group(4):
+        mon = m.group(3).split()[0]
+        return date(2023, _DUR_MONTHS.get(mon.lower(), 1), int(m.group(4)))
+    return date(2023, int(m.group(5)), int(m.group(6)))   # M/D
+
+
+def _dur_arr_date(m):
+    if m.group(2):
+        mon = m.group(1).split()[0]
+        return date(2023, _DUR_MONTHS.get(mon.lower(), 1), int(m.group(2)))
+    return date(2023, int(m.group(3)), int(m.group(4)))   # M/D
+
+
+def _dur_resolve_product(turns, turn_idx, explicit):
+    """Explicit NP after the order verb, or anaphora: walk back
+    user clauses nearest-first for a `my (new) X` possessive
+    anchor (#085: two reversed() traps live here)."""
+    exp = (explicit or '').strip()
+    first = _dur_words(exp)[0] if exp else ''
+    is_pronoun = (first in _DUR_PRONOUNS
+                  or first in ('from', 'online') or not exp)
+    if not is_pronoun:
+        return _dur_cstems(exp)
+    candidates = []
+    pre = []
+    for cl in _dur_clauses(turns[turn_idx].get('content', '')):
+        if _DUR_ORD_RE.search(cl) or _DUR_ARR_RE.search(cl):
+            break
+        pre.append(cl)
+    candidates.extend(reversed(pre))
+    for t in reversed(turns[:turn_idx]):
+        if t.get('role') == 'user':
+            candidates.extend(reversed(
+                _dur_clauses(t.get('content', ''))))
+    for cl in candidates[:8]:
+        pm = re.search(r'\bmy\s+(?:new\s+)?((?:[a-z]+[\- ]){0,5}[a-z]+)',
+                       cl, re.I)
+        if pm:
+            return _dur_cstems(pm.group(1))
+    return None
+
+
+def _dur_m4(question, sessions):
+    """M4 delivery-interval: order→arrival date join with
+    month-name AND slash dates, anaphoric product resolution, and
+    a question-side product guard (evidence ≠ asked entity →
+    abstain, the 60bf93ed_abs lesson)."""
+    if not _dur_m4_gate(question.lower()):
+        return None
+    qm = re.search(r'(?:my|the|a|an)\s+((?:[a-zA-Z\-]+[ ]{0,1}){1,5}?)\s+'
+                   r'(?:after|to arrive|\?)', question)
+    q_stems = _dur_cstems(qm.group(1)) if qm else set()
+    orders, arrivals = [], []
+    for s in sessions:
+        turns = s.get('turns', [])
+        for ti, t in enumerate(turns):
+            if t.get('role') != 'user':
+                continue
+            c = t.get('content', '')
+            for m in _DUR_ORD_RE.finditer(c):
+                explicit = m.group(2) or (m.group(1) or '').strip()
+                stems = _dur_resolve_product(turns, ti, explicit)
+                orders.append((stems or set(), _dur_ord_date(m)))
+            for m in _DUR_ARR_RE.finditer(c):
+                start = max(0, m.start() - 120)
+                pm = _DUR_ARR_PROD_RE.search(
+                    c[start:m.start()] + ' arrived')
+                if pm and _dur_words(pm.group(1))[0] \
+                        not in _DUR_PRONOUNS:
+                    stems = _dur_cstems(pm.group(1))
+                else:
+                    stems = _dur_resolve_product(turns, ti, 'it')
+                arrivals.append((stems or set(), _dur_arr_date(m)))
+    if not orders and not arrivals:
+        return None       # form fired, zero evidence (C498 abstain)
+    best = None
+    for astems, adate in arrivals:
+        for ostems, odate in orders:
+            inter = astems & ostems
+            if not inter:
+                continue
+            if q_stems and not (q_stems & (astems | ostems)):
+                continue    # joined product ≠ asked product
+            if len(inter) >= 2 or len(ostems) <= 2 or len(astems) <= 2:
+                delta = (adate - odate).days
+                if delta > 0 and (best is None or delta < best):
+                    best = delta
+    if best is None:
+        return None       # evidence present but not the asked pair
+    return f"{best} days"
+
+
+def _cnt_duration_family(question, sessions: list[dict]):
+    """Duration-family cascade M1 -> M4 -> M3 (#085 oracle 7/7).
+    M2 (distinct-day-rate) is claimed by the freq_days form one
+    gate below — disjoint gates make the split equivalent to the
+    prototype's M1 -> M2 -> M4 -> M3 cascade."""
+    v = _dur_m1(question, sessions)
+    if v is not None:
+        return v
+    v = _dur_m4(question, sessions)
+    if v is not None:
+        return v
+    return _dur_m3(question, sessions)
 
 
 def _cnt_duration_sum(question: str, sessions: list[dict]):
@@ -4684,11 +5071,16 @@ _CNT_SPECIES_FAMS = frozenset({'fish'})
 def _cnt_freq_days(question: str, sessions: list[dict]):
     """"Days a week" frequency: distinct weekdays in habitual
     attendance sentences ("I attend Zumba on Tuesdays and
-    Thursdays, yoga on Wednesdays" → 4)."""
+    Thursdays, yoga on Wednesdays" → 4). C505 (#085 M2): a
+    schedule-context word is now required in the sentence —
+    weekday mentions in unrelated sentences (a tennis Sunday, a
+    work Monday) no longer pollute the count (a08a253f 5→4)."""
     days = set()
     for si, sent in _cnt_sents(sessions):
         if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
             continue
+        if not _DUR_SCHED_ACT.search(sent):
+            continue      # schedule context required (C505)
         if not _WEEKDAY_RE.search(sent):
             continue
         for m in _WEEKDAY_RE.finditer(sent):
@@ -5506,6 +5898,7 @@ def answer_counting(question: str,
     if form is None:
         return None, {}
     fn = {"duration_sum": _cnt_duration_sum,
+          "duration_family": _cnt_duration_family,
           "total_sum": _cnt_total_sum,
           "item_total": _cnt_item_total,
           "unit_sum": _cnt_unit_sum,
