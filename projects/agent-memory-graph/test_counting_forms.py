@@ -70,10 +70,14 @@ class TestCountingFormDetector(unittest.TestCase):
             "How many days passed between my MoMA visit and the "
             "Ancient Civilizations exhibition?"))
 
-    def test_plain_entity_count_not_layered(self):
-        # entity_count (prec 0.20) stays OUT of the pipeline
-        self.assertIsNone(counting_form(
-            "How many model kits do I have?"))
+    def test_plain_entity_count_now_enum_form(self):
+        # C503 (#084): the entity-count wall was four walls —
+        # named/role/size enumeration carries built-in dedup
+        # keys and IS layered (enum_count, oracle prec 1.00);
+        # signature-less counts fall through (honest abstention,
+        # covered in test_enum_count.py).
+        self.assertEqual(counting_form(
+            "How many model kits do I have?"), "enum_count")
 
 
 class TestMechanisms(unittest.TestCase):

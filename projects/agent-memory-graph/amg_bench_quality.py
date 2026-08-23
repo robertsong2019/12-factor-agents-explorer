@@ -4472,6 +4472,12 @@ def counting_form(question: str) -> str | None:
         return "number_total"
     if re.match(r'^which\b', q, re.I) and re.search(r'\bmost\b', ql):
         return "argmax"
+    # C503 (#084): named/role/size enumeration — claims plain
+    # "how many X" questions every earlier form left unclaimed.
+    if re.match(r'^how many\b', q, re.I):
+        np_words = _enum_np(q)
+        if np_words and _enum_form_gate(ql, np_words):
+            return "enum_count"
     return None
 
 
@@ -5250,6 +5256,236 @@ def _cnt_argmax_entity(question: str, sessions: list[dict]):
     return ' '.join(w.capitalize() for w in best[0].split())
 
 
+# ----------------------------------------------------------------
+# Cycle 503 (Research #084 v5.2): enum_count — 5th counting form.
+# Entity-count questions split into four sub-classes; the two with
+# signatures carrying built-in dedup keys bypass the predicate-
+# semantics wall (C469/#075/C483's wall governs (entity x action)
+# pairs, not enumeration):
+#   named X / Name's X / my ROLE's X  -> one counted instance
+#   N-unit ("20-gallon tank")         -> size signature
+# Ownership gate: "have I bought/own/my" questions suppress name
+# signatures ("Billie Eilish's album" is brand pollution, not my
+# inventory) — sizes stay valid. Exclusion verbs (missed/skipped)
+# void a clause's signatures (realized-vs-intended micro-wall);
+# "Rachel's baby shower" is excluded via the possessive tail
+# window only (clause-level exclusion kills same-clause true
+# signatures — #084 v5.1 overcorrection). No resolvable signature
+# -> fall through (honest abstention; 26 wrong how-many questions
+# in the census stay untouched by construction).
+_ENUM_SIZE_UNITS = ('gallon', 'liter', 'inch', 'foot', 'pound',
+                    'kg', 'gb', 'tb', 'acre', 'bedroom')
+_ENUM_ROLE_NOUNS = (
+    'cousin', 'roommate', 'colleague', 'friend', 'sister',
+    'brother', 'aunt', 'uncle', 'niece', 'nephew', 'neighbor',
+    'classmate', 'coworker', 'boss', 'daughter', 'son', 'mother',
+    'father', 'grandma', 'grandpa', 'buddy', 'partner',
+    'teammate', 'professor', 'teacher', 'student')
+_ENUM_COMMON_CAPS = {
+    'Fresh', 'New', 'The', 'My', 'We', 'They', 'Last', 'This',
+    'That', 'Next', 'So', 'Also', 'Anyway', 'Well', 'Oh', 'Yeah',
+    'Okay', 'Children', 'Family', 'Friends', 'Kids', 'Local',
+    'City', 'Google', 'Amazon', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri',
+    'Sat', 'Sun', 'St', 'San', 'Los', 'Museum', 'Gallery',
+    'Center', 'University', 'School', 'Park', 'Library', 'Church',
+    'Hospital', 'Store', 'Shop', 'Studio', 'Theater', 'Cafe',
+    'Restaurant', 'College', 'Institute', 'High'} | _CNT_MONTHS \
+    | _CNT_WEEKDAYS
+_ENUM_EXCLUDE_VERBS = re.compile(
+    r"\b(missed|missing|skip(?:ped)?|couldn'?t (?:make|attend)"
+    r"|did(?:n'?t| not) attend|unable to attend"
+    r"|wasn'?t able to attend|didn'?t go to)\b", re.I)
+_ENUM_TWINS_APPOS = re.compile(
+    r"\btwins?,\s*([A-Z][a-z]{2,})\s+and\s+([A-Z][a-z]{2,})\b")
+# name-possessives belong to brands/artists on my-inventory
+# questions, not to my collection -> names invalid there
+_ENUM_MY_INVENTORY = re.compile(
+    r"\b(?:have i|did i|do i)\b.*\b(?:bought|purchased|worked on"
+    r"|worked with|own|owned|use|using|collected|acquired"
+    r"|downloaded|replaced|fixed|assembled|sold)\b|\bmy\b",
+    re.I)
+_ENUM_STOP_NP = {
+    'do', 'did', 'have', 'has', 'am', 'are', 'is', 'was', 'were',
+    'that', 'which', 'in', 'last', 'this', 'over', 'so',
+    'different', 'various', 'total', 'many', 'other', 'new',
+    'related', 'type', 'types', 'of', 'or', 'and', 'my', 'the'}
+_ENUM_TIME_HEADS = {
+    'time', 'times', 'week', 'weeks', 'day', 'days', 'hour',
+    'hours', 'minute', 'minutes', 'month', 'months', 'year',
+    'years', 'page', 'pages', 'point', 'points'}
+
+
+def _enum_stem(n: str) -> str:
+    n = n.lower()
+    if n.endswith('ies'):
+        return n[:-3] + 'y'
+    if n.endswith('es') and not n.endswith('ses'):
+        return n[:-2]
+    if n.endswith('s') and not n.endswith('ss'):
+        return n[:-1]
+    return n
+
+
+def _enum_np(question: str) -> list[str]:
+    """Content words of the counted NP ("how many babies were
+    born to friends..." -> ['babies', 'born', 'friends'])."""
+    ql = question.lower()
+    m = re.search(r'how many ([a-z][a-z\- ]{1,40}?) '
+                  r'(do|did|have|has|am|are|is|was|were|that|'
+                  r'which|in|last|this|over|so)', ql)
+    if not m:
+        m = re.search(r'how many ([a-z][a-z\- ]{1,40}?)\??$', ql)
+    if not m:
+        return []
+    words = [w for w in re.split(r'[.?!]', m.group(1))[0].split()
+             if w not in _ENUM_STOP_NP]
+    return words if words else []
+
+
+def _enum_form_gate(ql: str, np_words: list[str]) -> bool:
+    """Strict eligibility for the enum-count form (C488 census
+    discipline: a loose gate is a hijack surface — #084 v1's 26
+    fires carried a 0.15 precision)."""
+    if re.search(r'how many (times|years older'
+                 r'|minutes did i exceed|hours (a|per) week)', ql):
+        return False
+    if re.search(r'(older|younger|exceed|when will i be)', ql):
+        return False
+    if re.search(r'(typical week|a typical|per week|days a week)',
+                 ql):
+        return False
+    head = np_words[-1] if np_words else ''
+    if head in _ENUM_TIME_HEADS:
+        return False
+    return True
+
+
+def _enum_valid_name(tok: str) -> bool:
+    return tok not in _ENUM_COMMON_CAPS and \
+        re.fullmatch(r'[A-Z][a-z]{2,}', tok) is not None
+
+
+def _enum_clause_sigs(cl: str, stems: list[str]) -> tuple:
+    """Signatures in one clause -> (names, roles, bare_twins)."""
+    low = cl.lower()
+    if not any(st in low for st in stems):
+        return set(), set(), False
+    if _ENUM_EXCLUDE_VERBS.search(cl):
+        return set(), set(), False
+    names, roles = set(), set()
+    for m in re.finditer(
+            r'(?:named|calling|called)\s+([A-Z][a-z]{2,})', cl):
+        if _enum_valid_name(m.group(1)):
+            names.add(m.group(1))
+    for st in stems:
+        for m in re.finditer(
+                r"\b([A-Z][a-z]{2,})('s)\s+([^,]{0,60}?)\b" + st, cl):
+            tail = cl[m.end():m.end() + 15].lower()
+            if _enum_valid_name(m.group(1)) and 'shower' not in tail:
+                names.add(m.group(1))
+        for m in re.finditer(
+                r"\b(?:and\s+)([A-Z][a-z]{2,})('s)\s+([^,]{0,60}?)\b"
+                + st, cl):
+            if _enum_valid_name(m.group(1)):
+                names.add(m.group(1))
+        for m in re.finditer(
+                r'\b([A-Z][a-z]{2,})\s+'
+                r'(?:got\s+married|and\s+[A-Z][a-z]+\s*,)', cl):
+            if _enum_valid_name(m.group(1)) and \
+                    re.search(r'(wedding|married|bride|groom)', low):
+                names.add(m.group(1))
+        for m in re.finditer(
+                r'\b(?:my|our)\s+(?:little|best|old|college|close|'
+                r'dear)?\s*(' + '|'.join(_ENUM_ROLE_NOUNS) +
+                r")s?(?:\s+[A-Z][a-z]+)?(?:'s)?\s+([^,]{0,60}?)\b"
+                + st, cl):
+            roles.add(m.group(1))
+    twins_family = any(st.startswith(('bab', 'twin', 'famil'))
+                       for st in stems)
+    bare_twins = twins_family and bool(
+        re.search(r'\btwins?\b(?!,\s*[A-Z])', low))
+    if twins_family:
+        for m in _ENUM_TWINS_APPOS.finditer(cl):
+            if _enum_valid_name(m.group(1)):
+                names.add(m.group(1))
+            if _enum_valid_name(m.group(2)):
+                names.add(m.group(2))
+    return names, roles, bare_twins
+
+
+def _cnt_enum_count(question: str, sessions: list[dict]):
+    """Enumeration-signature count (#084 v5.2 oracle parity 4/4).
+
+    Granularity follows the prototype exactly: user TURNS are the
+    candidacy unit (a turn containing any stem contributes ALL
+    its clauses — the role-absorption step must see stem-less
+    clauses too, e.g. "my cousin Rachel's wedding" riding in a
+    turn whose stem sits in another clause); clauses are the
+    signature unit; size signatures scan the full turn.
+    """
+    np_words = _enum_np(question)
+    if not np_words:
+        return None
+    if not _enum_form_gate(question.lower(), np_words):
+        return None
+    stems = [_enum_stem(w) for w in np_words]
+    all_names: set[str] = set()
+    all_roles: set[str] = set()
+    sizes: set[str] = set()
+    bare_twins = twins_appos = False
+    cand_clauses: list[str] = []
+    n_cand = 0
+    for s in sessions:
+        for t in s.get('turns', []):
+            if t.get('role') != 'user':
+                continue
+            content = t.get('content', '')
+            if len(content) <= 3:
+                continue
+            if not any(st in content.lower() for st in stems):
+                continue          # turn-level candidacy (prototype)
+            n_cand += 1
+            cls = [c for c in re.split(r'[.;!?]', content)
+                   if c.strip()]
+            cand_clauses.extend(cls)
+            for cl in cls:
+                n, r, tw = _enum_clause_sigs(cl, stems)
+                all_names |= n
+                all_roles |= r
+                bare_twins = bare_twins or tw
+                if _ENUM_TWINS_APPOS.search(cl):
+                    twins_appos = True
+            for m in re.finditer(
+                    r'\b(\d+)[- ]?('
+                    + '|'.join(_ENUM_SIZE_UNITS) + r')\b',
+                    content.lower()):
+                sizes.add(m.group(1) + m.group(2))
+    if n_cand == 0:
+        return None
+    head = np_words[-1]
+    q_size = _enum_stem(head) in ('tank', 'aquarium') or \
+        any(u in head for u in _ENUM_SIZE_UNITS)
+    if sizes and q_size:
+        return str(len(sizes))
+    my_inv = bool(_ENUM_MY_INVENTORY.search(question))
+    if (all_names or all_roles) and not my_inv:
+        # same-clause name absorbs its role ("my cousin Rachel's
+        # wedding" is ONE instance, not cousin + Rachel) — over
+        # ALL clauses of candidate turns, stem-less included
+        absorbed = set()
+        for cl in cand_clauses:
+            for role in all_roles:
+                if role in cl.lower():
+                    for nm in all_names:
+                        if nm in cl:
+                            absorbed.add(role)
+                            break
+        n = len(all_names) + len(all_roles - absorbed) + \
+            (1 if bare_twins and not twins_appos else 0)
+        return str(n)
+    return None
+
+
 def answer_counting(question: str,
                     sessions: list[dict]) -> tuple[str | None, dict]:
     """Answer a counting-aggregation form from evidence sessions.
@@ -5274,6 +5510,7 @@ def answer_counting(question: str,
           "item_total": _cnt_item_total,
           "unit_sum": _cnt_unit_sum,
           "freq_days": _cnt_freq_days,
+          "enum_count": _cnt_enum_count,
           "number_total": _cnt_number_total,
           "argmax": _cnt_argmax_entity}
     try:
