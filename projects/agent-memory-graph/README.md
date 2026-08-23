@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-9872-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-9928-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -108,7 +108,7 @@ agent-memory-graph 的定位：**beyond recall — agency-grade graph memory —
 | **memorywire** | ✅ 5ops×4types | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **零依赖** | ✅ 仅 Python 标准库 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **LoCoMo Score** | 未测 | 49.0% | N/A | N/A | **92.21%** | 90.2% |
-| **Tests** | **9872** | ~500 | ~300 | ~800 | N/A | N/A |
+| **Tests** | **9928** | ~500 | ~300 | ~800 | N/A | N/A |
 
 ### 独特价值
 
@@ -2296,7 +2296,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-8505 → **9872 个测试**覆盖所有 API（**501 个 cycle，300 天零回滚**）。
+8505 → **9928 个测试**覆盖所有 API（**505 个 cycle，301 天零回滚**；计数为 08-24 03:30 后 pytest collect 实测）。
 
 ## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
 
@@ -4121,6 +4121,26 @@ exact 0.284→**0.316**（+17/−1）：temporal 0.481→**0.602**（+16，C494-
 #### role-aware answer face——echo pathology 修复 (Cycle 501)
 
 第一人称事实题的 GT 常藏在简短用户行，而助手 advice 行 kw 命中更高，答案门回显 advice 文本（“Mint is a fantastic app…”）。user-line 选择仅在两守卫下出手：`_user_fact_form`:3723（`_ROLE_USER_FACT_RE`:3720 第一人称代词 + 非 you 寻回形态（C468 管助手侧）+ 非 advice 请求（C498 已弃权））与 `_answer_form_claimed`:3730（被 ECM/pairwise/temporal_arith/counting 专业族 claim 的形态不动 fall-through——**gate 顺序即正确性面**，C482/C488 教训）；竞争时 margin 0、floor 2。full-500 163→**183**/500（exact 0.326→**0.366**，+20/−0：ssu 12、kupdate 5、multi 2、temporal 1）；base arm 精确复现 C499+C500（158+5=163）。+10 `test_role_answer.py`，套件 **9872**。
+
+### Counting 第 5 形态、duration-family 四机制、嵌入 side-channel 与官方刷新 0.368 (Cycles 503-506v)
+
+研究→生产流水线 #083/#084/#085 三连落地（原型 oracle parity 先行，A/B 串行切片验证，零劫持门槛），加上 C506v 全量官方刷新。C502 为 zero-loss revert（词法删除引入语法错误，即时回退），不计入 cycle 链。
+
+#### enum_count——枚举签名计数，counting 第 5 形态 (Cycle 503)
+
+"How many X…" 枚举计数（Research #084 v5.2）：用户 TURN 为候选单元（含 stem 的 turn 贡献其全部子句——role 吸收必须看到 stem-less 子句，如 "my cousin Rachel's wedding" 搭乘同 turn 其他子句的 stem）、子句为签名单元、尺寸签名（`_ENUM_SIZE_UNITS`:6123 gallon/liter/inch…）扫全 turn。三层防劫持：所有权门 `_ENUM_MY_INVENTORY`:6149（my-inventory 抑制名字签名——"Billie Eilish albums" 品牌污染防线）、排他谓词（missed/skipped）+ shower 尾部窗排他、twins 同位语 `_ENUM_TWINS_APPOS`:6145。求解 `_cnt_enum_count`:6102、形态门 `counting_form`:4666 → "enum_count":4879、分派表 :6361。oracle parity 4/4（tanks/weddings/babies/ceremonies）；A/B 串行 133 切片 24→**27**/133（0.180→0.203，+3/−0）；counting fired 29→35。+16 `test_enum_count.py`，套件 9888。
+
+#### duration-family 四机制 (Cycle 505)
+
+Research #085 v3 四机制移植：**M1** binge-dedup-sum——franchise/目的地键去重，重提不双计（`_dur_m1`:4916，franchise 键 `_DUR_FRANCHISE`:4757）；**M2** freq_days + 课程语境锚——无关星期句不再污染计数（`_cnt_freq_days`:5305）；**M3** realized-window-duration——子句级计划/事实墙，习惯语气排除（`_dur_m3`:4965）；**M4** delivery-interval——月份名+斜杠日期 join、代词回指产品、题侧产品守卫缺失→弃权（`_dur_m4`:5039）。族分发 `_cnt_duration_family`:5089、家族门 `_dur_family_gate`:4896、分派表 :6356。oracle parity 7/7（5 目标题 + aae3761f=15 计数控制 + 2788b940 未 claim 控制——原型上限 ≠ 管线预期，控制题是护栏）；27→**31**/133（0.203→**0.233**，+4/−0，C503+C505 链条累计 +7/−0）；counting fired 35→37。+11 `test_duration_family.py`，套件 9899。
+
+#### 嵌入 side-channel (Cycle 506)
+
+Research #083 定案生产化（form-gated switch，非 RRF fusion——融合被 #083 A/B 否决）：`chunk_session_text`:1782（150 词 × 6 块，贴合 MiniLM 256-token 上下文预算）+ `SidechannelEngine`:1798（import-probe 双档依赖：quality=fastembed/MiniLM → fast=model2vec/potion → None 降级）+ `session_embedding_scores`:1875（chunk-max 余弦，纯 python 零 numpy）+ `sidechannel_form`:1905 形态门——`pref_form`→"embed"（词法桥不可达的 advice 请求，纯嵌入会话选择替换关键词排序）、`recall_form`→"hybrid"（词法召回强，嵌入仅重排关键词候选修 @1 排序）、其余 None（词法管线原样，两门实测不相交：C498 普查 pref 29/30 + 0/470）。`--sidechannel` CLI:6507 + `run_eval`:6293 透传。密闭 stub-engine 测试；真引擎冒烟：probe 2.2s（缓存后）、语义桥 0.427 vs 词法 −0.029。**词法零依赖默认不动**。+15 tests，套件 **9914**。
+
+#### full-500 官方刷新 0.368 (Cycle 506v)
+
+exact 0.316→**0.368**（+0.052，C499 后首个全量参考）：C501 role-answer +20 与 C503/C505 +7 全量兑现——multi_session 0.128→**0.233**（0.128→0.166→0.203→0.233 三连弧）、ssu 0.329→**0.457**、kupdate +0.026、temporal 0.602→0.609；hit 0.396 / evhit 0.910 / abstain 8.6%；**零类目回归**。本轮零代码改动，纯基准刷新。POST `--sidechannel` 臂 A/B 为下一里程碑。
 
 ---
 
