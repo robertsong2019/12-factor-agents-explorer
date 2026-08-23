@@ -82,6 +82,11 @@ __all__ = [
     "answer_ecm",
     "pref_form",
     "recall_form",
+    "chunk_session_text",
+    "SidechannelEngine",
+    "probe_sidechannel_engine",
+    "session_embedding_scores",
+    "sidechannel_form",
     "answer_speaker_recall",
     "load_longmemeval_data",
     "run_eval",
@@ -439,7 +444,8 @@ class LongMemEvalAdapter:
                  recall_mode: str = "distinctive",
                  ppr_top: int = 15,
                  seed_recall_k: int = 5,
-                 recall_seed_k: int = 40):
+                 recall_seed_k: int = 40,
+                 sidechannel: bool = False):
         """Args:
             mg: MemoryGraph to ingest into (default: fresh in-memory).
             use_ppr: Enable PersonalizedPageRank expansion (multi-hop).
@@ -529,6 +535,13 @@ class LongMemEvalAdapter:
         self.ppr_top = ppr_top
         self.seed_recall_k = seed_recall_k
         self.recall_seed_k = recall_seed_k
+        # Cycle 506: embedding side-channel (Research #083) — opt-in;
+        # the engine is probed lazily on the FIRST gated question so
+        # import-time cost stays zero and the lexical default is
+        # untouched (zero-dep hermetic tests rely on that).
+        self.sidechannel = sidechannel
+        self._side_engine = None
+        self._side_probed = False
         # Adapter-side bookkeeping (avoids depending on repo getter
         # APIs): node id → {label, kind, role, seq, session_id}.
         self._nodes: dict[str, dict] = {}
@@ -540,6 +553,16 @@ class LongMemEvalAdapter:
         # them; same-day session ORDER is the pairwise signal.
         self._session_dates_raw: dict[str, str] = {}
         self._seq = 0                               # deterministic order
+
+    def _sidechannel_engine(self):
+        """Lazily resolve the side-channel engine (None when the
+        flag is off or no backend imports)."""
+        if not self.sidechannel:
+            return None
+        if not self._side_probed:
+            self._side_engine = probe_sidechannel_engine()
+            self._side_probed = True
+        return self._side_engine
 
     # ── Phase 1: ingestion ─────────────────────────────────────────
 
@@ -712,6 +735,48 @@ class LongMemEvalAdapter:
             ranked.append((-hits, -info["seq"], nid))
         ranked.sort()
 
+        # Cycle 506: form-gated embedding side-channel (Research
+        # #083). "embed" — preference forms: keyword ranking is
+        # replaced by full-haystack session scoring (the lexical
+        # bridge is unreachable; candidates often lack the evidence
+        # session entirely, so re-ranking them cannot help — the
+        # switch pulls NEW sessions in). "hybrid" — assistant-recall
+        # forms: keyword candidates re-ordered by session embedding
+        # score, ties fall back to (-hits, -seq) — the #083 lesson
+        # bans id-alphabetical tie-breaks, ingest order is ours.
+        side_mode = None
+        engine = (self._sidechannel_engine()
+                  if sidechannel_form(question) else None)
+        if engine is not None:
+            side_mode = sidechannel_form(question)
+            sessions = self._counting_sessions()
+            scores = session_embedding_scores(question, sessions,
+                                              engine)
+            if side_mode == "embed":
+                order = [s["session_id"] for s in sessions]
+                top = sorted(scores,
+                             key=lambda s: (-scores[s],
+                                            order.index(s)))
+                top = top[:SIDECHANNEL_TOP_SESSIONS]
+                by_sid: dict[str, list] = {}
+                for nid, info in self._messages.items():
+                    by_sid.setdefault(info["session_id"], []).append(
+                        (-info["seq"], nid))
+                ranked = []
+                for sid in top:
+                    for neg_seq, nid in sorted(by_sid.get(sid, [])):
+                        info = self._messages[nid]
+                        ranked.append(
+                            (-_keyword_hits(info["label"], keywords),
+                             neg_seq, nid))
+            else:  # hybrid
+                ranked.sort(
+                    key=lambda t: (
+                        -scores.get(
+                            self._messages[t[2]]["session_id"],
+                            float("-inf")),
+                        t[0], t[1], t[2]))
+
         lines: list[str] = []
         retrieved_ids: list[str] = []
         tokens = 0
@@ -740,6 +805,7 @@ class LongMemEvalAdapter:
             "latency_ms": latency,
             "tokens_est": tokens,
             "keywords": keywords,
+            "sidechannel": side_mode,   # None | "embed" | "hybrid"
             "retrieved_ids": retrieved_ids,   # Cycle 451: turn-level evidence scoring
         }
         return context, meta
@@ -1697,6 +1763,164 @@ def recall_form(question: str) -> str | None:
     if _RECALL_USER_SRC_RE.search(q):
         return None
     return "assistant" if _RECALL_YOU_RE.search(q) else None
+
+
+# ── Cycle 506: embedding side-channel (Research #083) ──────────────
+# The preference retrieval bridge is lexically unreachable
+# (unique-lexical-best 4/30) while a 384-d MiniLM closes it
+# (@5 18→26/30); ssa lexical recall is already 49/56 and embeddings
+# fix the @1 ordering. RRF fusion is HARMFUL when one arm is
+# near-random (@1 10 < 15) → the integration is a per-form SWITCH,
+# not a fusion — C473's "the form classifier IS the configuration
+# surface", extended from seed breadth to retrieval modality.
+
+SIDECHANNEL_WORDS_PER_CHUNK = 150   # MiniLM 256-token context budget
+SIDECHANNEL_MAX_CHUNKS = 6         # sessions score by chunk-max
+SIDECHANNEL_TOP_SESSIONS = 3       # embed-mode context window sessions
+
+
+def chunk_session_text(
+        text: str,
+        words_per_chunk: int = SIDECHANNEL_WORDS_PER_CHUNK,
+        max_chunks: int = SIDECHANNEL_MAX_CHUNKS) -> list[str]:
+    """Split *text* into ≤ *max_chunks* word chunks (research
+    protocol: 150 words × 6). Longer sessions keep their first
+    ``max_chunks`` chunks — the evidence for recall questions is
+    front-loaded in LongMemEval-style dialogues."""
+    words = text.split()
+    if not words:
+        return []
+    cap = min(len(words), words_per_chunk * max_chunks)
+    return [" ".join(words[i:i + words_per_chunk])
+            for i in range(0, cap, words_per_chunk)]
+
+
+class SidechannelEngine:
+    """Thin wrapper over an optional embedding backend.
+
+    ``embed(texts)`` returns L2-normalized vectors (list of float
+    lists) — the caller computes cosines as plain dot products.
+    Pure-python on purpose: numpy exists whenever fastembed or
+    model2vec imports, but the adapter itself stays zero-dep.
+    """
+
+    def __init__(self, embed_fn, tier: str):
+        self._embed_fn = embed_fn
+        self.tier = tier
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        return [self._normalize(v) for v in self._embed_fn(texts)]
+
+    @staticmethod
+    def _normalize(vec) -> list[float]:
+        norm = sum(x * x for x in vec) ** 0.5
+        return [x / norm for x in vec] if norm > 0.0 else list(vec)
+
+
+# Cached probe result (0 or 1 entries) — module-import side effects
+# must not repeat per adapter (OTel optional-dependency precedent).
+_SIDECHANNEL_PROBE: list = []
+
+
+def _probe_fastembed():
+    """Quality tier: fastembed + MiniLM int8 ONNX (36 chunks/s on a
+    1GB box, bitwise-deterministic, ~100MB extras)."""
+    try:
+        from fastembed import TextEmbedding  # noqa: PLC0415
+    except Exception:
+        return None
+    try:
+        model = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
+    except Exception:
+        return None
+    return SidechannelEngine(
+        lambda texts: [list(map(float, v)) for v in model.embed(texts)],
+        "quality")
+
+
+def _probe_model2vec():
+    """Fast tier: model2vec static potion (2463 chunks/s = 69×, no
+    neural runtime, ~30MB extras; @1 costs 4 questions vs MiniLM)."""
+    try:
+        from model2vec import StaticModel  # noqa: PLC0415
+    except Exception:
+        return None
+    try:
+        model = StaticModel.from_pretrained(
+            "minishlab/potion-retrieval-32M")
+    except Exception:
+        return None
+    return SidechannelEngine(
+        lambda texts: [list(map(float, v))
+                       for v in model.encode(texts)],
+        "fast")
+
+
+def probe_sidechannel_engine() -> SidechannelEngine | None:
+    """Import-probe optional embedding engines, quality tier first.
+
+    Returns ``None`` when neither backend imports — the lexical
+    pipeline is the zero-dependency default and stays untouched
+    (graceful degradation, OTel precedent). Result is cached.
+    """
+    if _SIDECHANNEL_PROBE:
+        return _SIDECHANNEL_PROBE[0]
+    engine = _probe_fastembed() or _probe_model2vec()
+    _SIDECHANNEL_PROBE.append(engine)
+    return engine
+
+
+def session_embedding_scores(question: str, sessions: list[dict],
+                             engine: SidechannelEngine) -> dict:
+    """Session → chunk-max cosine against *question*.
+
+    ``sessions``: ``[{"session_id", "turns": [{"role", "content"}]}]``
+    (the ``_counting_sessions`` shape). Deterministic: ties keep
+    ingest order at the CALLER (never an id-alphabetical second key
+    — the #083 tie-break artifact fabricated 12/30 from ``answer_*``
+    session ids sorting first).
+    """
+    chunks: list[str] = []
+    owners: list[str] = []
+    for session in sessions:
+        text = " ".join(str(t.get("content", ""))
+                         for t in session.get("turns", []))
+        for chunk in chunk_session_text(text):
+            chunks.append(chunk)
+            owners.append(str(session.get("session_id", "")))
+    if not chunks:
+        return {}
+    qv = engine.embed([question])[0]
+    best: dict[str, float] = {}
+    for row, vec in enumerate(engine.embed(chunks)):
+        sid = owners[row]
+        sim = sum(a * b for a, b in zip(qv, vec))
+        if sim > best.get(sid, float("-inf")):
+            best[sid] = sim
+    return best
+
+
+def sidechannel_form(question: str) -> str | None:
+    """Form gate for the embedding side-channel (Research #083).
+
+    ``"embed"``  — advice-request forms (C498 ``pref_form``): the
+    lexical bridge is unreachable → pure embedding session
+    selection replaces keyword ranking;
+    ``"hybrid"`` — assistant-recall forms (C468 ``recall_form``):
+    lexical recall is strong → embedding re-ranks the keyword
+    candidates, fixing @1 ordering;
+    ``None``     — every other form: lexical pipeline unchanged.
+    Order matters and the two gates are disjoint in practice
+    (C498 census: pref fires 29/30 preference, ZERO of 470 others
+    — recall questions are excluded by the shipped-gate set).
+    """
+    if pref_form(question):
+        return "embed"
+    if recall_form(question) == "assistant":
+        return "hybrid"
+    return None
 
 
 # Cycle 475 preface lexicon (Research #074): generic openers
@@ -6012,6 +6236,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              assistant_recall: bool = True,
              recall_mode: str = "distinctive",
              recall_seed_k: int = 40,
+             sidechannel: bool = False,
              judge_mode: str = "exact") -> dict:
     """Per-question-haystack evaluation (Cycle 454).
 
@@ -6047,6 +6272,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   ecm=ecm,
                   pref_abstain=pref_abstain,
                   role_answer=role_answer,
+                  sidechannel=sidechannel,
                   role_margin=role_margin,
                   assistant_recall=assistant_recall,
                   recall_mode=recall_mode,
@@ -6208,6 +6434,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Disable the Cycle 501 role-aware answer "
                              "face (user-line selection for first-"
                              "person fact questions)")
+    parser.add_argument("--sidechannel", action="store_true",
+                        help="Enable the Cycle 506 form-gated embedding "
+                             "side-channel (preference/assistant-recall "
+                             "forms; needs optional fastembed or "
+                             "model2vec — degrades to lexical without)")
     parser.add_argument("--mode", choices=("extract", "eval"),
                         default="extract",
                         help="extract = pre-C454 row dump (default); "
@@ -6243,6 +6474,7 @@ def main(argv: list[str] | None = None) -> int:
         pp_duration=not args.no_pp_duration,
         assistant_recall=not args.no_assistant_recall,
         role_answer=not args.no_role_answer,
+        sidechannel=args.sidechannel,
         recall_mode=args.recall_mode)
 
     if args.mode == "eval":
@@ -6263,6 +6495,7 @@ def main(argv: list[str] | None = None) -> int:
             pp_duration=not args.no_pp_duration,
             assistant_recall=not args.no_assistant_recall,
             role_answer=not args.no_role_answer,
+            sidechannel=args.sidechannel,
             recall_mode=args.recall_mode,
             judge_mode=args.judge)
         with open(args.output, "w", encoding="utf-8") as f:

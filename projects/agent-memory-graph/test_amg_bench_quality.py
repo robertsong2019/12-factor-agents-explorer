@@ -529,3 +529,184 @@ class TestCLI:
         rows = json.loads(out.read_text(encoding="utf-8"))["rows"]
         # No haystack ingested → nothing retrieved → abstention.
         assert rows[0]["abstained"] is True
+
+
+# ── Cycle 506: embedding side-channel (Research #083) ──────────────
+# Hermetic stub engine — deterministic 4-dim vectors, no model
+# downloads, no numpy. The probe tier labels survive as strings.
+
+
+class _StubEngine:
+    """Deterministic stub: sums hand-picked keyword direction vectors
+    and L2-normalizes (mirrors SidechannelEngine.normalize contract)."""
+
+    tier = "stub"
+
+    def __init__(self, directions):
+        self.directions = directions
+
+    def embed(self, texts):
+        out = []
+        for text in texts:
+            vec = [0.0, 0.0, 0.0, 0.0]
+            for word, d in self.directions.items():
+                if word in text:
+                    for i in range(4):
+                        vec[i] += d[i]
+            norm = sum(x * x for x in vec) ** 0.5
+            out.append([x / norm for x in vec] if norm > 0 else vec)
+        return out
+
+
+SIDECAR_SESSIONS = [
+    {"session_id": "s_cooking", "messages": [
+        {"role": "user", "content": "pasta sauce simmering tonight"},
+        {"role": "assistant", "content": "olive oil and garlic basics"}]},
+    {"session_id": "s_gear", "messages": [
+        {"role": "user", "content": "stratocaster versus les paul tones"},
+        {"role": "assistant",
+         "content": "the single coil chime suits your playing"}]},
+]
+
+
+class TestChunkSessionText:
+    def test_short_text_single_chunk(self):
+        assert abq.chunk_session_text("hello world") == ["hello world"]
+
+    def test_exact_150_word_boundary(self):
+        words = [f"w{i}" for i in range(300)]
+        chunks = abq.chunk_session_text(" ".join(words))
+        assert len(chunks) == 2
+        assert all(len(c.split()) == 150 for c in chunks)
+        assert chunks[0].startswith("w0 ")
+
+    def test_max_chunks_cap(self):
+        words = [f"w{i}" for i in range(1000)]
+        chunks = abq.chunk_session_text(" ".join(words))
+        assert len(chunks) == abq.SIDECHANNEL_MAX_CHUNKS
+
+    def test_empty(self):
+        assert abq.chunk_session_text("") == []
+
+
+class TestSidechannelForm:
+    def test_advice_request_is_embed(self):
+        assert abq.sidechannel_form(
+            "any recommendations for a music store visit?") == "embed"
+
+    def test_assistant_recall_is_hybrid(self):
+        # pref_form must NOT claim recall forms (C498 census parity).
+        assert abq.sidechannel_form(
+            "remind me what you recommended for dinner") == "hybrid"
+
+    def test_other_forms_untouched(self):
+        assert abq.sidechannel_form(
+            "when did the user start the new job?") is None
+
+
+class TestSessionEmbeddingScores:
+    def test_chunk_max_beats_flat_mediocre(self):
+        # One on-topic chunk among noise must win via chunk-max.
+        engine = _StubEngine({"stratocaster": [1, 0, 0, 0],
+                              "pasta": [0, 1, 0, 0]})
+        noise = " ".join(f"filler{i}" for i in range(400)) + \
+            " pasta sauce simmering"  # session A: off-topic max
+        sessions = [
+            {"session_id": "a", "turns": [
+                {"role": "user", "content": noise}]},
+            {"session_id": "b", "turns": [
+                {"role": "user", "content": "stratocaster versus les paul"}]},
+        ]
+        scores = abq.session_embedding_scores(
+            "stratocaster advice", sessions, engine)
+        assert scores["b"] > scores["a"]
+        assert 0.0 <= scores["a"] <= 1.0
+
+    def test_empty_sessions(self):
+        engine = _StubEngine({})
+        assert abq.session_embedding_scores("q", [], engine) == {}
+
+
+class TestProbeSidechannelEngine:
+    def test_degrades_to_none_and_caches(self, monkeypatch):
+        calls = {"n": 0}
+
+        def _miss():
+            calls["n"] += 1
+            return None
+
+        monkeypatch.setattr(abq, "_probe_fastembed", _miss)
+        monkeypatch.setattr(abq, "_probe_model2vec", _miss)
+        monkeypatch.setattr(abq, "_SIDECHANNEL_PROBE", [])
+        assert abq.probe_sidechannel_engine() is None
+        assert abq.probe_sidechannel_engine() is None
+        assert calls["n"] == 2  # one probe per tier, then cached
+
+    def test_quality_tier_wins_over_fast(self, monkeypatch):
+        stub = abq.SidechannelEngine(lambda texts: [[1, 0]] * len(texts),
+                                     "quality")
+        monkeypatch.setattr(abq, "_SIDECHANNEL_PROBE", [])
+        monkeypatch.setattr(abq, "_probe_fastembed", lambda: stub)
+        monkeypatch.setattr(abq, "_probe_model2vec",
+                            lambda: pytest.fail("must not be reached"))
+        assert abq.probe_sidechannel_engine() is stub
+
+
+class TestRetrieveContextSidechannel:
+    def _adapter(self, **kw):
+        a = LongMemEvalAdapter(max_context_tokens=2000, **kw)
+        a.ingest_sessions(SIDECAR_SESSIONS)
+        return a
+
+    def _stub(self):
+        return _StubEngine({"guitar": [1, 0, 0, 0],
+                            "stratocaster": [1, 0, 0, 0],
+                            "pasta": [0, 1, 0, 0]})
+
+    def _install(self, adapter, engine):
+        adapter.sidechannel = True
+        adapter._side_engine = engine
+        adapter._side_probed = True
+
+    def test_embed_switch_pulls_lexically_unreachable_session(self):
+        # Lexical bridge is closed: the evidence session shares ZERO
+        # question keywords (Research #083 arm F: unique-best 4/30).
+        q = "any recommendations for guitar shopping?"
+        base = self._adapter()
+        ctx0, meta0 = base.retrieve_context(q)
+        assert "stratocaster" not in ctx0
+        assert meta0.get("sidechannel") is None
+
+        adapter = self._adapter()
+        self._install(adapter, self._stub())
+        ctx, meta = adapter.retrieve_context(q)
+        assert meta.get("sidechannel") == "embed"
+        assert "stratocaster" in ctx
+
+    def test_hybrid_rerank_prefers_semantic_session(self):
+        q = "remind me what you suggested about guitar tone"
+        # Both sessions hold an assistant line with equal lexical
+        # distance; embedding must order the guitar session first.
+        adapter = self._adapter()
+        self._install(adapter, self._stub())
+        ctx, meta = adapter.retrieve_context(q)
+        assert meta.get("sidechannel") == "hybrid"
+        first_line = ctx.splitlines()[0]
+        # The guitar session wins the re-rank; within it the lexical
+        # tie-break may legitimately prefer the user line ("tone"
+        # keyword hit) — hybrid reorders SESSIONS, not intra-session
+        # lexical evidence.
+        assert "stratocaster" in first_line
+
+    def test_disabled_flag_keeps_lexical_path(self):
+        q = "any recommendations for guitar shopping?"
+        adapter = self._adapter(sidechannel=False)
+        ctx, meta = adapter.retrieve_context(q)
+        assert "stratocaster" not in ctx
+        assert meta.get("sidechannel") is None
+
+    def test_non_gated_form_ignores_engine(self):
+        adapter = self._adapter()
+        self._install(adapter, self._stub())
+        ctx, meta = adapter.retrieve_context("pasta sauce details")
+        assert meta.get("sidechannel") is None
