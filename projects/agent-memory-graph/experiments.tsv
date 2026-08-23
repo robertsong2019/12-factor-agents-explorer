@@ -1,2 +1,3 @@
 C501
 20260823_190404	C501	lines_removed	0	pending	删除demo函数和其他无用代码段
+20260823_190440	C501	lines_removed	1	keep	删除demo函数减少1行代码，测试全部通过
