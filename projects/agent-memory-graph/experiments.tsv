@@ -2,3 +2,4 @@ C501
 20260823_190404	C501	lines_removed	0	pending	删除demo函数和其他无用代码段
 20260823_190440	C501	lines_removed	1	keep	删除demo函数减少1行代码，测试全部通过
 20260823_190727	C502	lines_removed	0	revert	删除print语句造成语法错误，已回退
+20260823_220500	8d48c32	multi_session	27/133=0.203 (PRE 24/133=0.180, +3/-0)	keep	C503 enum_count: #084 v5.2 枚举签名计数生产化, oracle parity 4/4, counting fired 29-35
