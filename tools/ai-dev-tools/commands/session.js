@@ -119,21 +119,40 @@ async function stopSession(options) {
     sessionId = answer.session;
   }
   
-  // 获取统计信息
-  const statsAnswer = await inquirer.prompt([
-    {
-      type: 'number',
-      name: 'tokens',
-      message: '消耗的 token 数量:',
-      default: options.tokens || 0
-    },
-    {
-      type: 'number',
-      name: 'duration',
-      message: '持续时间（分钟）:',
-      default: Math.floor((Date.now() - sessions.find(s => s.id === sessionId).startTime) / 60000) || 1
-    }
-  ]);
+  const target = sessions.find(s => s.id === sessionId || s.name === sessionId);
+  if (!target) {
+    console.log(chalk.red(`未找到活动会话: ${sessionId}`));
+    process.exitCode = 1;
+    return;
+  }
+  sessionId = target.id;
+  
+  let statsAnswer;
+  
+  // 非交互模式：两个参数都提供了就不再提问（--duration 按帮助文档以秒为单位）
+  if (options.tokens !== undefined && options.duration !== undefined) {
+    statsAnswer = {
+      tokens: Number(options.tokens),
+      duration: Math.floor(Number(options.duration) / 60) // 转为分钟用于展示
+    };
+  } else {
+    statsAnswer = await inquirer.prompt([
+      {
+        type: 'number',
+        name: 'tokens',
+        message: '消耗的 token 数量:',
+        default: options.tokens || 0
+      },
+      {
+        type: 'number',
+        name: 'duration',
+        message: '持续时间（分钟）:',
+        default: options.duration !== undefined
+          ? Math.floor(Number(options.duration) / 60)
+          : (Math.floor((Date.now() - new Date(target.startTime).getTime()) / 60000) || 1)
+      }
+    ]);
+  }
   
   const spinner = ora('结束会话...').start();
   
@@ -183,7 +202,17 @@ async function logSession(options) {
     }
   ]);
   
-  console.log(chalk.green('\n✓ 日志已记录\n'));
+  // 实际持久化（之前只打印成功文案，什么都不存）
+  const target = sessions.find(s => s.id === answer.session);
+  try {
+    await storage.updateSession(answer.session, {
+      logs: [...(target?.logs || []), { time: new Date().toISOString(), content: answer.log }]
+    });
+    console.log(chalk.green('\n✓ 日志已记录\n'));
+  } catch (error) {
+    console.log(chalk.red(`记录失败: ${error.message}`));
+    process.exitCode = 1;
+  }
 }
 
 async function showStats(options) {
