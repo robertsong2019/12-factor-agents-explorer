@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-9928-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-9963-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -108,7 +108,7 @@ agent-memory-graph 的定位：**beyond recall — agency-grade graph memory —
 | **memorywire** | ✅ 5ops×4types | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **零依赖** | ✅ 仅 Python 标准库 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **LoCoMo Score** | 未测 | 49.0% | N/A | N/A | **92.21%** | 90.2% |
-| **Tests** | **9928** | ~500 | ~300 | ~800 | N/A | N/A |
+| **Tests** | **9963** | ~500 | ~300 | ~800 | N/A | N/A |
 
 ### 独特价值
 
@@ -2296,7 +2296,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-8505 → **9928 个测试**覆盖所有 API（**505 个 cycle，301 天零回滚**；计数为 08-24 03:30 后 pytest collect 实测）。
+8505 → **9963 个测试**覆盖所有 API（**511 个 cycle，302 天零回滚**；计数为 08-25 03:10 后 pytest collect 实测）。
 
 ## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
 
@@ -4140,7 +4140,41 @@ Research #083 定案生产化（form-gated switch，非 RRF fusion——融合�
 
 #### full-500 官方刷新 0.368 (Cycle 506v)
 
-exact 0.316→**0.368**（+0.052，C499 后首个全量参考）：C501 role-answer +20 与 C503/C505 +7 全量兑现——multi_session 0.128→**0.233**（0.128→0.166→0.203→0.233 三连弧）、ssu 0.329→**0.457**、kupdate +0.026、temporal 0.602→0.609；hit 0.396 / evhit 0.910 / abstain 8.6%；**零类目回归**。本轮零代码改动，纯基准刷新。POST `--sidechannel` 臂 A/B 为下一里程碑。
+exact 0.316→**0.368**（+0.052，C499 后首个全量参考）：C501 role-answer +20 与 C503/C505 +7 全量兑现——multi_session 0.128→**0.233**（0.128→0.166→0.203→0.233 三连弧）、ssu 0.329→**0.457**、kupdate +0.026、temporal 0.602→0.609；hit 0.396 / evhit 0.910 / abstain 8.6%；**零类目回归**。本轮零代码改动，纯基准刷新。POST `--sidechannel` 臂 A/B 已完成：**207/500=0.414 全库新高**（见下节）。
+
+---
+
+### Total-number v2、where-form、delta-family 两锚点聚合、inventory_count 第 10 形态与 POST 臂 0.414 (Cycles 507-511)
+
+08-24 白天 ~ 08-25 凌晨五连（四 keep 一负结果）：multi_session 0.233→**0.414** 133 切片四连弧（C507/C509/C511 各 +5/+16/+3 全零回退），C510 为首个 RECORD-NEGATIVE（负结果台账化，不涉生产代码，不计入 cycle 链——与 C502 zero-loss revert 同理）；full-500 POST 臂收口 0.414 全库新高。
+
+#### total-number 家族 v2——两实体数值求和 (Cycle 507)
+
+"Total number of views on YouTube and TikTok" 类问题要求按实体拆分求和，单向聚合器看不见题目自身的实体划分。`_cnt_number_total`:5935 v2 七项升级：P1 NP 上限 60→90 / P2 -es/-ies 复数形态 / P3 跨度级频率过滤 / P4 后置编号 `own_re`:5948+"of" 守卫（own_re 限定题目自有 head 而非 hyponym head——防 "Expand on module 4" 祈使句劫持）/ P5 序数计数 / P6 实体锚定拆分按实体 max 求和 / P7 sibling 入 species；另加逗号千分位保护 `[,;](?!\d)`。multi_session 0.233→**0.271**（31→36/133，+5/−0 恰为两实体求和目标）；xcat 交叉验证 temporal+single_session 114/203 逐位零翻转。
+
+#### where-form locative 提取 (Cycle 508)
+
+严格 start-with-where 门 `where_form`:2145（census 19/500 零家族重叠、全部原走 echo 路径）：`_where_loc_candidates`:2161 专名/普通两分支 locative 抽取（专名分支必须大小写敏感——re.I 会把句中动词垃圾当专名），locative 句子选择 :2183 仅扫 retrieved 会话（C472 全图锚回退教训不迁移到 where，sim v4 A/B 反证）；answer gate 挂接 `self.where_loc` :1094。where 家族 4→**6**（+2/−0 IKEA/Oahu）；组合树 0.368→**0.382**（+5 为 C507 同树测得）。已取证坑：①检索 hash 方差——retrieve_context 的 PPR 种子受 set 迭代序影响，同代码不同进程 retrieved_ids 漂移（遗留待修）；②10×50 分块官方 CLI 绕 277MB json.load 内存墙（~28 min 全量）。
+
+#### delta-family 两锚点数值聚合 (Cycle 509)
+
+题目文本自身命名比较双方（"how much more … compared to …" / "… instead of …" / "minimum amount … and …"）：`delta_form`:6824 STRICT 形态门（题面算子族精确分派 t_diff/rate/count_ratio/cmp_pct/pct_price/save/minmax——question-text only，无证据偷看；"faster" 单独门 temporal-diff 分支）+ 引擎区块 :6646（any-of 锚点绑定 + user-role 优先 + strict-majority 跨侧排除 + 子句局部性 tiebreak，再施加算子族 diff/sum2/minmax/rate/ratio/pct）。防劫持三设计：miss→None fall-through（gates own abstention）、counting 之前执行（dispatcher :1021）、`--no-delta` CLI :7390 隔离开关。21 题全错族 → oracle 16/21、fired 精度 **100%**。multi_session 0.271→**0.391**（36→52/133，+16/−0，16 wins 全 corpus-21 成员与 oracle 逐题一致）；套件 9928→9948（+20）。
+
+#### C510：kupdate answer-face 负结果 (RECORD-NEGATIVE)
+
+Research #087 被**移植前杀死**——virtual-flip census（门控+原型逻辑+生产判分函数级全库，~3 分钟）三重否证：①判分鸿沟：原型 oracle 19→54（2.46×）系关键词判分幻觉，生产 `exact_judge` 连续包含要求下 57 fire 仅 21 过；②形态不可分：PERFECT 形态内赢输共存，根因是选择质量而非形态路由；③跨类劫持：124 fire 翻错 31 个 currently-correct，净 **−7**。**census 升格 #088+ 所有 answer-face 生产化前置关卡（insight #254）：原型数字只代表研究方向，不代表生产收益**。负结果进台账（484ea70），v10 方向留档：值跨提取 / 值-签名距离选择 / judge 侧救援。
+
+#### inventory_count——第 10 counting form (Cycle 511)
+
+{kit, instrument, property} 白名单家族（133+500 双 census 恰 3 fire 全错 → 结构性零劫持面）：`_cnt_inventory_count`:6510 distinct-item 枚举，形态门 `counting_form` → "inventory_count":4909、分派表 :7088。分家族身份抽取（kit=scale+brand+专名句级 union / instrument=brand+model 码如 1/72 B-29、Tamiya Spitfire / property=N-bedroom+类型+邻区专名对）+ `_inv_dedup`:6505 最大签名包含去重；排除面：hypothetical acquisition（"thinking of buying"）/ foreign possessor（"my niece … her violin"）/ 域守卫；selling 不排除。坑：lower 后丢 anchor 专名（大小写保留抽取）/ 贪婪 optional 组 / scale 数字 token 拆分双计（句级 union+纯数字跳过）/ "Women in Art" 伪签名（单词专名须 marker）。multi_session 0.391→**0.414**（52→55/133，+3/−0）；oracle 3/3。
+
+#### full-500 POST 臂 0.414——嵌入通道全量兑现
+
+C506 留下的 `--sidechannel` 全量 A/B 收口：C508 树 0.382 → **207/500=0.414 全库新高**（1135s）；逐类目 multi 36→52（+16），其余五类**逐位不变**（losses=0——跨类目零回归实证，#083 form-gated 嵌入通道在 multi_session 上全量兑现）。
+
+#### 工具线注记：npm scripts DOA 修复 + 结构守卫
+
+`package.json` test 链为模板垃圾（`npm test --` 自递归至 core dump；prepare→build→test 链毒化每次 npm install）——b52e6ba 接线到真实 runner（python3 -m pytest / py_compile / python -m build），移除 prepare/prepublishOnly 钩子；新增 `test_package_json_scripts.py` 5 条结构守卫（amk scripts={} 655c173、ai-dev-tools 虚荣测试 e542697、本例三案同类）与 `scripts/find_untested.py` 覆盖缺口发现器。套件 9958→**9963**。
 
 ---
 
