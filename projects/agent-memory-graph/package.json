@@ -5,16 +5,12 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "npm test -- --passWithNoTests --bail",
-    "test:verbose": "npm test -- --verbose",
-    "test:coverage": "npm test -- --coverage",
-    "build": "npm run test",
-    "dev": "npm run test -- --watch",
-    "lint": "eslint src/ --ext .js,.ts",
-    "lint:fix": "eslint src/ --ext .js,.ts --fix",
-    "prepare": "npm run build",
-    "prepublishOnly": "npm run build",
-    "version": "npm run build"
+    "test": "python3 -m pytest -x -q",
+    "test:verbose": "python3 -m pytest -v",
+    "test:coverage": "python3 -m pytest -q --cov=memory_graph --cov-report=term-missing",
+    "build": "python3 -m build",
+    "dev": "python3 -m pytest -q --lf",
+    "lint": "python3 -m py_compile memory_graph.py telemetry.py mcp_server.py amg_bench.py run_amg.py"
   },
   "keywords": [
     "agent-memory",
