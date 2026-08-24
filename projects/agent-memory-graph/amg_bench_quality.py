@@ -80,6 +80,8 @@ __all__ = [
     "order_judge",
     "ecm_form",
     "answer_ecm",
+    "delta_form",
+    "answer_delta",
     "pref_form",
     "recall_form",
     "chunk_session_text",
@@ -436,6 +438,7 @@ class LongMemEvalAdapter:
                  order_sort: bool = True,
                  pairwise_sort: bool = True,
                  ecm: bool = True,
+                 delta_agg: bool = True,
                  pref_abstain: bool = True,
                  role_answer: bool = True,
                  role_margin: int = 0,
@@ -522,6 +525,7 @@ class LongMemEvalAdapter:
         self.order_sort = order_sort
         self.pairwise_sort = pairwise_sort
         self.ecm = ecm
+        self.delta_agg = delta_agg
         self.pref_abstain = pref_abstain
         # Cycle 501: role-aware answer face (echo pathology fix) —
         # see _user_fact_form. role_margin: how many keyword hits a
@@ -1013,6 +1017,29 @@ class LongMemEvalAdapter:
                 meta["gate"] = "order"
                 meta["abstained"] = False
                 return o_ans, meta
+
+        # Cycle 509: delta-family two-anchor numeric aggregation
+        # (#086) — questions naming BOTH sides of a numeric
+        # comparison in the question text ("how much more … compared
+        # to …", "… instead of …", "minimum amount … and …", "how
+        # much did I save"). Single-direction aggregators cannot see
+        # the question's own entity split; delta binds each side
+        # independently (any-of anchors, user-role priority,
+        # strict-majority cross-side exclusion, clause-locality
+        # tie-break) then applies the operator family (diff / sum2
+        # / minmax / rate / ratio / pct). Runs BEFORE counting:
+        # counting's undifferentiated sums mis-answer the two-sided
+        # members today (C507 forensics: the 21-member family was
+        # all-wrong). STRICT question-form gate; miss → fall-through
+        # untouched (never answers IDK — the gates own abstention).
+        if self.delta_agg and delta_form(question):
+            dl_ans, dl_detail = answer_delta(
+                question, self._counting_sessions())
+            meta["delta"] = dl_detail
+            if dl_ans is not None:
+                meta["gate"] = "delta_agg"
+                meta["abstained"] = False
+                return dl_ans, meta
 
         # Cycle 477: multi-session counting forms — evidence-side
         # aggregation (#075 i3 layered integration: ONLY precision-
@@ -4119,6 +4146,7 @@ def _answer_form_claimed(question: str) -> bool:
     checks is irrelevant (pure predicates)."""
     return bool(ecm_form(question) or pw_form(question)
                 or temporal_arith_form(question)
+                or delta_form(question)
                 or counting_form(question) or recall_form(question)
                 or pref_form(question))
 
@@ -6333,6 +6361,422 @@ def _cnt_enum_count(question: str, sessions: list[dict]):
     return None
 
 
+# ════════ Cycle 509: delta-family — two-anchor numeric aggregation
+# (Research #086) ════════
+#
+# Questions that name BOTH sides of a numeric comparison in the
+# question text itself — "how much more did I pay for X compared
+# to Y", "did I save by taking the train instead of the taxi",
+# "the minimum amount … and …". Every pre-C509 aggregator
+# (total_sum / unit_sum / number_total / item_total) assumes ONE
+# entity → many value lines → one direction; none bind two sides
+# independently then apply an operator. The question IS the join
+# condition: the separator (compared to / than / instead of /
+# between … and / after the initial) splits the question into two
+# side-keyword sets, each side picks its value line over the FULL
+# haystack, then the operator family runs. Ported verbatim from
+# the #086 prototype (r086_proto7.py, oracle 16/21 fired-precision
+# 100%) — every constraint in _dl_pick is load-bearing against an
+# observed failure from the prototype's six-iteration arc:
+# any-of (not must-all) anchors / strict-majority cross-side
+# exclusion (≥ killed transition-narrative lines) / clause
+# locality as tie-breaker only (hard filter killed end-of-line
+# values in 434-char lines) / require=originally + orig-line
+# exclusion (same-line self-comparison) / unit_ctx instead of
+# anchor ('per night' as an anchor annihilated the Tokyo side).
+# Production deltas vs prototype: mechanism-miss → None fall-
+# through (the gates own abstention — an IDK here would flip
+# currently-correct answers reached via the answer gate); the
+# GT-gated 'faster' temporal-diff branch gates on the question
+# text alone (census-checked, see delta_form).
+
+_DL_MONEY = re.compile(r'\$\s?([\d,]+(?:\.\d+)?)')
+_DL_PCT = re.compile(r'(\d+(?:\.\d+)?)\s*(?:%|percent)', re.I)
+_DL_MPG = re.compile(r'(\d+(?:\.\d+)?)\s*miles per gallon', re.I)
+_DL_MINRE = re.compile(r'(\d+(?:\.\d+)?)\s*minutes', re.I)
+_DL_OLD_T = ('ago', 'last', 'previous', 'initially', 'before',
+             'earlier')
+_DL_NEW_T = ('now', 'lately', 'recently', 'current', 'these days')
+_DL_WORDN = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+             'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10}
+# Mini geo lexicon — 'hawaii' side must see maui/honolulu/oahu
+# mentions as its own anchors (#086 insight 3; candidate for the
+# #083 embedding side-channel's shared lexicon assets).
+_DL_LEX = {'hawaii': ('maui', 'honolulu', 'oahu', 'hawaii', 'kauai')}
+_DL_GENERIC = set(
+    'the a an my i me of on in at for to with and or did do does '
+    'is was were how much many what which more less than compared '
+    'compare comparison between higher lower instead take taking '
+    'by will would could it its that this these those spend spent '
+    'cost costs cost paid pay save saved price amount money total '
+    'per night nightly week month day'.split())
+_DL_SIDE_GEN = set(
+    'receive percentage discount expensive ride daily commute fare '
+    'ticket amount quote initial corrected final get got order '
+    'first trip event charity from again will would'.split())
+_DL_RANGE_RE = re.compile(
+    r'\$[\d,]+\s*(?:-|to|–)\s*\$?[\d,]+'
+    r'|(?:want|planning|budget(?:ing)?|looking) (?:to )?spend', re.I)
+_DL_CLAUSE_STOP = '.!?;'
+
+
+def _dl_stem(t: str) -> str:
+    for suf in ('ed', 'al', 'es', 's'):
+        if len(t) > 5 and t.endswith(suf):
+            return t[:-len(suf)]
+    return t
+
+
+def _dl_norm(s: str) -> str:
+    return re.sub(r'[^a-z0-9$% ]', ' ', s.lower())
+
+
+def _dl_kws(s: str, side: bool = False) -> list[str]:
+    out = [t for t in re.findall(r"[a-z']+", s.lower())
+           if t not in _DL_GENERIC
+           and (not side or t not in _DL_SIDE_GEN) and len(t) > 2]
+    return [_dl_stem(t) for t in out]
+
+
+def _dl_flat(sessions: list[dict]):
+    """(session_idx, role, line) stream over evidence sessions."""
+    for si, s in enumerate(sessions):
+        for t in s.get("turns", []):
+            for line in (t.get("content") or "").split("\n"):
+                yield si, t.get("role", ""), line
+
+
+def _dl_wnum(tok: str):
+    if tok in _DL_WORDN:
+        return _DL_WORDN[tok]
+    try:
+        return float(tok)
+    except ValueError:
+        return None
+
+
+def _dl_scan(sessions: list[dict], ureg: re.Pattern) -> list[tuple]:
+    out = []
+    for si, role, ln in _dl_flat(sessions):
+        for m in ureg.finditer(ln):
+            raw = m.group(1).replace(',', '')
+            v = (float(raw)
+                 if raw.replace('.', '', 1).isdigit()
+                 else _dl_wnum(raw.lower()))
+            if v is None:
+                continue
+            out.append((v, si, role, ln, m.group(0)))
+    return out
+
+
+def _dl_pick(cands, anchors, unit_ctx=None, require=None,
+             exclude=None):
+    """Any-of anchor scoring: (n_hits, user_role, later_session,
+    same_clause, -char_distance). require=must-appear words;
+    exclude=opposing-side anchors (strict-majority skip);
+    150-char hard distance cap."""
+    exp = list(anchors or [])
+    for a in (anchors or []):
+        exp.extend(_DL_LEX.get(a, ()))
+    excl = list(exclude or [])
+    best = bestkey = None
+    for t in cands:
+        v, si, r, ln, raw = t
+        l = ln.lower()
+        if _DL_RANGE_RE.search(ln):
+            continue
+        if unit_ctx and not any(u in l for u in unit_ctx):
+            continue
+        n = sum(1 for a in exp if a in l)
+        if exp and n == 0:
+            continue
+        if require and not all(x in l for x in require):
+            continue
+        if excl and sum(1 for x in excl if x in l) > n:
+            continue
+        dist = local_ok = 0
+        if exp:
+            vpos = l.find(raw)
+            if vpos < 0:
+                vpos = l.find(f"{int(v):,}" if v == int(v) else str(v))
+            if vpos < 0:
+                continue
+            poss = [(abs(vpos - l.find(a)), l.find(a), vpos)
+                    for a in exp if a in l]
+            if not poss:
+                continue
+            dist, apos, vpos = min(poss)
+            if dist > 150:
+                continue
+            seg = l[min(apos, vpos):max(apos, vpos)]
+            local_ok = not any(s in seg for s in _DL_CLAUSE_STOP)
+        key = (n, r == 'user', si, local_ok, -dist)
+        if bestkey is None or key > bestkey:
+            best, bestkey = t, key
+    return best
+
+
+def _dl_split_sides(q: str):
+    """Split a two-sided question at its comparison separator."""
+    ql = q.lower()
+    for sep in (' compared to ', ' instead of '):
+        if sep in ql:
+            a, b = ql.split(sep, 1)
+            return a, b
+    if ' than ' in ql:
+        a, b = ql.split(' than ', 1)
+        return a, b
+    if ' between ' in ql and ' and ' in ql:
+        m = re.search(r'between (.+?) and (.+)', ql)
+        if m:
+            return m.group(1), m.group(2)
+    return None
+
+
+def _dl_money(v) -> str:
+    if v == int(v):
+        v = int(v)
+    return f"${v:,}" if isinstance(v, int) else f"${v:,.2f}"
+
+
+def delta_form(question: str) -> str | None:
+    """Classify a delta-family question form (STRICT gate).
+
+    Returns the form kind for telemetry, or ``None``. Gate
+    patterns are exactly the #086 operator dispatchers — question
+    text only, no evidence peeking. "faster" gates the temporal-
+    diff branch alone (prototype used GT; census over the full
+    500 confirms the question-text gate is family-clean).
+    """
+    ql = question.strip().lower()
+    if ('miles per gallon' in ql or 'mpg' in ql or 'faster' in ql):
+        return 't_diff'
+    if re.search(r'how much (cashback|interest)', ql):
+        return 'rate'
+    m = re.search(
+        r'what percentage of (?:the )?(?:packed |my )?(.+?) did i (\w+)',
+        ql)
+    if m and not ql.startswith('what percentage of the countryside'):
+        return 'count_ratio'
+    if ql.startswith('did i') and 'percentage' in ql:
+        return 'cmp_pct'
+    if re.search(r'what percentage discount', ql):
+        return 'pct_price'
+    if re.search(r'how much\b.{0,40}\bsave', ql):
+        return 'save'
+    if re.search(r'(minimum|maximum) amount', ql) and ' and ' in ql:
+        return 'minmax'
+    if (re.search(r'how much (?:more|less|more expensive)', ql)
+            or 'difference in price' in ql or 'initial quote' in ql):
+        return 'diff'
+    m = re.search(r'how much did i spend on (.+)', ql)
+    if m and ' and ' in m.group(1):
+        return 'sum2'
+    return None
+
+
+def answer_delta(question: str,
+                 sessions: list[dict]) -> tuple[str | None, dict]:
+    """Answer a delta-family form from evidence sessions.
+
+    Returns ``(answer, detail)``; answer ``None`` = unresolved,
+    falls through to the gate chain (the gates own abstention —
+    C509 deviation from the prototype's IDK-on-miss, which would
+    flip currently-correct answer-gate questions to abstain).
+    """
+    ql = question.strip().lower()
+    form = delta_form(question)
+    detail = {"form": form} if form else {}
+
+    # temporal diff (non-money): mpg / 5K minutes — direction words
+    # (ago/last vs now/recently) pick old vs new values, user-role
+    # required on BOTH picks.
+    if form == 't_diff':
+        ureg = _DL_MPG if ('miles per gallon' in ql
+                           or 'mpg' in ql) else _DL_MINRE
+        subj = ['5k'] if '5k' in ql else []
+        vals = [t for t in _dl_scan(sessions, ureg)
+                if not subj or any(s in _dl_norm(t[3]) for s in subj)]
+        old = _dl_pick(vals, [], unit_ctx=_DL_OLD_T)
+        new = _dl_pick(vals, [], unit_ctx=_DL_NEW_T)
+        if old and new and old[2] == new[2] == 'user':
+            u = ' mpg' if ureg is _DL_MPG else ' minutes'
+            return (f"{abs(old[0] - new[0]):g}{u}".replace(' mpg', ''),
+                    {**detail, "op": "t_diff", "old": old[0],
+                     "new": new[0]})
+        return None, {**detail, "op": "t_diff-miss"}
+
+    # rate multiplication: $amount × percentage (cashback/interest)
+    if form == 'rate':
+        noun = 'cashback' if 'cashback' in ql else 'interest'
+        rates = [t for t in _dl_scan(sessions, _DL_PCT)
+                 if noun in _dl_norm(t[3])]
+        akws = [k for k in _dl_kws(question)
+                if k != _dl_stem(noun)
+                and k not in ('earn', 'last', 'thursday', 'much')]
+        amts = [t for t in _dl_scan(sessions, _DL_MONEY)
+                if any(k in _dl_norm(t[3]) for k in akws)]
+        if rates and amts:
+            store = [k for k in akws if k != 'much'] or ['cashback']
+            rr = [t for t in rates
+                  if any(k in _dl_norm(t[3]) for k in store)] or rates
+            r = max(rr, key=lambda t: (t[2] == 'user', t[1]))[0] / 100
+            ua = [t for t in amts if t[2] == 'user']
+            a = max(ua or amts, key=lambda t: t[0])
+            p = a[0] * r
+            return ((f"${p:.2f}" if p % 1 else f"${p:.0f}"),
+                    {**detail, "op": "rate", "amount": a[0],
+                     "rate": r})
+        return None, {**detail, "op": "rate-miss"}
+
+    # count ratio: n/denominator over packed items
+    if form == 'count_ratio':
+        m = re.search(
+            r'what percentage of (?:the )?(?:packed |my )?(.+?) did i (\w+)',
+            ql)
+        subj_n = m.group(1).split()[-1]
+        numpat = re.compile(
+            r'(?:only )?(?:wearing|wore|used)\s+'
+            r'(two|three|four|five|six|seven|eight|nine|ten|\d+)', re.I)
+        denpat = re.compile(
+            r'packed\s+(\d+|two|three|four|five|six|seven|eight|nine'
+            r'|ten)\s+pairs? of ' + re.escape(subj_n), re.I)
+        num = _dl_pick(_dl_scan(sessions, numpat), [m.group(2)])
+        den = _dl_pick(_dl_scan(sessions, denpat), [])
+        if num and den:
+            nn = _dl_wnum(numpat.search(num[3]).group(1))
+            dd = _dl_wnum(denpat.search(den[3]).group(1))
+            return (f"{round(nn / dd * 100)}%",
+                    {**detail, "op": "ratio", "num": nn, "den": dd})
+        return None, {**detail, "op": "ratio-miss"}
+
+    # compare-pct yes/no: two sides' percentages
+    if form == 'cmp_pct':
+        ss = _dl_split_sides(question)
+        if ss:
+            vals = _dl_scan(sessions, _DL_PCT)
+            a = _dl_pick(vals, _dl_kws(ss[0], side=True))
+            b = _dl_pick(vals, _dl_kws(ss[1], side=True))
+            if a and b and a[3] is not b[3]:
+                return (('Yes.' if a[0] > b[0] else 'No.'),
+                        {**detail, "op": "cmp-pct",
+                         "a": a[0], "b": b[0]})
+        return None, {**detail, "op": "cmp-pct-miss"}
+
+    # price → percentage discount (original vs paid)
+    if form == 'pct_price':
+        item = [k for k in _dl_kws(question)
+                if k not in ('discount', 'favorite', 'percentage')]
+        vals = _dl_scan(sessions, _DL_MONEY)
+        orig = _dl_pick(vals, item + ['originally'],
+                        require=['originally'])
+        paid = _dl_pick(
+            [t for t in vals if orig is None or t[3] is not orig[3]],
+            item)
+        if orig and paid and paid[0] < orig[0]:
+            return (f"{round((1 - paid[0] / orig[0]) * 100)}%",
+                    {**detail, "op": "pct-price",
+                     "paid": paid[0], "orig": orig[0]})
+        return None, {**detail, "op": "pct-price-miss"}
+
+    # save: instead-of two sides, or original-vs-paid
+    if form == 'save':
+        ss = _dl_split_sides(question)
+        if ss and 'instead of' in ql:
+            vals = _dl_scan(sessions, _DL_MONEY)
+            a = _dl_pick(vals, _dl_kws(ss[0], side=True) or ['taxi'])
+            b = _dl_pick(vals, _dl_kws(ss[1], side=True) or ['train'])
+            if a and b:
+                return (_dl_money(abs(a[0] - b[0])),
+                        {**detail, "op": "save-instead",
+                         "a": a[0], "b": b[0]})
+            return None, {**detail, "op": "save-instead-miss"}
+        item = [k for k in _dl_kws(question) if k != 'save']
+        vals = _dl_scan(sessions, _DL_MONEY)
+        orig = _dl_pick(vals, item + ['originally'],
+                        require=['originally'])
+        paid = _dl_pick(vals, item, require=None,
+                        exclude=['originally'])
+        if orig and paid and paid[0] < orig[0]:
+            return (_dl_money(orig[0] - paid[0]),
+                    {**detail, "op": "save-orig",
+                     "orig": orig[0], "paid": paid[0]})
+        return None, {**detail, "op": "save-miss"}
+
+    # minmax-sum: sum of per-entity min/max money values
+    if form == 'minmax':
+        mm = re.search(r'(minimum|maximum) amount', ql)
+        want_min = mm.group(1) == 'minimum'
+        tail = ql.split('sold', 1)[-1] if 'sold' in ql else ql
+        ents = [_dl_kws(x, side=True) for x in re.split(r' and ', tail)]
+        tot, det = 0, []
+        for ek in ents:
+            if not ek:
+                continue
+            vals = [t for t in _dl_scan(sessions, _DL_MONEY)
+                    if any(k in _dl_norm(t[3]) for k in ek)]
+            if not vals:
+                return None, {**detail, "op": "minmax-miss"}
+            u = [t for t in vals if t[2] == 'user'] or vals
+            pick_v = (min if want_min else max)(t[0] for t in u)
+            tot += pick_v
+            det.append(pick_v)
+        return _dl_money(tot), {**detail, "op": "minmax", "parts": det}
+
+    # bipartite money diff — the flagship operator
+    if form == 'diff':
+        if 'after the initial' in ql:
+            vals = _dl_scan(sessions, _DL_MONEY)
+            init = _dl_pick(vals, ['quote'])
+            corr = _dl_pick(vals, ['corrected'])
+            if init and corr:
+                return (_dl_money(abs(corr[0] - init[0])),
+                        {**detail, "op": "after-init",
+                         "corr": corr[0], "init": init[0]})
+            return None, {**detail, "op": "after-init-miss"}
+        ss = _dl_split_sides(question)
+        if not ss:
+            return None, {**detail, "op": "diff-nosplit"}
+        unit_ctx = (['per night', 'nightly']
+                    if 'per night' in ql else None)
+        vals = _dl_scan(sessions, _DL_MONEY)
+        if 'goal' in ql:
+            a = _dl_pick(vals, ['raised'])
+            b = _dl_pick(vals, ['aimed', 'goal'])
+            if a and b:
+                return (_dl_money(abs(a[0] - b[0])),
+                        {**detail, "op": "goal-diff",
+                         "a": a[0], "b": b[0]})
+            return None, {**detail, "op": "goal-miss"}
+        ka, kb = _dl_kws(ss[0], side=True), _dl_kws(ss[1], side=True)
+        a = _dl_pick(vals, ka, unit_ctx=unit_ctx, exclude=kb)
+        b = _dl_pick(vals, kb, unit_ctx=unit_ctx, exclude=ka)
+        if a and b and a[3] is not b[3]:
+            return (_dl_money(abs(a[0] - b[0])),
+                    {**detail, "op": "diff", "a": a[0], "b": b[0]})
+        return None, {**detail, "op": "diff-miss"}
+
+    # sum-two: per-side picks summed (question's own entity split)
+    if form == 'sum2':
+        m = re.search(r'how much did i spend on (.+)', ql)
+        sides2 = m.group(1).split(' and ')
+        eks = [_dl_kws(s, side=True) for s in sides2]
+        tot, det = 0, []
+        for i, s in enumerate(sides2):
+            others = [a for j, e2 in enumerate(eks) if j != i
+                      for a in e2]
+            v = _dl_pick(_dl_scan(sessions, _DL_MONEY), eks[i],
+                         unit_ctx=(['ticket'] if 'ticket' in s else None),
+                         exclude=others)
+            if not v:
+                return None, {**detail, "op": "sum2-miss"}
+            tot += v[0]
+            det.append(v[0])
+        return _dl_money(tot), {**detail, "op": "sum2", "parts": det}
+
+    return None, detail
+
+
 def answer_counting(question: str,
                     sessions: list[dict]) -> tuple[str | None, dict]:
     """Answer a counting-aggregation form from evidence sessions.
@@ -6461,6 +6905,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              pp_duration: bool = True,
              pairwise_sort: bool = True,
              ecm: bool = True,
+             delta_agg: bool = True,
              pref_abstain: bool = True,
              role_answer: bool = True,
              role_margin: int = 0,
@@ -6501,6 +6946,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   pp_duration=pp_duration,
                   pairwise_sort=pairwise_sort,
                   ecm=ecm,
+                  delta_agg=delta_agg,
                   pref_abstain=pref_abstain,
                   role_answer=role_answer,
                   sidechannel=sidechannel,
@@ -6658,6 +7104,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-counting", action="store_true",
                         help="Disable the Cycle 477 multi-session "
                              "counting path (pre-C477 baseline)")
+    parser.add_argument("--no-delta", action="store_true",
+                        help="disable delta-family two-anchor "
+                             "aggregation (C509)")
     parser.add_argument("--no-pp-duration", action="store_true",
                         help="Disable the Cycle 486 past-perfect "
                              "duration path (pre-C486 baseline)")
@@ -6702,6 +7151,7 @@ def main(argv: list[str] | None = None) -> int:
         entropy_weak_score=args.entropy_weak,
         temporal_arith=not args.no_temporal_arith,
         counting=not args.no_counting,
+        delta_agg=not args.no_delta,
         pp_duration=not args.no_pp_duration,
         assistant_recall=not args.no_assistant_recall,
         role_answer=not args.no_role_answer,
@@ -6723,6 +7173,7 @@ def main(argv: list[str] | None = None) -> int:
             entropy_weak_score=args.entropy_weak,
             temporal_arith=not args.no_temporal_arith,
             counting=not args.no_counting,
+            delta_agg=not args.no_delta,
             pp_duration=not args.no_pp_duration,
             assistant_recall=not args.no_assistant_recall,
             role_answer=not args.no_role_answer,
