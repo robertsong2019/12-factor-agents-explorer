@@ -62,7 +62,7 @@ async function analyzeDirectory(dirPath, options) {
   return results;
 }
 
-async function analyzeFile(filePath, options) {
+export async function analyzeFile(filePath, options) {
   const ext = path.extname(filePath);
   const content = await fs.readFile(filePath, 'utf-8');
   const lines = content.split('\n');
@@ -105,7 +105,7 @@ async function analyzeFile(filePath, options) {
   return result;
 }
 
-function detectAICode(content, lines) {
+export function detectAICode(content, lines) {
   const indicators = [];
   
   // AI 生成特征
@@ -126,7 +126,10 @@ function detectAICode(content, lines) {
   // 重复代码检测
   const codeLines = lines.filter(l => l.trim() && !l.trim().startsWith('//'));
   const uniqueLines = new Set(codeLines.map(l => l.trim()));
-  const duplicateRatio = 1 - (uniqueLines.size / codeLines.length);
+  // Guard: empty/comment-only files would produce NaN from 0/0
+  const duplicateRatio = codeLines.length > 0
+    ? 1 - (uniqueLines.size / codeLines.length)
+    : 0;
   
   if (duplicateRatio > 0.1) {
     indicators.push(`重复代码比例: ${(duplicateRatio * 100).toFixed(1)}%`);
@@ -139,7 +142,7 @@ function detectAICode(content, lines) {
   };
 }
 
-function analyzeQuality(content, lines, ext) {
+export function analyzeQuality(content, lines, ext) {
   const issues = [];
   const metrics = {};
   
@@ -191,7 +194,7 @@ function analyzeQuality(content, lines, ext) {
   };
 }
 
-function analyzeSecurity(content, ext) {
+export function analyzeSecurity(content, ext) {
   const vulnerabilities = [];
   
   // 常见安全问题
@@ -199,9 +202,9 @@ function analyzeSecurity(content, ext) {
     { pattern: /eval\s*\(/g, desc: 'eval() 使用 - 潜在代码注入风险', severity: 'high' },
     { pattern: /innerHTML\s*=/g, desc: 'innerHTML 赋值 - XSS 风险', severity: 'medium' },
     { pattern: /document\.write/g, desc: 'document.write - XSS 风险', severity: 'medium' },
-    { pattern: /password\s*=\s*['"]/, desc: '硬编码密码', severity: 'high' },
-    { pattern: /api[_-]?key\s*=\s*['"]/, desc: '硬编码 API key', severity: 'high' },
-    { pattern: /secret\s*=\s*['"]/, desc: '硬编码密钥', severity: 'high' }
+    { pattern: /password\s*=\s*['"]/gi, desc: '硬编码密码', severity: 'high' },
+    { pattern: /api[_-]?key\s*=\s*['"]/gi, desc: '硬编码 API key', severity: 'high' },
+    { pattern: /secret\s*=\s*['"]/gi, desc: '硬编码密钥', severity: 'high' }
   ];
   
   securityPatterns.forEach(({ pattern, desc, severity }) => {
@@ -221,7 +224,7 @@ function analyzeSecurity(content, ext) {
   };
 }
 
-function extractFunctions(content) {
+export function extractFunctions(content) {
   const functions = [];
   
   // 简单的函数提取（JS/TS）
@@ -238,7 +241,7 @@ function extractFunctions(content) {
   return functions;
 }
 
-async function getFiles(dirPath, type) {
+export async function getFiles(dirPath, type) {
   const extensions = {
     js: ['.js', '.jsx'],
     ts: ['.ts', '.tsx'],
@@ -270,7 +273,7 @@ async function getFiles(dirPath, type) {
   return files;
 }
 
-async function outputResults(results, options) {
+export async function outputResults(results, options) {
   const format = options.format || 'text';
   
   if (format === 'json') {
@@ -304,10 +307,46 @@ async function outputResults(results, options) {
         if (f.quality) {
           console.log(chalk.gray(`    质量评分: ${f.quality.score}/100`));
         }
+        if (f.security) {
+          if (f.security.secure) {
+            console.log(chalk.gray('    安全: ✓ 无高危问题'));
+          } else {
+            f.security.vulnerabilities.forEach(v => {
+              console.log(chalk.red(`    安全[${v.severity}]: ${v.type} ×${v.count}`));
+            });
+          }
+        }
         if (f.aiIndicators?.detected) {
           console.log(chalk.yellow(`    AI 生成特征: ${f.aiIndicators.indicators.join(', ')}`));
         }
       });
+    }
+    
+    // 单文件分析结果（此前文本模式完全静默）
+    if (!results.summary && !results.files) {
+      console.log(chalk.cyan('文件:'), results.file);
+      console.log(chalk.gray(`  行数: ${results.lines} (代码 ${results.metrics?.codeLines ?? '-'} / 注释 ${results.metrics?.commentLines ?? '-'} / 空行 ${results.metrics?.blankLines ?? '-'})`));
+      if (results.functions) {
+        console.log(chalk.gray(`  函数: ${results.functions.length} 个`));
+      }
+      if (results.quality) {
+        console.log(chalk.gray(`  质量评分: ${results.quality.score}/100`));
+        results.quality.issues.forEach(i => {
+          console.log(chalk.yellow(`    [${i.severity}] ${i.type}: ${i.message}`));
+        });
+      }
+      if (results.security) {
+        if (results.security.secure) {
+          console.log(chalk.gray('  安全: ✓ 无高危问题'));
+        } else {
+          results.security.vulnerabilities.forEach(v => {
+            console.log(chalk.red(`  安全[${v.severity}]: ${v.type} ×${v.count}`));
+          });
+        }
+      }
+      if (results.aiIndicators?.detected) {
+        console.log(chalk.yellow(`  AI 生成特征: ${results.aiIndicators.indicators.join(', ')}`));
+      }
     }
     
     console.log();
