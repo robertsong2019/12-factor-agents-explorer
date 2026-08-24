@@ -245,3 +245,60 @@ test('no command → help text', () => {
   const { out } = amk(mkWorkspace());
   assert.match(out, /Usage: amk <command>/);
 });
+
+// ---------- context path isolation ----------
+test('context <path>: memory files come from target workspace, not global', () => {
+  const mainWs = mkWorkspace();
+  writeFileSync(join(mainWs, 'MEMORY.md'), 'GLOBALONLYMARKER global memory\n');
+  writeFileSync(join(mainWs, 'memory', localDate() + '.md'), 'global daily GLOBALDAILY\n');
+
+  const target = mkdtempSync(join(tmpdir(), 'amk-ctx-'));
+  mkdirSync(join(target, 'memory'));
+  writeFileSync(join(target, 'IDENTITY.md'), 'target identity\n');
+  writeFileSync(join(target, 'MEMORY.md'), 'TARGETMEMMARKER target memory\n');
+  writeFileSync(join(target, 'memory', '2026-01-05.md'), 'TARGETDAILY target daily note\n');
+
+  const { code, out } = amk(mainWs, 'context', target);
+  assert.equal(code, 0);
+  assert.match(out, /target identity/);
+  assert.match(out, /TARGETMEMMARKER/);
+  assert.match(out, /TARGETDAILY/);
+  assert.doesNotMatch(out, /GLOBALONLYMARKER/);
+  assert.doesNotMatch(out, /GLOBALDAILY/);
+});
+
+// ---------- tags CJK tokenization ----------
+function writeTagsWs() {
+  const ws = mkWorkspace();
+  writeFileSync(join(ws, 'memory', '2026-02-01.md'),
+    '记忆 图谱 很重要。记忆 系统 值得。memory graph matters\n');
+  return ws;
+}
+
+test('tags: CJK runs split into bigrams, not one mega-token', () => {
+  const { out } = amk(writeTagsWs(), 'tags');
+  // no token should glue 3+ consecutive CJK chars together
+  const tokens = out.split('\n').filter(l => l.trim() && !l.startsWith('🏷')).map(l => l.trim().split(/\s+/)[0]);
+  for (const t of tokens) {
+    assert.ok(!/[\u4e00-\u9fff]{3,}/.test(t), `mega-token leaked: ${t}`);
+  }
+});
+
+test('tags: CJK bigrams counted across occurrences', () => {
+  const { out } = amk(writeTagsWs(), 'tags');
+  assert.match(out, /记忆\s+2/);
+});
+
+test('tags: mixed latin+CJK token does not vanish or glue', () => {
+  const ws = mkWorkspace();
+  writeFileSync(join(ws, 'memory', '2026-02-02.md'), '使用了amk工具，amk很好用。tools\n');
+  const { out } = amk(ws, 'tags');
+  assert.ok(!/[\u4e00-\u9fff]{3,}/.test(out.replace(/[^\u4e00-\u9fff\s]/g, ' ')), 'mega-token leaked');
+  assert.match(out, /tools/); // latin part survives
+});
+
+// ---------- package wiring ----------
+test('package.json wires npm test to the suite', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
+  assert.ok(pkg.scripts && pkg.scripts.test, 'scripts.test missing — npm test is DOA');
+});

@@ -25,11 +25,11 @@ const args = process.argv.slice(2);
 const command = args[0];
 
 // --- Helpers ---
-function getMemoryFiles() {
-  if (!existsSync(MEMORY_DIR)) return [];
-  return readdirSync(MEMORY_DIR)
+function getMemoryFiles(dir = MEMORY_DIR) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
     .filter(f => f.endsWith('.md'))
-    .map(f => ({ name: f, path: join(MEMORY_DIR, f) }))
+    .map(f => ({ name: f, path: join(dir, f) }))
     .sort((a, b) => b.name.localeCompare(a.name));
 }
 
@@ -50,6 +50,27 @@ function localDateStr(d) {
   // today's file whenever local date != UTC date (e.g. 00:00-08:00 CST).
   const p = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function tokenize(text, stopWords) {
+  // Latin runs: keep words len>2 (existing behavior).
+  // CJK runs: split into sliding bigrams (single char kept as unigram) —
+  // without this, space-free CJK text glues into one unbreakable mega-token.
+  const out = [];
+  const cleaned = text.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ');
+  for (const tok of cleaned.split(/\s+/)) {
+    const parts = tok.match(/[a-z0-9]+|[\u4e00-\u9fff]+/g) || [];
+    for (const p of parts) {
+      if (/^[a-z0-9]+$/.test(p)) {
+        if (p.length > 2 && !stopWords.has(p)) out.push(p);
+      } else if (p.length === 1) {
+        out.push(p);
+      } else {
+        for (let i = 0; i + 1 < p.length; i++) out.push(p.slice(i, i + 2));
+      }
+    }
+  }
+  return out;
 }
 
 // --- Commands ---
@@ -143,18 +164,16 @@ function cmdExtractTags() {
   const stopWords = new Set(['the','a','an','is','are','was','were','be','been','being','have','has','had','do','does','did','will','would','could','should','may','might','shall','can','to','of','in','for','on','with','at','by','from','as','into','through','during','before','after','above','below','between','out','off','over','under','again','further','then','once','here','there','when','where','why','how','all','both','each','few','more','most','other','some','such','no','nor','not','only','own','same','so','than','too','very','just','because','but','and','or','if','while','this','that','these','those','it','its','i','me','my','we','our','you','your','he','him','his','she','her','they','them','their','what','which','who','whom']);
   
   for (const f of files) {
-    const content = readFileSafe(f.path);
-    const words = content.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ').split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
-    for (const w of words) {
+    for (const w of tokenize(readFileSafe(f.path), stopWords)) {
       wordFreq[w] = (wordFreq[w] || 0) + 1;
     }
   }
   
   // Also scan MEMORY.md
   if (existsSync(MEMORY_FILE)) {
-    const content = readFileSafe(MEMORY_FILE);
-    const words = content.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ').split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
-    for (const w of words) wordFreq[w] = (wordFreq[w] || 0) + 1;
+    for (const w of tokenize(readFileSafe(MEMORY_FILE), stopWords)) {
+      wordFreq[w] = (wordFreq[w] || 0) + 1;
+    }
   }
   
   const sorted = Object.entries(wordFreq).sort((a, b) => b[1] - a[1]).slice(0, 30);
@@ -218,14 +237,18 @@ function cmdPrune(days, apply = false) {
 
 function cmdContext(targetPath) {
   const base = targetPath || WORKSPACE;
+  // Long-term memory + daily files must come from the SAME base as
+  // identity/user/soul — otherwise a custom path leaks the global
+  // workspace's MEMORY.md and memory/ into the snapshot.
+  const memoryFile = join(base, 'MEMORY.md');
   const sections = [];
   
   // Gather context
   const identity = readFileSafe(join(base, 'IDENTITY.md'));
   const user = readFileSafe(join(base, 'USER.md'));
   const soul = readFileSafe(join(base, 'SOUL.md'));
-  const memory = readFileSafe(MEMORY_FILE);
-  const recentFiles = getMemoryFiles().slice(0, 3);
+  const memory = readFileSafe(memoryFile);
+  const recentFiles = getMemoryFiles(join(base, 'memory')).slice(0, 3);
   
   sections.push({ label: 'Identity', content: identity });
   sections.push({ label: 'User', content: user });

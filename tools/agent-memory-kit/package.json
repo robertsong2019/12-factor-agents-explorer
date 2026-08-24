@@ -7,6 +7,14 @@
   },
   "type": "module",
   "dependencies": {},
-  "keywords": ["ai-agent", "memory", "cli", "openclaw"],
-  "license": "MIT"
+  "keywords": [
+    "ai-agent",
+    "memory",
+    "cli",
+    "openclaw"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/cli.test.mjs"
+  }
 }
