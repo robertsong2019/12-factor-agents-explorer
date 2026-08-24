@@ -11,6 +11,9 @@ describe('DataStorage', () => {
     // Create a temporary test directory
     testDir = path.join(os.tmpdir(), `ai-dev-tools-test-${Date.now()}`);
     process.env.AID_DATA_PATH = testDir;
+    // Isolate `conf` too (XDG_CONFIG_HOME) — otherwise every test run writes
+    // to the real ~/.config/ai-dev-tools/config.json
+    process.env.XDG_CONFIG_HOME = path.join(testDir, 'config');
   });
 
   afterAll(async () => {
@@ -103,6 +106,36 @@ describe('DataStorage', () => {
         p.name.toLowerCase().includes('python') ||
         p.content.toLowerCase().includes('python')
       )).toBe(true);
+    });
+  });
+
+  describe('deletePrompt', () => {
+    test('removes the prompt from config and returns it', async () => {
+      const saved = await storage.savePrompt({ name: 'del-me', content: 'x' });
+      const removed = await storage.deletePrompt(saved.id);
+      expect(removed.id).toBe(saved.id);
+      expect(storage.getPrompts().find(p => p.id === saved.id)).toBeUndefined();
+    });
+
+    test('removes the file copy as well', async () => {
+      const saved = await storage.savePrompt({ name: 'del-file', content: 'y' });
+      await storage.deletePrompt(saved.id);
+      const fsx = await import('fs-extra');
+      const file = path.join(testDir, 'prompts', `${saved.id}-del-file.json`);
+      expect(await fsx.pathExists(file)).toBe(false);
+    });
+
+    test('throws for unknown id', async () => {
+      await expect(storage.deletePrompt('nonexistent-id')).rejects.toThrow('Prompt not found');
+    });
+  });
+
+  describe('savePrompt filename safety', () => {
+    test('name with slash does not crash and sanitizes filename', async () => {
+      const saved = await storage.savePrompt({ name: 'a/b c', content: 'z' });
+      expect(saved.id).toBeTruthy();
+      const fsx = await import('fs-extra');
+      expect(await fsx.pathExists(path.join(testDir, 'prompts', `${saved.id}-a-b-c.json`))).toBe(true);
     });
   });
 

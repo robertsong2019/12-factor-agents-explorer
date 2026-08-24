@@ -146,7 +146,7 @@ async function generateTask(templateName, options) {
   }
 }
 
-async function loadTemplate(name) {
+export async function loadTemplate(name) {
   const templates = {
     'code-review': {
       name: 'code-review',
@@ -369,11 +369,13 @@ async function loadTemplate(name) {
   return templates[name];
 }
 
-function generateTaskContent(template, variables) {
+export function generateTaskContent(template, variables) {
   let content = template.template;
   
   Object.entries(variables).forEach(([key, value]) => {
-    content = content.replace(new RegExp(`{${key}}`, 'g'), value);
+    // Function replacer: prevents `$&`, `$'`, "$`" in values from being
+    // interpreted as replacement patterns and corrupting the output
+    content = content.replace(new RegExp(`{${key}}`, 'g'), () => String(value));
   });
   
   return content;

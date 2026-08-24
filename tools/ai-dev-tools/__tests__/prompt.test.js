@@ -7,6 +7,7 @@ jest.unstable_mockModule('../lib/storage.js', () => ({
     savePrompt: jest.fn(),
     updatePrompt: jest.fn(),
     exportData: jest.fn(),
+    deletePrompt: jest.fn(),
   }
 }));
 
@@ -354,9 +355,12 @@ describe('promptCommand', () => {
 
       inquirer.prompt
         .mockResolvedValueOnce({ prompt: '1', confirm: true });
+      storage.deletePrompt.mockResolvedValue({ id: '1', name: 'Prompt 1' });
 
       await promptCommand('delete', {});
 
+      // Regression: delete used to print success WITHOUT calling storage at all
+      expect(storage.deletePrompt).toHaveBeenCalledWith('1');
       expect(consoleLogSpy).toHaveBeenCalledWith(
         expect.stringContaining('已删除')
       );

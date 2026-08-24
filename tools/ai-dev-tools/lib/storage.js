@@ -53,7 +53,7 @@ export class DataStorage {
     this.config.set('prompts', prompts);
     
     // Also save to file
-    const filename = `${newPrompt.id}-${prompt.name.replace(/\s+/g, '-')}.json`;
+    const filename = `${newPrompt.id}-${prompt.name.replace(/[\s/\\]+/g, '-')}.json`;
     await fs.writeJson(
       path.join(this.dataPath, 'prompts', filename),
       newPrompt,
@@ -85,6 +85,24 @@ export class DataStorage {
     }
     
     return prompts;
+  }
+
+  async deletePrompt(id) {
+    const prompts = this.config.get('prompts') || [];
+    const target = prompts.find(p => p.id === id);
+    if (!target) {
+      throw new Error(`Prompt not found: ${id}`);
+    }
+    this.config.set('prompts', prompts.filter(p => p.id !== id));
+    
+    // Remove the file copy if present
+    const filename = `${target.id}-${String(target.name || '').replace(/[\s/\\]+/g, '-')}.json`;
+    try {
+      await fs.remove(path.join(this.dataPath, 'prompts', filename));
+    } catch {
+      // File copy already gone — config is the source of truth
+    }
+    return target;
   }
 
   async updatePrompt(id, updates) {
@@ -119,7 +137,7 @@ export class DataStorage {
     sessions.push(newSession);
     this.config.set('sessions', sessions);
     
-    const filename = `${newSession.id}-${session.name.replace(/\s+/g, '-')}.json`;
+    const filename = `${newSession.id}-${session.name.replace(/[\s/\\]+/g, '-')}.json`;
     await fs.writeJson(
       path.join(this.dataPath, 'sessions', filename),
       newSession,

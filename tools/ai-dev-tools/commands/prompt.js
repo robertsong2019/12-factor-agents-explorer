@@ -238,7 +238,24 @@ async function exportPrompts(options) {
 async function deletePrompt(options) {
   const prompts = storage.getPrompts();
   
-  if (!options.name) {
+  if (prompts.length === 0) {
+    console.log(chalk.yellow('暂无保存的提示词'));
+    return;
+  }
+  
+  let targetId;
+  let targetName;
+  
+  if (options.name) {
+    const target = prompts.find(p => p.name === options.name || p.id === options.name);
+    if (!target) {
+      console.log(chalk.red(`未找到提示词: ${options.name}`));
+      process.exitCode = 1;
+      return;
+    }
+    targetId = target.id;
+    targetName = target.name;
+  } else {
     const answer = await inquirer.prompt([
       {
         type: 'list',
@@ -262,11 +279,18 @@ async function deletePrompt(options) {
       return;
     }
     
-    options.name = answer.prompt;
+    targetId = answer.prompt;
+    const target = prompts.find(p => p.id === targetId);
+    targetName = target ? target.name : targetId;
   }
   
-  // 实现删除逻辑...
-  console.log(chalk.green('✓ 提示词已删除\n'));
+  try {
+    await storage.deletePrompt(targetId);
+    console.log(chalk.green(`✓ 提示词已删除${targetName ? `: ${targetName}` : ''}\n`));
+  } catch (error) {
+    console.log(chalk.red(`删除失败: ${error.message}`));
+    process.exitCode = 1;
+  }
 }
 
 import path from 'path';
