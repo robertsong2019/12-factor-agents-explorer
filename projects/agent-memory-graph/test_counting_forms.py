@@ -75,9 +75,12 @@ class TestCountingFormDetector(unittest.TestCase):
         # named/role/size enumeration carries built-in dedup
         # keys and IS layered (enum_count, oracle prec 1.00);
         # signature-less counts fall through (honest abstention,
-        # covered in test_enum_count.py).
+        # covered in test_enum_count.py). C511: kit/instrument/
+        # property heads moved up to inventory_count (brand/
+        # scale/descriptor identity — test_inventory_count.py).
         self.assertEqual(counting_form(
-            "How many model kits do I have?"), "enum_count")
+            "How many model kits do I have?"),
+            "inventory_count")
 
 
 class TestMechanisms(unittest.TestCase):

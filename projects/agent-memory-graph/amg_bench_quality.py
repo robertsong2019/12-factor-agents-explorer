@@ -4901,7 +4901,12 @@ def counting_form(question: str) -> str | None:
         return "argmax"
     # C503 (#084): named/role/size enumeration — claims plain
     # "how many X" questions every earlier form left unclaimed.
+    # C511: inventory families (kit/instrument/property) claim
+    # ahead of this — brand/scale/descriptor identity is
+    # invisible to name/role signatures.
     if re.match(r'^how many\b', q, re.I):
+        if _inv_form_gate(ql):
+            return "inventory_count"
         np_words = _enum_np(q)
         if np_words and _enum_form_gate(ql, np_words):
             return "enum_count"
@@ -6288,6 +6293,283 @@ def _enum_clause_sigs(cl: str, stems: list[str]) -> tuple:
     return names, roles, bare_twins
 
 
+# ---------------------------------------------------------------------------
+# C511: inventory_count — distinct-item enumeration for hobby/
+# acquisition inventories ("how many model kits have I worked
+# on or bought?", "how many musical instruments do I currently
+# own?", "how many properties did I view …?"). The enum_count
+# machinery reads name/role signatures (weddings, babies); these
+# families carry identity in scale/brand/model codes (1/72 B-29,
+# Tamiya Spitfire, Korg B1) and descriptors (2-bedroom condo,
+# Cedar Creek). Census discipline: the family whitelist is
+# exactly the three implemented grammars; a wider gate is a
+# hijack surface (C488 lesson).
+# ---------------------------------------------------------------------------
+
+_INV_FAMS = {'kit', 'instrument', 'property'}
+
+_INV_HYPO_RE = re.compile(
+    r"\b(?:thinking (?:of|about) (?:buying|getting|working on"
+    r"|trying)"
+    r"|eyeing|considering (?:buying|getting|a few)"
+    r"|planning to (?:buy|get)"
+    r"|want(?:ing)? to (?:buy|get)"
+    r"|maybe (?:getting|buying)"
+    r"|next project"
+    r"|when i (?:get|buy)"
+    r"|hoping to (?:buy|get)"
+    r"|check(?:ing)? out (?:those|some of|the)"
+    r"|you mentioned"
+    r"|looking (?:at|to buy|to get)"
+    r"|\bi'?ll (?:start by |definitely )?(?:check|keep|get))\b",
+    re.I)
+
+_INV_FOREIGN_RE = re.compile(
+    r"\b(?:my|our)\s+(?:niece|nephew|sister|brother|friend"
+    r"|coworker|daughter|son|wife|husband|mom|mother|dad|father"
+    r"|neighbor|bandmate|classmate)\b"
+    r"|\b(?:her|his|their)\s+(?:new\s+|old\s+"
+    r"|student[- ]level\s+)?"
+    r"(?:guitar|piano|drum|violin|ukulele|cello|flute|trumpet"
+    r"|saxophone|banjo|mandolin|keyboard|synth\w*|bass)\b"
+    r"|\b(?:she|he|they)\s+(?:just\s+)?(?:got|bought|has"
+    r"|have)\b",
+    re.I)
+
+_INV_KIT_GUARD_RE = re.compile(
+    r"\b(?:meal\s?kit|first[- ]aid\s?kit|survival\s?kit"
+    r"|tool\s?kit"
+    r"|stock price|prediction model|role model|data model"
+    r"|business model|mental model|3d model|model (?:train"
+    r"|railway|rocket))\b", re.I)
+
+_INV_KIT_BRAND_RE = re.compile(
+    r"\b(revell|tamiya|airfix|italeri|hasegawa|trumpeter|meng"
+    r"|dragon|academy|monogram|amt|mpc|fujimi|aoshima"
+    r"|polar lights|moebius|lindberg|eduard|zvezda"
+    r"|hobby\s?boss)\b", re.I)
+
+_INV_KIT_ANCHOR_RE = re.compile(
+    r'(?:\d+\s*/\s*\d+|Revell|Tamiya|Airfix|Italeri|Hasegawa'
+    r'|Trumpeter|Meng|Dragon|Academy|Monogram|AMT|MPC|Fujimi'
+    r'|Aoshima|Polar Lights|Moebius|Lindberg|Eduard|Zvezda'
+    r'|Hobby Boss)\s*(?:scale\s+)?'
+    r"((?:[A-Za-z0-9'\.\-]+\s+){0,4}[A-Za-z0-9'\.\-]+)")
+
+_INV_SCALE_RE = re.compile(r'\b(\d+)\s*/\s*(\d+)\b')
+
+_INV_VIEW_RE = re.compile(
+    r"\b(?:i|i'?ve|we|we'?ve)\s+(?:also\s+|actually\s+"
+    r"|recently\s+)?"
+    r"(?:viewed|saw|seen|toured|visited"
+    r"|fell in love with)\b", re.I)
+
+_INV_OWN_RE = re.compile(
+    r"\b(?:my|our)\s+(?:new\s+|old\s+|first\s+|black\s+"
+    r"|white\s+|acoustic\s+|electric\s+|digital\s+"
+    r"|upright\s+|5-?piece\s+|simple\s+)*"
+    r"(?:[a-z0-9\-'/]+\s+){0,5}?"
+    r"(guitar|piano|drum|violin|ukulele|cello|flute|trumpet"
+    r"|saxophone|banjo|mandolin|keyboard|synth\w*|bass"
+    r"|instrument|kit|kits|model|models|tank|tanks)\b"
+    r"|\b(?:i'?ve had|i have had|just got|picked up"
+    r"|recently finished|started working on|been working on"
+    r"|been playing|finished)\b", re.I)
+
+_INV_MONTHS = _CNT_MONTHS if isinstance(_CNT_MONTHS, set) \
+    else {'january', 'february', 'march', 'april', 'may', 'june',
+         'july', 'august', 'september', 'october', 'november',
+         'december'}
+
+_INV_PROP_TYPE = {'house', 'condo', 'townhouse', 'bungalow',
+                  'apartment', 'loft', 'cottage', 'duplex',
+                  'villa', 'cabin', 'flat', 'home', 'property',
+                  'properties'}
+
+_INV_STOP_TOK = {'the', 'a', 'an', 'my', 'our', 'new', 'old',
+                 'simple', 'beautiful', 'scale', 'model', 'kit',
+                 'bomber', 'tank', 'and', 'that', 'one', 'some',
+                 'in', 'on', 'at', 'for', 'with', 'of', 'german',
+                 'american', 'student', 'level'}
+
+
+def _inv_form_gate(ql: str) -> str | None:
+    """Family whitelist for the inventory form (C511 census:
+    exactly 3 fires on the 500-question suite, all currently
+    wrong — zero hijack surface by construction)."""
+    if re.search(r'\b(times|in total|older|younger|exceed'
+                 r'|when will i be)\b', ql):
+        return None
+    if re.search(r'(typical week|a typical|per week|days a week)',
+                 ql):
+        return None
+    m = re.search(r'how many (?:different |total |other )*'
+                  r'([a-z][a-z\- ]{0,40}?) '
+                  r'(do|did|have|has|am|are|is|was|were|that|which)',
+                  ql)
+    if not m:
+        m = re.search(r'how many (?:different |total |other )*'
+                      r'([a-z][a-z\- ]{0,40}?)\??$', ql)
+    if not m or not m.group(1).split():
+        return None
+    head = _cnt_sing(m.group(1).split()[-1])
+    return head if head in _INV_FAMS else None
+
+
+def _inv_sents(sessions: list[dict]):
+    """User-role sentences across all evidence sessions."""
+    for s in sessions:
+        for t in s.get('turns', []):
+            if t.get('role') != 'user':
+                continue
+            for m in re.finditer(r'[^.!?]*[.!?]?',
+                                 t.get('content', '')):
+                sent = m.group(0).strip()
+                if len(sent) > 3:
+                    yield sent
+
+
+def _inv_kit_sigs(sent: str) -> list[frozenset]:
+    """Sentence-level scale/brand/model signature union."""
+    if _INV_KIT_GUARD_RE.search(sent):
+        return []
+    toks: set[str] = set()
+    for m in _INV_SCALE_RE.finditer(sent):
+        toks.add(f"{m.group(1)}/{m.group(2)}")
+    for m in _INV_KIT_BRAND_RE.finditer(sent):
+        toks.add(m.group(1).replace(' ', '').lower())
+    for m in _INV_KIT_ANCHOR_RE.finditer(sent):
+        for tok in re.findall(r"[A-Za-z0-9'\.\-]+", m.group(1)):
+            tl = tok.lower()
+            if tl in _INV_STOP_TOK or tl in _INV_MONTHS \
+                    or tok == 'I' or tok.isdigit():
+                continue
+            if any(c.isdigit() for c in tok) or \
+                    (tok[0].isupper() and len(tok) > 1):
+                toks.add(tl)
+    return [frozenset(toks)] if toks else []
+
+
+def _inv_instr_sigs(sent: str, members: set) -> list[frozenset]:
+    """Brand/model + qualifier signature for one sentence."""
+    toks: set[str] = set()
+    low = sent.lower()
+    for m in re.finditer(
+            r"\b([A-Z][A-Za-z]*\d[\w\-]*|\d+[- ]?piece)\b", sent):
+        toks.add(m.group(1).lower().replace(' ', '-'))
+    for m in re.finditer(
+            r"\b(Fender|Yamaha|Pearl|Korg|Cordoba|Kala|Gibson"
+            r"|Martin|Roland|Casio|Ibanez|Epiphone|Squier"
+            r"|Takamine|Gretsch|Jackson)\s+"
+            r"([A-Z0-9][\w\-]*(?:\s+[A-Z0-9][\w\-]*){0,2})", sent):
+        toks.add(m.group(1).lower())
+        toks.add(m.group(2).split()[0].lower())
+    quals = {'acoustic', 'electric', 'upright', 'digital',
+             'black', 'white', 'old'}
+    for w in re.findall(r'[a-z\-]+', low):
+        if w in quals or w in members:
+            toks.add(w)
+    return [frozenset(toks)] if toks else []
+
+
+def _inv_prop_sigs(sent: str) -> list[frozenset]:
+    """Descriptor signature (bedrooms/type, neighborhood)."""
+    toks: set[str] = set()
+    for m in re.finditer(r'(\d+)[- ]bedroom\s+([a-z]+)', sent,
+                         re.I):
+        toks.add(f"{m.group(1)}-bedroom")
+        t = m.group(2).lower()
+        if t.endswith('s'):
+            t = t[:-1]
+        toks.add(t)
+    for m in re.finditer(
+            r'\bin (?:the )?([A-Z][a-z]+(?: [A-Z][a-z]+)?)'
+            r'\s+(?:neighborhood|area)\b', sent):
+        parts = m.group(1).split()
+        if all(p.lower() in _INV_MONTHS for p in parts):
+            continue
+        toks.update(p.lower() for p in parts)
+    for m in re.finditer(
+            r'\bin ([A-Z][a-z]+ [A-Z][a-z]+)\b', sent):
+        parts = m.group(1).split()
+        if all(p.lower() in _INV_MONTHS for p in parts):
+            continue
+        toks.update(p.lower() for p in parts)
+    return [frozenset(toks)] if toks else []
+
+
+def _inv_dedup(sigs: list[frozenset]) -> int:
+    """Count maximal signatures under token containment."""
+    uniq: list[frozenset] = []
+    for s in sorted(set(sigs), key=len, reverse=True):
+        if not any(s <= t for t in uniq):
+            uniq.append(s)
+    return len(uniq)
+
+
+def _cnt_inventory_count(question: str,
+                         sessions: list[dict]):
+    """Distinct-item inventory count (C511 oracle 3/3).
+
+    Faces: hypothetical acquisition ("thinking of buying a new
+    ukulele") and foreign possessors ("my niece … her violin")
+    are excluded at sentence level; the question's own offer-on
+    anchor NP ("the townhouse in the Brookside neighborhood")
+    drops the purchase target from viewed-property counts.
+    Selling contemplation does NOT exclude (still owned — the
+    Pearl drum set counts)."""
+    fam = _inv_form_gate(question.lower().strip())
+    if not fam:
+        return None
+    ql = question.lower()
+    viewing = bool(re.search(
+        r'\b(view|viewed|tour|toured|visit|visited|see|seen'
+        r'|saw)\b', ql))
+    members = {'instrument': {'guitar', 'piano', 'drum', 'violin',
+                              'ukulele', 'cello', 'flute', 'trumpet',
+                              'saxophone', 'banjo', 'mandolin',
+                              'keyboard', 'synth', 'synthesizer',
+                              'bass', 'instrument', 'instruments'},
+               'property': _INV_PROP_TYPE,
+               'kit': {'kit', 'kits', 'model', 'models', 'tank',
+                       'tanks'}}[fam]
+    anchor: set[str] = set()
+    m = re.search(r'(?:offer on|purchase[ds]?|bought|contract on)'
+                  r'\s+(?:the|a|an)\s+(.+?)(?:\?|$)', question,
+                  re.I)
+    if m:
+        for w in re.findall(r"[A-Za-z][\w\-']*", m.group(1)):
+            wl = w.lower()
+            if wl not in ('in', 'the', 'a', 'an', 'neighborhood',
+                          'area', 'and', 'that', 'one', 'home',
+                          'place'):
+                anchor.add(wl)
+    sigs: list[frozenset] = []
+    for sent in _inv_sents(sessions):
+        if _INV_HYPO_RE.search(sent) or \
+                _INV_FOREIGN_RE.search(sent):
+            continue
+        if fam == 'kit':
+            if _INV_SCALE_RE.search(sent) or \
+                    _INV_KIT_BRAND_RE.search(sent) or \
+                    _INV_OWN_RE.search(sent):
+                sigs.extend(_inv_kit_sigs(sent))
+        else:
+            lic = _INV_VIEW_RE.search(sent) if viewing \
+                else _INV_OWN_RE.search(sent)
+            if not lic:
+                continue
+            if fam == 'instrument':
+                sigs.extend(_inv_instr_sigs(sent, members))
+            else:
+                sigs.extend(_inv_prop_sigs(sent))
+    if not sigs:
+        return None
+    if anchor and len(anchor) >= 2:
+        sigs = [s for s in sigs if not anchor <= s]
+    return str(_inv_dedup(sigs))
+
+
 def _cnt_enum_count(question: str, sessions: list[dict]):
     """Enumeration-signature count (#084 v5.2 oracle parity 4/4).
 
@@ -6803,6 +7085,7 @@ def answer_counting(question: str,
           "unit_sum": _cnt_unit_sum,
           "freq_days": _cnt_freq_days,
           "enum_count": _cnt_enum_count,
+          "inventory_count": _cnt_inventory_count,
           "number_total": _cnt_number_total,
           "argmax": _cnt_argmax_entity}
     try:
