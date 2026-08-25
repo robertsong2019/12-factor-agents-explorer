@@ -2,12 +2,12 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-9963-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-10040-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
 
-> 📚 教程：[基础入门](TUTORIAL.md) · [GraphRAG 端到端（Cycles 425-440）](TUTORIAL-GRAPHRAG.md) · [Temporal QA 零 LLM 时间推理（Cycles 456-489）](TUTORIAL-TEMPORAL-QA.md)
+> 📚 教程：[基础入门](TUTORIAL.md) · [GraphRAG 端到端（Cycles 425-440）](TUTORIAL-GRAPHRAG.md) · [Temporal QA 零 LLM 时间推理（Cycles 456-489）](TUTORIAL-TEMPORAL-QA.md) · [Abstention 弃权语义（Cycles 448-516）](TUTORIAL-ABSTENTION.md)
 
 ## 🎯 概述
 
@@ -108,7 +108,7 @@ agent-memory-graph 的定位：**beyond recall — agency-grade graph memory —
 | **memorywire** | ✅ 5ops×4types | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **零依赖** | ✅ 仅 Python 标准库 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **LoCoMo Score** | 未测 | 49.0% | N/A | N/A | **92.21%** | 90.2% |
-| **Tests** | **9963** | ~500 | ~300 | ~800 | N/A | N/A |
+| **Tests** | **10040** | ~500 | ~300 | ~800 | N/A | N/A |
 
 ### 独特价值
 
@@ -2296,7 +2296,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-8505 → **9963 个测试**覆盖所有 API（**511 个 cycle，302 天零回滚**；计数为 08-25 03:10 后 pytest collect 实测）。
+8505 → **10040 个测试**覆盖所有 API（**516 个 cycle，303 天零回滚**；计数为 08-26 04:00 后 pytest collect 实测）。
 
 ## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
 
@@ -4175,6 +4175,34 @@ C506 留下的 `--sidechannel` 全量 A/B 收口：C508 树 0.382 → **207/500=
 #### 工具线注记：npm scripts DOA 修复 + 结构守卫
 
 `package.json` test 链为模板垃圾（`npm test --` 自递归至 core dump；prepare→build→test 链毒化每次 npm install）——b52e6ba 接线到真实 runner（python3 -m pytest / py_compile / python -m build），移除 prepare/prepublishOnly 钩子；新增 `test_package_json_scripts.py` 5 条结构守卫（amk scripts={} 655c173、ai-dev-tools 虚荣测试 e542697、本例三案同类）与 `scripts/find_untested.py` 覆盖缺口发现器。套件 9958→**9963**。
+
+---
+
+## Cycles 512-516: 弃权语义家族 — 预设有失败检测 + RECORD-NEGATIVE 台账化
+
+> 本家族概念教程见 [TUTORIAL-ABSTENTION.md](TUTORIAL-ABSTENTION.md)："I don't know" 是答案不是失败。
+
+08-25 夜 ~ 08-26 凌晨五连（三 keep 一负结果一 revert）：弃权（abstention）从 temporal 家族的局部纪律升格为答案侧一等公民，multi_session 0.414→**0.459**（55→61/133）四连弧收尾，abs30 切片 10→15（+5/−0）。
+
+#### C512：knowledge_update #088 负结果台账化 (RECORD-NEGATIVE)
+
+原型 oracle 19→54（2.46×）被 virtual-flip census 在生产化前杀死：判分鸿沟（关键词判分幻觉 vs 生产 `exact_judge` 57 fire 仅 21 过）、形态不可分、跨类劫持净 −7。**原型数字只代表研究方向，不代表生产收益**（insight #254），census 升格为所有 answer-face 生产化前置关卡。负结果进 `experiments.tsv` 台账（484ea70）。同期 C512-B 写时嵌入摊销因冗余仅 1.02× 被 revert（133a7b1）。
+
+#### C513：negative-existence 弃权门 (#087 ABS_Q 血统)
+
+LME `_abs` 预设有失败陷阱：问题预设一个全语料零提及的实体（问 Shinjuku、语料只有 Harajuku），检索强而切线、置信度高、下游门全部编造（C511 HEAD：18/24 abs-GT 题被编造、0 弃权）。修复：回答前检测问题中专名的全量 haystack 零提及（word-boundary、case-insensitive；引号标题正则伪影排除，裸 token only）→ ABSTAIN。**跑在所有 mechanism 门之前——预设有失败优先于形态家族**（gate 顺序即正确性面）。census v3：13 fire/500、+3 abs-GT 赢、0 劫持；abs24 6→8（+2/−0）；ctrl16 零劫持。+16 tests。
+
+#### C514：museum_count 第 11 counting 形态 + 计数家族内首个弃权
+
+场馆到访月窗口计数（"How many different museums or galleries did I visit in the month of February?"）：身份在场馆专名（Natural History Museum、"The Art Cube"），实现在到访动词，月窗口承载排除语义（排除 1 月 workshop、保留 2/8 与 15 日）。**零场馆 = 预设有失败 → ABSTAIN**（counting-path abstained mapping，museum-only，全家族唯一返回 ABSTAIN 的 counting form）；12 月孪生题弃权即正确（GT 即 abstain）。census 恰 2 fire 全为原错题；oracle 2/2（Feb=2、Dec 弃权）。multi_session 0.414→0.429（55→57/133，+2/−0）；+23 tests（套件 10002）。
+
+#### C515：age_diff 第 12 counting 形态 — 自我年龄锚定年算术
+
+"How many years older is my grandma than me?" 族三形态（other-then-until）：自我年龄锚 + 靶事件年龄做整数年减法（grandma 75−32=43；25 岁毕业 vs 32 岁 = 7；明年结婚 32+1=33）。歧义纪律：**每个锚必须唯一取值，否则整个形态落回不动**；非正差值 = 语法 miss。census 3 fire、oracle 3/3、零劫持。multi_session 0.429→0.451（57→60/133，+3/−0）；+18 tests（套件 10020）。
+
+#### C516：neg_exist 普通名词限定器 — LME 换轨陷阱
+
+`_abs` 家族换的是**被问对象名词**（violin/guitar、football/baseball、iPad/iPhone、uncle/niece）：第一人称对象问句中普通名词全语料零提及 = 预设有失败 → ABSTAIN。与 C513 专名版分开是因为假阳性面不同（普通名词太常见，必须形态限定防劫持）。census v6：6 fire/500、5 赢 1 控；abs30 10→15（+5/−0）；multi_session 0.451→0.459（60→61/133，+1/−0）。+20 tests（套件 **10040**）。
 
 ---
 
