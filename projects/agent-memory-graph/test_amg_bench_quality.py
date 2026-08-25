@@ -154,7 +154,8 @@ class TestIngest:
         a = LongMemEvalAdapter()
         stats = a.ingest_sessions([])
         assert stats == {"sessions": 0, "messages": 0,
-                         "entities": 0, "edges": 0}
+                         "entities": 0, "edges": 0,
+                         "chunks_embedded": 0}   # Cycle 512 key
 
     def test_seq_monotonic(self, adapter):
         seqs = [info["seq"] for info in adapter._nodes.values()]
@@ -710,3 +711,132 @@ class TestRetrieveContextSidechannel:
         self._install(adapter, self._stub())
         ctx, meta = adapter.retrieve_context("pasta sauce details")
         assert meta.get("sidechannel") is None
+
+
+class TestNegativeExistence:
+    """C513: negative-existence abstention (#087 ABS_Q lineage).
+
+    LME _abs near-miss traps: the question presupposes an entity
+    whose confusable sibling IS in the corpus — retrieval is
+    strong-but-tangent and everything downstream fabricates."""
+
+    def test_near_miss_entity_fires(self):
+        # Shinjuku asked, Harajuku present (the trap's driver).
+        q = "How long have I been living in my current apartment in Shinjuku?"
+        text = "I moved to Harajuku last April. The commute is fine."
+        assert abq.negative_existence(q, text) == "Shinjuku"
+
+    def test_present_entity_does_not_fire(self):
+        q = "How long have I been living in Harajuku?"
+        text = "I moved to Harajuku last April."
+        assert abq.negative_existence(q, text) is None
+
+    def test_quoted_title_not_an_artifact(self):
+        # The 4th display-layer-bug family instance: quoted-phrase
+        # regexes fabricate spans across apostrophes. Bare tokens
+        # must match 'Ibotta' in the corpus without the quotes.
+        q = "How many weeks ago did I start using the cashback app 'Ibotta'?"
+        text = "I started using Ibotta for grocery cashback."
+        assert abq.negative_existence(q, text) is None
+
+    def test_possessive_apostrophes_dont_fabricate(self):
+        q = "When was Jessica's wedding compared to Michael's birthday?"
+        text = ("Jessica told me about her wedding plans. "
+                "Michael's birthday party is next month.")
+        assert abq.negative_existence(q, text) is None
+
+    def test_months_and_weekdays_are_anchors_not_entities(self):
+        q = "How many books did I finish reading in December?"
+        text = "I finished two novels in late autumn."
+        assert abq.negative_existence(q, text) is None
+
+    def test_word_boundary_not_substring(self):
+        # 'Spain' must not match 'Spainard'-like superstrings.
+        q = "Did I ever visit Spain?"
+        text = "We toured the Spainard vineyards last summer."
+        assert abq.negative_existence(q, text) == "Spain"
+
+    def test_case_insensitive_presence(self):
+        q = "What did I think of the Porsche?"
+        text = "The porsche handles beautifully on mountain roads."
+        assert abq.negative_existence(q, text) is None
+
+    def test_first_missing_entity_wins(self):
+        q = ("Which did I attend first, my Paris trip or the "
+             "Berlin conference?")
+        text = "My Paris trip was wonderful."
+        assert abq.negative_existence(q, text) == "Berlin"
+
+    def test_no_entities_no_fire(self):
+        q = "How many days did it take for my order to arrive?"
+        text = "no proper nouns here at all"
+        assert abq.negative_existence(q, text) is None
+
+    def test_initial_word_ignored(self):
+        # First token capitalized by sentence position, not entity.
+        q = "Sacramento is where I booked what?"
+        text = "I booked a hotel in San Francisco."
+        assert abq.negative_existence(q, text) is None
+
+
+class TestNegativeExistenceIntegration:
+    _SESSIONS = [
+        {"session_id": "s1", "messages": [
+            {"role": "user", "content":
+             "I've been living in Harajuku since last April and "
+             "really enjoy the neighborhood."}]},
+        {"session_id": "s2", "messages": [
+            {"role": "user", "content":
+             "Thinking about moving, but rent anywhere is pricey."}]},
+    ]
+
+    def _run(self, question, neg_exist=True):
+        a = LongMemEvalAdapter(max_context_tokens=2000,
+                               neg_exist=neg_exist)
+        a.ingest_sessions(self._SESSIONS)
+        pred, meta = a.answer_extractive(question, "")
+        return pred, meta
+
+    def test_gate_abstains_and_reports_entity(self):
+        pred, meta = self._run(
+            "How long have I been living in my Shinjuku apartment?")
+        assert pred == abq.ABSTAIN_ANSWER
+        assert meta["gate"] == "neg_exist"
+        assert meta["abstained"] is True
+        assert meta["neg_exist_entity"] == "Shinjuku"
+
+    def test_flag_off_falls_through(self):
+        pred, meta = self._run(
+            "How long have I been living in my Shinjuku apartment?",
+            neg_exist=False)
+        assert meta.get("gate") != "neg_exist"
+
+    def test_present_entity_unaffected(self):
+        pred, meta = self._run(
+            "How long have I been living in Harajuku?")
+        assert meta.get("gate") != "neg_exist"
+
+    def test_is_abs_scores_abstain_correct(self):
+        # evaluate() contract: abstain on an _abs question = correct.
+        a = LongMemEvalAdapter(max_context_tokens=2000)
+        a.ingest_sessions(self._SESSIONS)
+        rep = a.evaluate([{
+            "question_id": "x_abs",
+            "question": "How long have I lived in my Shinjuku place?",
+            "answer": "The information provided is not enough.",
+            "haystack_sessions": self._SESSIONS}])
+        r = rep["results"][0]
+        assert r["abstained"]
+        assert r["correct"] is True
+
+    def test_third_person_subject_exempt(self):
+        # LoCoMo form: subject's own lines never self-name — absence
+        # of "Caroline" in her own dialogue is normal, not a trap.
+        q = "What class did Caroline start?"
+        text = "I started a pottery class last month."
+        assert abq.negative_existence(q, text) is None
+
+    def test_first_person_required_to_fire(self):
+        q = "How long has Caroline lived in Shinjuku?"
+        text = "I moved to Harajuku last April."
+        assert abq.negative_existence(q, text) is None

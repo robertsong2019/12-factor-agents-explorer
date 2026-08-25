@@ -48,6 +48,7 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -440,6 +441,7 @@ class LongMemEvalAdapter:
                  ecm: bool = True,
                  delta_agg: bool = True,
                  pref_abstain: bool = True,
+                 neg_exist: bool = True,
                  role_answer: bool = True,
                  role_margin: int = 0,
                  assistant_recall: bool = True,
@@ -449,6 +451,7 @@ class LongMemEvalAdapter:
                  seed_recall_k: int = 5,
                  recall_seed_k: int = 40,
                  sidechannel: bool = False,
+                 sidechannel_cache: SidechannelCache | None = None,
                  where_loc: bool = True):
         """Args:
             mg: MemoryGraph to ingest into (default: fresh in-memory).
@@ -527,6 +530,7 @@ class LongMemEvalAdapter:
         self.ecm = ecm
         self.delta_agg = delta_agg
         self.pref_abstain = pref_abstain
+        self.neg_exist = neg_exist
         # Cycle 501: role-aware answer face (echo pathology fix) —
         # see _user_fact_form. role_margin: how many keyword hits a
         # user line may trail the top assistant line by and still
@@ -545,6 +549,10 @@ class LongMemEvalAdapter:
         # import-time cost stays zero and the lexical default is
         # untouched (zero-dep hermetic tests rely on that).
         self.sidechannel = sidechannel
+        # Cycle 512: write-time chunk-embedding amortization. Default
+        # cache is per-adapter; pass an external one to amortize
+        # across the run_eval per-question fresh-adapter protocol.
+        self.sidechannel_cache = sidechannel_cache or SidechannelCache()
         self.where_loc = where_loc
         self._side_engine = None
         self._side_probed = False
@@ -592,7 +600,8 @@ class LongMemEvalAdapter:
         Returns:
             Stats dict ``{sessions, messages, entities, edges}``.
         """
-        stats = {"sessions": 0, "messages": 0, "entities": 0, "edges": 0}
+        stats = {"sessions": 0, "messages": 0, "entities": 0,
+                 "edges": 0, "chunks_embedded": 0}
         if session_dates:
             for sid, dt in session_dates.items():
                 self._session_dates_raw[str(sid)] = str(dt)
@@ -638,6 +647,15 @@ class LongMemEvalAdapter:
 
             stats["edges"] += self._extract_entities(
                 session.get("messages", []), msg_ids, stats)
+
+            # Cycle 512: write-time pass — warm the side-channel
+            # cache while the session is being written, so query
+            # time embeds only the question.
+            engine = self._sidechannel_engine()
+            if engine is not None:
+                stats["chunks_embedded"] += (
+                    self.sidechannel_cache.precompute_sessions(
+                        [session], engine))
 
             stats["sessions"] += 1
 
@@ -751,13 +769,19 @@ class LongMemEvalAdapter:
         # score, ties fall back to (-hits, -seq) — the #083 lesson
         # bans id-alphabetical tie-breaks, ingest order is ours.
         side_mode = None
+        side_cache_meta: dict | None = None
         engine = (self._sidechannel_engine()
                   if sidechannel_form(question) else None)
         if engine is not None:
             side_mode = sidechannel_form(question)
             sessions = self._counting_sessions()
-            scores = session_embedding_scores(question, sessions,
-                                              engine)
+            h0, m0 = (self.sidechannel_cache.hits,
+                      self.sidechannel_cache.misses)
+            scores = session_embedding_scores(
+                question, sessions, engine,
+                cache=self.sidechannel_cache)
+            side_cache_meta = {"hits": self.sidechannel_cache.hits - h0,
+                               "misses": self.sidechannel_cache.misses - m0}
             if side_mode == "embed":
                 order = [s["session_id"] for s in sessions]
                 top = sorted(scores,
@@ -812,6 +836,7 @@ class LongMemEvalAdapter:
             "tokens_est": tokens,
             "keywords": keywords,
             "sidechannel": side_mode,   # None | "embed" | "hybrid"
+            "sidecache": side_cache_meta,  # Cycle 512: per-query delta
             "retrieved_ids": retrieved_ids,   # Cycle 451: turn-level evidence scoring
         }
         return context, meta
@@ -860,6 +885,34 @@ class LongMemEvalAdapter:
             meta["gate"] = "pref"
             meta["abstained"] = True
             return ABSTAIN_ANSWER, meta
+
+        # Cycle 513: negative-existence abstention (#087 ABS_Q
+        # lineage). LME _abs near-miss traps: the question
+        # presupposes an entity (Shinjuku) whose confusable sibling
+        # (Harajuku) IS in the corpus — retrieval is strong-but-
+        # tangent, confidence high, every downstream gate fabricates
+        # (18/24 abs-GT questions answered with fabrications at
+        # C511 HEAD, zero abstained). The presupposition failure is
+        # detectable BEFORE any answering: a proper noun in the
+        # question that appears NOWHERE in the full haystack
+        # (word-boundary, case-insensitive) means the answer cannot
+        # be extracted. Census v3 @HEAD: 13 fires / 500, +3 abs-GT
+        # wins, 0 hijacks (the two quoted-title regex artifacts
+        # were the only false fires — bare tokens only, the 4th
+        # display-layer-bug family instance). Runs before the
+        # mechanism gates: presupposition failure outranks form
+        # families (gate ORDER is a correctness face — C482).
+        if self.neg_exist:
+            haystack_text = "\n".join(
+                " ".join(str(t.get("content", ""))
+                         for t in s["turns"])
+                for s in self._counting_sessions())
+            missing = negative_existence(question, haystack_text)
+            if missing:
+                meta["gate"] = "neg_exist"
+                meta["abstained"] = True
+                meta["neg_exist_entity"] = missing
+                return ABSTAIN_ANSWER, meta
 
         # Cycle 497: neither-family ECM (Research #082) — "Who did
         # I meet first, X or Y?" / "Who became a parent first…".
@@ -1924,14 +1977,17 @@ def probe_sidechannel_engine() -> SidechannelEngine | None:
 
 
 def session_embedding_scores(question: str, sessions: list[dict],
-                             engine: SidechannelEngine) -> dict:
+                             engine: SidechannelEngine,
+                             cache: "SidechannelCache | None" = None) -> dict:
     """Session → chunk-max cosine against *question*.
 
     ``sessions``: ``[{"session_id", "turns": [{"role", "content"}]}]``
     (the ``_counting_sessions`` shape). Deterministic: ties keep
     ingest order at the CALLER (never an id-alphabetical second key
     — the #083 tie-break artifact fabricated 12/30 from ``answer_*``
-    session ids sorting first).
+    session ids sorting first). With a Cycle 512 *cache* warmed at
+    ingest time, only the question is embedded here — the
+    per-question 7.5s full-haystack pass amortizes to ~zero.
     """
     chunks: list[str] = []
     owners: list[str] = []
@@ -1944,13 +2000,108 @@ def session_embedding_scores(question: str, sessions: list[dict],
     if not chunks:
         return {}
     qv = engine.embed([question])[0]
+    if cache is not None:
+        vecs = cache.embed_missing(chunks, engine)
+    else:
+        vecs = engine.embed(chunks)
     best: dict[str, float] = {}
-    for row, vec in enumerate(engine.embed(chunks)):
+    for row, vec in enumerate(vecs):
         sid = owners[row]
         sim = sum(a * b for a, b in zip(qv, vec))
         if sim > best.get(sid, float("-inf")):
             best[sid] = sim
     return best
+
+
+class SidechannelCache:
+    """Content-addressed chunk-embedding store (Cycle 512).
+
+    Keys are sha1 of the exact ``chunk_session_text`` output, so a
+    session edit naturally misses (new text → new hash) while
+    identical chunks across sessions dedupe to one vector. The
+    write-time pass (``precompute_sessions`` at ingest) turns the
+    C506 per-question full-haystack embed (7.5s/q measured on the
+    full-500 POST arm) into a one-time ingest cost; a cache shared
+    across adapters also survives the run_eval per-question
+    fresh-adapter protocol.
+    """
+
+    def __init__(self, maxsize: int = 8192):
+        self._vecs: dict[str, list[float]] = {}
+        self._order: list[str] = []        # FIFO eviction order
+        self.maxsize = maxsize
+        self.hits = 0
+        self.misses = 0
+        self.embed_calls = 0               # texts sent to the engine
+
+    @staticmethod
+    def _key(text: str) -> str:
+        return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+    def get(self, text: str) -> list[float] | None:
+        return self._vecs.get(self._key(text))
+
+    def put(self, text: str, vec: list[float]) -> None:
+        key = self._key(text)
+        if key not in self._vecs:
+            self._order.append(key)
+            if len(self._order) > self.maxsize:
+                self._vecs.pop(self._order.pop(0), None)
+        self._vecs[key] = list(vec)
+
+    def forget(self) -> None:
+        """Drop all vectors (counters kept for audit)."""
+        self._vecs.clear()
+        self._order.clear()
+
+    def stats(self) -> dict:
+        total = self.hits + self.misses
+        return {"size": len(self._vecs), "maxsize": self.maxsize,
+                "hits": self.hits, "misses": self.misses,
+                "embed_calls": self.embed_calls,
+                "hit_rate": self.hits / total if total else 0.0}
+
+    def embed_missing(self, texts: list[str],
+                      engine) -> list[list[float] | None]:
+        """Vectors for *texts*, embedding and storing only misses."""
+        out: list[list[float] | None] = [None] * len(texts)
+        miss_idx: list[int] = []
+        for i, text in enumerate(texts):
+            vec = self._vecs.get(self._key(text))
+            if vec is None:
+                self.misses += 1
+                miss_idx.append(i)
+            else:
+                self.hits += 1
+                out[i] = vec
+        if miss_idx:
+            fresh = engine.embed([texts[i] for i in miss_idx])
+            self.embed_calls += len(miss_idx)
+            for i, vec in zip(miss_idx, fresh):
+                self.put(texts[i], vec)
+                out[i] = vec
+        return out
+
+    def precompute_sessions(self, sessions: list[dict],
+                            engine) -> int:
+        """Write-time pass: warm the cache for whole sessions.
+
+        Accepts both shapes used in this module — the ingest shape
+        (``{"session_id", "messages"}``) and the
+        ``_counting_sessions`` shape (``turns``) — chunked with the
+        exact ``session_embedding_scores`` protocol so warmed keys
+        match query-time keys byte for byte. Returns the number of
+        chunks embedded (misses consumed this call).
+        """
+        chunks: list[str] = []
+        for session in sessions:
+            turns = (session.get("messages")
+                     or session.get("turns") or [])
+            text = " ".join(str(t.get("content", "")) for t in turns)
+            chunks.extend(chunk_session_text(text))
+        before = self.misses
+        self.embed_missing(chunks, engine)
+        return self.misses - before
 
 
 def sidechannel_form(question: str) -> str | None:
@@ -4113,6 +4264,82 @@ def pref_form(question: str) -> bool:
     #080). Used by the C498 honest-abstention gate."""
     return (bool(_PREF_RE.search(question))
             and not _PREF_EXCLUDE_RE.search(question))
+
+
+# ── Cycle 513: negative-existence abstention (#087 ABS_Q lineage) ──
+# Months/weekdays/holiday anchors are temporal modifiers, not
+# presupposed entities — the corpus legitimately anchors them
+# relatively ("in January" + question_date) while the entity the
+# question asks about is elsewhere.
+_NEG_EXIST_STOP = frozenset({
+    "January", "February", "March", "April", "May", "June", "July",
+    "August", "September", "October", "November", "December",
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+    "Saturday", "Sunday", "Valentine", "Christmas", "Halloween",
+    "Thanksgiving", "Easter",
+    # generic question/service words that surface capitalized
+    "How", "What", "When", "Where", "Which", "Who", "Why", "The",
+    "Do", "Did", "Does", "Is", "Are", "Was", "Were", "Have", "Has",
+    "Will", "Would", "Should", "Instagram", "Google", "Apple",
+    "Amazon", "Facebook", "Netflix", "Spotify", "YouTube", "Twitter",
+})
+
+
+# First-person marker: LME _abs trap form ("How long have I lived
+# in Shinjuku?"). Case-sensitive \bI\b — lowercase "i" is noise.
+_NEG_EXIST_FIRST_PERSON_RE = re.compile(
+    r"\bI\b|\bmy\b|\bMy\b|\bme\b|\bmine\b")
+
+
+def _neg_exist_entities(question: str) -> list[str]:
+    """Proper-noun candidates from *question* (bare tokens only).
+
+    Quoted-phrase regexes are BANNED here: ``'([^']{2,40})'``
+    fabricated spans ACROSS apostrophes ("Jessica's wedding or
+    Michael's" → ``s wedding or Michael``; "…'How I Built This' and
+    'My Fa…" → ``ve listened to from ``) — the 4th instance of the
+    display-layer-bug-pretending-to-be-data family (TOOLS.md
+    permanent rule). Bare tokenization splits them away naturally.
+    """
+    toks = re.findall(r"[A-Za-z][A-Za-z0-9-]*", question)
+    out = []
+    for i, t in enumerate(toks):
+        if (t[0].isupper() and i > 0 and len(t) > 2
+                and t not in _NEG_EXIST_STOP
+                and (not t.isupper() or len(t) > 3)):
+            out.append(t)
+    return out
+
+
+def negative_existence(question: str,
+                       haystack_text: str) -> str | None:
+    """The first asked-for entity that never appears in the corpus.
+
+    Returns the missing entity name when any proper noun in
+    *question* is absent from *haystack_text* (word-boundary,
+    case-insensitive), ``None`` when every presupposition holds.
+    Absent entity ⇒ the answer cannot be extracted ⇒ the honest
+    answer is abstention, whatever the retrieval confidence (the
+    near-miss sibling drives retrieval astray by design).
+
+    First-person forms only (``I``/``my``/…): LME _abs traps ask
+    "How long have I lived in Shinjuku?" — the proper nouns are the
+    asked-about objects. Third-person subject questions (LoCoMo
+    "What class did Caroline start?") name a dialogue SUBJECT whose
+    own lines never self-name — absence there is normal, not a
+    presupposition failure (caught by the LoCoMo fixture suite).
+    """
+    if not _NEG_EXIST_FIRST_PERSON_RE.search(question):
+        return None
+    ents = _neg_exist_entities(question)
+    if not ents:
+        return None
+    tl = haystack_text.lower()
+    for e in ents:
+        if not re.search(rf"\b{re.escape(e.lower())}\b", tl):
+            return e
+    return None
+
 
 
 # Cycle 501: role-aware answer face — form gates. First-person
@@ -7190,6 +7417,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              ecm: bool = True,
              delta_agg: bool = True,
              pref_abstain: bool = True,
+             neg_exist: bool = True,
              role_answer: bool = True,
              role_margin: int = 0,
              assistant_recall: bool = True,
@@ -7231,6 +7459,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   ecm=ecm,
                   delta_agg=delta_agg,
                   pref_abstain=pref_abstain,
+                  neg_exist=neg_exist,
                   role_answer=role_answer,
                   sidechannel=sidechannel,
                   role_margin=role_margin,
@@ -7393,6 +7622,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-pp-duration", action="store_true",
                         help="Disable the Cycle 486 past-perfect "
                              "duration path (pre-C486 baseline)")
+    parser.add_argument("--no-neg-exist", action="store_true",
+                        help="Disable the Cycle 513 negative-existence "
+                             "abstention gate (missing proper noun ⇒ "
+                             "abstain)")
     parser.add_argument("--no-role-answer", action="store_true",
                         help="Disable the Cycle 501 role-aware answer "
                              "face (user-line selection for first-"
@@ -7460,6 +7693,7 @@ def main(argv: list[str] | None = None) -> int:
             pp_duration=not args.no_pp_duration,
             assistant_recall=not args.no_assistant_recall,
             role_answer=not args.no_role_answer,
+            neg_exist=not args.no_neg_exist,
             sidechannel=args.sidechannel,
             recall_mode=args.recall_mode,
             judge_mode=args.judge)
