@@ -48,6 +48,7 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -449,6 +450,7 @@ class LongMemEvalAdapter:
                  seed_recall_k: int = 5,
                  recall_seed_k: int = 40,
                  sidechannel: bool = False,
+                 sidechannel_cache: SidechannelCache | None = None,
                  where_loc: bool = True):
         """Args:
             mg: MemoryGraph to ingest into (default: fresh in-memory).
@@ -545,6 +547,10 @@ class LongMemEvalAdapter:
         # import-time cost stays zero and the lexical default is
         # untouched (zero-dep hermetic tests rely on that).
         self.sidechannel = sidechannel
+        # Cycle 512: write-time chunk-embedding amortization. Default
+        # cache is per-adapter; pass an external one to amortize
+        # across the run_eval per-question fresh-adapter protocol.
+        self.sidechannel_cache = sidechannel_cache or SidechannelCache()
         self.where_loc = where_loc
         self._side_engine = None
         self._side_probed = False
@@ -592,7 +598,8 @@ class LongMemEvalAdapter:
         Returns:
             Stats dict ``{sessions, messages, entities, edges}``.
         """
-        stats = {"sessions": 0, "messages": 0, "entities": 0, "edges": 0}
+        stats = {"sessions": 0, "messages": 0, "entities": 0,
+                 "edges": 0, "chunks_embedded": 0}
         if session_dates:
             for sid, dt in session_dates.items():
                 self._session_dates_raw[str(sid)] = str(dt)
@@ -638,6 +645,15 @@ class LongMemEvalAdapter:
 
             stats["edges"] += self._extract_entities(
                 session.get("messages", []), msg_ids, stats)
+
+            # Cycle 512: write-time pass — warm the side-channel
+            # cache while the session is being written, so query
+            # time embeds only the question.
+            engine = self._sidechannel_engine()
+            if engine is not None:
+                stats["chunks_embedded"] += (
+                    self.sidechannel_cache.precompute_sessions(
+                        [session], engine))
 
             stats["sessions"] += 1
 
@@ -751,13 +767,19 @@ class LongMemEvalAdapter:
         # score, ties fall back to (-hits, -seq) — the #083 lesson
         # bans id-alphabetical tie-breaks, ingest order is ours.
         side_mode = None
+        side_cache_meta: dict | None = None
         engine = (self._sidechannel_engine()
                   if sidechannel_form(question) else None)
         if engine is not None:
             side_mode = sidechannel_form(question)
             sessions = self._counting_sessions()
-            scores = session_embedding_scores(question, sessions,
-                                              engine)
+            h0, m0 = (self.sidechannel_cache.hits,
+                      self.sidechannel_cache.misses)
+            scores = session_embedding_scores(
+                question, sessions, engine,
+                cache=self.sidechannel_cache)
+            side_cache_meta = {"hits": self.sidechannel_cache.hits - h0,
+                               "misses": self.sidechannel_cache.misses - m0}
             if side_mode == "embed":
                 order = [s["session_id"] for s in sessions]
                 top = sorted(scores,
@@ -812,6 +834,7 @@ class LongMemEvalAdapter:
             "tokens_est": tokens,
             "keywords": keywords,
             "sidechannel": side_mode,   # None | "embed" | "hybrid"
+            "sidecache": side_cache_meta,  # Cycle 512: per-query delta
             "retrieved_ids": retrieved_ids,   # Cycle 451: turn-level evidence scoring
         }
         return context, meta
@@ -1924,14 +1947,17 @@ def probe_sidechannel_engine() -> SidechannelEngine | None:
 
 
 def session_embedding_scores(question: str, sessions: list[dict],
-                             engine: SidechannelEngine) -> dict:
+                             engine: SidechannelEngine,
+                             cache: "SidechannelCache | None" = None) -> dict:
     """Session → chunk-max cosine against *question*.
 
     ``sessions``: ``[{"session_id", "turns": [{"role", "content"}]}]``
     (the ``_counting_sessions`` shape). Deterministic: ties keep
     ingest order at the CALLER (never an id-alphabetical second key
     — the #083 tie-break artifact fabricated 12/30 from ``answer_*``
-    session ids sorting first).
+    session ids sorting first). With a Cycle 512 *cache* warmed at
+    ingest time, only the question is embedded here — the
+    per-question 7.5s full-haystack pass amortizes to ~zero.
     """
     chunks: list[str] = []
     owners: list[str] = []
@@ -1944,13 +1970,108 @@ def session_embedding_scores(question: str, sessions: list[dict],
     if not chunks:
         return {}
     qv = engine.embed([question])[0]
+    if cache is not None:
+        vecs = cache.embed_missing(chunks, engine)
+    else:
+        vecs = engine.embed(chunks)
     best: dict[str, float] = {}
-    for row, vec in enumerate(engine.embed(chunks)):
+    for row, vec in enumerate(vecs):
         sid = owners[row]
         sim = sum(a * b for a, b in zip(qv, vec))
         if sim > best.get(sid, float("-inf")):
             best[sid] = sim
     return best
+
+
+class SidechannelCache:
+    """Content-addressed chunk-embedding store (Cycle 512).
+
+    Keys are sha1 of the exact ``chunk_session_text`` output, so a
+    session edit naturally misses (new text → new hash) while
+    identical chunks across sessions dedupe to one vector. The
+    write-time pass (``precompute_sessions`` at ingest) turns the
+    C506 per-question full-haystack embed (7.5s/q measured on the
+    full-500 POST arm) into a one-time ingest cost; a cache shared
+    across adapters also survives the run_eval per-question
+    fresh-adapter protocol.
+    """
+
+    def __init__(self, maxsize: int = 8192):
+        self._vecs: dict[str, list[float]] = {}
+        self._order: list[str] = []        # FIFO eviction order
+        self.maxsize = maxsize
+        self.hits = 0
+        self.misses = 0
+        self.embed_calls = 0               # texts sent to the engine
+
+    @staticmethod
+    def _key(text: str) -> str:
+        return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+    def get(self, text: str) -> list[float] | None:
+        return self._vecs.get(self._key(text))
+
+    def put(self, text: str, vec: list[float]) -> None:
+        key = self._key(text)
+        if key not in self._vecs:
+            self._order.append(key)
+            if len(self._order) > self.maxsize:
+                self._vecs.pop(self._order.pop(0), None)
+        self._vecs[key] = list(vec)
+
+    def forget(self) -> None:
+        """Drop all vectors (counters kept for audit)."""
+        self._vecs.clear()
+        self._order.clear()
+
+    def stats(self) -> dict:
+        total = self.hits + self.misses
+        return {"size": len(self._vecs), "maxsize": self.maxsize,
+                "hits": self.hits, "misses": self.misses,
+                "embed_calls": self.embed_calls,
+                "hit_rate": self.hits / total if total else 0.0}
+
+    def embed_missing(self, texts: list[str],
+                      engine) -> list[list[float] | None]:
+        """Vectors for *texts*, embedding and storing only misses."""
+        out: list[list[float] | None] = [None] * len(texts)
+        miss_idx: list[int] = []
+        for i, text in enumerate(texts):
+            vec = self._vecs.get(self._key(text))
+            if vec is None:
+                self.misses += 1
+                miss_idx.append(i)
+            else:
+                self.hits += 1
+                out[i] = vec
+        if miss_idx:
+            fresh = engine.embed([texts[i] for i in miss_idx])
+            self.embed_calls += len(miss_idx)
+            for i, vec in zip(miss_idx, fresh):
+                self.put(texts[i], vec)
+                out[i] = vec
+        return out
+
+    def precompute_sessions(self, sessions: list[dict],
+                            engine) -> int:
+        """Write-time pass: warm the cache for whole sessions.
+
+        Accepts both shapes used in this module — the ingest shape
+        (``{"session_id", "messages"}``) and the
+        ``_counting_sessions`` shape (``turns``) — chunked with the
+        exact ``session_embedding_scores`` protocol so warmed keys
+        match query-time keys byte for byte. Returns the number of
+        chunks embedded (misses consumed this call).
+        """
+        chunks: list[str] = []
+        for session in sessions:
+            turns = (session.get("messages")
+                     or session.get("turns") or [])
+            text = " ".join(str(t.get("content", "")) for t in turns)
+            chunks.extend(chunk_session_text(text))
+        before = self.misses
+        self.embed_missing(chunks, engine)
+        return self.misses - before
 
 
 def sidechannel_form(question: str) -> str | None:
