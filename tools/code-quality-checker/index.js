@@ -10,6 +10,8 @@ import fs from 'fs-extra';
 import path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { realpathSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 const execAsync = promisify(exec);
 
@@ -32,31 +34,31 @@ program
   .action(async (targetPath, options) => {
     try {
       console.log(chalk.blue('🔍 开始代码质量检查...'));
-      
+
       const results = {
         path: targetPath,
         timestamp: new Date().toISOString(),
         checks: {}
       };
 
-      // 如果没有指定具体检查，默认运行所有
+      // 如果没有指定具体检查,默认运行所有
       const runAll = options.all || (!options.eslint && !options.complexity && !options.security && !options.dependencies);
-      
+
       // ESLint 检查
       if (runAll || options.eslint) {
         results.checks.eslint = await runESLintCheck(targetPath);
       }
-      
+
       // 代码复杂度检查
       if (runAll || options.complexity) {
         results.checks.complexity = await runComplexityCheck(targetPath);
       }
-      
+
       // 安全检查
       if (runAll || options.security) {
         results.checks.security = await runSecurityCheck(targetPath);
       }
-      
+
       // 依赖安全检查
       if (runAll || options.dependencies) {
         results.checks.dependencies = await runDependencyCheck(targetPath);
@@ -64,7 +66,7 @@ program
 
       // 输出结果
       outputResults(results, options.format, options.output);
-      
+
     } catch (error) {
       console.error(chalk.red('❌ 检查失败:'), error.message);
       process.exit(1);
@@ -78,7 +80,7 @@ program
   .action(async (options) => {
     try {
       console.log(chalk.blue('🚀 初始化代码质量配置...'));
-      
+
       const configTemplates = {
         '.eslintrc.js': `module.exports = {
   env: {
@@ -138,9 +140,9 @@ program
 
       for (const [filename, content] of Object.entries(configTemplates)) {
         const filePath = path.join(process.cwd(), filename);
-        
+
         if (fs.existsSync(filePath) && !options.force) {
-          console.log(chalk.yellow(`⚠️  ${filename} 已存在，使用 --force 覆盖`));
+          console.log(chalk.yellow(`⚠️  ${filename} 已存在,使用 --force 覆盖`));
           continue;
         }
 
@@ -148,8 +150,8 @@ program
         console.log(chalk.green(`✅ ${filename} 已创建`));
       }
 
-      console.log(chalk.green('🎉 代码质量配置初始化完成！'));
-      
+      console.log(chalk.green('🎉 代码质量配置初始化完成!'));
+
     } catch (error) {
       console.error(chalk.red('❌ 初始化失败:'), error.message);
       process.exit(1);
@@ -158,14 +160,14 @@ program
 
 async function runESLintCheck(targetPath) {
   console.log(chalk.yellow('📝 运行ESLint检查...'));
-  
+
   try {
     // 检查是否有ESLint配置
-    const hasEslint = await fs.pathExists(path.join(targetPath, '.eslintrc.js')) || 
+    const hasEslint = await fs.pathExists(path.join(targetPath, '.eslintrc.js')) ||
                     await fs.pathExists(path.join(targetPath, '.eslintrc.json'));
-    
+
     if (!hasEslint) {
-      console.log(chalk.yellow('⚠️  未找到ESLint配置文件，跳过ESLint检查'));
+      console.log(chalk.yellow('⚠️  未找到ESLint配置文件,跳过ESLint检查'));
       return { status: 'skipped', reason: 'No ESLint config found' };
     }
 
@@ -197,8 +199,19 @@ async function runComplexityCheck(targetPath) {
   console.log(chalk.yellow('🧮 运行代码复杂度检查...'));
   
   try {
-    // 使用简单的复杂度分析
-    const jsFiles = await findJavaScriptFiles(targetPath);
+    // 使用简单的复杂度分析（.complexityrc.json 可配置阈值/忽略/扩展名）
+    const config = await loadComplexityConfig(targetPath);
+    const maxComplexity = typeof config.maxComplexity === 'number' ? config.maxComplexity : 10;
+    const ignorePatterns = (Array.isArray(config.ignoreFiles) ? config.ignoreFiles : []).map(globToRegex);
+    const extRegex = (Array.isArray(config.fileExtensions) && config.fileExtensions.length > 0)
+      ? new RegExp('(' + config.fileExtensions.map(e => e.replace(/[.+^${}()|[\]\\]/g, '\\$&')).join('|') + ')$')
+      : /\.(js|ts|jsx|tsx)$/;
+
+    const jsFiles = (await findJavaScriptFiles(targetPath)).filter(file => {
+      if (!extRegex.test(file)) return false;
+      const rel = path.relative(targetPath, file).split(path.sep).join('/');
+      return !ignorePatterns.some(p => p.test(rel));
+    });
     const complexityResults = [];
 
     for (const file of jsFiles) {
@@ -211,7 +224,7 @@ async function runComplexityCheck(targetPath) {
     }
 
     const avgComplexity = complexityResults.reduce((sum, r) => sum + r.complexity, 0) / complexityResults.length || 0;
-    const highComplexityFiles = complexityResults.filter(r => r.complexity > 10);
+    const highComplexityFiles = complexityResults.filter(r => r.complexity > maxComplexity);
 
     console.log(chalk.green(`✅ 复杂度检查完成: 平均复杂度 ${avgComplexity.toFixed(2)}, ${highComplexityFiles.length} 个文件复杂度过高`));
 
@@ -231,7 +244,7 @@ async function runComplexityCheck(targetPath) {
 
 async function runSecurityCheck(targetPath) {
   console.log(chalk.yellow('🔒 运行安全检查...'));
-  
+
   try {
     const jsFiles = await findJavaScriptFiles(targetPath);
     const securityResults = [];
@@ -247,7 +260,7 @@ async function runSecurityCheck(targetPath) {
     }
 
     const totalIssues = securityResults.reduce((sum, r) => sum + r.issues.length, 0);
-    
+
     console.log(chalk.green(`✅ 安全检查完成: 发现 ${totalIssues} 个安全问题`));
 
     return {
@@ -265,12 +278,12 @@ async function runSecurityCheck(targetPath) {
 
 async function runDependencyCheck(targetPath) {
   console.log(chalk.yellow('📦 运行依赖安全检查...'));
-  
+
   try {
     // 检查package.json
     const packageJsonPath = path.join(targetPath, 'package.json');
     if (!await fs.pathExists(packageJsonPath)) {
-      console.log(chalk.yellow('⚠️  未找到package.json，跳过依赖检查'));
+      console.log(chalk.yellow('⚠️  未找到package.json,跳过依赖检查'));
       return { status: 'skipped', reason: 'No package.json found' };
     }
 
@@ -279,8 +292,8 @@ async function runDependencyCheck(targetPath) {
 
     // 检查过时依赖
     const outdatedDeps = await checkOutdatedDependencies(targetPath);
-    
-    console.log(chalk.green(`✅ 依赖检查完成: ${Object.keys(dependencies).length} 个依赖，${outdatedDeps.length} 个需要更新`));
+
+    console.log(chalk.green(`✅ 依赖检查完成: ${Object.keys(dependencies).length} 个依赖,${outdatedDeps.length} 个需要更新`));
 
     return {
       status: 'completed',
@@ -307,7 +320,7 @@ function outputResults(results, format, outputFile) {
         console.log(jsonOutput);
       }
       break;
-      
+
     case 'console':
     default:
       printConsoleResults(results);
@@ -322,12 +335,12 @@ function outputResults(results, format, outputFile) {
 function printConsoleResults(results) {
   console.log(chalk.blue('\\n📊 代码质量检查报告'));
   console.log(chalk.blue('═'.repeat(50)));
-  
+
   const { checks } = results;
-  
+
   for (const [checkName, checkResult] of Object.entries(checks)) {
     console.log(chalk.yellow(`\\n${checkName.toUpperCase()}`));
-    
+
     if (checkResult.status === 'completed') {
       switch (checkName) {
         case 'eslint':
@@ -336,20 +349,20 @@ function printConsoleResults(results) {
           console.log(`  警告: ${checkResult.warningCount}`);
           console.log(`  检查文件: ${checkResult.files}`);
           break;
-          
+
         case 'complexity':
           console.log(`  状态: ${chalk.green('✅ 完成')}`);
           console.log(`  平均复杂度: ${checkResult.averageComplexity.toFixed(2)}`);
           console.log(`  分析文件: ${checkResult.filesAnalyzed}`);
           console.log(`  高复杂度文件: ${checkResult.highComplexityFiles}`);
           break;
-          
+
         case 'security':
           console.log(`  状态: ${chalk.green('✅ 完成')}`);
           console.log(`  安全问题: ${checkResult.totalIssues}`);
           console.log(`  问题文件: ${checkResult.filesWithIssues}`);
           break;
-          
+
         case 'dependencies':
           console.log(`  状态: ${chalk.green('✅ 完成')}`);
           console.log(`  总依赖数: ${checkResult.totalDependencies}`);
@@ -362,116 +375,138 @@ function printConsoleResults(results) {
       console.log(`  状态: ${chalk.red('❌ 失败')} - ${checkResult.error}`);
     }
   }
-  
+
   // 计算总体健康分数
   const healthScore = calculateHealthScore(checks);
   console.log(`\\n${chalk.blue('总体健康分数')}: ${healthScore}/100`);
-  
+
   if (healthScore >= 80) {
-    console.log(chalk.green('🎉 代码质量良好！'));
+    console.log(chalk.green('🎉 代码质量良好!'));
   } else if (healthScore >= 60) {
-    console.log(chalk.yellow('⚠️  代码质量一般，建议改进'));
+    console.log(chalk.yellow('⚠️  代码质量一般,建议改进'));
   } else {
-    console.log(chalk.red('❌ 代码质量较差，需要重点关注'));
+    console.log(chalk.red('❌ 代码质量较差,需要重点关注'));
   }
 }
 
 function calculateHealthScore(checks) {
   let totalScore = 0;
   let checkCount = 0;
-  
+
   for (const [checkName, checkResult] of Object.entries(checks)) {
     if (checkResult.status === 'completed') {
       let score = 0;
-      
+
       switch (checkName) {
         case 'eslint':
           score = Math.max(0, 100 - (checkResult.errorCount * 5) - (checkResult.warningCount * 2));
           break;
-          
+
         case 'complexity':
           score = Math.max(0, 100 - (checkResult.highComplexityFiles * 10));
           break;
-          
+
         case 'security':
           score = Math.max(0, 100 - (checkResult.totalIssues * 15));
           break;
-          
+
         case 'dependencies':
           score = Math.max(0, 100 - (checkResult.outdatedDependencies * 5));
           break;
       }
-      
+
       totalScore += score;
       checkCount++;
     }
   }
-  
+
   return checkCount > 0 ? Math.round(totalScore / checkCount) : 0;
 }
 
 async function findJavaScriptFiles(dir) {
   const files = [];
   const entries = await fs.readdir(dir, { withFileTypes: true });
-  
+
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
-    
-    if (entry.isDirectory() && !entry.name.startsWith('.')) {
+
+    if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
       const subFiles = await findJavaScriptFiles(fullPath);
       files.push(...subFiles);
     } else if (entry.isFile() && entry.name.match(/\.(js|ts|jsx|tsx)$/)) {
       files.push(fullPath);
     }
   }
-  
+
   return files;
+}
+
+function globToRegex(glob) {
+  // 支持 ** 跨目录、* 单段、? 单字符的简化 glob
+  let re = glob.replace(/[.+^${}()|[\]\\]/g, ch => '\\' + ch);
+  re = re.replace(/\*\*/g, '\u0000');
+  re = re.replace(/\*/g, '[^/]*');
+  re = re.replace(/\?/g, '[^/]');
+  re = re.replace(/\u0000\//g, '(?:.*/)?');
+  re = re.replace(/\/\u0000/g, '/.*');
+  re = re.replace(/\u0000/g, '.*');
+  return new RegExp('^' + re + '$');
+}
+
+async function loadComplexityConfig(targetPath) {
+  const configPath = path.join(targetPath, '.complexityrc.json');
+  if (!(await fs.pathExists(configPath))) return {};
+  try {
+    return await fs.readJson(configPath);
+  } catch {
+    return {};
+  }
 }
 
 function analyzeComplexity(filePath) {
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split('\n');
-  
+
   let complexity = 0;
   const issues = [];
-  
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    
+
     // 检查循环复杂度
     if (line.match(/\b(if|for|while|do|switch|case|catch)\b/)) {
       complexity++;
     }
-    
-    // 检查嵌套层次（使用原始行而非 trimmed 行）
+
+    // 检查嵌套层次(使用原始行而非 trimmed 行)
     const indentLevel = lines[i].match(/^\s*/)?.[0].length || 0;
     if (indentLevel > 16) {
       issues.push(`第${i + 1}行: 缩进过深 (${indentLevel}级)`);
     }
-    
+
     // 检查行长度
     if (line.length > 100) {
       issues.push(`第${i + 1}行: 行过长 (${line.length}字符)`);
     }
   }
-  
+
   return { complexity, issues };
 }
 
 async function analyzeSecurity(filePath) {
   const content = fs.readFileSync(filePath, 'utf8');
   const securityIssues = [];
-  
+
   // 检查常见的安全问题
   const patterns = [
-    { regex: /eval\s*\(/g, issue: '使用eval函数，存在安全风险' },
-    { regex: /innerHTML\s*=/g, issue: '使用innerHTML，可能存在XSS风险' },
-    { regex: /document\.write\s*\(/g, issue: '使用document.write，已废弃且有安全风险' },
-    { regex: /setTimeout\s*\(['"][^'"]*['"]/, issue: '使用setTimeout字符串参数，可能有安全风险' },
-    { regex: /setInterval\s*\(['"][^'"]*['"]/, issue: '使用setInterval字符串参数，可能有安全风险' },
-    { regex: /\$\{[^}]*\}/g, issue: '使用模板字符串拼接，注意SQL注入风险' }
+    { regex: /eval\s*\(/g, issue: '使用eval函数,存在安全风险' },
+    { regex: /innerHTML\s*=/g, issue: '使用innerHTML,可能存在XSS风险' },
+    { regex: /document\.write\s*\(/g, issue: '使用document.write,已废弃且有安全风险' },
+    { regex: /setTimeout\s*\(['"][^'"]*['"]/, issue: '使用setTimeout字符串参数,可能有安全风险' },
+    { regex: /setInterval\s*\(['"][^'"]*['"]/, issue: '使用setInterval字符串参数,可能有安全风险' },
+    { regex: /\$\{[^}]*\}/g, issue: '使用模板字符串拼接,注意SQL注入风险' }
   ];
-  
+
   for (const pattern of patterns) {
     const matches = content.match(pattern.regex);
     if (matches) {
@@ -482,16 +517,24 @@ async function analyzeSecurity(filePath) {
       });
     }
   }
-  
+
   return securityIssues;
 }
 
 async function checkOutdatedDependencies(targetPath) {
+  // npm outdated exits 1 when outdated packages EXIST - stdout still carries the JSON.
+  // Salvage it from the error instead of returning [].
   try {
     const { stdout } = await execAsync('npm outdated --json', { cwd: targetPath });
     const outdated = JSON.parse(stdout);
     return Object.keys(outdated);
   } catch (error) {
+    if (error.stdout) {
+      try {
+        const outdated = JSON.parse(error.stdout);
+        return Object.keys(outdated);
+      } catch { /* fall through */ }
+    }
     return [];
   }
 }
@@ -505,10 +548,19 @@ export {
   runESLintCheck,
   runComplexityCheck,
   runSecurityCheck,
-  runDependencyCheck
+  runDependencyCheck,
+  globToRegex,
+  loadComplexityConfig
 };
 
-// Only parse CLI if run directly
-if (process.argv[1] && process.argv[1].endsWith('code-quality-checker/index.js')) {
+// Only parse CLI if run directly (realpath comparison survives bin symlinks like `cqc`)
+const isMain = (() => {
+  try {
+    return process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+if (isMain) {
   program.parse();
 }
