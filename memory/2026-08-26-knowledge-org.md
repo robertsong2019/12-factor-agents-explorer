@@ -27,3 +27,10 @@
 - MEMORY 反映真实状态：✓（所有数字 collect/commit 双验）
 - HEARTBEAT 可操作：✓（C517 候选优先级明确、勘误事项显式标注待办）
 - 编辑事故预防：本轮 edit 工具原子失败一次（7 处批量中 1 处 oldText 不匹配→全部未应用），改用单批 5 处+精确 sed 定位+python 替换三段式完成——同 insight #252 stale-base 教训的正面应用
+
+## 02:05 重复触发附录（第 2 次触发，幂等处理）
+
+- **判定**：本 cron 02:00 已完成全部四步（MEMORY/HEARTBEAT/knowledge-org 笔记/commit 168b2b1），02:05 为重复投递（同 08-22/08-25 essay 模式，家族第 4 例 → error-patterns.md 已记 + TOOLS.md 新增永久幂等三查规则）
+- **幂等核查**：MEMORY.md 头部 Current Focus (2026-08-26) ✓ / HEARTBEAT.md "August 26, 2026 — 02:00 AM update" ✓ / commit 168b2b1 在库 ✓ → 未重做
+- **本轮真实增量**：补 MEMORY.md 漏记的 **AI×Neuro #22**（突触稳态可塑性↔BN，08-25 22:30 发生，02:00 轮漏整合）——追加至 08-25 晚 code-lab arc 节末尾
+- **防覆盖确认**：memory_graph.py 并发会话未提交改动未触碰（C508 纪律维持）
