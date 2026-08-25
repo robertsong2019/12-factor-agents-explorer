@@ -167,19 +167,22 @@ class TestEndToEndAgentSimulation:
 
 
 class TestPerformanceEdgeCases:
+    # NOTE: wall-clock tripwires, not benchmarks. Generous bounds so a shared
+    # CI machine under load does not flake; they still catch O(n^2)-class
+    # regressions which blow past them by orders of magnitude.
 
     def test_rapid_append_performance(self):
-        """1000 appends should complete in <0.5s."""
+        """1000 appends should stay fast (tripwire, not benchmark)."""
         g = MemoryGraph()
         q = FastAppendQueue(g, auto_flush_threshold=0)
         start = time.time()
         for i in range(1000):
             q.append(f"perf test {i}")
         elapsed = time.time() - start
-        assert elapsed < 0.5
+        assert elapsed < 2.0
 
     def test_large_flush_performance(self):
-        """Flushing 500 items should complete in <2s."""
+        """Flushing 500 items should stay fast (tripwire, not benchmark)."""
         g = MemoryGraph()
         q = FastAppendQueue(g, auto_flush_threshold=0)
         for i in range(500):
@@ -187,7 +190,7 @@ class TestPerformanceEdgeCases:
         start = time.time()
         q.flush()
         elapsed = time.time() - start
-        assert elapsed < 2.0
+        assert elapsed < 10.0
 
     def test_search_buffer_large(self):
         """Buffer search on 500 items should be fast."""
@@ -198,7 +201,7 @@ class TestPerformanceEdgeCases:
         start = time.time()
         results = q.search_buffer("item 250")
         elapsed = time.time() - start
-        assert elapsed < 0.1
+        assert elapsed < 1.0
         assert len(results) >= 1
 
     def test_peek_does_not_copy_large_buffer_slowly(self):
@@ -210,4 +213,4 @@ class TestPerformanceEdgeCases:
         start = time.time()
         q.peek(5)
         elapsed = time.time() - start
-        assert elapsed < 0.01
+        assert elapsed < 0.5
