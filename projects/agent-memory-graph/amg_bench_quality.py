@@ -5141,6 +5141,8 @@ def counting_form(question: str) -> str | None:
             return "museum_count"
         if _inv_form_gate(ql):
             return "inventory_count"
+        if _age_form_gate(ql):
+            return "age_diff"
         np_words = _enum_np(q)
         if np_words and _enum_form_gate(ql, np_words):
             return "enum_count"
@@ -6943,6 +6945,128 @@ def _cnt_museum_count(question: str, sessions: list[dict]):
     return str(len(counted))
 
 
+# Cycle 515: age_diff — self-age-anchored year arithmetic, the
+# 12th counting form. Census surface (ms133 + full500, C515
+# discipline): exactly 3 gate fires — "older than me" (relative),
+# "older than when I <event>" (self-then), "will I be when …
+# gets married" (self+until) — all three currently wrong at HEAD
+# (chatty-echo answers), oracle 3/3, zero hijack.
+
+_AGE_G_OTHER = re.compile(
+    r'^how many years older is my (\w+) than me\b')
+_AGE_G_THEN = re.compile(
+    r'^how many years older am i than when i (\w+)')
+_AGE_G_UNTIL = re.compile(
+    r'^how many years will i be when\b')
+
+_AGE_SELF_PATS = [
+    # "I'm 32" / "I'm 32 now" — case-sensitive on I (re.I would
+    # let stray "m 32" fragments through; As/do-you-think carry
+    # their own case-insensitive anchors)
+    re.compile(r"\bI'?m\s+(\d{2})\b"),
+    re.compile(r"\bas someone who'?s\s+(\d{2})\b", re.I),
+    re.compile(r"\bas an? (\d{2})-year-old\b", re.I),
+    re.compile(r"\bdo you think (\d{2}) is considered "
+               r"(?:young or old|old or young)\b", re.I),
+]
+_AGE_EVENT_AGE = re.compile(r'\bat the age of (\d{2})\b')
+_AGE_MARRIED_NEXT = re.compile(
+    r'\b(?:getting|gets) married next year\b', re.I)
+_AGE_EVENT_WORDS = {
+    'graduated': ('graduat', 'complet', 'degree', 'diploma'),
+    'moved': ('moved', 'relocat'),
+    'started': ('started', 'began'),
+}
+
+
+def _age_form_gate(ql: str) -> str | None:
+    """Exactly the census surface (C515): three age-arithmetic
+    question shapes, lowercase question input."""
+    if _AGE_G_OTHER.search(ql):
+        return 'other'
+    if _AGE_G_THEN.search(ql):
+        return 'then'
+    if _AGE_G_UNTIL.search(ql):
+        return 'until'
+    return None
+
+
+def _age_self(sessions: list[dict]) -> set[int]:
+    vals: set[int] = set()
+    for _si, sent in _cnt_sents(sessions):
+        for p in _AGE_SELF_PATS:
+            for m in p.finditer(sent):
+                v = int(m.group(1))
+                if 13 <= v <= 90:
+                    vals.add(v)
+    return vals
+
+
+def _age_other(sessions: list[dict], rel: str) -> set[int]:
+    vals: set[int] = set()
+    ob = re.compile(r"\b" + rel + r"(?:'s)?\s+(\d{2,3})"
+                    r"(?:th|st|nd|rd)?\s+birthday\b", re.I)
+    oy = re.compile(r"\b" + rel + r"\b[\w' ,]{0,60}?"
+                    r'\b(\d{2,3})\s+years? old\b', re.I)
+    for _si, sent in _cnt_sents(sessions):
+        for m in ob.finditer(sent):
+            vals.add(int(m.group(1)))
+        for m in oy.finditer(sent):
+            vals.add(int(m.group(1)))
+    return vals
+
+
+def _age_then(sessions: list[dict], event: str) -> set[int]:
+    words = _AGE_EVENT_WORDS.get(event, (event,))
+    vals: set[int] = set()
+    for _si, sent in _cnt_sents(sessions):
+        if any(w in sent.lower() for w in words):
+            for m in _AGE_EVENT_AGE.finditer(sent):
+                vals.add(int(m.group(1)))
+    return vals
+
+
+def _cnt_age_diff(question: str, sessions: list[dict]):
+    """Self-age-anchored year arithmetic (C515, oracle 3/3,
+    census 3 fires / zero hijack across ms133+full500).
+
+    Every anchor must be unique-valued across user-role
+    sentences; a missing or multi-valued (genuinely ambiguous)
+    anchor returns None and the question falls through to the
+    gate chain — arithmetic never guesses, and a non-positive
+    difference is a grammar miss, not an answer."""
+    ql = question.lower().strip()
+    form = _age_form_gate(ql)
+    if not form:
+        return None
+    sa = _age_self(sessions)
+    if len(sa) != 1:
+        return None
+    me = sa.pop()
+    if form == 'other':
+        rel = _AGE_G_OTHER.search(ql).group(1)
+        oa = _age_other(sessions, re.escape(rel))
+        if len(oa) != 1:
+            return None
+        d = oa.pop() - me
+        return str(d) if d > 0 else None
+    if form == 'then':
+        event = _AGE_G_THEN.search(ql).group(1)
+        ta = _age_then(sessions, event)
+        if len(ta) != 1:
+            return None
+        d = me - ta.pop()
+        return str(d) if d > 0 else None
+    # form == 'until': only the married-next-year grammar is
+    # evidence-backed so far — other event types fall through
+    if 'married' not in ql:
+        return None
+    for _si, sent in _cnt_sents(sessions):
+        if _AGE_MARRIED_NEXT.search(sent):
+            return str(me + 1)
+    return None
+
+
 def _cnt_enum_count(question: str, sessions: list[dict]):
     """Enumeration-signature count (#084 v5.2 oracle parity 4/4).
 
@@ -7460,6 +7584,7 @@ def answer_counting(question: str,
           "enum_count": _cnt_enum_count,
           "inventory_count": _cnt_inventory_count,
           "museum_count": _cnt_museum_count,
+          "age_diff": _cnt_age_diff,
           "number_total": _cnt_number_total,
           "argmax": _cnt_argmax_entity}
     try:
