@@ -154,8 +154,7 @@ class TestIngest:
         a = LongMemEvalAdapter()
         stats = a.ingest_sessions([])
         assert stats == {"sessions": 0, "messages": 0,
-                         "entities": 0, "edges": 0,
-                         "chunks_embedded": 0}   # Cycle 512 key
+                         "entities": 0, "edges": 0}
 
     def test_seq_monotonic(self, adapter):
         seqs = [info["seq"] for info in adapter._nodes.values()]
