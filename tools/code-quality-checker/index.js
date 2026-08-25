@@ -31,6 +31,8 @@ program
   .option('--security', '检查安全问题')
   .option('--dependencies', '检查依赖安全')
   .option('--all', '运行所有检查')
+  .option('--fail-on <severity>', 'CI 门控：发现问题时 exit 1（error=安全问题/ESLint 错误；warning=再含告警级）', 'off')
+  .option('--min-score <score>', 'CI 门控：健康分数低于此值时 exit 1（0-100）')
   .action(async (targetPath, options) => {
     try {
       console.log(chalk.blue('🔍 开始代码质量检查...'));
@@ -67,6 +69,35 @@ program
       // 输出结果
       outputResults(results, options.format, options.output);
 
+      // CI 门控退出码
+      const failOn = options.failOn;
+      if (failOn && failOn !== 'off') {
+        if (!['error', 'warning'].includes(failOn)) {
+          console.error(chalk.red(`❌ 无效的 --fail-on 等级: ${failOn}（可选 error | warning）`));
+          process.exit(1);
+        }
+        const completed = Object.values(results.checks).filter(c => c.status === 'completed');
+        const hasError = completed.some(c => (c.errorCount > 0) || (c.totalIssues > 0));
+        const hasWarning = completed.some(c =>
+          (c.warningCount > 0) || (c.highComplexityFiles > 0) || (c.outdatedDependencies > 0));
+        if ((failOn === 'error' && hasError) || (failOn === 'warning' && (hasError || hasWarning))) {
+          console.error(chalk.red(`🚫 --fail-on ${failOn} 触发：存在未达标问题`));
+          process.exit(1);
+        }
+      }
+      if (options.minScore !== undefined) {
+        const min = Number(options.minScore);
+        if (!Number.isFinite(min) || min < 0 || min > 100) {
+          console.error(chalk.red('❌ 无效的 --min-score（需 0-100）'));
+          process.exit(1);
+        }
+        const score = calculateHealthScore(results.checks);
+        if (score < min) {
+          console.error(chalk.red(`🚫 健康分数 ${score} 低于阈值 ${min}`));
+          process.exit(1);
+        }
+      }
+      
     } catch (error) {
       console.error(chalk.red('❌ 检查失败:'), error.message);
       process.exit(1);
@@ -197,9 +228,9 @@ async function runESLintCheck(targetPath) {
 
 async function runComplexityCheck(targetPath) {
   console.log(chalk.yellow('🧮 运行代码复杂度检查...'));
-  
+
   try {
-    // 使用简单的复杂度分析（.complexityrc.json 可配置阈值/忽略/扩展名）
+    // 使用简单的复杂度分析(.complexityrc.json 可配置阈值/忽略/扩展名)
     const config = await loadComplexityConfig(targetPath);
     const maxComplexity = typeof config.maxComplexity === 'number' ? config.maxComplexity : 10;
     const ignorePatterns = (Array.isArray(config.ignoreFiles) ? config.ignoreFiles : []).map(globToRegex);

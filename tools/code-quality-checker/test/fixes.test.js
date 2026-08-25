@@ -14,6 +14,12 @@ import {
 
 const INDEX = path.resolve('index.js');
 
+// node --test IPC protocol corruption guard (same failure family as 2026-08-18 agent-task-orchestrator):
+// in-process check functions console.log heavily; interleaved stdout corrupts the runner's
+// structured-clone channel ("Unable to deserialize cloned data"). Silence here — CLI spawn
+// tests capture child output via spawnSync, unaffected.
+console.log = () => {};
+
 async function mkProject(files) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cqc-fix-'));
   for (const [rel, content] of Object.entries(files)) {
@@ -203,5 +209,69 @@ describe('globToRegex', () => {
   it('dots are literal', () => {
     const re = globToRegex('a.js');
     assert.ok(!re.test('aXjs'));
+  });
+});
+
+describe('fix5: CI gating (--fail-on / --min-score)', () => {
+  function cqc(args, cwd) {
+    return spawnSync(process.execPath, [INDEX, 'check', ...args], { encoding: 'utf8', cwd });
+  }
+
+  it('clean project exits 0 with --fail-on error', async () => {
+    const dir = await mkProject({ 'a.js': 'const a = 1;' });
+    const res = cqc([dir, '--security', '--fail-on', 'error']);
+    assert.equal(res.status, 0, `stderr: ${res.stderr}`);
+    await fs.remove(dir);
+  });
+
+  it('security issue triggers exit 1 with --fail-on error', async () => {
+    const dir = await mkProject({ 'a.js': 'eval("1")' });
+    const res = cqc([dir, '--security', '--fail-on', 'error']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr, /--fail-on error 触发/);
+    await fs.remove(dir);
+  });
+
+  it('high complexity alone does NOT trigger --fail-on error but does trigger warning', async () => {
+    const branchy = Array.from({ length: 15 }, (_, i) => `if (x${i}) {}`).join('\n');
+    const dir = await mkProject({ 'a.js': branchy });
+    const errLevel = cqc([dir, '--complexity', '--fail-on', 'error']);
+    assert.equal(errLevel.status, 0);
+    const warnLevel = cqc([dir, '--complexity', '--fail-on', 'warning']);
+    assert.equal(warnLevel.status, 1);
+    await fs.remove(dir);
+  });
+
+  it('skipped checks do not trigger failures', async () => {
+    const dir = await mkProject({ 'a.js': 'const a = 1;' }); // no .eslintrc → eslint skipped
+    const res = cqc([dir, '--eslint', '--fail-on', 'warning']);
+    assert.equal(res.status, 0);
+    await fs.remove(dir);
+  });
+
+  it('invalid --fail-on level exits 1 with message', async () => {
+    const dir = await mkProject({ 'a.js': 'const a = 1;' });
+    const res = cqc([dir, '--security', '--fail-on', 'bogus']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr, /无效的 --fail-on/);
+    await fs.remove(dir);
+  });
+
+  it('--min-score 100 passes clean project, fails eval project', async () => {
+    const clean = await mkProject({ 'a.js': 'const a = 1;' });
+    assert.equal(cqc([clean, '--security', '--min-score', '100']).status, 0);
+    await fs.remove(clean);
+    const dirty = await mkProject({ 'a.js': 'eval("1")' });
+    const res = cqc([dirty, '--security', '--min-score', '100']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr, /低于阈值/);
+    await fs.remove(dirty);
+  });
+
+  it('invalid --min-score range exits 1', async () => {
+    const dir = await mkProject({ 'a.js': 'const a = 1;' });
+    const res = cqc([dir, '--security', '--min-score', '150']);
+    assert.equal(res.status, 1);
+    await fs.remove(dir);
   });
 });
