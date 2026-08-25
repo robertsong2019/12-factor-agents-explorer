@@ -1169,6 +1169,24 @@ class LongMemEvalAdapter:
             gate = "entropy"
         else:
             gate = "answer"
+            # C516: common-noun restrictors (violin/football/iPad/
+            # uncle swaps) — placed at the FABRICATION point: every
+            # specialized gate (counting/pp_duration/where/recall)
+            # had its claim first; an absent asked-about object
+            # noun at the answer path means sibling-driven retrieval
+            # is about to fabricate. Gate label stays neg_exist.
+            if self.neg_exist:
+                hay = "\n".join(
+                    " ".join(str(t.get("content", ""))
+                             for t in s["turns"])
+                    for s in self._counting_sessions())
+                missing_c = common_noun_missing(question, hay)
+                if missing_c:
+                    meta["gate"] = "neg_exist"
+                    meta["abstained"] = True
+                    meta["neg_exist_entity"] = missing_c
+                    meta["neg_exist_kind"] = "common"
+                    return ABSTAIN_ANSWER, meta
         meta["gate"] = gate
         if gate != "answer":
             meta["abstained"] = True
@@ -4343,6 +4361,176 @@ def negative_existence(question: str,
     for e in ents:
         if not re.search(rf"\b{re.escape(e.lower())}\b", tl):
             return e
+    return None
+
+
+# ── Cycle 516: negative-existence, COMMON-noun restrictors ──
+# C513's gate is proper-noun-only. The LME _abs trap family also
+# swaps the asked-about OBJECT NOUN (violin vs guitar, football vs
+# baseball, iPad vs iPhone, uncle vs niece, egg tarts, table
+# tennis): the sibling drives retrieval, every gate fabricates.
+# Absent common noun in an object-asking first-person question
+# = same presupposition failure. Census v1→v6 over full-500
+# (170→104→33→8→6 fires; false-fire forensics drove every stop):
+#   * verbs paraphrase freely ("repotted"/"acquire"/"sold" absent
+#     is NOT presupposition failure) → VERB_STOP + *ed/*ing suffix
+#     heuristic with noun exceptions
+#   * event-CLASS nouns (ceremonies/conferences) — corpora name
+#     the specific event instead ("my graduation")
+#   * hyphen/digit tokens paraphrase ("week-long", "pre-1920") →
+#     skipped as candidates; corpus hyphens joined for matching
+#     (home-grown ~ homegrown)
+#   * modifiers drop legitimately ("music albums" corpus "albums")
+#     → compounds are NOT checked at all (sibling-signature
+#     separation falsified: adjectives precede trap nouns too —
+#     killed pre-implementation, C510 virtual-flip discipline)
+#   * typo tolerance: len>=7 with Levenshtein<=1 to any corpus
+#     word suppressed ("buisiness"/"business")
+# Final census: 6 fires / 500 — 5 abs-GT (all currently wrong),
+# 1 real-GT paraphrase (homegrown→locally grown) currently wrong
+# via pref-gate anyway → wrong→wrong, zero hijack.
+_NEG_EXIST_COMMON_STOP = frozenset("""
+how many much long often old far
+many few lot lots thing things stuff kind sort
+there here now then today yesterday tomorrow
+when which where what who why ago order
+number total first second third last past
+minute minutes hour hours day days week weeks month months year years time times
+page pages amount count level
+money color price cost name
+me my mine i you your
+did do does have has had was were will would can could should is are be been am
+the a an of for with to in on at from by or and but if as than
+between without within during until since about after before while over under into onto near across through
+weekend weekends family
+this that these those
+different various other more most less just only even also
+very really quite some any each every all both
+one two three four five six seven eight nine ten eleven twelve
+currently initially instead regularly usually recently already
+finally actually typically normally
+""".split())
+
+_NEG_EXIST_VERB_STOP = frozenset("""
+graduate graduated pass passed attending attend attended
+participate participated flied fly flew love loved cancel cancelled
+wear worn save submit submitted complete completed use used reach
+need book booked meet met get got give gave buy bought purchase
+play played watch watched finish finished start started spend spent
+dedicate practice practicing bake baked lead led try tried
+collect collecting add added live living work working move moved
+present presented study studied learn learned plan planning make made
+take took see saw go went gone come came keep kept think worth
+reading leading making view own gets acquire inherit repaint arrive sold
+pick serve left read
+""".split())
+
+_NEG_EXIST_ADJ_STOP = frozenset("""
+earliest latest typical consecutive minimum maximum formal initial
+significant favorite excluding previous
+""".split())
+
+_NEG_EXIST_EVENT_CLASS = frozenset("""
+ceremony ceremonies conference conferences festival festivals
+party parties meeting meetings gathering gatherings meetup meetups
+""".split())
+
+_NEG_EXIST_NOUN_ED_ING = frozenset("""
+seed speed feed bed hundred thousand morning evening wedding
+something anything nothing
+""".split())
+
+_NEG_EXIST_OBJECT_FORM_RE = re.compile(
+    r"^how (many|much|long|often|old|far)"
+    r"|^(what|when|where|which) .{0,40}\bI\b",
+    re.I)
+
+
+def _neg_exist_verbish(tok: str) -> bool:
+    """Verb-surface heuristic (census-built): STOP list + *ed/*ing."""
+    if tok in _NEG_EXIST_VERB_STOP:
+        return True
+    if tok in _NEG_EXIST_NOUN_ED_ING:
+        return False
+    return len(tok) > 4 and (tok.endswith('ed') or tok.endswith('ing'))
+
+
+def _neg_exist_forms(tok: str) -> list[str]:
+    """Corpus surface forms for a question token (stem-both-ways
+    + cross-POS derivational tolerance: 'visit' matches 'visited'/
+    'visiting' — corpus legitimately uses the verb where the
+    question says the noun; derivational misses are safe (no
+    fire), derivational false-fires would be hijacks)."""
+    forms = [tok, tok + 's', tok + 'es', tok + 'ed', tok + 'd',
+             tok + 'ing']
+    if tok.endswith('e'):
+        forms.extend([tok[:-1] + 'ed', tok[:-1] + 'ing'])
+    if tok.endswith('ies'):
+        forms.append(tok[:-3] + 'y')
+    if tok.endswith('s'):
+        forms.append(tok[:-1])
+    if tok.endswith('es'):
+        forms.append(tok[:-2])
+    return forms
+
+
+def _neg_exist_lev1(a: str, b: str) -> bool:
+    """Levenshtein distance <= 1 with early exit."""
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la == lb:
+        return sum(1 for x, y in zip(a, b) if x != y) <= 1
+    if la > lb:
+        a, b, la, lb = b, a, lb, la
+    i = 0
+    while i < la and a[i] == b[i]:
+        i += 1
+    return a[i:] == b[i + 1:]
+
+
+def common_noun_missing(question: str,
+                        haystack_text: str) -> str | None:
+    """First absent COMMON-noun restrictor, or None.
+
+    Complements :func:`negative_existence` (proper nouns): scans
+    lowercase content tokens of first-person object-asking
+    questions; a token absent from the FULL haystack (plural/
+    hyphen/typo tolerant) means the asked-about object was never
+    mentioned — presupposition failure, abstain whatever the
+    sibling-driven retrieval confidence.
+    """
+    if not _NEG_EXIST_FIRST_PERSON_RE.search(question):
+        return None
+    if not _NEG_EXIST_OBJECT_FORM_RE.search(question):
+        return None
+    q = re.sub(r"'([^']{2,40})'", " ", question)  # quoted titles out
+    q = re.sub(r"(\w+)'s\b", r"\1", q)          # uncle's -> uncle
+    toks = re.findall(r"[A-Za-z][A-Za-z0-9-]*", q)
+    tl = haystack_text.lower()
+    tl_nohy = tl.replace('-', '')
+    tl_words = None
+    for t in toks:
+        tok = t.lower()
+        if (not t[0].islower() or len(tok) < 3
+                or tok in _NEG_EXIST_COMMON_STOP
+                or tok in _NEG_EXIST_ADJ_STOP
+                or tok in _NEG_EXIST_EVENT_CLASS
+                or '-' in tok or any(c.isdigit() for c in tok)
+                or _neg_exist_verbish(tok)):
+            continue
+        pats = [rf"\b{re.escape(f)}\b" for f in _neg_exist_forms(tok)]
+        if (any(re.search(p, tl) for p in pats)
+                or re.search(rf"\b{re.escape(tok)}\b", tl_nohy)):
+            continue
+        if len(tok) >= 7:  # typo tolerance (buisiness ~ business)
+            if tl_words is None:
+                tl_words = set(re.findall(r"[a-z]{7,}", tl))
+            if any(_neg_exist_lev1(tok, w) for w in tl_words):
+                continue
+        return tok
     return None
 
 
