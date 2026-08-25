@@ -1111,7 +1111,12 @@ class LongMemEvalAdapter:
             meta["counting"] = c_detail
             if c_ans is not None:
                 meta["gate"] = "counting"
-                meta["abstained"] = False
+                # C514: museum_count's zero-venue abstention is a
+                # RESOLVED negative existence, not a fall-through —
+                # no other counting form returns ABSTAIN_ANSWER
+                # today (verified: zero occurrences in the
+                # counting layer), so this is museum-only.
+                meta["abstained"] = c_ans == ABSTAIN_ANSWER
                 return c_ans, meta
 
         # Cycle 468: speaker-recall path — you-addressed "remind me
@@ -5132,6 +5137,8 @@ def counting_form(question: str) -> str | None:
     # ahead of this — brand/scale/descriptor identity is
     # invisible to name/role signatures.
     if re.match(r'^how many\b', q, re.I):
+        if _muv_form_gate(ql):
+            return "museum_count"
         if _inv_form_gate(ql):
             return "inventory_count"
         np_words = _enum_np(q)
@@ -6797,6 +6804,145 @@ def _cnt_inventory_count(question: str,
     return str(_inv_dedup(sigs))
 
 
+# ---------------------------------------------------------------------------
+# Cycle 514: museum_count — venue visitation with a month window
+# (11th counting form). Census: exactly 2 fires on the full-500
+# ("how many different museums or galleries did I visit …", both
+# currently wrong, zero overlap with any other family). Grammar:
+# realized visit verbs + venue identity (Museum-suffix names,
+# quoted titles, gallery-context TitleSeqs) + venue-level date
+# aggregation — the month window is load-bearing: it excludes
+# the January Modern-Art-Museum workshop while keeping the 2/8
+# and 2/15 (15th February) visits. Future/speculative mentions
+# ("I'll check out the National Waterfront Museum") and generic
+# event NPs ("opening night") are rejected at clause level.
+# ---------------------------------------------------------------------------
+
+_MUV_Q_RE = re.compile(
+    r'how many (?:different |other |total |various )*'
+    r'(?:museums?|galleries?)'
+    r'(?: or (?:museums?|galleries?))? did i visit\b', re.I)
+_MUV_MONTH_RE = re.compile(
+    r'\b(?:in|during)(?: the)?(?: month of)?\s+'
+    + '(' + '|'.join(_TA_MONTH_NUM) + r')\w*\b', re.I)
+_MUV_FUTURE_RE = re.compile(
+    r"\b(?:i'?ll|we'?ll|will|might|maybe|planning|looking to"
+    r"|want to|hoping|can't wait|soon|next time|recommend)\b", re.I)
+_MUV_VISIT_RE = re.compile(
+    r"\b(?:visited|visit|attended|attending|was at|were at"
+    r"|took|went to|seen at|saw|met|toured|tour)\b", re.I)
+_MUV_VENUE_RE = re.compile(
+    r"(?:\b(?:to|at|of)\s+|\b(?:visited|saw|attended|toured)\s+)"
+    r"(?:the\s+)?[\"\']?"
+    r"((?:(?:Museum|Gallery)\s+of\s+|(?:[A-Z][\w&'\-]*\s+){1,3})"
+    r"[A-Z][\w&'\-]*)")
+_MUV_EVENT_GEN = frozenset(
+    'opening night workshop class event party show gala fair '
+    'tour lesson session meetup gathering'.split())
+_MUV_CTX_RE = re.compile(
+    r'\b(?:curator|exhibition|exhibit|gallery|galleries|museum'
+    r'|museums|opening night)\b', re.I)
+_MUV_DATE_M_D = re.compile(r'\b(\d{1,2})/(\d{1,2})\b')
+_MUV_DATE_DM = re.compile(
+    r'\b(\d{1,2})(?:st|nd|rd|th)?\s+('
+    + '|'.join(_TA_MONTH_NUM) + r')\w*\b', re.I)
+_MUV_DATE_MD = re.compile(
+    r'\b(' + '|'.join(_TA_MONTH_NUM) + r')\w*\s+'
+    r'(\d{1,2})(?:st|nd|rd|th)?\b', re.I)
+_MUV_DATE_IN = re.compile(
+    r'\b(?:in|during)\s+(' + '|'.join(_TA_MONTH_NUM)
+    + r')\w*\b', re.I)
+
+
+def _muv_form_gate(ql: str) -> bool:
+    """Exactly the census surface: how-many museum/gallery
+    visitation questions (C488 discipline — no wider gate)."""
+    return bool(_MUV_Q_RE.search(ql))
+
+
+def _muv_venue_norm(name: str) -> str:
+    n = name.strip().strip('"\'').strip()
+    if n.lower().startswith('the '):
+        n = n[4:]
+    return re.sub(r'\s+', ' ', n).strip().lower()
+
+
+def _muv_clause_months(cl: str) -> set[int]:
+    months: set[int] = set()
+    for m in _MUV_DATE_DM.finditer(cl):
+        months.add(_TA_MONTH_NUM[m.group(2)[:3].lower()])
+    for m in _MUV_DATE_MD.finditer(cl):
+        months.add(_TA_MONTH_NUM[m.group(1)[:3].lower()])
+    for m in _MUV_DATE_IN.finditer(cl):
+        months.add(_TA_MONTH_NUM[m.group(1)[:3].lower()])
+    for m in _MUV_DATE_M_D.finditer(cl):
+        months.add(int(m.group(1)))      # US M/D per LME authoring
+    return months
+
+
+def _cnt_museum_count(question: str, sessions: list[dict]):
+    """Distinct visited venues inside the question's month
+    window (C514). Venue-level date aggregation: a venue counts
+    iff at least one realized clause dates it inside the window;
+    undated realized mentions never fabricate window membership.
+    Zero venues (window asked or not) → ABSTAIN: the memory
+    never mentioned any qualifying visit — presupposition
+    failure, the honest protocol answer (the _abs twin scores
+    via abstention, not a fabricated "0" — C513's lesson that
+    silence is not a zero claim)."""
+    ql = question.lower().strip()
+    if not _muv_form_gate(ql):
+        return None
+    mq = _MUV_MONTH_RE.search(ql)
+    window = (_TA_MONTH_NUM[mq.group(1)[:3].lower()]
+              if mq else None)
+    venues: dict[str, set[int]] = {}
+    for s in sessions:
+        for t in s.get('turns', []):
+            if t.get('role') != 'user':
+                continue
+            content = t.get('content', '')
+            if not re.search(r'museum|galler|exhibit|curator',
+                             content, re.I):
+                continue        # turn candidacy (same unit as enum)
+            quoted = set(_muv_venue_norm(q) for q in
+                         re.findall(r'["\']([^"\']{2,40})["\']',
+                                    content))
+            for cl in re.split(r'[.;!?]', content):
+                cl = cl.strip()
+                if not cl or _MUV_FUTURE_RE.search(cl):
+                    continue
+                if not _MUV_VISIT_RE.search(cl):
+                    continue
+                for m in _MUV_VENUE_RE.finditer(cl):
+                    name = m.group(1)
+                    if not name:
+                        continue
+                    tail = name.split()[-1].lower()
+                    words = [w.lower() for w in name.split()]
+                    valid = (tail in ('museum', 'gallery',
+                                      'galleries')
+                             or name.startswith('Museum')
+                             or _muv_venue_norm(name) in quoted
+                             or (_MUV_CTX_RE.search(cl)
+                                 and not (set(words)
+                                          & _MUV_EVENT_GEN)))
+                    if not valid:
+                        continue
+                    key = _muv_venue_norm(name)
+                    if len(key) < 4 or key in _MUV_EVENT_GEN:
+                        continue
+                    months = venues.setdefault(key, set())
+                    months |= _muv_clause_months(cl)
+    if window is not None:
+        counted = [k for k, ms in venues.items() if window in ms]
+    else:
+        counted = list(venues)
+    if not counted:
+        return ABSTAIN_ANSWER
+    return str(len(counted))
+
+
 def _cnt_enum_count(question: str, sessions: list[dict]):
     """Enumeration-signature count (#084 v5.2 oracle parity 4/4).
 
@@ -7313,6 +7459,7 @@ def answer_counting(question: str,
           "freq_days": _cnt_freq_days,
           "enum_count": _cnt_enum_count,
           "inventory_count": _cnt_inventory_count,
+          "museum_count": _cnt_museum_count,
           "number_total": _cnt_number_total,
           "argmax": _cnt_argmax_entity}
     try:
