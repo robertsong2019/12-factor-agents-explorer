@@ -38,10 +38,27 @@ class TestAgeDiffGate(unittest.TestCase):
                 "gets married?"),
             "age_diff")
 
-    def test_twin_how_old_rachel_not_claimed(self):
-        # abs twin: starts "How old will Rachel…" — not our gate
+    def test_twin_how_old_rachel_claimed_c518(self):
+        # C518: the abs twin IS claimed now — third-party
+        # until-married; unanchored subject age -> resolved
+        # negative existence -> the counting layer owns abstain
+        self.assertEqual(counting_form(
+            "How old will Rachel be when I get married?"),
+            "age_diff")
+        self.assertEqual(
+            _cnt_age_diff(
+                "How old will Rachel be when I get married?",
+                sess(["I'm 32.",
+                      "My friend Rachel's getting married next year!"])),
+            "I don't know")
+        # anchored subject age falls through (never abstain on
+        # resolvable evidence)
+        self.assertIsNone(_cnt_age_diff(
+            "How old will Rachel be when I get married?",
+            sess(["I'm 32.", "Rachel is 29 years old."])))
+        # non-married how-old-will stays unclaimed
         self.assertIsNone(counting_form(
-            "How old will Rachel be when I get married?"))
+            "How old will Rachel be next year?"))
 
     def test_unit_sum_total_not_stolen(self):
         # unit_sum owns how-many-years-total; age gate must not

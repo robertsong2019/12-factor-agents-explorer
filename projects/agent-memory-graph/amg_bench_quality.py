@@ -1187,6 +1187,16 @@ class LongMemEvalAdapter:
                     meta["neg_exist_entity"] = missing_c
                     meta["neg_exist_kind"] = "common"
                     return ABSTAIN_ANSWER, meta
+                # C518: possessive numeric-attribute compounds
+                # (my 30-gallon tank) — same fabrication point,
+                # same gate label family.
+                miss_num = numeric_compound_missing(question, hay)
+                if miss_num:
+                    meta["gate"] = "neg_exist"
+                    meta["abstained"] = True
+                    meta["neg_exist_entity"] = miss_num
+                    meta["neg_exist_kind"] = "numeric"
+                    return ABSTAIN_ANSWER, meta
         meta["gate"] = gate
         if gate != "answer":
             meta["abstained"] = True
@@ -4440,9 +4450,14 @@ seed speed feed bed hundred thousand morning evening wedding
 something anything nothing
 """.split())
 
+# C518: "At which … did I" enters the same object-asking
+# surface (census: exactly one new fire — "At which university
+# did I present a poster for my undergrad course research
+# project?", undergrad absent, sibling poster/thesis drive the
+# echo; zero hijack, the six C516 fires unchanged).
 _NEG_EXIST_OBJECT_FORM_RE = re.compile(
     r"^how (many|much|long|often|old|far)"
-    r"|^(what|when|where|which) .{0,40}\bI\b",
+    r"|^(?:at which|what|when|where|which) .{0,40}\bI\b",
     re.I)
 
 
@@ -4531,6 +4546,31 @@ def common_noun_missing(question: str,
             if any(_neg_exist_lev1(tok, w) for w in tl_words):
                 continue
         return tok
+    return None
+
+
+# C518: numeric-attribute compounds. "How many fish are there
+# in my 30-gallon tank?" — the user owns a 20-gallon (and an old
+# 10-gallon); "30-gallon" appears NOWHERE. C516 skips hyphen/
+# digit tokens as restrictor candidates (paraphrase-prone), but
+# a POSSESSIVE N-gallon compound is a quantity attribute, not a
+# paraphrasable noun: absent = presupposition failure. Census
+# full-500: 1 fire (the trap), zero hijack — noun-compound
+# generalization deliberately NOT attempted (C510 falsified
+# sibling-signature separation; hyphen tokens stay skipped).
+_GALLON_MY_RE = re.compile(r"\bmy (\d{1,3}) ?-? ?gallons?\b", re.I)
+
+
+def numeric_compound_missing(question: str,
+                             haystack_text: str) -> str | None:
+    """First absent possessive N-gallon compound, or None."""
+    nums = _GALLON_MY_RE.findall(question)
+    if not nums:
+        return None
+    tl = haystack_text.lower()
+    for n in dict.fromkeys(nums):   # question order, deduped
+        if not re.search(rf"\b{n} ?-? ?gallons?\b", tl):
+            return f"{n}-gallon"
     return None
 
 
@@ -5319,6 +5359,13 @@ def counting_form(question: str) -> str | None:
         return "number_total"
     if re.match(r'^which\b', q, re.I) and re.search(r'\bmost\b', ql):
         return "argmax"
+    # C518: age_diff hoisted above the how-many block — its 4th
+    # form starts "how old will … be when I get married"
+    # (census: 1 fire full-500). The three C515 forms are all
+    # "how many …" and disjoint from museum/inventory/enum
+    # signatures, so the hoist is behavior-neutral for them.
+    if _age_form_gate(ql):
+        return "age_diff"
     # C503 (#084): named/role/size enumeration — claims plain
     # "how many X" questions every earlier form left unclaimed.
     # C511: inventory families (kit/instrument/property) claim
@@ -5329,8 +5376,6 @@ def counting_form(question: str) -> str | None:
             return "museum_count"
         if _inv_form_gate(ql):
             return "inventory_count"
-        if _age_form_gate(ql):
-            return "age_diff"
         np_words = _enum_np(q)
         if np_words and _enum_form_gate(ql, np_words):
             return "enum_count"
@@ -7146,6 +7191,12 @@ _AGE_G_THEN = re.compile(
     r'^how many years older am i than when i (\w+)')
 _AGE_G_UNTIL = re.compile(
     r'^how many years will i be when\b')
+# C518: third-party until-married — "How old will Rachel be
+# when I get married?" The trap: Rachel's wedding chatter is in
+# the corpus, Rachel's AGE never is; the echo answers from the
+# wedding session. Census: 1 fire full-500, zero hijack.
+_AGE_G_OTHER_UNTIL = re.compile(
+    r"^how old will (\w+) be when i (?:get|'m getting|got)\s+married\b")
 
 _AGE_SELF_PATS = [
     # "I'm 32" / "I'm 32 now" — case-sensitive on I (re.I would
@@ -7168,7 +7219,7 @@ _AGE_EVENT_WORDS = {
 
 
 def _age_form_gate(ql: str) -> str | None:
-    """Exactly the census surface (C515): three age-arithmetic
+    """Exactly the census surface (C515+C518): four age-arithmetic
     question shapes, lowercase question input."""
     if _AGE_G_OTHER.search(ql):
         return 'other'
@@ -7176,6 +7227,8 @@ def _age_form_gate(ql: str) -> str | None:
         return 'then'
     if _AGE_G_UNTIL.search(ql):
         return 'until'
+    if _AGE_G_OTHER_UNTIL.search(ql):
+        return 'other_until'
     return None
 
 
@@ -7227,6 +7280,19 @@ def _cnt_age_diff(question: str, sessions: list[dict]):
     form = _age_form_gate(ql)
     if not form:
         return None
+    if form == 'other_until':
+        # C518: "How old will Rachel be when I get married?" —
+        # the subject's AGE anchor is the presupposition. Absent
+        # anchor anywhere in the corpus = resolved negative
+        # existence (C514 museum precedent: the counting layer
+        # owns the abstain); anchored = fall through, arithmetic
+        # never guesses (no timing anchor grammar exists yet).
+        subj = _AGE_G_OTHER_UNTIL.search(ql).group(1)
+        if subj in ('i', 'we'):
+            return None
+        if _age_other(sessions, re.escape(subj)):
+            return None
+        return ABSTAIN_ANSWER
     sa = _age_self(sessions)
     if len(sa) != 1:
         return None
