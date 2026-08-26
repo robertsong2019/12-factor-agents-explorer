@@ -259,6 +259,16 @@ export class MultimodalAgent extends BaseAgent {
     
     return 'general';
   }
+  
+  // For testing - make intent history accessible
+  public getIntentHistoryForTest(): Intent[] {
+    return this.intentHistory;
+  }
+  
+  // For testing - make intent classification accessible
+  public classifyIntentForTest(text: string, keywords: string[]): string {
+    return this.classifyIntent(text, keywords);
+  }
 
   // Placeholder methods for other modalities
   private async detectObjects(imageData: Buffer): Promise<string[]> {
