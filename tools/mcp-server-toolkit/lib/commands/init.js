@@ -96,7 +96,7 @@ export async function init(name, options) {
       scripts: {
         build: 'tsc',
         dev: 'tsc --watch',
-        test: 'jest',
+        test: 'tsc && node --test dist/test/*.test.js',
         start: `node dist/index.js`
       },
       keywords: ['mcp', 'server', 'model-context-protocol'],
@@ -107,9 +107,7 @@ export async function init(name, options) {
       },
       devDependencies: {
         '@types/node': '^20.0.0',
-        'typescript': '^5.0.0',
-        jest: '^29.0.0',
-        '@types/jest': '^29.0.0'
+        'typescript': '^5.0.0'
       },
       engines: {
         node: '>=18.0.0'
@@ -136,8 +134,8 @@ export async function init(name, options) {
         declarationMap: true,
         sourceMap: true
       },
-      include: ['src/**/*'],
-      exclude: ['node_modules', 'dist', 'test']
+      include: ['src/**/*', 'test/**/*'],
+      exclude: ['node_modules', 'dist']
     };
 
     await fs.writeJson(path.join(projectDir, 'tsconfig.json'), tsConfig, { spaces: 2 });
@@ -163,6 +161,20 @@ export async function init(name, options) {
     // 创建主服务器文件
     const serverCode = generateServerCode(name, options.type, options.addExample || options.example);
     await fs.writeFile(path.join(projectDir, 'src/index.ts'), serverCode);
+
+    // 创建冒烟测试（npm test 从项目根运行，读 mcp-server.json；编译后位于 dist/test/ 仍正确）
+    const smokeTest = `import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+test('mcp-server.json loads with required fields', () => {
+  const cfg = JSON.parse(readFileSync('mcp-server.json', 'utf8'));
+  assert.ok(cfg.name, 'missing name');
+  assert.ok(cfg.version, 'missing version');
+  assert.ok(['stdio', 'sse', 'stdlib'].includes(cfg.transport), 'bad transport');
+});
+`;
+    await fs.writeFile(path.join(projectDir, 'test/smoke.test.ts'), smokeTest);
 
     // 创建 README
     const readme = generateReadme(name, options);

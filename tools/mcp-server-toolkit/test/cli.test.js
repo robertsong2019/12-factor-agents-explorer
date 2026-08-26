@@ -59,6 +59,26 @@ test('init creates full project structure', () => {
   assert.equal(cfg.transport, 'stdio'); // CLI default
 });
 
+test('init emits a working test wiring in generated project (no dead jest)', () => {
+  const dir = tmp();
+  assert.equal(mcpt(['init', 'wired', '-e'], dir).status, 0);
+  const p = path.join(dir, 'wired');
+
+  const pkg = JSON.parse(fs.readFileSync(path.join(p, 'package.json'), 'utf8'));
+  // 旧病：test:'jest' 无配置无 ts-jest、test/ 被 tsconfig 排除、零测试文件 -> 子项目 npm test 天生 DOA
+  assert.match(pkg.scripts.test, /^tsc && node --test dist\/test\/\*\.test\.js$/);
+  assert.ok(!pkg.devDependencies.jest, 'jest should not be emitted');
+
+  const ts = JSON.parse(fs.readFileSync(path.join(p, 'tsconfig.json'), 'utf8'));
+  assert.ok(ts.include.includes('test/**/*'), 'test dir must compile');
+  assert.ok(!ts.exclude.includes('test'), 'test dir must not be excluded');
+
+  const smoke = fs.readFileSync(path.join(p, 'test', 'smoke.test.ts'), 'utf8');
+  assert.match(smoke, /mcp-server\.json/);
+  // 冒烟测试不得 import 服务器代码 —— src/index.ts 顶层 main() 会连接 stdio，导入即挂起
+  assert.doesNotMatch(smoke, /from '\.\.\/src/);
+});
+
 test('init duplicate dir exits 1', () => {
   const dir = tmp();
   const first = mcpt(['init', 'dup', '-e'], dir);
