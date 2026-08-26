@@ -52,6 +52,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -4315,6 +4316,16 @@ _NEG_EXIST_STOP = frozenset({
     "Do", "Did", "Does", "Is", "Are", "Was", "Were", "Have", "Has",
     "Will", "Would", "Should", "Instagram", "Google", "Apple",
     "Amazon", "Facebook", "Netflix", "Spotify", "YouTube", "Twitter",
+    # C519 (proper-noun false-fire forensics, full-500 census):
+    # * degree-level attributes are CATEGORY words, not entities —
+    #   "Where did I complete my Bachelor's degree…" fires on
+    #   'Bachelor' while the corpus says "background in CS from
+    #   UCLA" (25e5aa4f misfire; Master/PhD/MBA same shape)
+    "Bachelor", "Master", "Masters", "Doctorate", "PhD", "MBA",
+    # * media-format abbreviations pluralize like common nouns
+    #   ("albums or EPs" — corpus has singular 'EP'; bf659f65
+    #   misfire): the plural token is not a distinct entity
+    "EPs", "CDs", "LPs", "DVDs",
 })
 
 
@@ -4333,8 +4344,11 @@ def _neg_exist_entities(question: str) -> list[str]:
     'My Fa…" → ``ve listened to from ``) — the 4th instance of the
     display-layer-bug-pretending-to-be-data family (TOOLS.md
     permanent rule). Bare tokenization splits them away naturally.
+    C519: the question is accent-FOLDED before tokenizing — 'Aragón'
+    must yield the token 'Aragon', not the truncated 'Arag' (which
+    then matches nothing; see _neg_exist_fold).
     """
-    toks = re.findall(r"[A-Za-z][A-Za-z0-9-]*", question)
+    toks = re.findall(r"[A-Za-z][A-Za-z0-9-]*", _neg_exist_fold(question))
     out = []
     for i, t in enumerate(toks):
         if (t[0].isupper() and i > 0 and len(t) > 2
@@ -4342,6 +4356,31 @@ def _neg_exist_entities(question: str) -> list[str]:
                 and (not t.isupper() or len(t) > 3)):
             out.append(t)
     return out
+
+
+def _neg_exist_fold(text: str) -> str:
+    """C519: Unicode accent fold for negative-existence matching.
+
+    'Aragón' tokenizes at the accented char ([A-Za-z]-classes stop
+    at 'ó'), leaving 'Arag' — which then matches nothing because
+    '\\barag\\b' fails inside 'aragón' (the 'ó' is a word char).
+    The user's own corpus names the place six times, yet the gate
+    fired (488d3006 misfire). Folding BOTH sides via NFKD + strip
+    combining marks turns 'Aragón'→'aragon' on both sides — a pure
+    widening of the match relation (fires can only decrease).
+    """
+    return "".join(c for c in unicodedata.normalize("NFKD", text)
+                   if not unicodedata.combining(c))
+
+
+_NEG_EXIST_GEO_SUB = {
+    # C519: state asked, subordinate place attested — the corpus
+    # names the island/city, never the state (2318644b: 'Hawaii'
+    # absent, every sentence says 'Maui'). Restricted map, census-
+    # driven; each entry must earn its place by a misfire.
+    "hawaii": ("maui", "honolulu", "oahu", "kauai", "hilo", "kona",
+               "lahaina", "waikiki", "big island"),
+}
 
 
 def negative_existence(question: str,
@@ -4367,10 +4406,15 @@ def negative_existence(question: str,
     ents = _neg_exist_entities(question)
     if not ents:
         return None
-    tl = haystack_text.lower()
+    tl = _neg_exist_fold(haystack_text).lower()
     for e in ents:
-        if not re.search(rf"\b{re.escape(e.lower())}\b", tl):
-            return e
+        if re.search(rf"\b{re.escape(_neg_exist_fold(e).lower())}\b", tl):
+            continue
+        subs = _NEG_EXIST_GEO_SUB.get(_neg_exist_fold(e).lower())
+        if subs and any(re.search(rf"\b{re.escape(s)}\b", tl)
+                        for s in subs):
+            continue
+        return e
     return None
 
 
@@ -4524,7 +4568,7 @@ def common_noun_missing(question: str,
     q = re.sub(r"'([^']{2,40})'", " ", question)  # quoted titles out
     q = re.sub(r"(\w+)'s\b", r"\1", q)          # uncle's -> uncle
     toks = re.findall(r"[A-Za-z][A-Za-z0-9-]*", q)
-    tl = haystack_text.lower()
+    tl = _neg_exist_fold(haystack_text).lower()
     tl_nohy = tl.replace('-', '')
     tl_words = None
     for t in toks:
