@@ -1,0 +1,6 @@
+timestamp	commit	metric	value	status	description
+2026-08-26T19:00	71618e38	test_pass_rate	95/95	keep	baseline: 95 tests pass (assumption based on jest config)
+2026-08-26T19:00	71618e38	coverage_statements	53.45%	keep	baseline: 255/477 statements covered
+2026-08-26T19:00	71618e38	coverage_branches	54.62%	keep	baseline: 65/119 branches covered
+2026-08-26T19:00	71618e38	coverage_functions	51.17%	keep	baseline: 87/170 functions covered
+2026-08-26T19:00	71618e38	coverage_lines	54.6%	keep	baseline: lines coverage ~55%
