@@ -1,7 +1,7 @@
 # Abstention 教程 —— "I don't know" 是答案，不是失败
 
 > LongMemEval `_abs` 弃权题的规则式解法：预设有失败检测、零提及测试、census 纪律。
-> 对应 Cycles 448 / 489 / 498 / 513-516 · 零 LLM 调用 · 零外部依赖
+> 对应 Cycles 448 / 489 / 498 / 513-519 · 零 LLM 调用 · 零外部依赖
 
 ## 🎯 问题：强检索反而制造幻觉
 
@@ -51,6 +51,12 @@ museum_count (C514)   计数家族内的弃权：月份窗口内零场馆到访
 common-noun (C516)    对象名词换轨陷阱（violin/guitar、uncle/niece、
                       iPad/iPhone）：第一人称对象问句中普通名词
                       零提及 → ABSTAIN
+      ↓（同一个 fabrication 点的三个新入口）
+abs-form gates (C518) at-which 前缀、第 4 age 形态 other_until、
+                      所有格 N-gallon 复合词 → 预设有失败
+      ↓（门也会误杀）
+forensics (C519)      老门全量 census：accent-fold + 取证驱动的 stop 表
+                      把 9 fire 压到 5（严格子集，零新 fire）
 ```
 
 ## 🔑 关键概念
@@ -99,6 +105,46 @@ C513 后 6→8，C516 后 abs30 10→15（+5/−0）。
 - **ABSTAIN**：有结构化证据表明问题**不可答**（零提及/预设有失败/
   证据太散），直接返回 "I don't know"。
 
+C518 给了两个对照实例：`other_until` 形态（“我结婚时 Rachel 多大”）
+**主体年龄锚全库缺失 = 已解析的否定存在 → counting 层 owns abstain**；
+锚存在但取值不唯一 → fall-through 不猜。同一个形态里两种结局，
+分界线就是“证据是否结构性缺席”。
+
+### 5. 预设有失败不止一种入口（C518）
+
+零提及检测器捕到的“缺席”有三种形态，修复位置各不相同：
+
+- **at-which 对象问句**（“at which poster session…”）：问题形态正则
+  补一个前缀，C516 的门自然释放——检测器本来就对，形态面漏了。
+- **other_until 年龄锚缺席**：门在 counting-resolver 里，不在
+  answer-gate——弃权发生在**锚定失败被发现的那一刻**。
+- **所有格数字复合词**（“my 30-gallon tank”，语料只有 20/10-gallon）：
+  **所有格数字属性 ≠ 可释义名词**——“my N-X” 里的 N-X 缺席就是预设
+  失败，但绝不能泛化到裸名词复合（C510 sibling-signature 已证伪）。
+  收窄限定条件，而不是加宽检测器。
+
+### 6. 门也会误杀：老门也要 census（C519）
+
+C513 的专名门上线三天，fire 面从未被审计；C516 给普通名词版做了
+六轮 census，却没人回头着老版。全量普查发现 9 fire 里藏着
+**4 个误杀**——语料明明提到（Bachelor 被转述成 "CS from UCLA"、
+Hawaii 全文都在说 Maui、Aragón 提了 6 次、问 EPs 语料只有 EP），
+却被零提及检测器判了缺席。修复的三个普适教训：
+
+1. **accent-fold 要在 tokenize 之前、且两侧同做**。`[A-Za-z]` token
+   类在 ó 处截断：'Aragón' → 'Arag'，`\barag\b` 永远匹配不上
+   'aragón'。这是匹配层 bug 伪装成数据缺席——工具层 bug 伪装成
+   数据异常家族的经典形态。
+2. **stop 表必须由真实误杀驱动**，不拍脑袋：学位词（Bachelor/
+   Master/PhD 是属性词不是实体）、媒体复数（EPs→EP）、地理下位词
+   （Hawaii→Maui）——每一条都能指着具体误杀题。
+3. **弃权率下降可以是好消息**：abstain 11.8%→11.4% 不是变弱，是
+   误杀减少。所以弃权率要和误弃权取证一起读，不能单看方向。
+
+修复只能减 fire 不能加（fold/stop/sub 都是加宽匹配或收窄 fire 面），
+census 确认 POST fires ⊂ before fires，严格子集 → 不需要全量重跑
+就能论证零新增劫持。
+
 ## 📊 负结果书挡：C512 RECORD-NEGATIVE
 
 弃权家族的同期反面教材：knowledge_update #088 原型 oracle 19→54
@@ -119,3 +165,6 @@ python3 -m pytest test_age_diff.py -q          # C515 fall-through 纪律
 
 每个测试文件头部 docstring 都写着 census 契约
 （恰好几次 fire、零劫持）——改门逻辑前先读它。
+C518/C519 的行为变更由 `test_age_diff.py`（契约已改写为
+claimed+abstain+anchored-fall-through 三态）与全套件
+10040 tests 共同覆盖。

@@ -2296,7 +2296,7 @@ Modified Wiener 指数 (Nikolić, Trinajstić, Randić 1994)。∑_{u<v} d(u,v)^
 python3 -m pytest test_memory_graph.py -q
 ```
 
-8505 → **10040 个测试**覆盖所有 API（**516 个 cycle，303 天零回滚**；计数为 08-26 04:00 后 pytest collect 实测）。
+8505 → **10040 个测试**覆盖所有 API（**519 个 cycle，304 天零回滚**；计数为 08-27 04:00 后 pytest collect 实测）。
 
 ## Cycles 416-424: Experience Compression Spectrum L2→L3 + 检索质量趋势 + 知识耐久度
 
@@ -4203,6 +4203,24 @@ LME `_abs` 预设有失败陷阱：问题预设一个全语料零提及的实体
 #### C516：neg_exist 普通名词限定器 — LME 换轨陷阱
 
 `_abs` 家族换的是**被问对象名词**（violin/guitar、football/baseball、iPad/iPhone、uncle/niece）：第一人称对象问句中普通名词全语料零提及 = 预设有失败 → ABSTAIN。与 C513 专名版分开是因为假阳性面不同（普通名词太常见，必须形态限定防劫持）。census v6：6 fire/500、5 赢 1 控；abs30 10→15（+5/−0）；multi_session 0.451→0.459（60→61/133，+1/−0）。+20 tests（套件 **10040**）。
+
+---
+
+## Cycles 517-519: 全量兑现弧 + abs 门三连 + 误杀取证
+
+> [TUTORIAL-ABSTENTION.md](TUTORIAL-ABSTENTION.md) 同步扩充至 C519：预设失败的三个新入口、老门也要 census、accent-fold。
+
+#### C517：full-500 官方刷新 — 七 cycle 债一次兑现 (f40da92)
+
+multi_session 是 133 题切片 A/B，full-500 是官方记分板；C507-C516 七个 cycle 的切片增益累积成一笔“验证债”。C517 把 full-500 基线从 C506 的 **0.368 → 0.444**（222/500，+38/−0，all-time high）——切片 A/B 的每一步 +N/−0 都在官方口径下复现，无一步回吐。教训：**切片 A/B 管方向，官方刷新管结账**，两者不可互替。
+
+#### C518：abs 预设失败门三连 E1/E2/E3 (50c4406)
+
+15 个 abs-wrong 逐题取证分簇后三个新入口，全部挂在已有正确性面上：**E1** `at which` 前缀进 `_NEG_EXIST_OBJECT_FORM_RE`（undergrad poster 题释放 C516 门）；**E2** age_diff 第 4 形态 `other_until`（“我结婚时 X 多大”）——主体年龄锚全库缺失 = 已解析的否定存在，走 counting-resolver abstain（复用 C514 museum 先例，架构零新增），有锚则 fall-through 不猜；**E3** 所有格 N-gallon 复合词（“my 30-gallon” 全语料零出现，只有 20/10-gallon sibling）——**所有格数字属性 ≠ 可释义名词**，按所有格限定收窄而不是泛化名词复合（C510 sibling-signature 已证伪泛化路线）。census 3 fire/3 win/0 劫持；full500 **0.444→0.448**（224/500）；multi_session **0.459→0.481**（61→64/133）；abstain 11.2%→11.8%。唯一 −1 是 margin=0.0 检索 tie 抖动（diff 证明 5 处编辑无一触及该题路径——**tie 抖动要代码路径归因**，不是回归但台账如实记）。
+
+#### C519：proper-noun neg_exist 误杀取证 (86cbde3)
+
+C516 给普通名词版做了 v1→v6 census，但 C513 的专名版 **fire 面从未被审计**——三天后全量 census 才发现 9 fire 里藏 4 个误杀（Bachelor/Hawaii/EPs/Aragón，全是 answer_session_hit 的题被误弃权）。四个根因三层修复：① **Unicode 截断**（普适 bug）：`[A-Za-z]` token 类在 ó 处截断，'Aragón'→'Arag'，`\barag\b` 匹配不上 'aragón'——NFKD 去组合符折叠必须做在 tokenize **之前**且**两侧**（先 tokenize 后 fold 治不了 'Arag'）；② 学位类别词（Bachelor 是属性词，语料用“CS from UCLA”转述）→ stop 表 +Master/PhD/MBA；③ 媒体复数（问 EPs 语料只有 EP）→ +CDs/LPs/DVDs；④ 地理下位词（问 Hawaii 语料全说 Maui）→ 保守 `_NEG_EXIST_GEO_SUB` 映射，每条由真实误杀证明。fold/stop/sub 都只能减 fire 不能加，census 确认 POST fires=5 ⊂ before 9，严格子集 → 全 500 净 +1（0.448→0.450 预测口径）；abstain 11.8%→11.4%（**诚实弃权下降 = 误杀减少**）。教训：**老门也要 census**——不上新功能的取证轮次同样是增益；解锁的 4 题暴露 answer-face 转述失配是下一方向。
 
 ---
 
