@@ -8,7 +8,7 @@
     "mcpt": "./bin/mcpt.js"
   },
   "scripts": {
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test": "node --test test/*.test.js",
     "lint": "eslint lib bin",
     "dev": "node bin/mcpt.js"
   },
@@ -35,8 +35,7 @@
     "ora": "^8.2.0"
   },
   "devDependencies": {
-    "eslint": "^8.50.0",
-    "jest": "^29.7.0"
+    "eslint": "^8.50.0"
   },
   "engines": {
     "node": ">=16.0.0"

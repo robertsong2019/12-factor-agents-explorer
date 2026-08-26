@@ -60,6 +60,12 @@ export async function init(name, options) {
     process.exit(1);
   }
 
+  const transport = options.type || 'stdio';
+  if (!['stdio', 'sse', 'stdlib'].includes(transport)) {
+    console.log(chalk.red('❌ 无效的传输类型 --type：只能是 stdio | sse | stdlib'));
+    process.exit(1);
+  }
+
   const projectDir = path.resolve(name);
 
   // 检查目录是否已存在
