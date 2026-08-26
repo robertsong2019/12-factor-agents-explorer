@@ -12,6 +12,7 @@
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import { spawnSync } from 'child_process';
 
 const HOME = process.env.HOME || '/root';
 const TEMPLATES_DIR = join(HOME, '.openclaw/workspace/tools/prompt-template-manager/templates');
@@ -48,6 +49,16 @@ function parseVars(args) {
   return vars;
 }
 
+// Guards the write path (and read joins) against path separators/traversal:
+// "a/b" would crash writeFileSync with ENOENT; "../x" escapes TEMPLATES_DIR.
+function validateName(name) {
+  if (!name || !/^[\w][\w.-]*$/.test(name)) {
+    console.error(`Invalid template name: ${JSON.stringify(name)} (allowed: letters, digits, _, ., -)`);
+    process.exit(1);
+  }
+  return name;
+}
+
 switch (command) {
   case 'list':
   case 'ls': {
@@ -61,30 +72,51 @@ switch (command) {
     break;
   }
   case 'show': {
-    const name = args[1];
-    if (!name) { console.error('Usage: ptm show <name>'); process.exit(1); }
+    if (!args[1]) { console.error('Usage: ptm show <name>'); process.exit(1); }
+    const name = validateName(args[1]);
     const p = join(TEMPLATES_DIR, name + '.md');
     if (!existsSync(p)) { console.error(`Template not found: ${name}`); process.exit(1); }
     console.log(readFileSync(p, 'utf-8'));
     break;
   }
   case 'add': {
-    const name = args[1];
-    if (!name) { console.error('Usage: ptm add <name> [content]'); process.exit(1); }
-    const content = args.slice(2).join(' ') || (() => {
+    if (!args[1]) { console.error('Usage: ptm add <name> [content]'); process.exit(1); }
+    const name = validateName(args[1]);
+    const rest = args.slice(2);
+    const force = rest.includes('--force');
+    const content = rest.filter(a => a !== '--force').join(' ') || (() => {
       // Read from stdin if no content provided
       console.error('Enter template content (Ctrl+D to finish):');
       // fd 0, not '/dev/stdin': the path form throws ENXIO when stdin is a pipe
       // in some spawn contexts (e.g. child_process input option)
       return readFileSync(0, 'utf-8');
     })();
-    writeFileSync(join(TEMPLATES_DIR, name + '.md'), content, 'utf-8');
+    const dest = join(TEMPLATES_DIR, name + '.md');
+    if (existsSync(dest) && !force) {
+      console.error(`Template already exists: ${name} (use --force to overwrite)`);
+      process.exit(1);
+    }
+    writeFileSync(dest, content, 'utf-8');
     console.log(`✅ Added template: ${name}`);
     break;
   }
+  case 'edit': {
+    if (!args[1]) { console.error('Usage: ptm edit <name>'); process.exit(1); }
+    const name = validateName(args[1]);
+    const p = join(TEMPLATES_DIR, name + '.md');
+    if (!existsSync(p)) { console.error(`Template not found: ${name}`); process.exit(1); }
+    const editor = process.env.EDITOR || process.env.VISUAL;
+    if (!editor) { console.error('No editor configured: set $EDITOR or $VISUAL'); process.exit(1); }
+    // Split so "code --wait" style editors work; stdio inherit keeps the editor interactive
+    const parts = editor.split(/\s+/);
+    const r = spawnSync(parts[0], [...parts.slice(1), p], { stdio: 'inherit' });
+    if (r.error) { console.error(`Failed to launch editor: ${r.error.message}`); process.exit(1); }
+    process.exit(r.status ?? 0);
+    break;
+  }
   case 'render': {
-    const name = args[1];
-    if (!name) { console.error('Usage: ptm render <name> [key=value ...]'); process.exit(1); }
+    if (!args[1]) { console.error('Usage: ptm render <name> [key=value ...]'); process.exit(1); }
+    const name = validateName(args[1]);
     const p = join(TEMPLATES_DIR, name + '.md');
     if (!existsSync(p)) { console.error(`Template not found: ${name}`); process.exit(1); }
     const vars = parseVars(args.slice(2));
@@ -93,8 +125,8 @@ switch (command) {
     break;
   }
   case 'export': {
-    const name = args[1];
-    if (!name) { console.error('Usage: ptm export <name> [key=value ...]'); process.exit(1); }
+    if (!args[1]) { console.error('Usage: ptm export <name> [key=value ...]'); process.exit(1); }
+    const name = validateName(args[1]);
     const p = join(TEMPLATES_DIR, name + '.md');
     if (!existsSync(p)) { console.error(`Template not found: ${name}`); process.exit(1); }
     const vars = parseVars(args.slice(2));
@@ -111,6 +143,7 @@ Commands:
   list                    List all templates
   show <name>             Display a template
   add <name> [content]    Add new template (reads stdin if no content)
+  edit <name>             Open template in $EDITOR
   render <name> [k=v...]  Render template with variables
   export <name> [k=v...]  Output rendered prompt (no extra formatting)
 

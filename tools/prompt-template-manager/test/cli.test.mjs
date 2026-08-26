@@ -207,3 +207,81 @@ test('shipped templates dir is created under overridden HOME (hermetic)', () => 
   ptm(home, ['list']);
   assert.ok(existsSync(freshHomeTdir(home)), 'templates dir auto-created');
 });
+
+// ─── round 2: overwrite guard, name validation, edit command ──────
+
+test('add refuses to overwrite existing template without --force', () => {
+  const { home } = freshHome();
+  seed(home, 't', '# One');
+  const r = ptm(home, ['add', 't', '# Two']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /already exists/i);
+  assert.match(r.stderr, /--force/);
+  // content must be untouched
+  assert.match(readFileSync(join(home, '.openclaw/workspace/tools/prompt-template-manager/templates/t.md'), 'utf-8'), /One/);
+});
+
+test('add --force overwrites existing template', () => {
+  const { home } = freshHome();
+  seed(home, 't', '# One');
+  const r = ptm(home, ['add', 't', '--force', '# Two']);
+  assert.equal(r.status, 0);
+  assert.match(readFileSync(join(home, '.openclaw/workspace/tools/prompt-template-manager/templates/t.md'), 'utf-8'), /Two/);
+});
+
+test('add name containing "/" exits 1 clean, no stack trace', () => {
+  const { home } = freshHome();
+  const r = ptm(home, ['add', 'a/b', 'content']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /invalid template name/i);
+  assert.doesNotMatch(r.stderr, /at /); // no "at fn (file:line)" stack frames
+});
+
+test('add name with "../" traversal is refused', () => {
+  const { home } = freshHome();
+  const r = ptm(home, ['add', '../evil', 'stolen']);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /invalid template name/i);
+});
+
+test('edit opens template in $EDITOR', () => {
+  const { home } = freshHome();
+  seed(home, 'doc', '# Editable');
+  const r = ptm(home, ['edit', 'doc'], { env: { ...process.env, HOME: home, EDITOR: 'cat' } });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /# Editable/);
+});
+
+test('edit without $EDITOR exits 1 with clear message', () => {
+  const { home } = freshHome();
+  seed(home, 'doc', '# X');
+  const env = { ...process.env, HOME: home };
+  delete env.EDITOR;
+  const r = ptm(home, ['edit', 'doc'], { env });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /EDITOR/);
+});
+
+test('edit missing template exits 1', () => {
+  const { home } = freshHome();
+  const r = ptm(home, ['edit', 'nope'], { env: { ...process.env, HOME: home, EDITOR: 'cat' } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /not found/i);
+});
+
+test('render documents: CJK variable names are NOT substituted (\\w+ only)', () => {
+  const { home } = freshHome();
+  seed(home, 'cjk', '你好 {{名字}} end');
+  const r = ptm(home, ['render', 'cjk', '名字=值']);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /\{\{名字\}\}/); // stays visible — documented \w+ limitation
+});
+
+test('parseVars ignores stray args without "=" or leading "="', () => {
+  const { home } = freshHome();
+  seed(home, 'v', 'X={{a}} Y={{b}}');
+  const r = ptm(home, ['render', 'v', 'a=1', '-flag', '=odd']);
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /X=1/);
+  assert.match(r.stdout, /Y=\{\{b\}\}/); // =odd doesn't bind key '' 
+});
