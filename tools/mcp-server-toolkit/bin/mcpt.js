@@ -35,7 +35,7 @@ program
 program
   .command('generate')
   .description('生成 MCP 服务器代码')
-  .option('-f, --file <file>', '配置文件路径', 'mcp-server.yaml')
+  .option('-f, --file <file>', '配置文件路径', 'mcp-server.json')
   .option('-o, --output <dir>', '输出目录', 'dist')
   .action(generate);
 

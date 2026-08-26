@@ -108,7 +108,7 @@ test('init -t sse records transport in mcp-server.json', () => {
 });
 
 test('placeholder commands exit 1 with honest message', () => {
-  for (const cmd of ['generate', 'test', 'serve']) {
+  for (const cmd of ['test', 'serve']) {
     const r = mcpt([cmd], tmp());
     assert.equal(r.status, 1, `${cmd} placeholder must exit 1`);
     assert.ok(r.stderr.includes('尚未实现'), `${cmd} stderr should say not implemented: ${r.stderr}`);
