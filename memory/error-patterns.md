@@ -92,3 +92,10 @@
 - **修正:** 核实产物已存在（MEMORY/HEARTBEAT 时间戳+内容、commit hash、发布状态）→ 不重做，只补增量（本轮补 AI×Neuro #22 漏记）；记录触发事件
 - **出现次数:** 4（08-22 essay / 更早 ×1 / 08-25 essay / 08-26 KO）
 - **Prevention:** 已按 Error Escalation Protocol 第 3+ 次升级为 TOOLS.md 永久规则（cron 幂等三查）
+
+### [2026-08-26] ConcurrencyManager 测试假设不存在的 API（重犯）
+- **场景：** agent-task-cli Round 63 waterfall 测试
+- **错误：** afterEach 调 cm.destroy()，但 ConcurrencyManager 没有 destroy 方法（Round 59 已踩过并记录在 experiments.tsv）
+- **根因：** 写测试时凭其他类（Cache.destroy 存在）的模式惯性外推，未查目标类实际 API
+- **修正：** 删除 afterEach 调用
+- **出现次数：** 2（Round 59 一次，Round 63 一次）⚠️ 第 3 次将升级为 TOOLS.md 永久规则
