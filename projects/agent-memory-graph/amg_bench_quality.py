@@ -6874,6 +6874,14 @@ _ENUM_TIME_HEADS = {
     'time', 'times', 'week', 'weeks', 'day', 'days', 'hour',
     'hours', 'minute', 'minutes', 'month', 'months', 'year',
     'years', 'page', 'pages', 'point', 'points'}
+# C521: event-name occurrence counting — counted-NP heads whose
+# instances surface as DISTINCT proper-noun event names, so the
+# count is |distinct names|, not |clauses| (a festival mentioned
+# five times is still one festival).
+_ENUM_EVENT_NAME_HEADS = {'festival', 'fest'}
+_ENUM_EVENT_NAME_PHRASE = re.compile(
+    r"\b((?:[A-Z][\w&'\-]*\s+){0,4}[A-Z][\w&'\-]*\s*"
+    r"(?:Festivals?|Fests?))\b")
 
 
 def _enum_stem(n: str) -> str:
@@ -7587,6 +7595,26 @@ def _cnt_enum_count(question: str, sessions: list[dict]):
         any(u in head for u in _ENUM_SIZE_UNITS)
     if sizes and q_size:
         return str(len(sizes))
+    # C521: event proper-name signature — attendance counted by
+    # DISTINCT event proper-nouns ("Austin Film Festival" and
+    # "AFI Fest" are two festivals however often each is
+    # re-mentioned). Runs BEFORE the names/roles branch: event
+    # candidate turns often carry person names (a director, a
+    # volunteer meetup) that the names signature miscounts as
+    # instances. Census @2026-08-27 (full-500): exactly ONE enum
+    # question has an event-name head (gpt4_a56, GT=4 — was a
+    # names-count/generic-recall miss); no other family moves.
+    if _enum_stem(head) in _ENUM_EVENT_NAME_HEADS:
+        events = set()
+        for cl in cand_clauses:
+            if _ENUM_EXCLUDE_VERBS.search(cl):
+                continue
+            for m in _ENUM_EVENT_NAME_PHRASE.finditer(cl):
+                events.add(re.sub(
+                    r"^(?:the|a|an)\s+", '',
+                    re.sub(r'\s+', ' ', m.group(1)).lower()))
+        if events:
+            return str(len(events))
     my_inv = bool(_ENUM_MY_INVENTORY.search(question))
     if (all_names or all_roles) and not my_inv:
         # same-clause name absorbs its role ("my cousin Rachel's

@@ -205,3 +205,70 @@ def test_oracle_parity_four_questions():
             if sid in ans_ids]
         got = _cnt_enum_count(d["question"], sesss)
         assert got == want, (qid, got, want)
+
+
+# --------------------------------- C521: event proper-name signature
+
+def test_festival_proper_names_dedup():
+    """Distinct festival proper-nouns count once each, however
+    often each is re-mentioned (real gpt4_a56 evidence shape)."""
+    s = [sess(
+        "I participated in the 48-hour film challenge at the "
+        "Austin Film Festival, and it was a wild ride!",
+        "I got to discuss the film with the director at a Q&A "
+        "after the screening at the Seattle International Film "
+        "Festival.",
+        "I volunteered at the Portland Film Festival, where I "
+        "helped with event coordination.",
+        "I volunteered at the Portland Film Festival again this "
+        "summer.",
+        "I attended some amazing festivals, like AFI Fest, "
+        "where I got to see Joker.")]
+    assert _cnt_enum_count(
+        "How many movie festivals that I attended?", s) == "4"
+
+
+def test_festival_generic_and_missed_mentions_dont_count():
+    s = [sess(
+        "I've been attending film festivals and events lately.",
+        "I missed AFI Fest this year because of work.")]
+    assert _cnt_enum_count(
+        "How many movie festivals that I attended?", s) is None
+
+
+def test_festival_signature_beats_names_possessive():
+    """Event-head questions are owned by the proper-name
+    signature: 'Rachel's favorite festival' must not become a
+    Rachel count."""
+    s = [sess(
+        "I went to Rachel's favorite festival, the Austin Film "
+        "Festival, again this year.",
+        "Rachel told me about the Portland Film Festival too.")]
+    assert _cnt_enum_count(
+        "How many movie festivals that I attended?", s) == "2"
+
+
+def test_non_event_heads_keep_names_priority():
+    s = [sess("my cousin Rachel's wedding was beautiful.",
+              "my friend Tom's wedding was in June.")]
+    assert _cnt_enum_count(
+        "How many weddings have I attended in this year?", s) \
+        == "2"
+
+
+@pytest.mark.skipif(not os.path.exists("/tmp/lme_s.json"),
+                    reason="LongMemEval fixture not on disk")
+def test_oracle_festival_question_gpt4_a56():
+    """C521 target: the full-500 festival question answered from
+    its evidence sessions (GT = 4)."""
+    import json
+    data = json.load(open("/tmp/lme_s.json"))
+    d = next(x for x in data
+             if x["question_id"].startswith("gpt4_a56"))
+    ans_ids = set(d["answer_session_ids"])
+    sesss = [
+        {"session_id": sid, "turns": s}
+        for s, sid in zip(d["haystack_sessions"],
+                          d["haystack_session_ids"])
+        if sid in ans_ids]
+    assert _cnt_enum_count(d["question"], sesss) == "4"
