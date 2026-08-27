@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { checks, diagnose, diagnoseJSON } = require("./index");
 const os = require("os");
+const { execFileSync } = require("child_process");
 
 // Helper: create a temp skill directory
 function createTempSkill(files) {
@@ -588,6 +589,38 @@ test("--fix generated SKILL.md passes the new frontmatter check (hereditary fix)
   expect(check.status).toBe("pass");
 });
 
+// ── Missing-dir guards (2026-08-27) ──────────────────────────
+
+test("autoFixJSON returns structured error (no throw) on missing dir", () => {
+  const { autoFixJSON } = require("./index");
+  const r = autoFixJSON(path.join(os.tmpdir(), "sd-missing-" + Date.now()));
+  expect(r.error).toContain("not found");
+  expect(r.fixCount).toBe(0);
+});
+
+test("diagnoseJSON reports honest single failure on missing dir", () => {
+  const r = diagnoseJSON(path.join(os.tmpdir(), "sd-missing-" + Date.now()));
+  expect(r.summary.fail).toBe(1);
+  expect(r.exitCode).toBe(2);
+  expect(r.results[0].name).toBe("Directory exists");
+});
+
+test("CLI --fix --json on missing dir: nonzero exit, valid JSON, no stack trace", () => {
+  const missing = path.join(os.tmpdir(), "sd-cli-missing-" + Date.now());
+  let out, status;
+  try {
+    out = execFileSync("node", ["index.js", "--fix", "--json", missing], { encoding: "utf8" });
+    status = 0;
+  } catch (e) {
+    out = e.stdout;
+    status = e.status;
+  }
+  expect(status).not.toBe(0);
+  const parsed = JSON.parse(out); // throws if machine output polluted
+  expect(parsed.fixes[0].error).toContain("not found");
+  expect(parsed.diagnosis[0].summary.fail).toBe(1);
+});
+
 // ── autoFix – already has .gitignore with node_modules ──────────
 
 test("auto-fix skips when .gitignore already has node_modules", () => {
@@ -686,8 +719,6 @@ describe("formatGithubAnnotations", () => {
 });
 
 describe("CLI --format github", () => {
-  const { execFileSync } = require("child_process");
-
   test("fail condition emits ::error annotation, exit code 2, no ANSI", () => {
     const dir = createTempSkill({}); // empty dir: no SKILL.md → fail, no README → warn
     let out, status;

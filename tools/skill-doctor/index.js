@@ -214,6 +214,15 @@ function diagnose(dir, quiet = false) {
 
 function diagnoseJSON(dir) {
   const resolved = path.resolve(dir);
+  if (!fs.existsSync(resolved)) {
+    return {
+      directory: resolved,
+      error: "directory not found",
+      results: [{ name: "Directory exists", status: "fail", msg: `not found: ${resolved}` }],
+      summary: { pass: 0, warn: 0, fail: 1, skip: 0 },
+      exitCode: 2,
+    };
+  }
   const allChecks = [...checks, ...loadCustomChecks(resolved)];
   const results = allChecks.map(({ name, fn }) => {
     try {
@@ -321,6 +330,9 @@ function autoFix(dir) {
 
 function autoFixJSON(dir) {
   const resolved = path.resolve(dir);
+  if (!fs.existsSync(resolved)) {
+    return { directory: resolved, error: "directory not found", fixes: [], fixCount: 0 };
+  }
   const results = fixers.map(({ name, fn }) => {
     const r = fn(resolved);
     return { name, ...r };
@@ -371,7 +383,7 @@ ${c.bold}Usage:${c.reset}
   skill-doctor <skill-dir> [skill-dir ...]
   skill-doctor --json <skill-dir>   machine-readable output
   skill-doctor --fix <skill-dir>    auto-fix simple issues
-  skill-doctor --fix --json        auto-fix with JSON output
+  skill-doctor --fix --json        auto-fix with JSON output ({fixes, diagnosis})
   skill-doctor --quiet <skill-dir> only show warnings/failures
   skill-doctor --format github <skill-dir>  GitHub Actions annotations (::error/::warning)
   skill-doctor --help
@@ -383,14 +395,19 @@ ${c.bold}Exit codes:${c.reset}
     process.exit(0);
   }
 
+  // Machine contract first: --fix --json must emit parseable JSON only.
+  // fs.writeSync(1, …) flushes synchronously — console.log buffers to pipes
+  // asynchronously and a following exit can drop it mid-write.
+  if (fixMode && jsonMode) {
+    const fixReports = dirs.map((d) => autoFixJSON(d));
+    const diagReports = dirs.map((d) => diagnoseJSON(d));
+    fs.writeSync(1, JSON.stringify({ fixes: fixReports, diagnosis: diagReports }, null, 2) + "\n");
+    process.exit(Math.max(...diagReports.map((r) => r.exitCode)));
+  }
+
   if (fixMode) {
-    if (jsonMode) {
-      const reports = dirs.map((d) => autoFixJSON(d));
-      console.log(JSON.stringify(reports, null, 2));
-    } else {
-      for (const arg of dirs) autoFix(arg);
-    }
-    // After fixing, re-diagnose to show current state
+    for (const arg of dirs) autoFix(arg);
+    // After fixing, re-diagnose to show current state (text mode)
     console.log(`\n${c.bold}${c.cyan}--- Re-running diagnosis ---${c.reset}`);
   }
 
