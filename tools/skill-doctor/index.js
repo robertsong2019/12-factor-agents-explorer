@@ -38,6 +38,39 @@ check("SKILL.md has description", (dir) => {
   return { status: "pass", msg: "description present" };
 });
 
+// Extract a leading YAML-ish frontmatter block: returns its text or null.
+function parseFrontmatter(content) {
+  if (!content.startsWith("---")) return null;
+  const end = content.indexOf("\n---", 3);
+  if (end === -1) return null;
+  return content.slice(3, end);
+}
+
+function parseFrontmatterFields(block) {
+  const fields = {};
+  for (const line of block.split(/\r?\n/)) {
+    const m = line.match(/^([\w-]+)\s*:\s*(.+?)\s*$/);
+    if (m && !(m[1] in fields)) fields[m[1]] = m[2];
+  }
+  return fields;
+}
+
+// OpenClaw/AgentSkills spec: SKILL.md needs a frontmatter block with non-empty
+// name and description — a skill without one won't load at all.
+check("Valid SKILL.md frontmatter", (dir) => {
+  const p = path.join(dir, "SKILL.md");
+  if (!fs.existsSync(p)) return { status: "skip", msg: "no SKILL.md" };
+  const content = fs.readFileSync(p, "utf8");
+  const block = parseFrontmatter(content);
+  if (block === null)
+    return { status: "warn", msg: "no frontmatter block (--- ... ---) — skill will not load; run --fix to add one" };
+  const fields = parseFrontmatterFields(block);
+  const missing = ["name", "description"].filter((k) => !fields[k]);
+  if (missing.length)
+    return { status: "warn", msg: `frontmatter missing: ${missing.join(", ")}` };
+  return { status: "pass", msg: `${fields.name} — ok` };
+});
+
 check("README.md exists", (dir) => {
   const p = path.join(dir, "README.md");
   if (!fs.existsSync(p)) return { status: "warn", msg: "No README.md" };
@@ -239,12 +272,19 @@ fixer("Add .gitignore with node_modules", (dir) => {
   return { fixed: true, msg: "created .gitignore with node_modules" };
 });
 
+// OpenClaw skills must load from frontmatter — emit a spec-valid skeleton,
+// not just markdown (previously generated frontmatter-less files).
+const slugify = (s) => s.toLowerCase().replace(/[^\w.-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "") || "skill";
+
 fixer("Create minimal SKILL.md", (dir) => {
   const p = path.join(dir, "SKILL.md");
   if (fs.existsSync(p)) return { fixed: false, msg: "SKILL.md already exists" };
   const name = path.basename(dir);
-  fs.writeFileSync(p, `# ${name}\n\n> Description of this skill.\n\n## Usage\n\nHow to use this skill.\n`);
-  return { fixed: true, msg: "created minimal SKILL.md" };
+  fs.writeFileSync(
+    p,
+    `---\nname: ${slugify(name)}\ndescription: Description of this skill.\n---\n\n# ${name}\n\n## Usage\n\nHow to use this skill.\n`
+  );
+  return { fixed: true, msg: "created minimal SKILL.md with frontmatter" };
 });
 
 fixer("Create minimal README.md", (dir) => {
@@ -309,7 +349,7 @@ function loadCustomChecks(dir) {
 }
 
 // Export for testing
-module.exports = { checks, diagnose, diagnoseJSON, fixers, autoFix, autoFixJSON, loadCustomChecks, formatGithubAnnotations, escapeGithubData };
+module.exports = { checks, diagnose, diagnoseJSON, fixers, autoFix, autoFixJSON, loadCustomChecks, formatGithubAnnotations, escapeGithubData, parseFrontmatter, parseFrontmatterFields };
 
 if (require.main === module) {
   const args = process.argv.slice(2);

@@ -537,6 +537,57 @@ test("plain exec with static string stays clean", () => {
   expect(check.status).toBe("pass");
 });
 
+// ── Frontmatter validation (2026-08-27) ─────────────────────────
+
+test("warns when frontmatter lacks name field", () => {
+  const dir = createTempSkill({ "SKILL.md": "---\ndescription: Uses graph retrieval.\n---\n\nBody." });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "Valid SKILL.md frontmatter");
+  expect(check.status).toBe("warn");
+  expect(check.msg).toContain("name");
+});
+
+test("warns when there is no frontmatter block at all", () => {
+  const dir = createTempSkill({ "SKILL.md": "# My Skill\n\ndescription: only in prose body" });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "Valid SKILL.md frontmatter");
+  expect(check.status).toBe("warn");
+  expect(check.msg).toContain("no frontmatter block");
+});
+
+test("passes valid frontmatter with name + description", () => {
+  const dir = createTempSkill({ "SKILL.md": "---\nname: rag-skill\ndescription: Graph retrieval for memory.\n---\n\nBody." });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "Valid SKILL.md frontmatter");
+  expect(check.status).toBe("pass");
+  expect(check.msg).toContain("rag-skill");
+});
+
+test("skips frontmatter check without SKILL.md", () => {
+  const dir = createTempSkill({});
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "Valid SKILL.md frontmatter");
+  expect(check.status).toBe("skip");
+});
+
+test("parseFrontmatter returns null on unterminated/absent block", () => {
+  const { parseFrontmatter } = require("./index");
+  expect(parseFrontmatter("no block here")).toBeNull();
+  expect(parseFrontmatter("---\nunterminated till eof")).toBeNull();
+  expect(parseFrontmatter("---\nname: x\n---\nbody")).toContain("name: x");
+});
+
+test("--fix generated SKILL.md passes the new frontmatter check (hereditary fix)", () => {
+  const dir = createTempSkill({});
+  const { autoFix } = require("./index");
+  autoFix(dir);
+  const content = fs.readFileSync(path.join(dir, "SKILL.md"), "utf8");
+  expect(content.startsWith("---\nname: ")).toBe(true);
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "Valid SKILL.md frontmatter");
+  expect(check.status).toBe("pass");
+});
+
 // ── autoFix – already has .gitignore with node_modules ──────────
 
 test("auto-fix skips when .gitignore already has node_modules", () => {
@@ -655,7 +706,7 @@ describe("CLI --format github", () => {
 
   test("healthy skill dir emits no annotation lines, exit 0", () => {
     const dir = createTempSkill({
-      "SKILL.md": "A".repeat(200) + "\nDescription: does things properly for tests here\n" + "B".repeat(100),
+      "SKILL.md": "---\nname: healthy-skill\ndescription: does things properly for tests here\n---\n\n" + "A".repeat(200),
       "README.md": "# readme\n",
     });
     const out = execFileSync("node", ["index.js", "--format", "github", dir], {
