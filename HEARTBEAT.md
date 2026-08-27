@@ -7,7 +7,7 @@
 - [ ] **amg PyPI publish — 人工三步**（建独立 GitHub 仓 agent-memory-graph / PyPI 2FA + Trusted Publisher / twine upload）+ **④ npm 命名决策 (#068)**（裸名被占：`@robertsong2019/agent-memory-graph` 推荐 / `amgraph` / `agent-memory-graph-py`，均实测 FREE）— 技术前置 100% 完成 (#066)，与 PyPI 同为 human-blocked
 - [ ] **agent-context-store: README + npm publish** — **2929 tests**, 600+ APIs
 - [ ] **structured-output-toolkit: README + npm publish** — **571 tests**
-- [ ] **agent-task-cli: README + npm publish** — **1599 tests**, F243 (Round 62: Storage.updateWhere/priorities/enqueueAll, 532fa78)
+- [ ] **agent-task-cli: README + npm publish** — **1636 tests**, F249 (Round 64: EventBus.waitForMatch/Storage.partition/Storage.minBy-maxBy, dda22fa)
 
 ### 中优先级（本月）
 - [ ] amg-bench: LongMemEval adapter + competitive scoring (harness skeleton done cycle 370, adapter design done Research #061)
@@ -25,7 +25,7 @@
 - **agent-memory-graph (Python)**: **10040 tests**（08-26 collect 实测；C514 处首破 10,000 🎉；链 9958(C511)→9979(C513)→10002(C514)→10020(C515)→10039(C516) 绿）— 990+ APIs。entropy + classification + FINGEREntropy + PPR + multi_hop_reason + spreading_activation (5-member family) + activation_trace ✅ + competitive_spreading ✅ + SummaryTree + code-aware + provenance (4) + OWASP security suite (6) ✅ + amg-bench ✅ + MCP 16 tools ✅ + OTel telemetry ✅ + MultiAgentMemoryGraph (MESI) ✅ + FastAppendQueue ✅ + flush_and_consolidate ✅ (确定性 tie-break C437) + ResidualExtractor ✅ + consolidate() NREM/REM ✅ + consolidation_status() ✅ + memory_interference_report() ✅ + knowledge_freshness_report() ✅ + retrieval quality family COMPLETE ✅ + attention ✅ + temporal trilogy ✅ + bi-temporal APIs (5) ✅ + forgetting_forecast ✅ + seeded RNG fix ✅ + Experience Compression Spectrum COMPLETE ✅ + GraphRAG API family COMPLETE ✅ + export_graphml ✅ + run_amg.py 适配器 ✅ + chunk_text ✅ + resolve_entity_variants ✅ + amg_bench_quality LongMemEval 适配器 ✅ + 熵置信双门 abstention ✅ + locomo_bench_quality LoCoMo 适配器 ✅ (C451) + when-question date resolution ✅ (C456) + temporal-arithmetic answer path ✅ (C457) + telemetry v2 semconv 对齐 ✅ (C461) + judge_llm() 双口径+CLI ✅ (C462-464) + calibration_by_category ✅ (C465) + honest attribution ✅ (C466) + evidence-session coverage (answer_session_hit) ✅ (C467) + 锚定卫生 ✅ (C471) + 全图锚回退 ✅ (C472) + form-scoped seed breadth ✅ (C473) + distinctive speaker recall ✅ (C475) + counting forms 管线 ✅ (C477/C483) + in-text date anchors ✅ (C482) + past-perfect duration/纯任期 ✅ (C486/487) + order-family N 锚排序 + pairwise which-first 门 ✅ (C488/489) + 锚纪律两连 ✅ (C490/491) + TA first-kind 退役 ✅ (C493) + pairwise v2 三连 ✅ (C494-496) + ECM neither-family ✅ (C497) + preference 诚实弃权 ✅ (C498) + item_total ✅ (C500) + role-aware answer face ✅ (C501) + enum_count ✅ (C503) + duration-family M1-M4 ✅ (C505) + 嵌入 side-channel form-gated ✅ (C506) + where-form locative ✅ (C508) + delta-family 两锚点数值聚合 ✅ (C509) + inventory_count 枚举库存（第 10 counting form）✅ (C511) + neg-exist abstention 专有名词门 ✅ (C513) + museum_count 第 11 form ✅ (C514) + age_diff 第 12 form ✅ (C515) + neg_exist 普通名词 restrictor ✅ (C516) + **full-500 官方刷新 0.444（+38/−0，multi 0.459 兑现）** ✅ (C517) + abs 预设失败门三连 E1/E2/E3 ✅ (C518) + proper-noun 误杀取证修复（NFKD fold/学位媒体 stop/geo-sub）✅ (C519)。**⚠️ 08-16 审计 (#068)：旧台账 "(TS) 7349" 为幻影双计，已删——无 TS 实现（唯一真 TS = amg-mcp wrapper 1718 行/122 tests）**
 - **agent-context-store**: **2929 tests**
 - **structured-output-toolkit**: **571 tests**
-- **agent-task-cli**: **1618 tests** — F244-F246 (Round 63: ConcurrencyManager.waterfall / Cache.deleteMany / EventBus.onOnce，e5be0b9 已 push；F243 Round 62: updateWhere/priorities/enqueueAll，532fa78)。⚠️ 重犯已记录错误：cm.destroy() 不存在第 2 次（Round 59 台账已记）——第 3 次将写死规则：写 ConcurrencyManager 测试前先 grep 清理方法
+- **agent-task-cli**: **1636 tests** — F247-F249 (Round 64: EventBus.waitForMatch 谓词版 waitFor / Storage.partition / Storage.minBy-maxBy，dda22fa；Round 63: waterfall/deleteMany/onOnce，e5be0b9)。⚠️ 重犯已记录错误：cm.destroy() 不存在第 2 次（Round 59 台账已记）——第 3 次将写死规则：写 ConcurrencyManager 测试前先 grep 清理方法
 - **context-forge**: **1458 tests** (F79, 21 dimensions)
 - **nano-agent**: **1156 tests** — F69 (R20: 序列协议 dunders/copy+content_hash/subscribe 事件钩子)
 - **edge-agent-runtime**: **345 tests**
@@ -37,8 +37,8 @@
 - **session-archiver**: **81 tests**（08-24 晨 65→81）
 - **tools/ai-dev-tools**: **79 tests**（08-24 晚 3 cycle：prompt delete/log 双假成功 + $& 模板注入 + 单文件静默）
 - **tools/agent-memory-kit**: **29 tests**（08-24 晚：npm test DOA 接线 + context 跨工作区污染 + CJK 巨词 bigram）
-- **四项目总计**: 12229 tests ✅（amg 10040 + sot 571 + atc 1618）
-- **全项目总计**: ~21349 tests（08-27 KO 口径：amg 10040、atc 1618、session-archiver 81/ai-dev-tools 79/amk 29/cqc 56/mcpt 33 新入（08-26 真接线 node --test，旧 38 系 run.sh 口径 npm test 从未跑通已废）；其余沿用 08-22 修正台账）
+- **四项目总计**: 12247 tests ✅（amg 10040 + sot 571 + atc 1636）
+- **全项目总计**: ~21367 tests（08-27 KO 口径：amg 10040、atc 1636、session-archiver 81/ai-dev-tools 79/amk 29/cqc 56/mcpt 33 新入（08-26 真接线 node --test，旧 38 系 run.sh 口径 npm test 从未跑通已废）；其余沿用 08-22 修正台账）
 - **零回滚率**: amg **304天** 🏆（KO 日历链：08-22=299 / 08-23=300 / 08-24=301 / 08-25=302 / 08-26=303 / 08-27=304，会话漂移勿沿用；C482→C500 19 轮全 keep，其后 C502 zero-loss revert 不计；C503→C509→C511→C513→C516 keep 链，C510 pre-port REJECT / C512 RECORD-NEGATIVE / C512-B retract 不涉生产）/ acs 200天 🏆
 
 ## 近期活动 (08-26 白天 ~ 08-27 凌晨 crons)
