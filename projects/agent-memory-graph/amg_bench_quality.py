@@ -1757,6 +1757,174 @@ def calibration_by_category(results: list) -> dict:
             for cat, rows in sorted(groups.items())}
 
 
+# ── Risk-coverage / selective prediction (Cycle 520 — Research #089) ─
+#
+# The abstention stack (C448 entropy gate + C513/C516/C518 neg-exist
+# + presupposition gates) has so far been evaluated at ONE operating
+# point per A/B (accuracy at the shipped threshold). Selective
+# prediction upgrades that to curve metrics: rank every question by
+# answering confidence, sweep the coverage frontier, and measure
+# risk everywhere — AURC (area under the curve) needs no threshold
+# choice to compare two confidence signals, E-AURC subtracts the
+# exact oracle AURC (perfect ordering — all-correct-first — measured
+# through the same trapezoid integrator) so only RANKING
+# quality remains, and Risk@coverage reads off deployable operating
+# points (e.g. "abstain 10% → Risk@90%"). Per-category breakdown
+# lands "the form classifier is the configuration surface" (#233/
+# #251) as a measurement: a single global threshold rides a saddle
+# point on a mixed curve surface (C452/C473 twice shown empirically).
+# Calibration ≠ selective prediction: a signal can be symmetrically
+# calibrated yet rank-blind (AURC high) or overconfident yet perfectly
+# ranked (AURC minimal) — RL-driven selective regression, arXiv
+# 2607.03528 Fig.1. Citations: Ding et al. CVPRW 2020 (AURC the only
+# reliable metric among AUROC/AUPR/AURC); Kirichenko et al.
+# AbstentionBench ICML 2025 (frontier LLMs hallucinate on
+# unanswerable; reasoning tuning reduces abstention 24%).
+
+def _rc_confidence(r) -> float | None:
+    """Per-question answering confidence for curve ranking.
+
+    1 − norm_entropy over the keyword-hit evidence distribution
+    (C448 signal, inverted so higher = answer more confidently).
+    Duck-typed: QuestionResult attrs or serialized report rows.
+    """
+    retr = (r.retrieval if hasattr(r, "retrieval")
+            else r.get("retrieval") if hasattr(r, "get") else None)
+    ne = retr.get("norm_entropy") if isinstance(retr, dict) else None
+    return None if ne is None else 1.0 - float(ne)
+
+
+def _risk_coverage_curve(scored: list[dict]) -> list[tuple[float, float]]:
+    """[(coverage, risk)] sweeping the answered set by confidence.
+
+    risk = error rate of the answered prefix; abstained questions
+    excluded below the operating coverage carry no risk — that is
+    exactly where abstention pays. Ported verbatim (semantics) from
+    Research #089 risk_coverage_aurc.py.
+    """
+    ranked = sorted(scored, key=lambda s: s["score"], reverse=True)
+    n, wrong, points = len(ranked), 0, []
+    if not n:
+        return points
+    for i, r in enumerate(ranked, 1):
+        wrong += 0 if r["correct"] else 1
+        points.append((i / n, wrong / i))
+    return points
+
+
+def _aurc(points: list[tuple[float, float]]) -> float:
+    """Area under the risk-coverage curve (trapezoid integral)."""
+    (c0, r0), area = (0.0, 0.0), 0.0
+    for c, r in points:
+        area += (c - c0) * (r0 + r) / 2
+        c0, r0 = c, r
+    return area
+
+
+def risk_at_coverage(points, coverage: float) -> float:
+    """Risk at a coverage level — the deployable operating-point read."""
+    for cov, risk in points:
+        if cov >= coverage - 1e-9:
+            return risk
+    return points[-1][1] if points else 0.0
+
+
+def _oracle_aurc(n: int, k: int) -> float:
+    """AURC of the perfect ordering, computed exactly.
+
+    Builds the all-correct-first arrangement and integrates it
+    through the SAME trapezoid code — constructive exactness, no
+    closed form to mistranscribe. (The k²/2n² formula circulating in
+    notes — incl. our own #089 — is its small-k Taylor approximation,
+    e.g. n=10,k=4: exact 0.0926 vs 0.0800; the Cycle 520 oracle
+    cross-check caught it. Empirically k²/2n² underestimates, so it
+    flatters every E-AURC it touches.)
+    """
+    if not n or k < 0 or k > n:
+        return 0.0
+    perfect = ([{"score": 1.0, "correct": True}] * (n - k)
+               + [{"score": 0.0, "correct": False}] * k)
+    return _aurc(_risk_coverage_curve(perfect))
+
+
+def risk_coverage_report(results: list, *,
+                         coverage_levels: tuple[float, ...] =
+                         (0.5, 0.7, 0.8, 0.9, 0.95)) -> dict:
+    """Selective-prediction report over an evaluated result set.
+
+    Answers, for the confidence signal ``1 − norm_entropy``: how much
+    risk remains if the system answers only the top-p fraction
+    (Risk@p), how good the ranking is independent of any threshold
+    (E-AURC, 0 = perfect ordering), and where the curve surface
+    diverges by question form (per-category AURC — global thresholds
+    ride saddle points on mixed surfaces, C452/C473).
+
+    Duck-typed input — QuestionResult attrs or report dict rows,
+    same protocol as :func:`calibration_summary`. ``correct`` already
+    encodes the benchmark verdict (honest abstention on _abs counts
+    as correct); rows lacking a confidence signal are counted in
+    ``unresolved_score`` and excluded from the curve.
+    """
+    scored: list[dict] = []
+    unresolved = 0
+    for r in results:
+        conf = _rc_confidence(r)
+        if conf is None:
+            unresolved += 1
+            continue
+        if hasattr(r, "correct"):
+            correct, abstained = bool(r.correct), bool(r.abstained)
+            category = r.category or "unknown"
+        else:
+            correct = bool(r.get("correct"))
+            abstained = bool(r.get("abstained"))
+            category = r.get("category") or "unknown"
+        scored.append({"score": conf, "correct": correct,
+                       "abstained": abstained, "category": category})
+    n = len(scored)
+    k = sum(1 for s in scored if not s["correct"])
+    if not n:
+        return {"total": 0, "unresolved_score": unresolved,
+                "answered": 0, "abstained": 0, "errors": 0,
+                "overall_risk": 0.0, "aurc": 0.0, "aurc_oracle": 0.0,
+                "e_aurc": 0.0, "risk_at": {}, "curve_deciles": [],
+                "per_category": {}}
+    pts = _risk_coverage_curve(scored)
+    aurc_val = _aurc(pts)
+    oracle = _oracle_aurc(n, k)
+    curve_deciles = [pts[min(int(d * n), n) - 1]
+                     for d in range(1, 11) if int(d * n) >= 1]
+    per_category: dict[str, dict] = {}
+    for cat in sorted({s["category"] for s in scored}):
+        sub = [s for s in scored if s["category"] == cat]
+        sub_pts = _risk_coverage_curve(sub)
+        m, kw = len(sub), sum(1 for s in sub if not s["correct"])
+        per_category[cat] = {
+            "total": m, "errors": kw,
+            "accuracy": round((m - kw) / m, 4),
+            "aurc": round(_aurc(sub_pts), 4),
+            "e_aurc": round(_aurc(sub_pts) - _oracle_aurc(m, kw), 4)
+            if m else 0.0,
+        }
+    return {
+        "total": n,
+        "unresolved_score": unresolved,
+        "answered": sum(1 for s in scored if not s["abstained"]),
+        "abstained": sum(1 for s in scored if s["abstained"]),
+        "errors": k,
+        "overall_risk": round(k / n, 4),
+        "aurc": round(aurc_val, 4),
+        "aurc_oracle": round(oracle, 4),
+        "e_aurc": round(aurc_val - oracle, 4),
+        "risk_at": {f"{int(c * 100)}%":
+                    round(risk_at_coverage(pts, c), 4)
+                    for c in coverage_levels},
+        "curve_deciles": [(round(c, 3), round(rk, 4))
+                           for c, rk in curve_deciles],
+        "per_category": per_category,
+    }
+
+
 # ── Temporal arithmetic (Cycle 457 — LME_s temporal-reasoning) ──────
 #
 # LongMemEval temporal-reasoning questions are NOT when-questions
@@ -8127,6 +8295,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
         "total_questions": n,
         "categories": categories,
         "results": all_results,
+        "risk_coverage": risk_coverage_report(all_results),
         "sweep": sweep,
         "config": kwargs,
     }
