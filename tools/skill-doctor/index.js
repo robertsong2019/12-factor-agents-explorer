@@ -72,10 +72,15 @@ check("No suspicious patterns", (dir) => {
       try {
         const content = fs.readFileSync(full, "utf8");
         // Check for common red flags
-        if (/eval\s*\(/.test(content) && !/no.*eval/i.test(content))
+        // NOTE: anchored via (?<![\w.$]) so identifiers ending in "eval"
+        // (retrieval(, medieval(, relevel() don't false-positive.
+        if (/(?<![\w.$])eval\s*\(/.test(content) && !/no.*eval/i.test(content))
           results.push(`${entry.name}: eval() usage`);
         if (/child_process.*execSync.*\+/.test(content))
           results.push(`${entry.name}: possible command injection`);
+        // Shell out with an interpolated template literal = unescaped input reaches the shell
+        if (/\bexec(?:Sync)?\s*\(\s*`[^`]*\$\{/.test(content))
+          results.push(`${entry.name}: possible command injection (interpolated exec)`);
         if (/curl.*\|.*sh/.test(content))
           results.push(`${entry.name}: pipe to shell`);
         if (/process\.env\.\w+.*(?:fetch|axios|http)/i.test(content))

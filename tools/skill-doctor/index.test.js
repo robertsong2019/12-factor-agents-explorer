@@ -502,6 +502,41 @@ test("flags eval in .md files (they are scanned)", () => {
   expect(check.msg).toContain("eval");
 });
 
+// ── Suspicious patterns – word-boundary false positives (2026-08-27) ──
+
+test("does not flag identifiers ending in 'eval' (retrieval/medieval FP fix)", () => {
+  const dir = createTempSkill({
+    "SKILL.md": "---\nname: rag\ndescription: x\n---\nCall `results = retrieval(query)` then ranking.",
+    "search.js": "const hits = retrieval(q); // memory.retrieval(query)",
+    "search.py": "def retrieval(q):\n    return index.search(q)",
+  });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "No suspicious patterns");
+  expect(check.status).toBe("pass");
+});
+
+test("still flags standalone eval( call after lookbehind anchoring", () => {
+  const dir = createTempSkill({ "bad.js": "const x = eval(userInput);" });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "No suspicious patterns");
+  expect(check.status).toBe("warn");
+});
+
+test("flags interpolated exec template literal (backtick ${})", () => {
+  const dir = createTempSkill({ "run.js": "const { exec } = require('child_process'); exec(`ls ${userDir}`);" });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "No suspicious patterns");
+  expect(check.status).toBe("warn");
+  expect(check.msg).toContain("interpolated exec");
+});
+
+test("plain exec with static string stays clean", () => {
+  const dir = createTempSkill({ "run.js": "exec('ls -la');" });
+  const report = diagnoseJSON(dir);
+  const check = report.results.find((r) => r.name === "No suspicious patterns");
+  expect(check.status).toBe("pass");
+});
+
 // ── autoFix – already has .gitignore with node_modules ──────────
 
 test("auto-fix skips when .gitignore already has node_modules", () => {
