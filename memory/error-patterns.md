@@ -99,3 +99,17 @@
 - **根因：** 写测试时凭其他类（Cache.destroy 存在）的模式惯性外推，未查目标类实际 API
 - **修正：** 删除 afterEach 调用
 - **出现次数：** 2（Round 59 一次，Round 63 一次）⚠️ 第 3 次将升级为 TOOLS.md 永久规则
+
+### [2026-08-28] node --test runner IPC corruption（环境级第 3 例 → 已升级 TOOLS.md 规则）
+- **场景：** context-forge 测试循环基线，`npm test`（node --test 80 个测试文件）
+- **错误：** 5 跑 2 红，file 级 `ERR_TEST_FAILURE: Unable to deserialize cloned data due to invalid or unsupported version`，stack 全在 `node:internal/test_runner/runner` 的 `FileTest.parseMessage`（父进程侧）
+- **根因：** Node test runner 上游 IPC 竞态 bug（nodejs/node#44526 家族），多子进程套件偶发消息帧损坏；已排除 OOM（dmesg 的 kill 是 76 天前旧事件）
+- **修正：** 不在项目层修（不可修）。重跑 2 次定性为 flake 再继续工作
+- **出现次数：** 3（8/18 afm、8/21 afm、8/28 context-forge）→ Prevention 已升 TOOLS.md 永久规则
+
+### [2026-08-28] 重复实现的 bug 修复漏网（prompt-mgr render 反斜杠，家族再犯）
+- **场景：** prompt-mgr morning 测试循环，红验证 `--vars "p=C:\Users\test"` → CLI exit 1（re.error bad-escape）
+- **错误：** `utils.substitute_variables()` 把值当 re.sub replacement 字符串；同款 bug 在 models.Template.render() 已于 08-17（b21d0ee）修掉，但 utils 重复实现漏修——而 CLI 实际走 manager→utils 路径
+- **根因：** 修 bug 时只修当前报错路径，未 grep 同 pattern 的其他实现点；重复代码 = 每个实例都是独立病灶
+- **修正：** utils 用同样的 lambda replacement 修复 + 3 个红验证回归测试（324→327）
+- **出现次数：** 家族第 2 次明确记录（08-27 essay 系统化过该家族）；修 bug 后应 `grep -n "re.sub("` 全仓扫同 pattern
