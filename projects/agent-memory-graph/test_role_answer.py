@@ -82,7 +82,11 @@ class TestRoleAnswerSelection(unittest.TestCase):
         self.assertTrue(meta.get("role_answer", {}).get("override"))
 
     def test_switch_off_keeps_assistant_echo(self):
-        a = LongMemEvalAdapter(role_answer=False)
+        # quant_rerank=False too: C523 legitimately supersedes this
+        # scenario for quantity-form questions (the $800 fact line
+        # gets re-ranked in even with role_answer off); isolating
+        # C501 requires both flags off
+        a = LongMemEvalAdapter(role_answer=False, quant_rerank=False)
         a.ingest_sessions(HAY)
         ans, meta = a.answer_extractive(Q)
         self.assertNotIn("$800", ans)

@@ -443,6 +443,7 @@ class LongMemEvalAdapter:
                  delta_agg: bool = True,
                  pref_abstain: bool = True,
                  neg_exist: bool = True,
+                 quant_rerank: bool = True,
                  role_answer: bool = True,
                  role_margin: int = 0,
                  assistant_recall: bool = True,
@@ -537,6 +538,7 @@ class LongMemEvalAdapter:
         # user line may trail the top assistant line by and still
         # win (0 = must tie; the -seq tie-break hands equal-hit
         # tops to the LATEST message, routinely the advice reply).
+        self.quant_rerank = quant_rerank
         self.role_answer = role_answer
         self.role_margin = role_margin
         self.assistant_recall = assistant_recall
@@ -1246,6 +1248,46 @@ class LongMemEvalAdapter:
                     and best_u_hits >= top_hits - self.role_margin)}
             if meta["role_answer"]["override"]:
                 best_line = best_u
+        # C523: quantity-form answer-face re-rank (#090). Census
+        # (C523 /tmp/c523/census_gates.py, official C522
+        # post_full500.json): 220/500 questions match ^how
+        # (many|long|much); 103 of them reach the answer gate — 81
+        # wrong, 42 with retrieval_hit AND answer_session_hit True,
+        # i.e. the GT number IS in the window but the quoted face is
+        # a number-free adjacent message (the C499 pathology's
+        # quantity subtype: c960da58 Spotify "20", 94f70d80 IKEA "4
+        # hours", af8d2e46 "7 shirts", 6b168ec8 "three bikes", ...
+        # Fix: when the top line carries NO quantity token, prefer
+        # the number-bearing USER line with the most keyword evidence
+        # (floor 2, C501 floor). Strict scope makes regressions on
+        # correct answers near-constructive-impossible: a top line
+        # that already quotes a number is untouched (correct numeric
+        # answers keep their face by construction), and with no
+        # qualifying candidate we fall through untouched (C488).
+        # Iteration order over lines is (-hits, -seq): strict `>` on
+        # hits keeps the EARLIEST matching entry on ties, which is
+        # the latest message — the knowledge-update recency
+        # convention (C437/C447 -seq) for free.
+        if (self.quant_rerank and _quantity_form(question)
+                and not _QUANTITY_TOKEN_RE.search(
+                    best_line.split("] ", 1)[-1])):
+            kws = meta.get("keywords") or _keywords(question)
+            best_q, best_q_hits = None, -1
+            for ln in lines[1:]:
+                if not ln.startswith("[user"):
+                    continue
+                body = ln.split("] ", 1)[-1]
+                if not _QUANTITY_TOKEN_RE.search(body):
+                    continue
+                h = _keyword_hits(body, kws)
+                if h > best_q_hits:
+                    best_q, best_q_hits = ln, h
+            meta["quant_rerank"] = {
+                "candidate_hits": max(best_q_hits, 0),
+                "override": bool(
+                    best_q is not None and best_q_hits >= 2)}
+            if meta["quant_rerank"]["override"]:
+                best_line = best_q
         return best_line.split("] ", 1)[-1], meta
 
     def _counting_sessions(self) -> list[dict]:
@@ -4823,6 +4865,28 @@ def _answer_form_claimed(question: str) -> bool:
                 or pref_form(question))
 
 
+# C523 quantity-form face (see answer_extractive comment). Cardinal
+# words only — NOT once/twice/couple/half, which saturate advice text
+# and would both false-qualify candidates and false-guard the top.
+_QUANTITY_FORM_RE = re.compile(r"^how\s+(?:many|long|much)\b", re.I)
+_QUANTITY_TOKEN_RE = re.compile(
+    r"\b\d+(?:[.,]\d+)?\b|\b(?:one|two|three|four|five|six|seven|"
+    r"eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|"
+    r"seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|"
+    r"seventy|eighty|ninety|hundred|dozen)\b", re.I)
+
+
+def _quantity_form(question: str) -> bool:
+    """True for how-many/long/much fact questions (Cycle 523).
+
+    No family exclusions: gate ORDER means counting/TA/delta
+    already had their pass upstream — their unresolved fall-throughs
+    are exactly the answer-face population this re-rank serves; and
+    where-questions (STRICT start-with-where) cannot match a ^how
+    anchor. The top-line-number guard is the safety face."""
+    return bool(_QUANTITY_FORM_RE.match(question.strip()))
+
+
 _ECM_GATE_A_RE = re.compile(
     r"^who did i (meet|get to know) first,\s*(.+?)\s+or\s+(.+?)\?$",
     re.I)
@@ -8184,6 +8248,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              delta_agg: bool = True,
              pref_abstain: bool = True,
              neg_exist: bool = True,
+             quant_rerank: bool = True,
              role_answer: bool = True,
              role_margin: int = 0,
              assistant_recall: bool = True,
@@ -8226,6 +8291,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   delta_agg=delta_agg,
                   pref_abstain=pref_abstain,
                   neg_exist=neg_exist,
+                  quant_rerank=quant_rerank,
                   role_answer=role_answer,
                   sidechannel=sidechannel,
                   role_margin=role_margin,
@@ -8397,6 +8463,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Disable the Cycle 501 role-aware answer "
                              "face (user-line selection for first-"
                              "person fact questions)")
+    parser.add_argument("--no-quant-rerank", action="store_true",
+                        help="Disable the Cycle 523 quantity-form "
+                             "answer-face re-rank")
     parser.add_argument("--sidechannel", action="store_true",
                         help="Enable the Cycle 506 form-gated embedding "
                              "side-channel (preference/assistant-recall "
@@ -8438,6 +8507,7 @@ def main(argv: list[str] | None = None) -> int:
         pp_duration=not args.no_pp_duration,
         assistant_recall=not args.no_assistant_recall,
         role_answer=not args.no_role_answer,
+        quant_rerank=not args.no_quant_rerank,
         sidechannel=args.sidechannel,
         recall_mode=args.recall_mode)
 
@@ -8460,6 +8530,7 @@ def main(argv: list[str] | None = None) -> int:
             pp_duration=not args.no_pp_duration,
             assistant_recall=not args.no_assistant_recall,
             role_answer=not args.no_role_answer,
+            quant_rerank=not args.no_quant_rerank,
             neg_exist=not args.no_neg_exist,
             sidechannel=args.sidechannel,
             recall_mode=args.recall_mode,
