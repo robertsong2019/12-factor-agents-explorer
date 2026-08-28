@@ -113,3 +113,10 @@
 - **根因：** 修 bug 时只修当前报错路径，未 grep 同 pattern 的其他实现点；重复代码 = 每个实例都是独立病灶
 - **修正：** utils 用同样的 lambda replacement 修复 + 3 个红验证回归测试（324→327）
 - **出现次数：** 家族第 2 次明确记录（08-27 essay 系统化过该家族）；修 bug 后应 `grep -n "re.sub("` 全仓扫同 pattern
+
+### [2026-08-29] 重复实现孪生家族第 7 例：孪生长进测试层（acs rename_key + TestRenameKey 遮蔽）
+- **场景：** acs morning 测试循环，覆盖率扫描发现 rename_key 区块 100% 未覆盖，红验证 xref rename 行为
+- **错误：** src 层 `rename_key` 双 def（贫血版遮蔽完整版）；tests 层 `TestRenameKey` 双 class（后定义遮蔽前定义）——`test_preserves_versions` 必 FAIL 却显示 2898 全绿
+- **根因：** Python 模块级/class 内后定义静默覆盖前定义，无任何告警；套件"绿"只说明收集到的测试通过，不说明该测的都在
+- **修正：** 删贫血孪生 + 四角索引重写；shadow class 改名去遮蔽；红验证 4 回归
+- **出现次数：** 家族第 7 次；**新变体**：前 6 次都在实现层，这次测试层也长孪生 → 检查规则升级：测 bug 前 `grep -c "def <name>" file` 和 `grep -c "^class <Name>" tests/`，>1 先去重再修
