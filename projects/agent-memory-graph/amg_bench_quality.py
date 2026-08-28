@@ -444,6 +444,7 @@ class LongMemEvalAdapter:
                  pref_abstain: bool = True,
                  neg_exist: bool = True,
                  quant_rerank: bool = True,
+                 ku_session_face: bool = True,
                  role_answer: bool = True,
                  role_margin: int = 0,
                  assistant_recall: bool = True,
@@ -539,6 +540,7 @@ class LongMemEvalAdapter:
         # win (0 = must tie; the -seq tie-break hands equal-hit
         # tops to the LATEST message, routinely the advice reply).
         self.quant_rerank = quant_rerank
+        self.ku_session_face = ku_session_face
         self.role_answer = role_answer
         self.role_margin = role_margin
         self.assistant_recall = assistant_recall
@@ -1288,6 +1290,72 @@ class LongMemEvalAdapter:
                     best_q is not None and best_q_hits >= 2)}
             if meta["quant_rerank"]["override"]:
                 best_line = best_q
+        # C525: knowledge-update recency session-scope (#090
+        # spin-off). Census (C525 /tmp/c525/census_c525.py, official
+        # C523 post_full500_c523.json, 225 answer-gate questions
+        # replayed on pristine HEAD): 109/158 answer-gate wrongs
+        # have NO GT-bearing line in the window, but 92 of them DO
+        # have the GT session retrieved (answer_session_hit=True) —
+        # the window-composition surface. Face-level remainder:
+        # questions asking the CURRENT state of an accumulating
+        # quantity (recency adverbs, _KU_RECENCY_RE) are answered by
+        # the LATEST session's evidence, while keyword ranking
+        # saturates on topic echoes from older sessions (C499
+        # pathology, session subtype). Rule: when the face line's
+        # session differs from the latest evidence session (max seq
+        # over keyword-hit lines), re-face to that session's best
+        # line — max keyword hits, ties keep the LATEST message
+        # (C437/C447 recency convention), any role, floor 2 (C501).
+        # Census: 6 fires = 2 wins (1a8a66a6 magazines,
+        # 6a27ffc2 Corey-30-videos) + 4 wrong→wrong noops, ZERO
+        # correct-question touches. The adverb scope is what
+        # separates: the same condition unscoped fires 58 with 10
+        # hijacks incl. 3 C523 wins (C522/C524 inseparability
+        # pattern avoided by form-narrowing, not a new
+        # discriminator). Fall-through with no qualifying candidate
+        # (C488); window lines are mapped via retrieved_ids (labels
+        # may embed newlines — split-based mapping desyncs, the
+        # C525 census v1 lesson). Specialized gates upstream own
+        # counting/TA/delta forms, so this block only ever sees the
+        # answer-gate remainder.
+        if self.ku_session_face and _KU_RECENCY_RE.search(question):
+            kws = meta.get("keywords") or _keywords(question)
+            face_body = best_line.split("] ", 1)[-1]
+            nodes = []
+            for nid in (meta.get("retrieved_ids") or []):
+                info = self._messages.get(nid)
+                if not info:
+                    continue
+                body = info.get("label", "")
+                nodes.append({
+                    "role": info.get("role") or "?",
+                    "body": body,
+                    "sid": info.get("session_id"),
+                    "seq": info.get("seq") or 0,
+                    "hits": _keyword_hits(body, kws)})
+            face_node = next(
+                (n for n in nodes if n["body"] == face_body), None)
+            ev = [n for n in nodes if n["hits"] >= 1]
+            les = (max(ev, key=lambda n: n["seq"])["sid"]
+                   if ev else None)
+            best_n = None
+            if face_node is not None and les is not None:
+                cands = [n for n in nodes if n["sid"] == les
+                         and n["hits"] >= 2]
+                if cands:
+                    mh = max(n["hits"] for n in cands)
+                    best_n = max(
+                        (n for n in cands if n["hits"] == mh),
+                        key=lambda n: n["seq"])
+            meta["ku_session_face"] = {
+                "face_session": (face_node or {}).get("sid"),
+                "latest_evidence_session": les,
+                "candidate_hits": best_n["hits"] if best_n else 0,
+                "override": bool(best_n is not None
+                                 and face_node is not None
+                                 and best_n["body"] != face_body)}
+            if meta["ku_session_face"]["override"]:
+                best_line = (f"[{best_n['role']}] {best_n['body']}")
         return best_line.split("] ", 1)[-1], meta
 
     def _counting_sessions(self) -> list[dict]:
@@ -4875,6 +4943,14 @@ _QUANTITY_TOKEN_RE = re.compile(
     r"seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|"
     r"seventy|eighty|ninety|hundred|dozen)\b", re.I)
 
+# C525: recency-adverb markers for current-state knowledge-update
+# questions. Lexicalizes "the answer is the LATEST value" intent —
+# the kupdate recency signal C524 localized to session/date (not
+# keyword) granularity.
+_KU_RECENCY_RE = re.compile(
+    r"\b(?:so far|currently|to date|as of (?:now|today)|lately"
+    r"|these days|up to now)\b", re.I)
+
 
 def _quantity_form(question: str) -> bool:
     """True for how-many/long/much fact questions (Cycle 523).
@@ -8249,6 +8325,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              pref_abstain: bool = True,
              neg_exist: bool = True,
              quant_rerank: bool = True,
+             ku_session_face: bool = True,
              role_answer: bool = True,
              role_margin: int = 0,
              assistant_recall: bool = True,
@@ -8292,6 +8369,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   pref_abstain=pref_abstain,
                   neg_exist=neg_exist,
                   quant_rerank=quant_rerank,
+                  ku_session_face=ku_session_face,
                   role_answer=role_answer,
                   sidechannel=sidechannel,
                   role_margin=role_margin,
@@ -8466,6 +8544,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-quant-rerank", action="store_true",
                         help="Disable the Cycle 523 quantity-form "
                              "answer-face re-rank")
+    parser.add_argument("--no-ku-session-face", action="store_true",
+                        help="Disable the Cycle 525 knowledge-update "
+                             "recency session-scope answer face")
     parser.add_argument("--sidechannel", action="store_true",
                         help="Enable the Cycle 506 form-gated embedding "
                              "side-channel (preference/assistant-recall "
@@ -8508,6 +8589,7 @@ def main(argv: list[str] | None = None) -> int:
         assistant_recall=not args.no_assistant_recall,
         role_answer=not args.no_role_answer,
         quant_rerank=not args.no_quant_rerank,
+        ku_session_face=not args.no_ku_session_face,
         sidechannel=args.sidechannel,
         recall_mode=args.recall_mode)
 
@@ -8531,6 +8613,7 @@ def main(argv: list[str] | None = None) -> int:
             assistant_recall=not args.no_assistant_recall,
             role_answer=not args.no_role_answer,
             quant_rerank=not args.no_quant_rerank,
+            ku_session_face=not args.no_ku_session_face,
             neg_exist=not args.no_neg_exist,
             sidechannel=args.sidechannel,
             recall_mode=args.recall_mode,
