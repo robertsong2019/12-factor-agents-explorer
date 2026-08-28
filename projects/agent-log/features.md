@@ -16,6 +16,7 @@
 - [x] **F1**: `search` with regex support — `-r`/`--regex` flag ✅ (previously done)
 - [x] **F2**: `search` with date range filtering (`--from`/`--to` YYYY-MM-DD) ✅ 2026-05-30
 - [x] **F3**: `search` with export — save results to file (`-o results.txt`) ✅ 2026-04-30
+- [x] **F19**: `search --count` — ranked per-file match counts, sorted desc (text/JSON/export) ✅ 2026-08-28
 
 ### Timeline & Summary
 - [x] **F4**: `summary` with keyword filtering — show only entries matching a pattern ✅ 2026-06-01
@@ -44,8 +45,11 @@
 - [x] **F16**: Unit tests for each command (Bats framework) ✅ 2026-08-22 (18 bats tests incl. 10 regression tests for 4 real bugs: help DOA, clean data loss, find -j JSON, escaping)
 - [x] **F17**: Integration tests with sample fixture data ✅ 2026-05-30
 - [x] **F18**: Performance benchmarks for large log sets — `test/bench.sh` (365-day synthetic corpus, per-command timing + thresholds) + `test/bench.test.bats` (4 smoke tests) ✅ 2026-08-22
+- [x] **F20**: Pipe-safe output — ANSI palette auto-disabled when stdout is not a TTY or `NO_COLOR` set (search/grep colored greps no longer pollute piped/redirected output) ✅ 2026-08-28
 
 ## Priorities
 **Round 1 (Core UX):** F1, F4, F10 — Improve search and add JSON output
 **Round 2 (Analysis):** F6, F7, F8 — Better session and trend analysis
 **Round 3 (Quality):** F16, F17 — Add test coverage
+
+**Side finding (2026-08-28):** `setup_fixture.sh` never sets `OPENCLAW_WORKSPACE`; agent-log.sh re-derives MEMORY_DIR from WORKSPACE, so bats tests for search/summary accidentally ran against live workspace data (pass because real memory contains "EventBus" etc). f19-f20.test.bats sets the override; migrating legacy fixture tests is future work.

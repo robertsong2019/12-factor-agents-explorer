@@ -13,6 +13,11 @@ HEARTBEAT_STATE="$MEMORY_DIR/heartbeat-state.json"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; GRAY='\033[0;90m'; RESET='\033[0m'
 
+# F20: pipe-safe output — suppress ANSI colors when stdout is not a TTY or NO_COLOR is set
+if [[ ! -t 1 ]] || [[ -n "${NO_COLOR:-}" ]]; then
+  RED=''; GREEN=''; YELLOW=''; BLUE=''; CYAN=''; GRAY=''; RESET=''
+fi
+
 # Global JSON flag
 JSON_OUTPUT=0
 
@@ -42,13 +47,14 @@ build_search_json() {
 # ── Commands ──
 
 cmd_search() {
-  local use_regex=0 query="" output_file="" date_from="" date_to=""
+  local use_regex=0 query="" output_file="" date_from="" date_to="" count_only=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -r|--regex) use_regex=1 ;;
       -o|--output) shift; output_file="${1:-}" ;;
       -j|--json) JSON_OUTPUT=1 ;;
+      --count) count_only=1 ;;
       --from) shift; date_from="${1:-}" ;;
       --to) shift; date_to="${1:-}" ;;
       *) query="$1" ;;
@@ -56,7 +62,7 @@ cmd_search() {
     shift
   done
 
-  [[ -z "$query" ]] && die "Usage: agent-log search [-r|--regex] [-o file] [-j|--json] [--from DATE] [--to DATE] <query>"
+  [[ -z "$query" ]] && die "Usage: agent-log search [-r|--regex] [-o file] [-j|--json] [--from DATE] [--to DATE] [--count] <query>"
 
   # Validate date formats
   local date_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
@@ -93,14 +99,21 @@ cmd_search() {
 
   local json_results=()
   local plain_output=""
+  local grep_color=()
+  [[ -t 1 && -z "${NO_COLOR:-}" ]] && grep_color=(--color=always)
 
   local found_files
   found_files=$(grep -rl "${grep_opts[@]}" "$query" "${files[@]}" 2>/dev/null || true)
 
+  local rank_rows=()
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
     local rel="${f#$HOME/}"
-    if [[ $JSON_OUTPUT -eq 1 ]]; then
+    if [[ $count_only -eq 1 ]]; then
+      local matches
+      matches=$(grep "${grep_opts[@]}" -c "$query" "$f" 2>/dev/null || echo 0)
+      rank_rows+=("$matches"$'\t'"$rel")
+    elif [[ $JSON_OUTPUT -eq 1 ]]; then
       local matches
       matches=$(grep "${grep_opts[@]}" -c "$query" "$f" 2>/dev/null || echo 0)
       # Escape special chars in filename for JSON
@@ -108,9 +121,40 @@ cmd_search() {
       json_results+=("{\"file\":\"$esc_rel\",\"matches\":$matches}")
     else
       plain_output+="$(echo -e "${BLUE}$rel${RESET}")"$'\n'
-      plain_output+="$(grep --color=always "${grep_opts[@]}" -n -C 1 "$query" "$f" 2>/dev/null | head -20 | sed 's/^/  /' || true)"$'\n\n'
+      plain_output+="$(grep "${grep_color[@]}" "${grep_opts[@]}" -n -C 1 "$query" "$f" 2>/dev/null | head -20 | sed 's/^/  /' || true)"$'\n\n'
     fi
   done <<< "$found_files"
+
+  # F19: --count — ranked per-file match counts, sorted descending
+  if [[ $count_only -eq 1 ]]; then
+    if [[ ${#rank_rows[@]} -eq 0 ]]; then
+      echo "No matches."
+      return
+    fi
+    if [[ $JSON_OUTPUT -eq 1 ]]; then
+      local sorted_json=() m rel_row
+      while IFS=$'\t' read -r m rel_row; do
+        sorted_json+=("{\"file\":\"${rel_row//\"/\\\"}\",\"matches\":$m}")
+      done < <(printf '%s\n' "${rank_rows[@]}" | sort -rn)
+      build_search_json "$query" "$search_type" "${sorted_json[@]+${sorted_json[@]}}"
+    else
+      echo -e "${CYAN}Match counts ($search_type):${RESET} $query"
+      echo -e "${GRAY}(${#files[@]} files scanned)${RESET}"
+      echo
+      printf '%s\n' "${rank_rows[@]}" | sort -rn | awk -F'\t' '{printf "  %5d  %s\n", $1, $2}'
+    fi
+    if [[ -n "$output_file" ]]; then
+      {
+        echo "# Match counts for: $query"
+        echo "# Type: $search_type"
+        echo "# Generated: $(date -Iseconds)"
+        echo ""
+        printf '%s\n' "${rank_rows[@]}" | sort -rn | awk -F'\t' '{printf "%6d  %s\n", $1, $2}'
+      } > "$output_file"
+      echo -e "${GREEN}Results exported to: $output_file${RESET}"
+    fi
+    return
+  fi
 
   if [[ $JSON_OUTPUT -eq 1 ]]; then
     build_search_json "$query" "$search_type" "${json_results[@]+${json_results[@]}}"
@@ -467,7 +511,9 @@ cmd_grep() {
   [[ -z "$pattern" ]] && die "Usage: agent-log grep <pattern> [-j|--json]"
 
   [[ -d "$SESSIONS_DIR" ]] || die "No sessions directory"
-  grep -r --include='*.md' --color=always -n "$pattern" "$SESSIONS_DIR" 2>/dev/null \
+  local grep_color=()
+  [[ -t 1 && -z "${NO_COLOR:-}" ]] && grep_color=(--color=always)
+  grep -r --include='*.md' "${grep_color[@]}" -n "$pattern" "$SESSIONS_DIR" 2>/dev/null \
     | head -50 || echo -e "${GRAY}(no matches)${RESET}"
 }
 
@@ -602,8 +648,8 @@ agent-log — Search, filter, and summarize OpenClaw session logs
 Usage: agent-log <command> [args]
 
 Commands:
-  search <query> [-r|--regex] [-o FILE] [-j|--json] [--from DATE] [--to DATE]
-      Search memory + session logs (text or regex)
+  search <query> [-r|--regex] [-o FILE] [-j|--json] [--from DATE] [--to DATE] [--count]
+      Search memory + session logs (text or regex; --count shows ranked match counts)
   today                      Show today's daily notes + session activity
   date YYYY-MM-DD            Show notes for a specific date
   summary [DAYS] [-k|--keyword KW] [-t|--types] [--csv] [--md] [-j|--json]
