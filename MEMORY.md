@@ -16,6 +16,13 @@
 
 ## Current Focus (2026-08-28)
 
+### 08-28 晚 Research #091 — latest-number-wins：supersedence 签名与答题时 recency 仲裁 ✅
+> - **动机**: 关键路径 #3 首位（a2f3aa27 "1250→1300 followers" 数字行内 recency 比较，HEARTBEAT 标"C524 首选但风险高一档"→研究先行）。核心难题不是排序（seq 易得）而是**判定哪两个数值是同一事实的版本（supersedence）vs 共存的不同事实（coexistence）**——选错方向双向翻车：该合不合（答旧值）/ 不该合硬合（人名域劫持）
+> - **文献栈**: Zep/Graphiti arXiv:2501.13956（bi-temporal 4 时间戳，**矛盾关窗不覆写**，LongMemEval +18.5%/延迟 −90%，写时 LLM 失效）/ RecencyQA 2026 arXiv:2603.16544（**recency–stationarity 二维分类学**，recency demand 是问题属性非事实属性，non-stationary 难且时间上下文 +40%）/ TempLAMA TACL'22（timestamp conditioning）/ FreshQA（false-premise 类=弃权同构）/ SituatedQA（答案=(句子,语境) 函数，与 #090 问题盲/form-gated 三度收敛）
+> - **产出**: `fact_versions.py` 零依赖原型（catalyst-research/exploration-notes/code/），**12/12 自测全绿**。三层：unit_domain（time 换算秒/currency·distance 按码分域不换算）→ supersedence 签名 **(canonical entity, normalized predicate, unit domain)** → resolve（撤回检查→max(seq) 胜→superseded 链审计）。六 credit 形态（1250→1300 原题/2h≡120min/$90k·€90k 域多义+单位提示选域/递进链/撤回后新值胜/值不变 NO_CHANGE）+ 六 non-credit 防御（显式撤回无替代→INVALIDATED 弃权不回吐旧值/撤回早于事实无效/followers≠following 谓词劫持/Raj≠Priya 实体劫持/5mi≠8km 分域/空集门前弃权）
+> - **关键洞察**: ①**版本判定应在答题时而非写入时**——Zep 写时失效每写付一次 LLM 判定且误杀不可逆；amg append-only + seq 免费系统钟，答题时确定性分组零 LLM 可单测（C512 写时摊销 1.02× 反向印证）②**"风险高一档"的解药是签名不是阈值**——无签名 recency 重排才危险，三要素签名把模糊判断变精确匹配 ③单位域=判分(#090 $5≢€5)/检索(#091 版本边界)共享原语，两次独立收敛，README 统一叙事素材 ④版本链终端 INVALIDATED 是弃权家族第三成员（neg-exist 从未有/版本失效 曾有过/预设失败 既有门）⑤C523 (-hits,-seq) 已隐式验证 recency 信号 +11/−0，C524 是显式化收获非赌博
+> - **Next（C524 前置）**: ①census 先行（insight #254 纪律）——full-500 数值行按签名分组，测同签名多值组人口（对照 40+ 题估计）+ 签名碰撞假合并数（hijack 暴露面）+ 撤回形态计数 ②census 绿灯后 C524 form-gated 落地（仅数量当前值型 form，A/B kupdate+multi_session，基线官方 0.476，(+n/−0) 纪律）③撤回检测器独立小件（"not anymore/moved out/paid off/sold"→Retraction 事件→第三弃权源）④README 素材 "unit domain as the supersedence boundary"。笔记: exploration-notes/2026-08-28-latest-number-wins-supersedence-signature.md
+
 ### 08-27 晚 ~ 08-28 凌晨 — C520-C523 弧线：官方 0.454→**0.476**（238/500，C481 起 **2.33×**）+ C522 大 census 负结果
 > - **C520 (cde5d38, keep)**: risk_coverage_report()——AURC/E-AURC/Risk@coverage selective-prediction（#089 移植）。**真 bug：#089 oracle k²/2n² 是小-k Taylor 近似（n=10,k=4 低估→美化 E-AURC）→ 换 constructive-exact（同一梯形积分器）+ oracle 交叉检查强制**。flat-curve 量化：risk@50%=0.516 vs overall 0.556
 > - **C521 (61525fa, keep)**: enum_count event proper-name signature——festival/fest-head 数 DISTINCT 活动专名（dedup 再提及/排除动词从句跳过/preempt names-roles）。full-500 census：event-head enum 题恰 1 道；A/B 21 题 how-many 切片 +1/−0 含 CONTROL 逐字节一致
