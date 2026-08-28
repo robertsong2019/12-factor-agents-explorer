@@ -445,6 +445,7 @@ class LongMemEvalAdapter:
                  neg_exist: bool = True,
                  quant_rerank: bool = True,
                  ku_session_face: bool = True,
+                 session_complete_face: bool = True,
                  role_answer: bool = True,
                  role_margin: int = 0,
                  assistant_recall: bool = True,
@@ -541,6 +542,7 @@ class LongMemEvalAdapter:
         # tops to the LATEST message, routinely the advice reply).
         self.quant_rerank = quant_rerank
         self.ku_session_face = ku_session_face
+        self.session_complete_face = session_complete_face
         self.role_answer = role_answer
         self.role_margin = role_margin
         self.assistant_recall = assistant_recall
@@ -1356,6 +1358,64 @@ class LongMemEvalAdapter:
                                  and best_n["body"] != face_body)}
             if meta["ku_session_face"]["override"]:
                 best_line = (f"[{best_n['role']}] {best_n['body']}")
+        # C526: session-completion face rescue (C525 queue item —
+        # window-composition census, /tmp/c526, 225 answer-gate
+        # questions replayed on HEAD). The census KILLS the
+        # budget-truncation hypothesis: only 5 wrongs have a
+        # GT-bearing line in the candidate list beyond the window
+        # (all hits=1), while 105 wrongs never see the GT line as a
+        # candidate at all (58 have NO GT-bearing line anywhere in
+        # the haystack — quotation-judge dead, judge_semantic
+        # territory). Rescue surface: same-session lines the seed
+        # phase missed. Rule: scan messages of the FACE's OWN session
+        # that are NOT in the retrieval window; if one out-hits the
+        # face (margin 1, floor 2), re-face to it — max hits, ties
+        # keep the latest (C437/C447). Session-locality is the
+        # separator: unscoped (any session) the same rule is
+        # +7/−3 with ALL 3 hijacks cross-session; same-session is
+        # +3/−0 over the full population (caf9ead2, c4a1ceb8 new
+        # wins; 6a27ffc2 idempotent on the C525 fix), zero correct
+        # touches. Fall-through otherwise (C488); window lines are
+        # mapped via retrieved_ids, not split (C525 census v1
+        # lesson). Specialized gates upstream own their forms, so
+        # this block only ever sees the answer-gate remainder.
+        if self.session_complete_face:
+            kws = meta.get("keywords") or _keywords(question)
+            face_body = best_line.split("] ", 1)[-1]
+            win_ids = set(meta.get("retrieved_ids") or [])
+            face_sid = None
+            face_hits = 0
+            for nid in (meta.get("retrieved_ids") or []):
+                info = self._messages.get(nid)
+                if info and info.get("label", "") == face_body:
+                    face_sid = info.get("session_id")
+                    face_hits = _keyword_hits(face_body, kws)
+                    break
+            best_n = None
+            if face_sid is not None:
+                for nid, info in self._messages.items():
+                    if nid in win_ids:
+                        continue
+                    if info.get("session_id") != face_sid:
+                        continue
+                    body = info.get("label", "")
+                    h = _keyword_hits(body, kws)
+                    if h < max(2, face_hits + 1):
+                        continue
+                    if (best_n is None or h > best_n["hits"]
+                            or (h == best_n["hits"]
+                                and (info.get("seq") or 0)
+                                > (best_n["seq"] or 0))):
+                        best_n = {"role": info.get("role") or "?",
+                                  "body": body, "hits": h,
+                                  "seq": info.get("seq") or 0}
+            meta["session_complete_face"] = {
+                "face_session": face_sid,
+                "candidate_hits": best_n["hits"] if best_n else 0,
+                "override": bool(best_n is not None
+                                 and best_n["body"] != face_body)}
+            if meta["session_complete_face"]["override"]:
+                best_line = f"[{best_n['role']}] {best_n['body']}"
         return best_line.split("] ", 1)[-1], meta
 
     def _counting_sessions(self) -> list[dict]:
@@ -8326,6 +8386,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              neg_exist: bool = True,
              quant_rerank: bool = True,
              ku_session_face: bool = True,
+             session_complete_face: bool = True,
              role_answer: bool = True,
              role_margin: int = 0,
              assistant_recall: bool = True,
@@ -8370,6 +8431,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   neg_exist=neg_exist,
                   quant_rerank=quant_rerank,
                   ku_session_face=ku_session_face,
+                  session_complete_face=session_complete_face,
                   role_answer=role_answer,
                   sidechannel=sidechannel,
                   role_margin=role_margin,
@@ -8547,6 +8609,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-ku-session-face", action="store_true",
                         help="Disable the Cycle 525 knowledge-update "
                              "recency session-scope answer face")
+    parser.add_argument("--no-session-complete-face", action="store_true",
+                        help="Disable the Cycle 526 session-completion "
+                             "face rescue")
     parser.add_argument("--sidechannel", action="store_true",
                         help="Enable the Cycle 506 form-gated embedding "
                              "side-channel (preference/assistant-recall "
@@ -8590,6 +8655,7 @@ def main(argv: list[str] | None = None) -> int:
         role_answer=not args.no_role_answer,
         quant_rerank=not args.no_quant_rerank,
         ku_session_face=not args.no_ku_session_face,
+        session_complete_face=not args.no_session_complete_face,
         sidechannel=args.sidechannel,
         recall_mode=args.recall_mode)
 
@@ -8614,6 +8680,7 @@ def main(argv: list[str] | None = None) -> int:
             role_answer=not args.no_role_answer,
             quant_rerank=not args.no_quant_rerank,
             ku_session_face=not args.no_ku_session_face,
+        session_complete_face=not args.no_session_complete_face,
             neg_exist=not args.no_neg_exist,
             sidechannel=args.sidechannel,
             recall_mode=args.recall_mode,
