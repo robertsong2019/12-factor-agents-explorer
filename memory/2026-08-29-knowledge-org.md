@@ -32,6 +32,9 @@
 - **新项目入账**：projects/agent-log（bats 口径，非 npm/node --test，记账时注意口径差异）
 - 拓扑混用（skill-doctor 行在 root tsv）维持 monitoring，append-only 不改史
 
+## 双触发记录（02:10 孪生实例）
+02:06-02:09 首实例完成全量 KO 并提交 233f802 后，02:10 孪生触发到达。幂等三查通过（产物 mtime 02:07-02:09 + commit 实存 + 本会话无 in-flight），核验 MEMORY.md（Current Focus 08-29 / C524→C526 arc / 10084×4）、HEARTBEAT.md（08-29 头部 / 10084×5）后 **no-op 不重做**。本日 KO 双触发例 +1（essay 05:06 / tool-dev 22:11 之外第 3 例）。
+
 ## 质量自检
 - MEMORY.md 反映真实状态？✓ 10084/1683/327/12338 与 git log + 项目仓 tsv + suite 记录对账；C524-C526 行链 verified
 - HEARTBEAT.md 可操作？✓ 关键路径 #3 队首=官方收债+judge_semantic #090（C526 会话 01:53 刚重写，本轮不重复动）；人工阻塞项（PyPI/npm 命名）显式
