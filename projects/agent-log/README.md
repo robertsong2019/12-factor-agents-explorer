@@ -31,6 +31,12 @@ agent-log search "docker"
 
 # What happened in the last week?
 agent-log summary 7
+
+# Activity sparkline for the last 14 days
+agent-log trend
+
+# Ranked match counts per file (who talks about Docker the most?)
+agent-log search "docker" --count
 ```
 
 ## Usage
@@ -62,18 +68,28 @@ agent-log stats
 
 | Command | Description |
 |---------|-------------|
-| `search <query>` | Search all logs for a keyword |
-| `today` | Show today's activity timeline |
+| `search <query>` | Search all logs. Flags: `-r` regex, `--from/--to YYYY-MM-DD` date range, `--count` ranked per-file match counts, `-o FILE` export, `-j` JSON |
+| `today` | Show today's daily notes + session activity |
 | `date <YYYY-MM-DD>` | Show activity for a specific date |
-| `summary <N>` | Summarize last N days of activity |
+| `summary [N]` | Summarize last N days. Flags: `-k KW` keyword filter, `-t` break down by activity type, `--csv` / `--md` / `-j` output |
+| `trend [N]` | Sparkline activity trend over N days (default 14); `-j` for JSON |
+| `stats` | Workspace statistics; `--md` / `-j` output |
+| `sessions` | List 30 most recent session files with lines/size/mtime; `-j` for JSON |
+| `session <id>` | Show one session transcript by exact name or partial pattern; `-j` for JSON |
+| `find <pattern>` | Find sessions by content/filename pattern and/or `-a DATE` / `-b DATE` modified-time bounds; `-j` for JSON |
+| `grep <pattern>` | Fast grep across session logs (first 50 hits, line numbers) |
+| `tail [-n N] [-f]` | Tail the most recent session; `-f` follows as it grows |
 | `cron` | List all cron job runs |
-| `stats` | Show session statistics |
+| `clean [-n] [-a DAYS]` | Remove empty and old daily notes. **The only command that deletes** — always preview with `-n/--dry-run` first |
+
+All commands that print reports also accept `-j/--json` where noted, so output can be piped into `jq` or fed to scripts. Colors are automatically disabled when stdout is not a TTY or `NO_COLOR` is set.
 
 ## Testing
 
 ```bash
-# Full bats suite (22 tests, fully sandboxed — HOME is overridden to a fixture dir)
-bats test/commands.bats test/bugfixes.test.bats
+# Full bats suite (31 tests, fully hermetic — HOME and OPENCLAW_WORKSPACE are
+# overridden to a fixture dir with dynamic dates, so runs never touch live data)
+bats test/commands.bats test/bugfixes.test.bats test/f19-f20.test.bats
 
 # Performance benchmarks (F18) — 365-day synthetic corpus, per-command timing + thresholds
 bash test/bench.sh          # full benchmark run
@@ -90,21 +106,23 @@ bats test/bench.test.bats   # 4 smoke tests
 ## How It Works
 
 ```
-~/.openclaw/workspace/
-├── memory/          ← agent-log reads daily notes (YYYY-MM-DD.md)
-├── sessions/        ← session transcripts (if available)
-└── .openclaw/       ← cron logs, config
+~/.openclaw/workspace/        ← WORKSPACE (override with OPENCLAW_WORKSPACE)
+├── memory/                   ← daily notes, YYYY-MM-DD.md
+└── *.md (root only)          ← MEMORY.md, README.md, ...
+
+~/.openclaw/sessions/         ← session transcripts (outside the workspace)
 ```
 
-`agent-log` scans these standard OpenClaw directories using `grep`/`ripgrep` and presents results with colorized output. No indexing, no database — just fast text search.
+`agent-log` scans these standard OpenClaw directories using `grep`/`find` and presents results with colorized output. No indexing, no database — just fast text search. Note that `SESSIONS_DIR` is fixed to `~/.openclaw/sessions` and does not follow `OPENCLAW_WORKSPACE`.
 
 ## Design Principles
 
 - **Single Bash script, zero dependencies** — works on any Unix system
-- **Read-only** — never modifies your logs
-- **Respects `.gitignore`** — skips binary files and ignored paths
+- **Read-only by default** — the only command that deletes anything is `clean` (preview with `-n/--dry-run`)
+- **Pipe-safe** — ANSI colors auto-disabled when stdout is not a TTY or `NO_COLOR` is set
+- **JSON everywhere** — machine-readable output for scripting (`-j` on most commands)
 - **Colorized output** — easy to scan visually
-- **Composable** — pipe to `less`, `wc -l`, etc.
+- **Composable** — pipe to `less`, `wc -l`, `jq`, etc.
 
 ## Extending
 
