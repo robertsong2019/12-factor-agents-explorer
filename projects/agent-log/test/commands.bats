@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Bats tests for agent-log core commands (F16)
+# Bats tests for agent-log core commands (F16, hermetic via setup_fixture since F21)
 
 setup() {
   source "$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/setup_fixture.sh"
@@ -36,6 +36,8 @@ teardown() {
   run bash "$AGENT_LOG" summary -j 3
   [ "$status" -eq 0 ]
   [[ "$output" =~ '"command":"summary"' ]]
+  # hermetic: dynamic fixture dates guarantee all 3 files fall in the window
+  [[ "$output" =~ '"total_files":3' ]]
 }
 
 # --- search command ---
@@ -43,6 +45,9 @@ teardown() {
 @test "search finds keyword in logs" {
   run bash "$AGENT_LOG" search "EventBus"
   [ "$status" -eq 0 ]
+  # hermetic: EventBus exists only in the D1 fixture file
+  [[ "$output" =~ "$FIX_D1.md" ]]
+  [[ "$output" =~ "Refactored EventBus" ]]
 }
 
 @test "search with regex flag works" {

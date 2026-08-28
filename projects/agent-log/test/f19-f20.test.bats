@@ -4,8 +4,7 @@
 setup() {
   source "$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/setup_fixture.sh"
   setup
-  # Hermetic: agent-log.sh derives MEMORY_DIR from WORKSPACE, so point it at the fixture
-  export OPENCLAW_WORKSPACE="$FIXTURE_DIR"
+  # OPENCLAW_WORKSPACE + HOME are exported hermetically by setup_fixture (F21)
   AGENT_LOG="$(cd "$(dirname "$BATS_TEST_FILENAME")" && pwd)/../agent-log.sh"
   export AGENT_LOG
 }
@@ -20,13 +19,13 @@ teardown() {
   run bash "$AGENT_LOG" search --count emitAsync
   [ "$status" -eq 0 ]
   [[ "$output" =~ "Match counts" ]]
-  [[ "$output" =~ "2026-05-31.md" ]]
+  [[ "$output" =~ "$FIX_D1.md" ]]
 }
 
 @test "F19: --count value matches fixture content (emitAsync appears once)" {
   run bash "$AGENT_LOG" search --count emitAsync
   [ "$status" -eq 0 ]
-  count=$(printf '%s\n' "$output" | awk '/2026-05-31\.md$/{print $1}')
+  count=$(printf '%s\n' "$output" | awk -v d="$FIX_D1" '$0 ~ d"\\.md$"{print $1}')
   [ "$count" = "1" ]
 }
 
@@ -53,7 +52,7 @@ teardown() {
   [ "$status" -eq 0 ]
   [ -f "$out" ]
   grep -q '# Match counts for: emitAsync' "$out"
-  count=$(awk '/2026-05-31\.md$/{print $1}' "$out")
+  count=$(awk -v d="$FIX_D1" '$0 ~ d"\\.md$"{print $1}' "$out")
   [ "$count" = "1" ]
 }
 

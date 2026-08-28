@@ -46,10 +46,11 @@
 - [x] **F17**: Integration tests with sample fixture data ✅ 2026-05-30
 - [x] **F18**: Performance benchmarks for large log sets — `test/bench.sh` (365-day synthetic corpus, per-command timing + thresholds) + `test/bench.test.bats` (4 smoke tests) ✅ 2026-08-22
 - [x] **F20**: Pipe-safe output — ANSI palette auto-disabled when stdout is not a TTY or `NO_COLOR` set (search/grep colored greps no longer pollute piped/redirected output) ✅ 2026-08-28
+- [x] **F21**: Hermetic test fixtures — setup_fixture.sh now exports OPENCLAW_WORKSPACE + fake HOME (agent-log.sh re-derives MEMORY_DIR from WORKSPACE) and uses dynamic dates (D0/D1/D2) so summary/trend windows always include fixture files; legacy commands.bats tests were passing against live workspace data by accident ✅ 2026-08-28
 
 ## Priorities
 **Round 1 (Core UX):** F1, F4, F10 — Improve search and add JSON output
 **Round 2 (Analysis):** F6, F7, F8 — Better session and trend analysis
 **Round 3 (Quality):** F16, F17 — Add test coverage
 
-**Side finding (2026-08-28):** `setup_fixture.sh` never sets `OPENCLAW_WORKSPACE`; agent-log.sh re-derives MEMORY_DIR from WORKSPACE, so bats tests for search/summary accidentally ran against live workspace data (pass because real memory contains "EventBus" etc). f19-f20.test.bats sets the override; migrating legacy fixture tests is future work.
+**Side finding (2026-08-28):** `setup_fixture.sh` never sets `OPENCLAW_WORKSPACE`; agent-log.sh re-derives MEMORY_DIR from WORKSPACE, so bats tests for search/summary accidentally ran against live workspace data (pass because real memory contains "EventBus" etc). **Fixed same day by F21** — fixture is now fully hermetic with dynamic dates; legacy tests kept their assertions plus strengthened checks (summary JSON total_files:3, search output contains fixture content).
