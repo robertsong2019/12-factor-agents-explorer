@@ -27,9 +27,9 @@ def _adapter_with_recall_spy(**kw):
     limits = []
     orig = ad.mg.recall
 
-    def spy(query, limit=5):
+    def spy(query, limit=5, **kw):
         limits.append(limit)
-        return orig(query, limit=limit)
+        return orig(query, limit=limit, **kw)
 
     ad.mg.recall = spy
     return ad, limits

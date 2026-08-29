@@ -547,16 +547,38 @@ class MemoryGraph:
         )
         self.conn.commit()
 
-    def recall(self, query: str, limit: int = 5) -> list[Node]:
-        """按关键词召回记忆，访问过的记忆强度增加。"""
+    def recall(self, query: str, limit: int = 5, *,
+               readonly: bool = False) -> list[Node]:
+        """按关键词召回记忆，访问过的记忆强度增加。
+
+        ``readonly=True`` turns recall into a pure read: no decay,
+        no access boost, no weight/accessed writes.  Ties break by
+        rowid (ingest order), making the result a pure function of
+        the stored graph — independent of wall clock and call
+        history.  The benchmark eval path uses this (Cycle 528):
+        the default boost/decay path made ``ORDER BY weight DESC``
+        resolve weight near-ties by ingest-time decay float noise,
+        which was the root cause of the C527-era "tie-jitter" family
+        (per-question fresh ingests → fresh ``accessed`` timestamps →
+        cross-run verdict flips with identical code + seed).
+        """
         now = time.time()
+        order = "weight DESC, rowid" if readonly else "weight DESC"
         rows = self.conn.execute(
-            "SELECT * FROM nodes WHERE label LIKE ? AND quarantined = 0 ORDER BY weight DESC LIMIT ?",
+            f"SELECT * FROM nodes WHERE label LIKE ? AND quarantined = 0 ORDER BY {order} LIMIT ?",
             (f"%{query}%", limit)
         ).fetchall()
 
         results = []
         for r in rows:
+            if readonly:
+                results.append(Node(
+                    id=r["id"], label=r["label"], kind=r["kind"],
+                    data=json.loads(r["data"]),
+                    created=r["created"], accessed=r["accessed"],
+                    weight=r["weight"]
+                ))
+                continue
             # 应用遗忘衰减
             elapsed_days = (now - r["accessed"]) / 86400
             decayed = r["weight"] * math.exp(-self.DECAY_RATE * elapsed_days)

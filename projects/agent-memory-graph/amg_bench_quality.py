@@ -457,7 +457,8 @@ class LongMemEvalAdapter:
                  recall_seed_k: int = 40,
                  sidechannel: bool = False,
                  sidechannel_cache: SidechannelCache | None = None,
-                 where_loc: bool = True):
+                 where_loc: bool = True,
+                 deterministic_recall: bool = True):
         """Args:
             mg: MemoryGraph to ingest into (default: fresh in-memory).
             use_ppr: Enable PersonalizedPageRank expansion (multi-hop).
@@ -544,6 +545,17 @@ class LongMemEvalAdapter:
         self.quant_rerank = quant_rerank
         self.ku_session_face = ku_session_face
         self.session_complete_face = session_complete_face
+        # Cycle 528: read-only recall in the eval path — retrieval
+        # becomes a pure function of the ingested graph (no wall-clock
+        # decay, no access-boost writes). Root-cause fix for the
+        # "tie-jitter" family (C517✓→C522✓→C523✓→C527✗ flips of
+        # 86f00804 with identical code+seed): the default recall
+        # mutated weights with ``now=time.time()`` decay + boost, so
+        # each fresh per-question ingest carried fresh float noise
+        # into ``ORDER BY weight DESC`` near-ties. RNG audit (C528):
+        # zero unseeded ``random.`` reachable in the retrieval path —
+        # the noise was wall clock, not RNG.
+        self.deterministic_recall = deterministic_recall
         self.role_answer = role_answer
         self.role_margin = role_margin
         self.assistant_recall = assistant_recall
@@ -716,6 +728,7 @@ class LongMemEvalAdapter:
         start = time.perf_counter()
         keywords = _keywords(question)
         candidate_ids: set[str] = set()
+        ordered_candidates: list[str] = []  # C528: discovery order
 
         # Cycle 473: speaker-recall seed breadth. Per-question
         # haystacks hold hundreds of assistant messages; the
@@ -733,27 +746,41 @@ class LongMemEvalAdapter:
                  else self.seed_recall_k)
 
         # Seed: direct keyword recall (substring match, zero-cost).
+        # readonly (C528): see deterministic_recall in __init__ —
+        # no decay/boost mutation, rowid tie-break, clock-free.
+        # C528: ordered_candidates tracks first-discovery order — node
+        # ids are fresh uuid4 per ingest, so set iteration over them
+        # (hash order keyed by RANDOM values) re-rolls every run even
+        # with PYTHONHASHSEED pinned. PPR seed selection below must
+        # see discovery order, not hash order.
+        def _add_candidate(nid: str) -> None:
+            if nid not in candidate_ids:
+                candidate_ids.add(nid)
+                ordered_candidates.append(nid)
+
         for kw in keywords[:8]:
-            for node in self.mg.recall(kw, limit=k_eff):
-                candidate_ids.add(node.id)
+            for node in self.mg.recall(kw, limit=k_eff,
+                                       readonly=self.deterministic_recall):
+                _add_candidate(node.id)
 
         # Scored candidates: graphrag local (BM25 + 1-hop expansion).
         try:
             for r in self.mg.search_graphrag(question, mode="local",
                                              limit=10):
-                candidate_ids.add(r.get("node_id", ""))
+                _add_candidate(r.get("node_id", ""))
         except Exception:
             pass  # search may raise on empty graphs — recall is enough
 
-        # Multi-hop expansion: PPR from the seed set.
+        # Multi-hop expansion: PPR from the seed set (discovery order,
+        # NOT set/hash order — C528 determinism).
         if self.use_ppr and candidate_ids:
-            seeds = [nid for nid in candidate_ids if nid][:8]
+            seeds = [nid for nid in ordered_candidates if nid][:8]
             try:
                 ppr = self.mg.personalized_pagerank(seeds)
                 for nid in sorted(ppr, key=ppr.get, reverse=True):
                     if len(candidate_ids) >= len(seeds) + self.ppr_top:
                         break
-                    candidate_ids.add(nid)
+                    _add_candidate(nid)
             except Exception:
                 pass
 
@@ -8395,6 +8422,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
              recall_mode: str = "distinctive",
              recall_seed_k: int = 40,
              sidechannel: bool = False,
+             deterministic_recall: bool = True,
              judge_mode: str = "exact") -> dict:
     """Per-question-haystack evaluation (Cycle 454).
 
@@ -8436,6 +8464,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
                   session_complete_face=session_complete_face,
                   role_answer=role_answer,
                   sidechannel=sidechannel,
+                  deterministic_recall=deterministic_recall,
                   role_margin=role_margin,
                   assistant_recall=assistant_recall,
                   recall_mode=recall_mode,
@@ -8570,6 +8599,9 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
         report["config"]["data_sha256_12"] = h.hexdigest()[:12]
         report["config"]["pythonhashseed"] = (
             os.environ.get("PYTHONHASHSEED") or "unpinned")
+    # Cycle 528: determinism flag travels with the report — readonly
+    # recall runs are bitwise-replayable, wall-clock runs are not.
+    report["config"]["deterministic_recall"] = deterministic_recall
     return report
 
 
@@ -8631,6 +8663,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-session-complete-face", action="store_true",
                         help="Disable the Cycle 526 session-completion "
                              "face rescue")
+    parser.add_argument("--wallclock-recall", action="store_true",
+                        help="Legacy wall-clock recall (decay + access "
+                             "boost writes). Default is readonly "
+                             "deterministic recall (Cycle 528) — bitwise "
+                             "replayable, immune to ingest-time jitter.")
     parser.add_argument("--sidechannel", action="store_true",
                         help="Enable the Cycle 506 form-gated embedding "
                              "side-channel (preference/assistant-recall "
@@ -8676,7 +8713,8 @@ def main(argv: list[str] | None = None) -> int:
         ku_session_face=not args.no_ku_session_face,
         session_complete_face=not args.no_session_complete_face,
         sidechannel=args.sidechannel,
-        recall_mode=args.recall_mode)
+        recall_mode=args.recall_mode,
+        deterministic_recall=not args.wallclock_recall)
 
     if args.mode == "eval":
         entropies = None
@@ -8704,7 +8742,8 @@ def main(argv: list[str] | None = None) -> int:
             neg_exist=not args.no_neg_exist,
             sidechannel=args.sidechannel,
             recall_mode=args.recall_mode,
-            judge_mode=args.judge)
+            judge_mode=args.judge,
+            deterministic_recall=not args.wallclock_recall)
         with open(args.output, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2)
         print(f"\n{report['total_questions']} questions · "
