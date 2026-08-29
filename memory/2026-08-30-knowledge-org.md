@@ -31,4 +31,7 @@ job fd0515b0-f483-411d-b110-3a16fbc49983。素材：git log 24h（fd204d7=C528 /
 - 遗留债（未处理，记录）：memory/2026-08-30-key-development-3.md 与本轮三文件待 commit（下步执行）；cron 双注册 5 组仍待罗嵩拍板删除；kd-3 提出的 exec 后台 kill 孤儿进程课已入 MEMORY/HEARTBEAT。
 
 ## 提交
-git add 仅 MEMORY.md HEARTBEAT.md memory/2026-08-30-knowledge-org.md memory/2026-08-30-key-development-3.md（kd-3 未落账的笔记），commit 消息沿用「knowledge org 08-30: …」风格。
+git add 仅 MEMORY.md HEARTBEAT.md memory/2026-08-30-knowledge-org.md memory/2026-08-30-key-development-3.md（kd-3 未落账的笔记），commit 消息沿用「knowledge org 08-30: …」风格。（已执行：1c6aac0 02:11）
+
+## ⏱️ 02:12 重复触发（幂等跳过）
+同 job fd0515b0 于 02:12 再次投递（间隔 ~12 分钟）。幂等三查：产物在（本文件 + MEMORY/HEARTBEAT mtime 02:11）、commit 在（1c6aac0 02:11 含全部四文件）、无并发在飞会话 → **不重做，仅补记本触发事件**。08-30 当日 cron 双触发第 1 例（此前 05:04/20:14-15/22:08 等 08-29 三例模式延续）。
