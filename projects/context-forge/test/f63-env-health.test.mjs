@@ -207,3 +207,38 @@ test('analyzeEnvHealth — multiple files aggregate correctly', () => {
   assert.ok(result.undocumented.includes('UNIQUE_B'));
   assert.ok(!result.undocumented.includes('SHARED'));
 });
+
+test('formatEnvHealthReport — renders stale vars section', () => {
+  const report = formatEnvHealthReport({
+    grade: 'B', score: 85, hasEnvExample: true, envExampleFile: '.env.example',
+    totalSourceEnvVars: 3, totalExampleVars: 2,
+    undocumented: ['MISSING_VAR'], stale: ['OLD_VAR'], hardcodedSecrets: [],
+  });
+  assert.ok(report.includes('### Stale Environment Variables'));
+  assert.ok(report.includes('`OLD_VAR`'));
+  assert.ok(report.includes('`MISSING_VAR`'));
+});
+
+test('formatEnvHealthReport — renders hardcoded secrets capped at 10', () => {
+  const secrets = Array.from({ length: 12 }, (_, i) => ({
+    file: `sec${i}.js`, line: i + 1, description: 'API key literal',
+  }));
+  const report = formatEnvHealthReport({
+    grade: 'F', score: 10, hasEnvExample: false,
+    totalSourceEnvVars: 0, totalExampleVars: 0,
+    undocumented: [], stale: [], hardcodedSecrets: secrets,
+  });
+  assert.ok(report.includes('🔴 Hardcoded Secrets (12)'));
+  assert.equal((report.match(/sec\d+\.js/g) || []).length, 10);
+  assert.ok(!report.includes('sec10.js'));
+  assert.ok(!report.includes('sec11.js'));
+});
+
+test('formatEnvHealthReport — all-clear message when nothing to report', () => {
+  const report = formatEnvHealthReport({
+    grade: 'A', score: 100, hasEnvExample: true, envExampleFile: '.env.example',
+    totalSourceEnvVars: 2, totalExampleVars: 2,
+    undocumented: [], stale: [], hardcodedSecrets: [],
+  });
+  assert.ok(report.includes('✅ All environment variables are properly documented.'));
+});

@@ -370,3 +370,59 @@ def nightmare(a):
     });
   });
 });
+
+describe('F81: cognitive complexity — labels & recursion', () => {
+  const mk = (name, content) => ({ path: name, content });
+
+  it('scores labeled continue higher than plain continue', () => {
+    const labeled = [mk('labeled.js', `
+      function find(matrix) {
+        outer: for (const row of matrix) {
+          for (const cell of row) {
+            if (cell > 3) continue outer;
+          }
+        }
+        return -1;
+      }
+    `)];
+    const plain = [mk('plain.js', `
+      function find(matrix) {
+        for (const row of matrix) {
+          for (const cell of row) {
+            if (cell > 3) continue;
+          }
+        }
+        return -1;
+      }
+    `)];
+    const lr = analyzeCognitiveComplexity(labeled);
+    const pr = analyzeCognitiveComplexity(plain);
+    assert.ok(lr.stats.maxCognitiveComplexity > pr.stats.maxCognitiveComplexity,
+      `labeled ${lr.stats.maxCognitiveComplexity} should exceed plain ${pr.stats.maxCognitiveComplexity}`);
+  });
+
+  it('adds +1 for direct recursion', () => {
+    const files = [mk('rec.js', `
+      function fact(n) {
+        if (n <= 1) return 1;
+        return n * fact(n - 1);
+      }
+    `)];
+    const result = analyzeCognitiveComplexity(files);
+    // if (+1) + recursion (+1) = 2
+    assert.ok(result.stats.maxCognitiveComplexity >= 2,
+      `expected >= 2, got ${result.stats.maxCognitiveComplexity}`);
+  });
+
+  it('does not count function declaration or assignment shadowing as recursion', () => {
+    const files = [mk('shadow.js', `
+      function fact(n) {
+        const fact = prepare(n);
+        return fact;
+      }
+    `)];
+    const result = analyzeCognitiveComplexity(files);
+    // only if/prepare-call contributes nothing recursion-wise; const fact = ... has prevToken 'const' anyway
+    assert.equal(result.issues.length, 0);
+  });
+});

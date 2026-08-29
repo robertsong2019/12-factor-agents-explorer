@@ -186,3 +186,54 @@ describe('F48: formatTechDebtReport', () => {
     assert.ok(report.includes('🟢'));
   });
 });
+
+describe('F48: analyzeTechDebt — naming & file-size signals', () => {
+  it('scores naming inconsistencies (inconsistencies/totalFiles)', () => {
+    const result = analyzeTechDebt({ naming: { inconsistencies: 6, totalFiles: 10 } });
+    const item = result.items.find(i => i.category === 'Naming Inconsistencies');
+    assert.ok(item, 'naming item present');
+    assert.equal(item.count, 6);
+    assert.equal(item.total, 10);
+    assert.equal(item.score, 60); // round(0.6 * 100)
+    assert.equal(item.severity, 'medium'); // >= 50
+    assert.ok(result.recommendations.some(r => r.includes('Standardize naming in 6 files')));
+  });
+
+  it('accepts inconsistentFiles/total aliases', () => {
+    const result = analyzeTechDebt({ naming: { inconsistentFiles: 1, total: 4 } });
+    const item = result.items.find(i => i.category === 'Naming Inconsistencies');
+    assert.ok(item);
+    assert.equal(item.count, 1);
+    assert.equal(item.score, 25); // round(0.25 * 100)
+    assert.equal(item.severity, 'low');
+  });
+
+  it('guards zero-total naming against division by zero', () => {
+    const result = analyzeTechDebt({ naming: { inconsistencies: 3, totalFiles: 0 } });
+    const item = result.items.find(i => i.category === 'Naming Inconsistencies');
+    assert.ok(item);
+    assert.equal(item.score, 0);
+  });
+
+  it('scores file size outliers with capped score', () => {
+    const result = analyzeTechDebt({ fileSizes: { outliers: 20 } });
+    const item = result.items.find(i => i.category === 'File Size Outliers');
+    assert.ok(item);
+    assert.equal(item.count, 20);
+    assert.equal(item.score, 100); // min(100, 20*10)
+    assert.equal(item.severity, 'medium');
+    assert.ok(result.recommendations.some(r => r.includes('Split 20 oversized files')));
+  });
+
+  it('scores small outlier counts as low severity', () => {
+    const result = analyzeTechDebt({ fileSizes: { outliers: 2 } });
+    const item = result.items.find(i => i.category === 'File Size Outliers');
+    assert.equal(item.score, 20);
+    assert.equal(item.severity, 'low');
+  });
+
+  it('ignores null naming and fileSizes signals', () => {
+    const result = analyzeTechDebt({ naming: null, fileSizes: null });
+    assert.equal(result.items.length, 0);
+  });
+});

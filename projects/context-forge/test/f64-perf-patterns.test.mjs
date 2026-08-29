@@ -209,3 +209,56 @@ test('analyzePerformancePatterns — readdirSync is detected', () => {
   const result = analyzePerformancePatterns(files);
   assert.equal(result.summary.syncIO, 1);
 });
+
+test('analyzePerformancePatterns — flags async work inside loop', () => {
+  const files = [
+    { path: 'src/loader.js', content: [
+      'async function loadAll(ids) {',
+      '  for (const id of ids) {',
+      '    const res = await fetch(`/api/${id}`);',
+      '    console.log(res);',
+      '  }',
+      '}',
+    ].join('\n') },
+  ];
+  const result = analyzePerformancePatterns(files);
+  assert.equal(result.summary.promiseInLoop, 1);
+  const issue = result.files[0].issues.find(i => i.type === 'promise_in_loop');
+  assert.ok(issue, 'promise_in_loop issue present');
+  assert.equal(issue.severity, 'medium');
+});
+
+test('analyzePerformancePatterns — flags missing await on async call', () => {
+  const files = [
+    { path: 'src/api.js', content: [
+      'function handler() {',
+      '  const data = api.get("/users");',
+      '  return data;',
+      '}',
+    ].join('\n') },
+  ];
+  const result = analyzePerformancePatterns(files);
+  assert.equal(result.summary.missingAwait, 1);
+  const issue = result.files[0].issues.find(i => i.type === 'missing_await');
+  assert.ok(issue);
+  assert.equal(issue.severity, 'high');
+});
+
+test('analyzePerformancePatterns — awaited call is NOT missing-await', () => {
+  const files = [
+    { path: 'src/api.js', content: 'async function h() { const data = await api.get("/u"); return data; }' },
+  ];
+  const result = analyzePerformancePatterns(files);
+  assert.equal(result.summary.missingAwait, 0);
+});
+
+test('analyzePerformancePatterns — flags unbounded ops on large result sets', () => {
+  const files = [
+    { path: 'src/dom.js', content: 'const ids = Array.from(document.querySelectorAll(".item")).map(el => el.dataset.id);' },
+  ];
+  const result = analyzePerformancePatterns(files);
+  assert.equal(result.summary.unboundedOps, 1);
+  const issue = result.files[0].issues.find(i => i.type === 'unbounded_operation');
+  assert.ok(issue);
+  assert.equal(issue.severity, 'low');
+});

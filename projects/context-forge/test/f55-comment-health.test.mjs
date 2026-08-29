@@ -189,3 +189,44 @@ describe('F55: analyzeCommentHealth', () => {
     assert.ok(result.totalCommentLines >= 2);
   });
 });
+
+describe('formatCommentHealthReport — issue table & truncation', () => {
+  const baseResult = (files) => ({
+    fileCount: files.length, grade: 'C', healthScore: 70,
+    overallRatio: 12.5, totalCommentLines: 5, totalCodeLines: 40,
+    overallDocCoverage: 50, totalDocumentedExports: 1, totalExportedSymbols: 2,
+    totalTodoFixme: 1, totalStaleComments: 0,
+    files,
+  });
+
+  it('renders Key Issues and comment ratio table', () => {
+    const files = [
+      { file: 'a.js', codeLines: 30, ratio: 10, docCoverage: null, issues: [{ line: 3, severity: 'high', description: 'TODO without owner' }] },
+      { file: 'b.js', codeLines: 12, ratio: 15, docCoverage: 100, issues: [] },
+    ];
+    const report = formatCommentHealthReport(baseResult(files));
+    assert.ok(report.includes('### Key Issues'));
+    assert.ok(report.includes('`a.js:3` — TODO without owner'));
+    assert.ok(report.includes('### Comment Ratio by File'));
+    assert.ok(report.includes('| a.js | 30 | 10% | — |'));
+    assert.ok(report.includes('| b.js | 12 | 15% | 100% |'));
+  });
+
+  it('omits Key Issues when only low-severity issues exist', () => {
+    const files = [
+      { file: 'a.js', codeLines: 30, ratio: 10, docCoverage: null, issues: [{ line: 5, severity: 'low', description: 'minor nit' }] },
+    ];
+    const report = formatCommentHealthReport(baseResult(files));
+    assert.ok(!report.includes('### Key Issues'));
+  });
+
+  it('truncates issues and table rows at 15', () => {
+    const files = Array.from({ length: 20 }, (_, i) => ({
+      file: `f${i}.js`, codeLines: 20 + i, ratio: i, docCoverage: 0,
+      issues: [{ line: 1, severity: 'medium', description: `issue ${i}` }],
+    }));
+    const report = formatCommentHealthReport(baseResult(files));
+    assert.ok(report.includes('_...and 5 more_'));
+    assert.ok(report.includes('| _...5 more_ | | | |'));
+  });
+});
