@@ -47,7 +47,7 @@ build_search_json() {
 # ── Commands ──
 
 cmd_search() {
-  local use_regex=0 query="" output_file="" date_from="" date_to="" count_only=0
+  local use_regex=0 query="" output_file="" date_from="" date_to="" count_only=0 context=1
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -55,6 +55,7 @@ cmd_search() {
       -o|--output) shift; output_file="${1:-}" ;;
       -j|--json) JSON_OUTPUT=1 ;;
       --count) count_only=1 ;;
+      -C|--context) shift; context="${1:-}" ;;
       --from) shift; date_from="${1:-}" ;;
       --to) shift; date_to="${1:-}" ;;
       *) query="$1" ;;
@@ -62,12 +63,13 @@ cmd_search() {
     shift
   done
 
-  [[ -z "$query" ]] && die "Usage: agent-log search [-r|--regex] [-o file] [-j|--json] [--from DATE] [--to DATE] [--count] <query>"
+  [[ -z "$query" ]] && die "Usage: agent-log search [-r|--regex] [-o file] [-j|--json] [--from DATE] [--to DATE] [--count] [-C N|--context N] <query>"
 
   # Validate date formats
   local date_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
   [[ -n "$date_from" ]] && ! [[ "$date_from" =~ $date_re ]] && die "--from requires YYYY-MM-DD format, got: $date_from"
   [[ -n "$date_to" ]] && ! [[ "$date_to" =~ $date_re ]] && die "--to requires YYYY-MM-DD format, got: $date_to"
+  [[ "$context" =~ ^[0-9]+$ ]] || die "-C/--context requires a non-negative integer, got: $context"
 
   local files=()
   while IFS= read -r -d '' f; do files+=("$f"); done < <(
@@ -121,7 +123,7 @@ cmd_search() {
       json_results+=("{\"file\":\"$esc_rel\",\"matches\":$matches}")
     else
       plain_output+="$(echo -e "${BLUE}$rel${RESET}")"$'\n'
-      plain_output+="$(grep "${grep_color[@]}" "${grep_opts[@]}" -n -C 1 "$query" "$f" 2>/dev/null | head -20 | sed 's/^/  /' || true)"$'\n\n'
+      plain_output+="$(grep "${grep_color[@]}" "${grep_opts[@]}" -n -C "$context" "$query" "$f" 2>/dev/null | head -20 | sed 's/^/  /' || true)"$'\n\n'
     fi
   done <<< "$found_files"
 
@@ -176,12 +178,76 @@ cmd_search() {
         while IFS= read -r f; do
           [[ -z "$f" ]] && continue
           echo "== ${f#$HOME/} =="
-          grep "${grep_opts[@]}" -n -C 1 "$query" "$f" 2>/dev/null | head -20
+          grep "${grep_opts[@]}" -n -C "$context" "$query" "$f" 2>/dev/null | head -20
           echo ""
         done <<< "$found_files"
       fi
     } > "$output_file"
     echo -e "${GREEN}Results exported to: $output_file${RESET}"
+  fi
+}
+
+cmd_hot() {
+  # F23: top-K most frequent terms across memory logs in a date window.
+  local top_n=10 date_from="" date_to=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -n|--top) shift; top_n="${1:-}" ;;
+      -j|--json) JSON_OUTPUT=1 ;;
+      --from) shift; date_from="${1:-}" ;;
+      --to) shift; date_to="${1:-}" ;;
+      -h|--help) usage; return ;;
+      *) if [[ "$1" =~ ^[0-9]+$ ]]; then top_n="$1"; else die "Usage: agent-log hot [N] [-n N] [--from DATE] [--to DATE] [-j|--json]"; fi ;;
+    esac
+    shift
+  done
+  [[ "$top_n" =~ ^[1-9][0-9]*$ ]] || die "--top requires a positive integer, got: $top_n"
+
+  local date_re='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+  [[ -n "$date_from" ]] && ! [[ "$date_from" =~ $date_re ]] && die "--from requires YYYY-MM-DD format, got: $date_from"
+  [[ -n "$date_to" ]] && ! [[ "$date_to" =~ $date_re ]] && die "--to requires YYYY-MM-DD format, got: $date_to"
+
+  local files=()
+  while IFS= read -r -d '' f; do files+=("$f"); done < <(find "$MEMORY_DIR" -name '*.md' -print0 2>/dev/null | sort -z)
+  [[ ${#files[@]} -eq 0 ]] && die "No log files found in MEMORY_DIR=$MEMORY_DIR"
+
+  if [[ -n "$date_from" ]] || [[ -n "$date_to" ]]; then
+    local filtered=()
+    for f in "${files[@]}"; do
+      local basename; basename=$(basename "$f" .md)
+      if [[ "$basename" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        [[ -n "$date_from" ]] && [[ "$basename" < "$date_from" ]] && continue
+        [[ -n "$date_to" ]] && [[ "$basename" > "$date_to" ]] && continue
+      fi
+      filtered+=("$f")
+    done
+    files=("${filtered[@]}")
+  fi
+  [[ ${#files[@]} -eq 0 ]] && die "No log files in range ${date_from:-..}${date_to:+ .. $date_to}"
+
+  # Tokenize: lowercase words (letters/digits/_/-), min length 3, drop stopwords.
+  local stopwords=(the and for that with this from not are was were has have had you your out all can will would could should into over under than then when what who how why its its been being their there these those also more most some such only each other about after before between during through very just like made make many much need now one two three new old see use used using get got set put run ran but our ours she her him his they them were what which while who will with)
+  local terms_raw
+  terms_raw=$(cat "${files[@]}" 2>/dev/null | tr '[:upper:]' '[:lower:]' \
+    | grep -oE '[a-z][a-z0-9_-]{2,}' \
+    | grep -vxF -f <(printf '%s\n' "${stopwords[@]}") \
+    | sort | uniq -c | sort -rn | head -n "$top_n" || true)
+
+  if [[ $JSON_OUTPUT -eq 1 ]]; then
+    local json_items=() cnt term
+    while IFS= read -r row; do
+      [[ -z "$row" ]] && continue
+      cnt=$(printf '%s' "$row" | awk '{print $1}')
+      term=$(printf '%s' "$row" | awk '{$1=""; sub(/^ /,""); print}')
+      json_items+=("{\"term\":\"$(esc_json "$term")\",\"count\":$cnt}")
+    done <<< "$terms_raw"
+    printf '{"command":"hot","n":%d,"file_count":%d,"terms":[%s]}\n' \
+      "$top_n" "${#files[@]}" "$(IFS=,; echo "${json_items[*]+${json_items[*]}}")"
+  else
+    echo -e "${CYAN}Top terms:${RESET}"
+    echo -e "${GRAY}(${#files[@]} files, top $top_n)${RESET}"
+    [[ -z "$terms_raw" ]] && { echo "No terms found."; return; }
+    printf '%s\n' "$terms_raw" | awk -F' :' '{count=$1; sub(/^ */,"",count); printf "  %6s  %s\n", count, $2}'
   fi
 }
 
@@ -648,8 +714,10 @@ agent-log — Search, filter, and summarize OpenClaw session logs
 Usage: agent-log <command> [args]
 
 Commands:
-  search <query> [-r|--regex] [-o FILE] [-j|--json] [--from DATE] [--to DATE] [--count]
-      Search memory + session logs (text or regex; --count shows ranked match counts)
+  search <query> [-r|--regex] [-o FILE] [-j|--json] [--from DATE] [--to DATE] [--count] [-C N|--context N]
+      Search memory + session logs (text or regex; --count shows ranked match counts; -C sets context lines, default 1)
+  hot [N] [-n N] [--from DATE] [--to DATE] [-j|--json]
+      Top-N most frequent terms across memory logs (default N=10; English words, min length 3)
   today                      Show today's daily notes + session activity
   date YYYY-MM-DD            Show notes for a specific date
   summary [DAYS] [-k|--keyword KW] [-t|--types] [--csv] [--md] [-j|--json]
@@ -674,6 +742,7 @@ EOF
 
 case "${1:-help}" in
   search)  shift; cmd_search "$@" ;;
+  hot)     shift; cmd_hot "$@" ;;
   today)   cmd_today ;;
   date)    [[ -z "${2:-}" ]] && die "Usage: agent-log date YYYY-MM-DD"; cmd_date "$2" ;;
   summary) shift; cmd_summary "$@" ;;
