@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import math
 import re
 import unicodedata
@@ -8373,6 +8374,7 @@ def load_longmemeval_data(path, *, limit: int = 0) -> list[dict]:
 
 def run_eval(dataset: list[dict], *, limit: int = 0,
              entropies: list[float | None] | None = None,
+             data_source: str | None = None,
              use_ppr: bool = True, max_context_tokens: int = 4000,
              abstain_score: float = 1.0, abstain_entropy: float | None = 0.95,
              entropy_weak_score: int = 1,
@@ -8551,6 +8553,23 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
         report["calibration"] = calibration_summary(all_results)
         report["calibration_by_category"] = \
             calibration_by_category(all_results)
+    # Cycle 527: lineage fingerprint — dataset identity + interpreter
+    # hash seed, recorded AFTER the dual-mode config overwrite so both
+    # judge modes carry it. Rationale: the oracle-vs-s_cleaned dataset
+    # mixup (0.526 vs 0.484 on identical code) and the ±2-question
+    # PYTHONHASHSEED jitter both produce silent unreproducible diffs
+    # in full-500 lineage comparisons; fingerprinting makes every
+    # comparison auditable (runners should still pin PYTHONHASHSEED).
+    if data_source:
+        p = Path(data_source)
+        h = hashlib.sha256()
+        with open(p, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        report["config"]["data_file"] = p.name
+        report["config"]["data_sha256_12"] = h.hexdigest()[:12]
+        report["config"]["pythonhashseed"] = (
+            os.environ.get("PYTHONHASHSEED") or "unpinned")
     return report
 
 
@@ -8667,6 +8686,7 @@ def main(argv: list[str] | None = None) -> int:
                          for t in args.sweep_entropies.split(",")]
         report = run_eval(
             dataset, limit=args.limit, entropies=entropies,
+            data_source=args.data,
             use_ppr=not args.no_ppr,
             max_context_tokens=args.max_tokens,
             abstain_score=args.abstain_score,
