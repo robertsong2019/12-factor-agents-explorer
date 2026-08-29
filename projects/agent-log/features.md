@@ -19,6 +19,7 @@
 - [x] **F19**: `search --count` — ranked per-file match counts, sorted desc (text/JSON/export) ✅ 2026-08-28
 - [x] **F22**: `search -C N/--context N` — context lines around matches (default 1, validated non-negative int; applies to display + export) ✅ 2026-08-29
 - [x] **F23**: `hot [N]` — top-N frequent terms across memory logs (min length 3, stopword-filtered, --from/--to window, text/JSON) ✅ 2026-08-29
+- [x] **F24**: `cron --job <pattern>` — case-insensitive filter over `openclaw cron list` (usage error on missing pattern, honest no-match message, CLI-absent path bypasses filter) ✅ 2026-08-29
 
 ### Timeline & Summary
 - [x] **F4**: `summary` with keyword filtering — show only entries matching a pattern ✅ 2026-06-01

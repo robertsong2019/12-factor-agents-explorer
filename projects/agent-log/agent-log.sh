@@ -371,12 +371,35 @@ cmd_summary() {
 }
 
 cmd_cron() {
+  local job_pattern=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --job)
+        [[ -n "${2-}" ]] || { echo -e "${RED}--job requires a pattern${RESET}" >&2; return 1; }
+        job_pattern="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
   echo -e "${CYAN}⏰ Cron logs${RESET}"
   echo
+  local cli_ok=0 listing
   if command -v openclaw &>/dev/null; then
-    openclaw cron list 2>/dev/null || echo -e "${GRAY}(openclaw cron not available)${RESET}"
+    cli_ok=1
+    listing=$(openclaw cron list 2>/dev/null || echo "(openclaw cron not available)")
   else
-    echo -e "${GRAY}(openclaw CLI not in PATH)${RESET}"
+    listing="(openclaw CLI not in PATH)"
+  fi
+  if [[ -n "$job_pattern" && "$cli_ok" -eq 1 ]]; then
+    local filtered
+    filtered=$(printf '%s\n' "$listing" | grep -i -- "$job_pattern" || true)
+    if [[ -z "${filtered// /}" ]]; then
+      echo -e "${GRAY}(no matching cron jobs for: $job_pattern)${RESET}"
+    else
+      printf '%s\n' "$filtered"
+    fi
+  else
+    printf '%s\n' "$listing"
   fi
 }
 
@@ -746,7 +769,7 @@ case "${1:-help}" in
   today)   cmd_today ;;
   date)    [[ -z "${2:-}" ]] && die "Usage: agent-log date YYYY-MM-DD"; cmd_date "$2" ;;
   summary) shift; cmd_summary "$@" ;;
-  cron)    cmd_cron ;;
+  cron)    shift; cmd_cron "$@" ;;
   stats)   shift; cmd_stats "$@" ;;
   clean)   shift; cmd_clean "$@" ;;
   sessions) shift; cmd_sessions "$@" ;;
