@@ -47,10 +47,39 @@ context-forge /path/to/my-project --dry-run
 - 📝 **TODO extraction** — scan and categorize TODO/FIXME/HACK comments (F28)
 - 🔐 **Env var detection** — find hardcoded env references and secrets (F29)
 - 📜 **License detection** — SPDX identification + compatibility checks (F30)
-- ⏳ **Bi-temporal validity** — time-window edge tracking, point-in-time queries (F31)
 - 🔐 **Secret scanner** — detect API keys, tokens, passwords, private keys with risk levels (F32)
 - 📖 **Doc readability** — A-F grade scoring, heading hierarchy, paragraph/sentence analysis (F33)
 - 🪦 **Dead code detector** — find unused exports by cross-referencing imports (F34)
+
+### Code Quality Suite (F46–F58)
+
+- 🧠 **Code complexity** — decision-point estimation, per-file A-F grading (F46)
+- 🔗 **File coupling** — Jaccard similarity, shared dependency tracking (F47)
+- ⚖️ **Tech debt score** — weighted multi-signal: TODOs + dead code + complexity + deps + secrets (F48)
+- 🚨 **Error handling** — 8 anti-patterns: empty catch, catch-ignore, bare throw, string throw, generic catch-all (F53)
+- 👯 **Duplicate code** — normalized line fingerprinting, wasted-lines estimate (F54)
+- 💬 **Comment health** — comment-to-code ratio, stale comments, doc coverage (F55)
+- ⏳ **Async patterns** — floating promises, missing await, callback hell, unhandled rejections (F56)
+- 📤 **Export health** — barrel files, re-export chains, unused exports, mixed styles (F57)
+- 📐 **Function metrics** — length, param count, return paths, arrow/async split (F58)
+
+### Code Structure & Safety (F75–F82)
+
+- 🛡️ **Guard clauses** — deep nesting (4+ levels), if/else wrapping candidates (F75)
+- 📦 **Parameter objects** — 4+ scalar params, boolean flag confusion, consecutive optionals (F76)
+- 🔄 **Cyclomatic complexity** — per-function decision-point counting, 10/15 thresholds (F77)
+- ↩️ **Return paths** — excessive returns (5+), unreachable code after return (F78)
+- ⚖️ **Equality checks** — `==`/`!=` coercion risks, null-safe patterns (F79)
+- 💧 **Resource leaks** — `setInterval`/listeners/streams/DB handles never released (F80)
+- 🧩 **Cognitive complexity** — SonarQube-style nesting-aware scoring (F81)
+- 🕵️ **Security anti-patterns** — 8 categories: eval, XSS, SQLi, prototype pollution, ReDoS, command injection (F82)
+
+### Analysis Extras (F35–F45)
+
+- 🧪 **Test file detection** — framework detection: jest/pytest/go/vitest/mocha (F35)
+- 🔥 **Git hotspots** — most frequently changed files (F36)
+- 🛣️ **API routes** — Express/FastAPI/Flask/Django endpoints + markdown report (F42–F43)
+- 📦 **Import health** — unused deps, import frequency, diversity score (F44–F45)
 
 ### Code Health Audit (F59–F67)
 
@@ -325,35 +354,6 @@ const license = await detectLicense(root)
 // { spdx: 'MIT', source: 'package.json', compatible: ['Apache-2.0', 'BSD-3-Clause'] }
 ```
 
-## Bi-Temporal Validity (F31)
-
-Time-window edge tracking for dependency graphs.
-
-```javascript
-import {
-  edge_set_validity, edge_invalidate, edge_valid_at,
-  temporal_snapshot, edge_temporal_history
-} from './context-forge.mjs'
-
-// Set validity window on an edge
-edge_set_validity(graph, './a', './b', { valid_from: '2026-01-01', valid_until: '2026-06-01' })
-
-// Invalidate an edge (with audit trail)
-edge_invalidate(graph, './a', './b', { reason: 'refactored out' })
-
-// Check if edge was valid at a specific time
-edge_valid_at(graph, './a', './b', '2026-03-15')  // → true
-
-// Time-travel: all valid edges at time T
-temporal_snapshot(graph, '2026-03-15')
-
-// Per-node temporal history
-edge_temporal_history(graph, './a')
-// [{ edge: './a→./b', valid_from: ..., valid_until: ..., status: 'invalidated' }]
-```
-
----
-
 ## Security Scanning (F32)
 
 Detect potential secrets and sensitive information in your codebase.
@@ -431,8 +431,8 @@ Detect exported symbols that are never imported or referenced elsewhere in the c
 ```javascript
 import { detectDeadCode, formatDeadCodeReport } from './context-forge.mjs'
 
-const importData = parseImports('./src')   // from F14: analyzeImports()
-const apiSurface = extractApiSurface('./src') // from F28: scanCode()
+const importData = await extractImports('./src', 3)   // real import graph
+const apiSurface = await extractApiSurface('./src')   // exported symbols
 
 const result = detectDeadCode(importData, apiSurface)
 console.log(formatDeadCodeReport(result))
@@ -552,6 +552,24 @@ console.log(formatNamingReport(analysis))
 
 Nine specialized analyzers that grade your codebase health from A to F across different dimensions. Each returns a structured report with `formatXxxReport()` for CLI output.
 
+Most of these analyzers take an explicit **file list** (`[{ path, content }]`), not a directory — define the helper once and reuse it:
+
+```javascript
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+
+// Collect all source files as [{ path, content }]
+const loadFiles = (...dirs) => dirs.flatMap(dir =>
+  readdirSync(dir, { withFileTypes: true, recursive: true })
+    .filter(e => e.isFile())
+    .map(e => {
+      const path = join(e.parentPath ?? e.path, e.name)
+      return { path, content: readFileSync(path, 'utf8') }
+    }))
+```
+
+> ⚠️ Passing a directory string where a file list is expected does **not** throw — the scan silently finds nothing and returns a perfect grade. Always check `totalFiles`/`filesScanned` > 0.
+
 ### CLI Health (F59)
 
 Analyze CLI completeness: help/version flags, usage docs, arg validation, exit codes, subcommands, stderr usage, and color output. Detects CLI frameworks (commander/yargs vs manual).
@@ -559,7 +577,7 @@ Analyze CLI completeness: help/version flags, usage docs, arg validation, exit c
 ```javascript
 import { analyzeCliHealth, formatCliHealthReport } from './context-forge.mjs'
 
-const report = await analyzeCliHealth('./bin', { maxDepth: 3 })
+const report = analyzeCliHealth(loadFiles('./bin'))  // [{ path, content }]
 console.log(formatCliHealthReport(report))
 // 🖥️ CLI Health: B (6/8 checks passed)
 // ✅ Help flag (--help) found in 3/3 files
@@ -567,16 +585,17 @@ console.log(formatCliHealthReport(report))
 // ⚠️ Exit codes: 1/3 files use process.exit() without code
 ```
 
-**Returns:** `{ grade, score, checks: [{name, passed, files}], framework }`
+**Returns:** `{ cliFileCount, healthScore, grade, totalChecks, totalPassed, checks, framework }`
 
 ### Dependency Risk (F60)
 
 5-category dependency risk assessment: version pinning (pinned/caret/tilde/range/wildcard), dev/prod ratio, risky pattern detection (code execution, legacy heavyweight, duplicate functionality), and dependency count scoring.
 
 ```javascript
-import { analyzeDependencyRisk, formatDependencyRiskReport } from './context-forge.mjs'
+import { detectProject, analyzeDependencyRisk, formatDependencyRiskReport } from './context-forge.mjs'
 
-const report = await analyzeDependencyRisk('./package.json')
+const info = await detectProject('./')            // project metadata (deps, pkg)
+const report = analyzeDependencyRisk(info)
 console.log(formatDependencyRiskReport(report))
 // 📦 Dependency Risk: A (Low risk)
 // Pinning: 95% pinned | Dev/Prod: 60/40
@@ -592,14 +611,14 @@ Estimate test coverage by mapping test files to source files. Detects test frame
 ```javascript
 import { analyzeTestCoverage, formatTestCoverageReport } from './context-forge.mjs'
 
-const report = await analyzeTestCoverage('./src', './test')
+const report = analyzeTestCoverage(loadFiles('./src', './test'))  // include test files in the list
 console.log(formatTestCoverageReport(report))
 // 🧪 Test Coverage: C (45% files tested)
 // Framework: jest | 18/40 source files have tests
 // ⚠️ 22 untested files (avg 85 lines)
 ```
 
-**Returns:** `{ grade, framework, tested, untested, coverage, untestedFiles: [] }`
+**Returns:** `{ grade, score, testFileCount, sourceFileCount, testedCount, untestedFiles: [] }`
 
 ### Logging Health (F62)
 
@@ -608,14 +627,14 @@ Detect console.log pollution (5-level `console.*` tracking) and catch blocks wit
 ```javascript
 import { analyzeLoggingHealth, formatLoggingHealthReport } from './context-forge.mjs'
 
-const report = await analyzeLoggingHealth('./src', { maxDepth: 5 })
+const report = analyzeLoggingHealth(loadFiles('./src'))
 console.log(formatLoggingHealthReport(report))
 // 📝 Logging Health: D
 // Found 47 console.log, 12 console.error, 3 console.warn
 // ⚠️ 8 catch blocks without any logging
 ```
 
-**Returns:** `{ grade, consoleCounts: {log, error, warn, info, debug}, catchWithoutLog: [] }`
+**Returns:** `{ grade, score, totalFiles, summary, files }`
 
 ### Environment Health (F63)
 
@@ -624,14 +643,14 @@ console.log(formatLoggingHealthReport(report))
 ```javascript
 import { analyzeEnvHealth, formatEnvHealthReport } from './context-forge.mjs'
 
-const report = await analyzeEnvHealth('./', { envFile: '.env.example' })
+const report = analyzeEnvHealth(loadFiles('./'))  // include .env.example in the list if you have one
 console.log(formatEnvHealthReport(report))
 // 🔧 Env Health: B
 // .env.example: 12/15 vars documented (80%)
 // ⚠️ 3 undocumented: API_KEY, SECRET, TOKEN
 ```
 
-**Returns:** `{ grade, documented, undocumented, stale, hardcodedSecrets: [] }`
+**Returns:** `{ grade, score, hasEnvExample, envExampleFile, totalSourceEnvVars, undocumented, hardcodedSecrets: [] }`
 
 ### Performance Patterns (F64)
 
@@ -640,7 +659,7 @@ console.log(formatEnvHealthReport(report))
 ```javascript
 import { analyzePerformancePatterns, formatPerformanceReport } from './context-forge.mjs'
 
-const report = await analyzePerformancePatterns('./src', { maxDepth: 5 })
+const report = analyzePerformancePatterns(loadFiles('./src'))
 console.log(formatPerformanceReport(report))
 // ⚡ Performance: C (8 issues found)
 // ⚠️ sync I/O: 5 calls (readFileSync in 3 files)
@@ -648,7 +667,7 @@ console.log(formatPerformanceReport(report))
 // ⚠️ promise-in-loop: 1 occurrence
 ```
 
-**Returns:** `{ grade, patterns: {syncIO, nestedLoops, promiseInLoop, missingAwait, unboundedOps} }`
+**Returns:** `{ grade, score, totalFiles, summary, files }`
 
 ### Type Safety (F65)
 
@@ -657,14 +676,15 @@ TypeScript type safety analysis: explicit/implicit `any` detection, `@ts-ignore`
 ```javascript
 import { analyzeTypeSafety, formatTypeSafetyReport } from './context-forge.mjs'
 
-const report = await analyzeTypeSafety('./src', { maxDepth: 5 })
+// takes a list of { path, content } objects — not a directory
+const report = analyzeTypeSafety(files)   // [{ path: 'src/app.ts', content: '...' }, ...]
 console.log(formatTypeSafetyReport(report))
 // 🛡️ Type Safety: B
 // Explicit any: 3 | Implicit any: 8
 // @ts-ignore: 2 | Type assertions: 15
 ```
 
-**Returns:** `{ grade, explicitAny, implicitAny, tsIgnores, typeAssertions, missingReturnTypes, nonNullAssertions }`
+**Returns:** `{ grade, score, totalFiles, summary: {anyUsage, implicitAny, tsIgnore, tsNocheck, tsExpectError, typeAssertions, missingReturnType, nonNullAssertions}, files }`
 
 ### Code Smells (F66)
 
@@ -673,7 +693,8 @@ console.log(formatTypeSafetyReport(report))
 ```javascript
 import { analyzeCodeSmells, formatCodeSmellReport } from './context-forge.mjs'
 
-const report = await analyzeCodeSmells('./src', { maxDepth: 5 })
+// takes a list of { path, content } objects — not a directory
+const report = analyzeCodeSmells(files)   // [{ path: 'src/app.js', content: '...' }, ...]
 console.log(formatCodeSmellReport(report))
 // 💩 Code Smells: C (12 issues)
 // ⚠️ 3 files > 500 lines (largest: 892)
@@ -681,7 +702,7 @@ console.log(formatCodeSmellReport(report))
 // ⚠️ 4 TODO/FIXME comments
 ```
 
-**Returns:** `{ grade, smells: {longFiles, deepNesting, tooManyParams, magicNumbers, godFiles, emptyCatch, todos} }`
+**Returns:** `{ grade, score, totalFiles, summary: {longFiles, deepNesting, tooManyParams, magicNumbers, godFiles, emptyCatch, todoComments}, files }`
 
 ### README Health (F67)
 
@@ -699,6 +720,134 @@ console.log(formatReadmeHealthReport(report))
 ```
 
 **Returns:** `{ grade, sections: {title, description, ...}, placeholders, brokenLinks, stats: {headings, codeBlocks, links, images} }`
+
+---
+
+## Code Quality Suite (F46–F58)
+
+Nine analyzers. Calling conventions vary — check each signature (file lists use the `loadFiles` helper defined above).
+
+### Code Complexity & Coupling (F46–F48)
+
+```javascript
+import { analyzeCodeComplexity, analyzeFileCoupling, analyzeTechDebt, extractImports } from './context-forge.mjs'
+
+// F46 takes (root, filesMap): relPath → { lang }
+const files = new Map([['src/index.js', { lang: 'JavaScript' }]])
+const cx = await analyzeCodeComplexity('./src', files)
+// → { files: [{ file, complexity }], totalFiles, totalLines, byGrade: {A,B,C,D,F} }
+
+// F47 takes the import graph from extractImports
+const importData = await extractImports('./src', 3)   // → { imports: Map, allImports }
+const coupling = analyzeFileCoupling(importData)
+// → { couples, totalFiles, totalCouples, avgCoupling, mostCoupled, sharedDeps }
+
+// F48 takes a pre-computed signals object, not a path
+const debt = analyzeTechDebt({
+  totalFiles: 40, totalLines: 8200,
+  todoCount: 12, deadCodeCount: 3,
+  avgComplexity: 9, dependencyCount: 24, secretCount: 0,
+})
+// → { overallScore, grade, items, highPriorityCount, recommendations }
+```
+
+### Error Handling, Duplication & Comments (F53–F55)
+
+```javascript
+import { analyzeErrorHandling, analyzeDuplicateCode, analyzeCommentHealth } from './context-forge.mjs'
+
+const eh = analyzeErrorHandling(loadFiles('./src'))
+// 8 anti-patterns → { total, byType, bySeverity, affectedFiles, healthScore, grade }
+
+const dup = analyzeDuplicateCode(loadFiles('./src'))
+// normalized line fingerprinting → { duplicateGroups, totalOccurrences, wastedLines, topDuplicates }
+
+const ch = analyzeCommentHealth(loadFiles('./src'))
+// → { overallRatio, overallDocCoverage, staleComments, grade }
+```
+
+### Async, Exports & Functions (F56–F58)
+
+```javascript
+import { analyzeAsyncPatterns, analyzeExportHealth, analyzeFunctionMetrics } from './context-forge.mjs'
+
+const ap = analyzeAsyncPatterns(loadFiles('./src'))
+// → { totalFloatingPromises, totalMissingAwait, totalCallbackHell, totalUnhandledRejections, grade }
+
+const xh = analyzeExportHealth(loadFiles('./src'))
+// → { totalBarrelFiles, totalReExports, totalUnusedExports, grade }
+
+const fm = analyzeFunctionMetrics(loadFiles('./src'))
+// → { totalFunctions, totalLongFunctions, totalHighParamFunctions, grade }
+```
+
+---
+
+## Code Structure & Complexity (F75–F79, F81)
+
+Six analyzers sharing one calling convention (file list via `loadFiles`) and one result shape — `{ stats, issues, score, grade }` — each with a `formatXxxReport()` companion:
+
+```javascript
+import {
+  analyzeGuardClauses, formatGuardClausesReport,       // F75
+  analyzeParameterObjects, formatParameterObjectsReport, // F76
+  analyzeCyclomaticComplexity, formatCyclomaticComplexityReport, // F77
+  analyzeReturnPaths, formatReturnPathsReport,          // F78
+  analyzeEqualityChecks, formatEqualityChecksReport,    // F79
+  analyzeCognitiveComplexity, formatCognitiveComplexityReport,   // F81
+} from './context-forge.mjs'
+
+const report = await analyzeCyclomaticComplexity(loadFiles('./src'))
+console.log(formatCyclomaticComplexityReport(report))
+// ## 🔄 Cyclomatic Complexity Analysis
+// **Health Score: 100/100 (A)**
+// - Total functions: 12
+// - Complex functions (≥10): 2
+// - Very complex (≥15): 0
+```
+
+All six take a `[{ path, content }]` file list and grade A–F: guard-clause nesting depth (F75), parameter-object candidates (F76), per-function cyclomatic complexity with 10/15 thresholds (F77), return-path count with unreachable-code detection (F78), loose-equality coercion risks (F79), and nesting-aware cognitive complexity (F81).
+
+---
+
+## Resource & Security Scanning (F80, F82)
+
+These two take an explicit **list of file paths** (not a directory):
+
+```javascript
+import { analyzeResourceLeaks, analyzeSecurityAntiPatterns } from './context-forge.mjs'
+
+const leaks = analyzeResourceLeaks(loadFiles('./src'))
+// setInterval without clear, listeners without remove, unclosed streams/DB handles
+// → { issues, summary: { totalIssues, high, medium, filesScanned, score, grade } }
+
+const sec = analyzeSecurityAntiPatterns(loadFiles('./src'))
+// 8 categories: code-injection (eval/Function), XSS (innerHTML), SQLi,
+// prototype pollution, insecure-random, command-injection, ReDoS, hardcoded credentials
+// → { issues, summary: { totalIssues, critical, high, medium, low, categories, grade } }
+```
+
+---
+
+## More Analyzers (F35, F36, F42–F45)
+
+```javascript
+import {
+  detectTestFiles, analyzeGitHotspots,
+  detectApiRoutes, formatApiRoutesReport,
+  extractImports, detectProject, analyzeImportHealth, formatImportHealthReport,
+} from './context-forge.mjs'
+
+const tests = await detectTestFiles('./')          // → { files }, framework detection
+const hot = await analyzeGitHotspots('./')         // → { hotspots, totalCommits }
+const routes = await detectApiRoutes('./')         // → { routes, frameworks, count, byMethod }
+console.log(formatApiRoutesReport(routes))         // markdown table by method
+
+const info = await detectProject('./')             // project metadata (deps, pkg)
+const imports = await extractImports('./', 3)      // → { imports: Map, allImports }
+const ih = analyzeImportHealth(info, imports)      // note: takes BOTH results
+// → { unusedDeps, mostImported, totalImports, uniqueImports, diversityScore }
+```
 
 ---
 

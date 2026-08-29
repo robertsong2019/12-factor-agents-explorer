@@ -2605,9 +2605,12 @@ async function main() {
 
   console.log(`🔨 context-forge — Analyzing ${basename(root)}...\n`);
 
-  const [info, gitignore, langs, importData, apiSurface, configData] = await Promise.all([
+  // parseGitignore must complete first: the analyzers below take `gitignore`
+  // as an argument, and referencing it inside this same destructuring's
+  // Promise.all would be a TDZ error (broke the whole CLI since F7, 43a61f0).
+  const gitignore = await parseGitignore(root);
+  const [info, langs, importData, apiSurface, configData] = await Promise.all([
     detectProject(root),
-    parseGitignore(root),
     scanLanguages(root, 3, 0, gitignore),
     extractImports(root, 3, 0, gitignore),
     extractApiSurface(root, 3, 0, gitignore),

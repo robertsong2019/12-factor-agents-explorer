@@ -323,7 +323,7 @@ npm test
 | agent-memory-service | Node.js | [README](projects/agent-memory-service/README.md) | [TUTORIAL](projects/agent-memory-service/TUTORIAL.md) |
 | agent-memory-graph | Python | [README](projects/agent-memory-graph/README.md) | [TUTORIAL](projects/agent-memory-graph/TUTORIAL.md) |
 | agent-log | Bash | [README](projects/agent-log/README.md) | [TUTORIAL](projects/agent-log/TUTORIAL.md) |
-| context-forge | Python | [README](projects/context-forge/README.md) | [TUTORIAL](projects/TUTORIAL-context-forge.md) |
+| context-forge | Node.js | [README](projects/context-forge/README.md) | [TUTORIAL](projects/TUTORIAL-context-forge.md) |
 | mission-control | Node.js | [README](projects/mission-control/README.md) | [TUTORIAL](projects/mission-control/TUTORIAL.md) |
 | prompt-mgr | Python | [README](projects/prompt-mgr/README.md) | [TUTORIAL](projects/prompt-mgr/docs/TUTORIAL.md) |
 
