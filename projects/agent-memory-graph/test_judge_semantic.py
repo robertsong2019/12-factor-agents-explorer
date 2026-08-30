@@ -294,3 +294,38 @@ def test_cli_rejects_unknown_judge_choice():
     with pytest.raises(SystemExit) as ei:
         abq.main(["--data", "nope.json", "--judge", "bogus"])
     assert ei.value.code == 2
+
+
+
+# ── Cycle 530: judge backend fingerprint ────────────────────────
+
+def test_run_eval_semantic_records_unconsulted_backend(monkeypatch):
+    """Decidable-only dataset: judge_llm never called. The backend
+    fingerprint must read 'unconsulted' regardless of prior state."""
+    monkeypatch.setattr(abq, "_JUDGE_MODE", None)
+    rep = abq.run_eval([SEM_Q], judge_mode="semantic")
+    assert rep["config"]["judge_llm_backend"] == "unconsulted"
+
+
+def test_run_eval_semantic_records_mock_backend(monkeypatch):
+    """NEEDS_JUDGE row + dead endpoint: the sticky mock fallback must
+    be visible in the report config — a mock-resolved run is NOT an
+    oracle-resolved one (C530 cascade-500: 24 mock verdicts rode along
+    unrecorded, inflating raw cascade 262/500 vs 246 bankable)."""
+    monkeypatch.setattr(abq, "_JUDGE_MODE", abq._JUDGE_MODE)
+    # simulate the post-probe degraded state (what a failed ollama
+    # probe leaves behind: sticky _JUDGE_MODE = "mock")
+    abq._JUDGE_MODE = "mock"
+    monkeypatch.setattr(abq, "judge_semantic",
+                        lambda *a, **k: "NEEDS_JUDGE")
+    rep = abq.run_eval([SEM_Q], judge_mode="semantic")
+    assert rep["config"]["judge_llm_backend"] == "mock"
+    row = rep["results"][0]
+    assert row["correct_exact"] is not None
+    assert row["correct_llm"] is not None
+
+
+def test_run_eval_exact_mode_has_no_backend_field():
+    """exact mode never consults an LLM, so no backend field."""
+    rep = abq.run_eval([SEM_Q])
+    assert "judge_llm_backend" not in rep["config"]

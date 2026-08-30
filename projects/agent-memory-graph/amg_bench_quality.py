@@ -8846,6 +8846,17 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
         report["calibration_by_category"] = \
             calibration_by_category(all_results)
         report["judge_ab"] = judge_ab_report(all_results)
+        # Cycle 530: LLM-judge backend fingerprint. judge_llm
+        # auto-detects once per process (ollama probe) and degrades
+        # permanently to the lexical mock judge when no endpoint
+        # answers — without this field a mock-resolved run is
+        # indistinguishable from an oracle-resolved one in the report
+        # (C530 cascade-500: 24 mock verdicts silently inflated the
+        # raw cascade metric 262/500 vs 246 deterministic-bankable).
+        # "unconsulted" = zero NEEDS_JUDGE rows, the semantic layer
+        # decided everything; abs rows share the exact verdict and
+        # never consult the LLM.
+        report["config"]["judge_llm_backend"] = _JUDGE_MODE or "unconsulted"
     # Cycle 527: lineage fingerprint — dataset identity + interpreter
     # hash seed, recorded AFTER the dual-mode config overwrite so both
     # judge modes carry it. Rationale: the oracle-vs-s_cleaned dataset
