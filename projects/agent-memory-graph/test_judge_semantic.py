@@ -94,6 +94,61 @@ def test_weak_veto_survives_for_non_numeric():
     assert judge_semantic("Sport?", "tennis", "table tennis") == "WRONG"
 
 
+# ── Cycle 531: either/or answer-face rescue (question-conditioned) ──
+
+def test_either_or_answer_face_rescue():
+    """C531 census: the blanket subset veto fired twice on the official
+    cascade-500, both false kills. When the QUESTION offers exactly two
+    alternatives, a candidate that verbatim-names one of them is the
+    complete answer (gpt4_98f46fc6: 'the charity bake sale' vs 'I
+    participated in the charity bake sale first.') — the textual
+    analogue of the exact-number face, keyed off the question."""
+    assert judge_semantic(
+        "Which event did I participate in first, the charity gala or "
+        "the charity bake sale?",
+        "the charity bake sale",
+        "I participated in the charity bake sale first.") == "CORRECT"
+
+
+def test_either_or_rescue_guards():
+    """The rescue must not fire outside its scope: undecided reference
+    (names both alternatives), negated reference, or questions offering
+    more than one 'or' stay vetoed."""
+    q = ("Which event did I participate in first, the charity gala or "
+         "the charity bake sale?")
+    cand = "the charity bake sale"
+    # reference mentions both alternatives → a guess, not an answer face
+    assert judge_semantic(
+        q, cand,
+        "I attended both the charity gala and the charity bake sale.") == "WRONG"
+    # negated reference stays vetoed
+    assert judge_semantic(
+        q, cand,
+        "I did not participate in the charity bake sale first; "
+        "the gala came first.") == "WRONG"
+    # multi-or question → no rescue
+    assert judge_semantic(
+        "Which came first, the gala or the bake sale or the raffle?",
+        "the bake sale", "the bake sale came first") == "WRONG"
+
+
+def test_narrative_abbreviation_stays_vetoed():
+    """C531 census residual debt (gpt4_45189cb4): 'First NBA game, then
+    College Football National Championship game, finally NFL playoffs'
+    is semantically correct vs the verbose reference, but no non-fitted
+    lexical rule separates faithful narrative abbreviation from partial
+    answers (event-skipping). Deliberately left vetoed — rescuing it
+    needs a principled formulation or the oracle. pinned so a future
+    fix must consciously update this spec."""
+    assert judge_semantic(
+        "What is the order of the sports events I watched in January?",
+        "First NBA game, then College Football National Championship "
+        "game, finally NFL playoffs",
+        "First, I attended a NBA game at the Staples Center, then I "
+        "watched the College Football National Championship game, and "
+        "finally, I watched the NFL playoffs.") == "WRONG"
+
+
 # ── judge_semantic: honest abstention ────────────────────────────
 
 @pytest.mark.parametrize("ref,cand", [

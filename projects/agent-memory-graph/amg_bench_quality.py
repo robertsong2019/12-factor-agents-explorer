@@ -1998,6 +1998,54 @@ def _sem_time_seconds(text: str) -> float | None:
     return float(m.group(1)) * _SEM_TIME_UNITS[m.group(2)]
 
 
+_SEM_DET_RE = re.compile(r"\b(the|a|an|my|our)\s+[^\s]+", re.IGNORECASE)
+_SEM_NEG_RE = re.compile(
+    r"\b(not|never|no|cant|dont|doesnt|didnt|wasnt|werent)\b")
+
+
+def _sem_either_or_face(question: str, answer: str, reference: str) -> bool:
+    """Question-conditioned answer face for either/or questions (C531).
+
+    When the question itself offers exactly two alternatives ("X or Y?"),
+    the complete answer is one of them — a candidate that verbatim-names
+    an alternative is the precise form of the reference, not a weaker
+    subset (the textual analogue of the exact-number answer face).
+    Guarded: fires only when (a) the normalized question contains exactly
+    one " or ", (b) the candidate's tokens sit inside the named
+    alternative, (c) the reference contains the candidate's alternative
+    while containing nothing from the *other* alternative's distinctive
+    tokens (an undecided reference mentioning both must not rescue a
+    guess), and (d) the reference carries no negation ("not the bake
+    sale" must stay vetoed).
+    """
+    nq, nc, nr = _sem_norm(question), _sem_norm(answer), _sem_norm(reference)
+    if nq.count(" or ") != 1:
+        return False
+    left, right = nq.split(" or ", 1)
+    alt_b = right.replace("?", "").strip()
+    dets = list(_SEM_DET_RE.finditer(left))
+    if not dets or not alt_b:
+        return False
+    alt_a = left[dets[-1].start():].strip()
+    toks_c = {w for w in nc.split() if w not in _SEM_STOPWORDS}
+    if not toks_c:
+        return False
+    toks_a, toks_b = set(alt_a.split()), set(alt_b.split())
+    if toks_c <= toks_a:
+        named, other = alt_a, alt_b
+    elif toks_c <= toks_b:
+        named, other = alt_b, alt_a
+    else:
+        return False            # candidate not contained in either alternative
+    toks_r = {w for w in nr.split() if w not in _SEM_STOPWORDS}
+    diff = ({w for w in other.split()} - set(nc.split())) - _SEM_STOPWORDS
+    if diff & toks_r:
+        return False            # reference also names the other alternative
+    if _SEM_NEG_RE.search(nr):
+        return False
+    return bool(set(nc.split()) & toks_r) and toks_c <= toks_r
+
+
 def judge_semantic(question: str, answer: str, reference: str) -> str:
     """Deterministic semantic-equivalence judge (#090 simplified port).
 
@@ -2050,6 +2098,16 @@ def judge_semantic(question: str, answer: str, reference: str) -> str:
         # precise form of the reference, not a weaker one — the
         # norm already folded five→5, so equal numbers = equal fact.
         if num_c and set(num_c) <= set(num_r):
+            return "CORRECT"
+        # Either/or answer face (C531): when the question itself offers
+        # exactly two alternatives, a candidate that verbatim-names one
+        # of them is the complete answer, not a weaker subset — the
+        # textual analogue of the numeric face above. C531 census: the
+        # blanket subset veto fired twice on the official cascade-500,
+        # both false kills (gpt4_98f46fc6 charity either/or;
+        # gpt4_45189cb4 narrative abbreviation — the latter stays
+        # vetoed, deferred until a non-fitted rule exists).
+        if _sem_either_or_face(question, answer, reference):
             return "CORRECT"
         return "WRONG"
     if toks_r and toks_r < toks_c:       # superset candidate
