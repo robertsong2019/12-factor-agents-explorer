@@ -58,6 +58,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from memory_graph import MemoryGraph
@@ -98,6 +99,11 @@ __all__ = [
     "judge_llm",
     "judge_mock",
     "judge_ollama",
+    "judge_semantic",
+    "judge_cascade",
+    "cohens_kappa",
+    "mcnemar_exact",
+    "judge_ab_report",
     "calibration_summary",
     "calibration_by_category",
     "main",
@@ -1515,7 +1521,11 @@ class LongMemEvalAdapter:
         question with :func:`judge_llm` (ollama endpoint with mock
         fallback), producing ``accuracy_exact`` / ``accuracy_llm`` /
         ``calibration`` report keys — one metric's gains can't mask
-        the other's losses (Research #069).
+        the other's losses (Research #069). ``judge_mode="semantic"``
+        (Cycle 529) scores via :func:`judge_cascade` instead —
+        deterministic semantic layer first, LLM only on NEEDS_JUDGE
+        — same report shape plus ``judge_ab`` (Research #092
+        kappa/McNemar A/B statistics).
 
         Args:
             dataset: ``[{"id", "question", "answer", ...}]``.
@@ -1525,7 +1535,8 @@ class LongMemEvalAdapter:
               (C466 — honest attribution for calibration_by_category).
             judge_fn: Optional external judge; default containment.
             limit: Evaluate at most this many questions (0 = all).
-            judge_mode: "exact" (default) or "dual".
+            judge_mode: "exact" (default), "dual" or "semantic"
+                (Cycle 529 cascade).
 
         Returns:
             Report dict: overall accuracy / retrieval-hit rate /
@@ -1568,12 +1579,18 @@ class LongMemEvalAdapter:
 
             correct_exact: bool | None = None
             correct_llm: bool | None = None
-            if judge_mode == "dual":
+            if judge_mode in ("dual", "semantic"):
                 correct_exact = correct
                 if is_abs:
                     # abstention semantics are protocol-level, not
                     # semantic — both metrics share the verdict
                     correct_llm = correct
+                elif judge_mode == "semantic":
+                    # Cycle 529: cascade — deterministic semantic
+                    # layer first, LLM only on NEEDS_JUDGE
+                    verdict = judge_cascade(question, predicted, truth)
+                    correct_llm = (None if verdict == "ERROR"
+                                   else verdict == "CORRECT")
                 else:
                     verdict = judge_llm(question, predicted, truth)
                     correct_llm = (None if verdict == "ERROR"
@@ -1660,7 +1677,7 @@ class LongMemEvalAdapter:
                        "entropy_weak_score": self.entropy_weak_score,
                        "judge_mode": judge_mode},
         }
-        if judge_mode == "dual":
+        if judge_mode in ("dual", "semantic"):
             report["accuracy_exact"] = report["overall_accuracy"]
             scored = [r for r in results if r.correct_llm is not None]
             report["accuracy_llm"] = (
@@ -1669,6 +1686,7 @@ class LongMemEvalAdapter:
             report["calibration"] = calibration_summary(results)
             report["calibration_by_category"] = \
                 calibration_by_category(results)
+            report["judge_ab"] = judge_ab_report(results)
         return report
 
     def sweep_abstention(self, dataset: list[dict], *,
@@ -1895,6 +1913,250 @@ def judge_llm(question: str, answer: str, reference: str, *,
 
 
 _JUDGE_MODE: str | None = None  # sticky auto-detect cache
+
+
+# ── Semantic judge layer (Cycle 529 — Research #090/#092) ──────
+#
+# Deterministic first rung of the judging cascade: normalization +
+# guarded soft-matching so semantically-equivalent answers credit
+# without an LLM call, and lexically-unsolvable pairs abstain
+# honestly (NEEDS_JUDGE → judge_llm in :func:`judge_cascade`).
+# #090 simplified port; A/B decision protocol per Research #092
+# (discordant counts + McNemar exact + Cohen's kappa, per category).
+#
+# False-pass red lines (the guards): number-signature mismatch is a
+# veto (7 vs 17), currency-domain conflict is a veto ($5 vs 5
+# euros), and containment is ASYMMETRIC per the LongMemEval official
+# protocol — a weaker candidate ("tennis" vs ref "table tennis")
+# fails while a superset candidate ("blue is his favorite color" vs
+# ref "blue") passes. Deviation from the #092 prototype: no
+# bootstrap-CI vs truth — production rows carry no ground-truth
+# correctness label; the A/B decision runs on McNemar, and
+# oracle-labeled CIs live in the research harness.
+
+_SEM_NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "ten": "10", "eleven": "11", "twelve": "12", "fifteen": "15",
+    "twenty": "20", "thirty": "30", "hundred": "100",
+    "thousand": "1000",
+}
+_SEM_TIME_UNITS = {"hours": 3600, "hour": 3600, "minutes": 60,
+                   "minute": 60, "days": 86400, "day": 86400,
+                   "weeks": 604800, "week": 604800}
+_SEM_STOPWORDS = {"is", "his", "her", "the", "a", "an", "of", "to",
+                  "in", "at", "on", "and", "was"}
+
+
+def _sem_norm(text: str) -> str:
+    """Judge-side normalization: number words folded, trailing/prefix
+    $ adsorbed + currency words canonicalized, ordinals stripped,
+    separators dropped, lowercased."""
+    t = text.strip().lower()
+    t = re.sub(r"([\d,])\s*\$(?!\d)", r"\1 usd", t)      # trailing $
+    t = re.sub(r"\$\s*([\d,]+(?:\.\d+)?)", r"\1 usd", t)  # prefix $
+    t = re.sub(r"\bdollars?\b", "usd", t)
+    t = re.sub(r"\beuros?\b", "eur", t)
+    t = re.sub(r"\byen\b", "jpy", t)
+    t = re.sub(r"\byuan\b", "cny", t)
+    t = re.sub(r"\b(\d{1,2})(st|nd|rd|th)\b", r"\1", t)   # ordinals
+    for w, d in _SEM_NUMBER_WORDS.items():
+        t = re.sub(rf"\b{w}\b", d, t)
+    t = re.sub(r"[,$.]", "", t)
+    t = re.sub(r"\s+", " ", t)
+    return t.strip()
+
+
+def _sem_date_fold(text: str) -> str:
+    """Best-effort date folding: january 5 2023 / 5 january 2023 →
+    ``year-mon-day`` (or ``mon-day`` when yearless)."""
+    t = _sem_norm(text)
+    m = re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+(\d{1,2})\s*(\d{4})?\b", t)
+    if m:
+        mon, day, year = m.group(1), int(m.group(2)), m.group(3) or ""
+        return f"{year}-{mon}-{day}".strip("-")
+    m = re.search(r"\b(\d{1,2})\s+(?:(?:of|the)\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s*(\d{4})?\b", t)
+    if m:
+        day, mon, year = int(m.group(1)), m.group(2), m.group(3) or ""
+        return f"{year}-{mon}-{day}".strip("-")
+    return t
+
+
+def _sem_numbers(text: str) -> list[str]:
+    return re.findall(r"\d+(?:\.\d+)?", _sem_norm(text))
+
+
+def _sem_currencies(text: str) -> set[str]:
+    return set(re.findall(r"\b(usd|eur|jpy|cny)\b", _sem_norm(text)))
+
+
+def _sem_time_seconds(text: str) -> float | None:
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(hours?|minutes?|days?|weeks?)",
+                  _sem_norm(text))
+    if not m:
+        return None
+    return float(m.group(1)) * _SEM_TIME_UNITS[m.group(2)]
+
+
+def judge_semantic(question: str, answer: str, reference: str) -> str:
+    """Deterministic semantic-equivalence judge (#090 simplified port).
+
+    Ladder: exact (case-insensitive) → normalized → date fold →
+    time-unit conversion → guarded containment → soft similarity.
+    ``question`` is unused in the lexical ladder but kept for judge
+    signature uniformity (and future question-conditioned guards).
+
+    Returns "CORRECT" / "WRONG" / "NEEDS_JUDGE" — the third verdict
+    is an honest abstention for lexically-unsolvable pairs (entity
+    substitution, zero-overlap paraphrase); :func:`judge_cascade`
+    routes those to the LLM judge. NEVER use NEEDS_JUDGE as credit.
+    """
+    if not reference:
+        return "CORRECT"  # same convention as exact_judge/judge_mock
+    if not answer:
+        return "WRONG"
+    r, c = reference.strip(), answer.strip()
+    if r.lower() == c.lower():
+        return "CORRECT"
+    nr, nc = _sem_norm(r), _sem_norm(c)
+    if nr == nc:
+        return "CORRECT"
+    dr, dc = _sem_date_fold(r), _sem_date_fold(c)
+    if dr == dc and dr not in (nr, nc):
+        return "CORRECT"
+    tr, tc = _sem_time_seconds(r), _sem_time_seconds(c)
+    if tr is not None and tc is not None and abs(tr - tc) < 1e-9:
+        return "CORRECT"
+    # Guard 1: number-signature mismatch → veto, but ONLY when the
+    # number sets are DISJOINT (7 vs 17). Superset candidates
+    # legitimately carry extra numbers ("16GB" answered with a full
+    # laptop spec listing) — C529 veto-kill audit caught 32 false
+    # losses under the stricter sorted-multiset rule, all fixed by
+    # requiring an empty intersection (full-spec answers share the
+    # GT number; 17 shares nothing with 7).
+    num_r, num_c = _sem_numbers(r), _sem_numbers(c)
+    if num_r and num_c and not (set(num_r) & set(num_c)):
+        return "WRONG"
+    # Guard 2: currency-domain conflict ($5 vs 5 euros).
+    cur_r, cur_c = _sem_currencies(r), _sem_currencies(c)
+    if cur_r and cur_c and cur_r != cur_c:
+        return "WRONG"
+    # Guard 3: asymmetric containment (official superset protocol).
+    toks_r = {w for w in nr.split() if w not in _SEM_STOPWORDS}
+    toks_c = {w for w in nc.split() if w not in _SEM_STOPWORDS}
+    if toks_c and toks_c < toks_r:
+        # Exact-number answer face: a bare/equivalent numeric answer
+        # ("140" vs "140 hours", "5" vs "five model kits") is the
+        # precise form of the reference, not a weaker one — the
+        # norm already folded five→5, so equal numbers = equal fact.
+        if num_c and set(num_c) <= set(num_r):
+            return "CORRECT"
+        return "WRONG"
+    if toks_r and toks_r < toks_c:       # superset candidate
+        return "CORRECT"
+    if SequenceMatcher(None, nr, nc).ratio() >= 0.75:
+        return "CORRECT"
+    return "NEEDS_JUDGE"
+
+
+def judge_cascade(question: str, answer: str, reference: str, *,
+                  llm_fn=None, **llm_kw) -> str:
+    """Semantic-first judging cascade — LLM only on honest abstention.
+
+    :func:`judge_semantic` resolves the lexically-decidable surface at
+    zero cost with bitwise reproducibility; NEEDS_JUDGE pairs fall
+    through to ``llm_fn`` (default :func:`judge_llm`). Returns
+    "CORRECT" / "WRONG" / "ERROR" (ERROR propagates from the LLM)."""
+    verdict = judge_semantic(question, answer, reference)
+    if verdict != "NEEDS_JUDGE":
+        return verdict
+    fn = llm_fn or judge_llm
+    return fn(question, answer, reference, **llm_kw)
+
+
+def cohens_kappa(labels_a: list[int], labels_b: list[int]) -> float:
+    """Cohen's kappa — chance-corrected agreement.
+
+    Raw agreement is inflated whenever both judges lean the same way
+    on imbalanced data (Research #092: official-judge raw 0.98 vs
+    kappa after 33-41pp shrink); kappa is the honest A/B lens."""
+    assert len(labels_a) == len(labels_b) and labels_a
+    n = len(labels_a)
+    po = sum(1 for a, b in zip(labels_a, labels_b) if a == b) / n
+    p_a1, p_b1 = sum(labels_a) / n, sum(labels_b) / n
+    pe = p_a1 * p_b1 + (1 - p_a1) * (1 - p_b1)
+    return 1.0 if pe == 1.0 else (po - pe) / (1.0 - pe)
+
+
+def mcnemar_exact(b: int, c_disc: int) -> float:
+    """Two-sided exact binomial McNemar p-value for discordant (b, c).
+
+    The legal paired test for judge A/Bs: only the rows the two
+    judges disagree on carry evidence; concordant rows cancel."""
+    n = b + c_disc
+    if n == 0:
+        return 1.0
+    k = min(b, c_disc)
+    tail = sum(math.comb(n, i) for i in range(0, k + 1)) / (2 ** n)
+    return min(1.0, 2.0 * tail)
+
+
+def _ab_pair_stats(pairs: list[tuple[int, int]]) -> dict:
+    """Discordant summary for one (correct_exact, correct_llm) group."""
+    n = len(pairs)
+    b = sum(1 for e, c in pairs if not e and c)    # cascade-only correct
+    cc = sum(1 for e, c in pairs if e and not c)   # cascade-only wrong
+    return {"scored": n, "cascade_only_correct": b,
+            "cascade_only_wrong": cc, "mcnemar_p": mcnemar_exact(b, cc)}
+
+
+def judge_ab_report(results: list) -> dict:
+    """A/B decision statistics: containment-baseline vs cascade judge.
+
+    Research #092 protocol over dual/semantic-scored rows (duck-typed
+    — QuestionResult attrs or report dict rows, same protocol as
+    :func:`calibration_summary`): discordant counts (rescues b vs
+    losses c), McNemar exact p, Cohen's kappa, and a per-category
+    breakdown so any verdict traces to the question types driving it
+    (type noise floors differ — preference 0.10 vs ss 0.00).
+
+    ``verdict`` at p<0.05: "cascade>exact" / "exact>cascade",
+    else "n.s." — McNemar is the decision rule; kappa quantifies how
+    much of the raw agreement is chance consensus.
+    """
+    ex: list[int] = []
+    ca: list[int] = []
+    cats: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for r in results:
+        e = (r.correct_exact if hasattr(r, "correct_exact")
+             else r.get("correct_exact"))
+        c = (r.correct_llm if hasattr(r, "correct_llm")
+             else r.get("correct_llm"))
+        if e is None or c is None:
+            continue  # judge ERROR rows carry no pair evidence
+        pair = (int(bool(e)), int(bool(c)))
+        ex.append(pair[0])
+        ca.append(pair[1])
+        cat = ((r.category if hasattr(r, "category") else r.get("category"))
+               or "unknown")
+        cats[cat].append(pair)
+    overall = _ab_pair_stats(list(zip(ex, ca)))
+    p = overall["mcnemar_p"]
+    if p < 0.05:
+        verdict = ("cascade>exact" if overall["cascade_only_correct"]
+                   > overall["cascade_only_wrong"] else "exact>cascade")
+    else:
+        verdict = "n.s."
+    return {"scored": overall["scored"],
+            "agree": overall["scored"] - overall["cascade_only_correct"]
+            - overall["cascade_only_wrong"],
+            "cascade_only_correct": overall["cascade_only_correct"],
+            "cascade_only_wrong": overall["cascade_only_wrong"],
+            "mcnemar_p": p,
+            "kappa": cohens_kappa(ex, ca) if ex else 0.0,
+            "verdict": verdict,
+            "by_category": {cat: _ab_pair_stats(pairs)
+                            for cat, pairs in sorted(cats.items())}}
 
 
 def calibration_summary(results: list) -> dict:
@@ -8438,8 +8700,9 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
             ``_abs`` suffix = abstention-scored).
         limit: Evaluate at most this many questions (0 = all).
         entropies: Optional entropy thresholds (``None`` = gate off).
-        judge_mode: "exact" (default) or "dual" (Cycle 462 — adds
-            ``accuracy_exact``/``accuracy_llm``/``calibration`` to the
+        judge_mode: "exact" (default), "dual", or "semantic"
+            (Cycle 529 — cascade judge; adds ``accuracy_exact`` /
+            ``accuracy_llm``/``calibration``/``judge_ab`` to the
             aggregated report).
 
     Returns:
@@ -8571,7 +8834,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
         sum(r["answer_session_hit"] for r in resolved_rows)
         / len(resolved_rows) if resolved_rows else 0.0)
     report["answer_sessions_resolved"] = len(resolved_rows)
-    if judge_mode == "dual":
+    if judge_mode in ("dual", "semantic"):
         report["config"] = {**kwargs, "judge_mode": judge_mode}
         report["accuracy_exact"] = report["overall_accuracy"]
         scored = [r for r in all_results
@@ -8582,6 +8845,7 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
         report["calibration"] = calibration_summary(all_results)
         report["calibration_by_category"] = \
             calibration_by_category(all_results)
+        report["judge_ab"] = judge_ab_report(all_results)
     # Cycle 527: lineage fingerprint — dataset identity + interpreter
     # hash seed, recorded AFTER the dual-mode config overwrite so both
     # judge modes carry it. Rationale: the oracle-vs-s_cleaned dataset
@@ -8681,7 +8945,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sweep-entropies", default="",
                         help="CSV entropy thresholds for eval-mode sweep "
                              "(e.g. 'none,0.90,0.95'; 'none' = gate off)")
-    parser.add_argument("--judge", choices=("exact", "dual"),
+    parser.add_argument("--judge", choices=("exact", "dual", "semantic"),
                         default="exact",
                         help="exact = containment judge (default); "
                              "dual = additionally score with judge_llm "
