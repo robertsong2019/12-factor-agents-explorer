@@ -66,6 +66,7 @@
 - **拓扑快捷统计** — hub_nodes/peripheral_nodes/mean_degree 一键获取关键结构指标 (Cycle 339)
 - **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 + 噪声鲁棒性测试 (Cycles 326-341)
 - **Temporal QA 家族 (5 路由)** — LongMemEval temporal-reasoning 零 LLM 解法：temporal_arith 日历算术 + pp_duration/pure_tenure 状态时长 + order 排序 + pairwise which-first，form gate + 最早-FRESH 锚定 + 负存在弃权，temporal-133 0.323→0.474 全程 zero-flip (Cycles 457-489)
+- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 **0.494** (Cycles 520-531)
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 - **传播激活家族 (5 API)** — ACT-R 认知模型: spreading_activation (基础) → activation_trace (可解释) → competitive_spreading (多种子竞争) → temporal_spreading (时间衰减) → activation_diff (对比分析) (Cycles 366-383)
 - **流式熵追踪** — FINGEREntropy O(Δ) 增量 von Neumann 熵 + StreamingGraph 实时异常检测 (Cycle 361)
@@ -413,12 +414,13 @@ mg.link(user.id, project.id, "works_on")
 
 ### 搜索与召回
 
-#### `recall(query, limit=5) -> list[Node]`
+#### `recall(query, limit=5, *, readonly=False) -> list[Node]`
 
-按关键词召回记忆（自动增强访问强度）。
+按关键词召回记忆（自动增强访问强度）。`readonly=True` 时为纯读：无 decay/boost 写回，tie-break 用摄入序（rowid），结果成为存储图的纯函数——基准评估路径默认用此模式（`deterministic_recall`，Cycle 528），`--wallclock-recall` 可逃逸回旧行为。
 
 ```python
-results = mg.recall("Python")
+results = mg.recall("Python")          # 交互路径：访问会增强权重
+results = mg.recall("Python", readonly=True)   # 评估/重放：零副作用，跨 run 逐字节可复现
 ```
 
 #### `find_by_kind(kind) -> list[Node]`
@@ -4221,6 +4223,60 @@ multi_session 是 133 题切片 A/B，full-500 是官方记分板；C507-C516 �
 #### C519：proper-noun neg_exist 误杀取证 (86cbde3)
 
 C516 给普通名词版做了 v1→v6 census，但 C513 的专名版 **fire 面从未被审计**——三天后全量 census 才发现 9 fire 里藏 4 个误杀（Bachelor/Hawaii/EPs/Aragón，全是 answer_session_hit 的题被误弃权）。四个根因三层修复：① **Unicode 截断**（普适 bug）：`[A-Za-z]` token 类在 ó 处截断，'Aragón'→'Arag'，`\barag\b` 匹配不上 'aragón'——NFKD 去组合符折叠必须做在 tokenize **之前**且**两侧**（先 tokenize 后 fold 治不了 'Arag'）；② 学位类别词（Bachelor 是属性词，语料用“CS from UCLA”转述）→ stop 表 +Master/PhD/MBA；③ 媒体复数（问 EPs 语料只有 EP）→ +CDs/LPs/DVDs；④ 地理下位词（问 Hawaii 语料全说 Maui）→ 保守 `_NEG_EXIST_GEO_SUB` 映射，每条由真实误杀证明。fold/stop/sub 都只能减 fire 不能加，census 确认 POST fires=5 ⊂ before 9，严格子集 → 全 500 净 +1（0.448→0.450 预测口径）；abstain 11.8%→11.4%（**诚实弃权下降 = 误杀减少**）。教训：**老门也要 census**——不上新功能的取证轮次同样是增益；解锁的 4 题暴露 answer-face 转述失配是下一方向。
+
+---
+
+## Cycles 520-531: 官方记分板 0.450→0.494 — census-first 判分革命与确定性管线
+
+> 官方口径（LongMemEval **s_cleaned** full-500，PYTHONHASHSEED=7）轨迹：0.450（C519 预测）→ 0.454 → 0.476 → 0.484 → 0.486（det）→ 0.492（cascade）→ **0.494**。本段主轴：RECORD-NEGATIVE 台账（C522/C524）+ 数据集分叉拦截（C527/C527b phantom +25）+ tie-jitter 家族根因关闭（C528）+ 判分级联生产化（C529-C531）。
+
+#### C520：`risk_coverage_report` — 风险-覆盖曲线进报告 (cde5d38)
+
+AURC/E-AURC/Risk@coverage + per-form breakdown 进 amg_bench_quality（Research #089 port），run_eval 报告无条件接线。移植时抓出 #089 原型一个真实 bug：oracle 闭式 k²/2n² 是小-k Taylor 近似，系统性低估 E-AURC（n=10、k=4 时 0.0926 vs 精确 0.0800，方向恰好是"体面"）——换成与实测同一梯形积分器的构造式精确 oracle。full-500 smoke：risk@50%=0.516 vs overall 0.556，平坦曲线定量复证 #089 读数；preference 全错切片 E-AURC=0 退化下限。+12 tests（含 oracle 交叉校验），套件 10052。
+
+#### C521：enum_count 事件专名签名 (61525fa)
+
+festival/fest-head → 数 DISTINCT 事件专名：重提去重、排除动词子句跳过、先于 names/roles 消歧（"Rachel's favorite festival" 不算一个 Rachel 计数）。21-q 切片 A/B +1/−0（gpt4_a56 null→4=GT）；oracle-parity 4/4 恢复；套件 10057。
+
+#### C522：phrase-restrictor bigram 否证 + 官方刷新 0.454 (RECORD-NEGATIVE)
+
+C518 队列项「相邻内容 bigram 在 haystack 缺失而两 token 都在」全量 census：48 fire = 4 win / 12+ 劫持，机械签名完全相同 → **实现前否证**。同 cycle 官方 full-500 收 C519+C521 债：0.448→**0.454**（224→227，+3/−0；86f00804 tie-jitter 自愈归还）。
+
+#### C523：quantity-form 答案面重排 — 0.454→0.476 (e4ac826)
+
+"how many/much" 答案门 quantity 形态重排：103-q 切片 0.214→0.320 与 full 逐题一致；全量 227→**238**（+11/−0：10 个真 fact-line 重排 + 1 个包含事故 a9f6b44c——GT "2" ⊆ "2023"，此事故后被 C529/C530 判分侧拦截反杀）；both-correct PA 扰动 0/489。套件 10069。
+
+#### C524：latest-number-wins 否证 (RECORD-NEGATIVE)
+
+a2f3aa27 队列项实现前 census 否证：top-has-number 38/103；loose override +2/−8、strict +0/−4、flagship 题信号层不可解。C512/C522 census-first 纪律第三案。
+
+#### C525/C526：narrowing-scope + session-completion 两面 census（+5/−0）
+
+**C525** narrowing-scope 答案面 +2/−0（fires=6，零正确题触及；同条件 unscoped fire 58 含 10 劫持——**scope=narrowing 承载全部分离力**）。**C526** session-completion 面 +3/−0 same-session；unscoped 变体 +7/−3 且 3 劫持全跨 session → 拒绝 unscoped。窗口预算 cut 分析：真实瓶颈 = seed-miss 105（58 题 GT 串根本不在 haystack——quotation-judge 死路）。五题预测被 C527 官方刷新 5/5 兑现。
+
+#### C527/C527b：官方 0.484 + 数据集分叉拦截 + 指纹基建 (b5e5843/c1863ad)
+
+官方 full-500 刷新 0.476→**0.484**（242/500，+5/−1，钉 PYTHONHASHSEED=7；−1 = 86f00804 tie-jitter 家族）。**主发现 DATASET BIFURCATION**：`longmemeval_oracle.json`（1.9 sess/22 msg 每题）与 `longmemeval_s_cleaned.json`（47.7 sess/494 msg）共享同 500 qid = **两套基准**；oracle 首跑 0.526「phantom +25」被好得可疑纪律拦截——官方血统全在 S-track，oracle-track 只配当 fast-iteration 开发集（1/5 体积；机制杠杆不可跨集比较：quant_rerank oracle +20 vs s_cleaned +11）。C527b 指纹基建：report config 新增 `data_file`/`data_sha256_12`/`pythonhashseed`，run_eval(data_source=) 接线（零作答行为变化）——**跨 run 比对先验指纹**从此是纪律。同期 RNG 取证：86f00804 同环境 A/B 单题翻转 + 顺序交换重放 ✓✓✗✗，统一解释 C517✓→C527✗ 四次官方翻转（真根因 C528 关闭）。套件 10089。
+
+#### `recall(query: str, limit: int = 5, *, readonly: bool = False) -> list[Node]` — 确定性纯读召回 (Cycle 528)
+
+tie-jitter 家族（同码同 seed 跨 run verdict 翻转）RNG 审计证伪「未播种 random」假设——检索路径可达面零未播种随机。真双源：① `recall()` wall-clock weight 突变（decay+ACCESS_BOOST 写回；每题 fresh ingest → fresh accessed 时间戳 → `ORDER BY weight DESC` 近平分骑衰减浮点噪声）；② PPR seeds 取 fresh uuid4 的 set 哈希序（os.urandom，PYTHONHASHSEED 免疫）。修复：`readonly=True` 纯读（零写入，tie-break 用 rowid=摄入序；legacy 路径逐字节等价）+ PPR 改发现序 seeds；适配器 `deterministic_recall=True` 默认、`--wallclock-recall` 逃生口。证据：det500 243/500（**0.486**）vs banked 242，+1/−0 且唯一 win = 86f00804 本尊；499/500 verdict 逐字节同；q86 四进程跨 seed bitwise 同 predhash；prefix50 A/A 两进程 50/50 同。**评估管线 = dataset 纯函数，单题独立重放恢复合法**。套件 10096。
+
+#### `judge_semantic(question: str, answer: str, reference: str) -> str` — 确定性语义 judge (Cycle 529)
+
+Research #090 简化 port：规范化（大小写/标点/数字词 five→5）→ 日期折叠 → 时间单位换算（统一秒）→ 守卫包含 → 软相似（SequenceMatcher ≥0.75）阶梯，返回 CORRECT / WRONG / **NEEDS_JUDGE**——第三判定是词法不可解对（实体替换、零重叠改述）的诚实弃权，**永不计分**。三个假通过/假损失守卫：number veto 仅在数字集**不相交**时否决（超集候选合法共享 GT 数字——"16GB" 答成全配置清单，C529 前规则误杀 32 题）；币种域冲突（$5 vs 5 euros）；非对称包含带 exact-number 答案面（"140"="140 hours"）。
+
+#### `judge_cascade(question, answer, reference, *, llm_fn=None, **llm_kw) -> str` + A/B 统计三件套 (Cycle 529)
+
+cascade = judge_semantic 先行，仅 NEEDS_JUDGE 降级 `judge_llm`（可注入 llm_fn）。`judge_mode="semantic"` 贯通 evaluate()/run_eval()/CLI `--judge semantic`（dual 报告形状 + judge_ab）。统计三件套（Research #092 协议）：`cohens_kappa`——原始 agreement 在非平衡数据上被机会共识灌水（官方 judge raw 0.98，κ 后缩水 33-41pp）；`mcnemar_exact`——判对对抵消，只数不一致对的精确二项检验；`judge_ab_report`——rescue/loss 计数 + McNemar p + κ + 分类目分解（类目噪声地板不同：preference 0.10 vs ss 0.00）。det500 replay census 修复兑现：8 个确定性 rescue 待收、veto-kill 32→5、169 题 LLM-judge 表面测绘。套件 10137。
+
+#### C530：官方 cascade-500 收债 0.492 + judge backend 指纹
+
+@pristine 重放 0.486 exact 逐字节一致（0 pred/verdict diff——C528 纯函数再认证）→ 确定性 cascade **246/500（0.492）入账**：+8 rescue（C529 census 8/8 兑现）−5 veto-kill（包含假通过拦截，含 a9f6b44c 已知事故反杀）。**主发现：mock fallback 静默污染**——无 ollama 时 judge_llm sticky 降级 lexical mock，24 个 NEEDS_JUDGE 行被 mock 判定（20 假 rescue + 4 假 kill），raw cascade 262/500（0.524）不可入账；修法 = report config `judge_llm_backend` 指纹（mock/ollama/unconsulted）。McNemar (b=8,c=5) p=0.581 n.s.——**升级依据 = 判分有效性，非分数 delta**。169-172 题 NEEDS_JUDGE 的 LLM 上行空间待 ollama oracle。套件 10140。
+
+#### C531：either/or 答案面 rescue — 0.494 (0f7f6b1)
+
+veto census 复核发现 subset-branch 在官方 cascade-500 上精度 0/2（两个假 kill：gpt4_98f46fc6 charity either/or 获救；gpt4_45189cb4 narrative abbreviation 仍留 veto——无非拟合规则前不救）。问题条件化守卫：题面恰给两个候选时，逐字点名其一 = 完整答案而非弱子集（数字答案面的文本类比）；限定单-or 问题 + 候选被包含 + undecided-ref/negation 守卫，C529 tennis spec 保留。banked 246→**247（0.494）**，kills 5→4（冻结 C530 预测上 verdict-delta 枚举验证）。套件 10143。
 
 ---
 
