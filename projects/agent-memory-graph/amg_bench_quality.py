@@ -2046,6 +2046,49 @@ def _sem_either_or_face(question: str, answer: str, reference: str) -> bool:
     return bool(set(nc.split()) & toks_r) and toks_c <= toks_r
 
 
+_SEM_ORDER_Q_RE = re.compile(r"\border\b|\bsequence\b|\bchronolog")
+_SEM_MARKER_SPLIT_RE = re.compile(
+    r"\b(after that|first|second|third|fourth|fifth|next|then|"
+    r"finally|lastly|subsequently)\b")
+
+
+def _sem_marker_subsequence_face(question: str, answer: str,
+                                 reference: str) -> bool:
+    """Marker-aware subsequence answer face for order questions (C532).
+
+    A narrative answer that (a) answers an order/sequence question,
+    (b) shares the reference's discourse-marker skeleton — the same
+    markers (first/then/finally/...) in the same order, >= 2 of them,
+    with no content preamble before the first — and (c) whose every
+    segment is an in-order token subsequence of the corresponding
+    reference segment, is the same narrative *abbreviated*, not a
+    weaker subset. Event-skipping partials are excluded structurally:
+    a dropped event removes a marker (skeleton mismatch) and a
+    reordered or foreign event breaks per-segment alignment — which
+    is exactly why C531 could only pin this debt as "needs a
+    principled formulation" rather than a coverage threshold.
+    """
+    if not _SEM_ORDER_Q_RE.search(_sem_norm(question)):
+        return False
+    pa = _SEM_MARKER_SPLIT_RE.split(_sem_norm(answer))
+    pr = _SEM_MARKER_SPLIT_RE.split(_sem_norm(reference))
+    if len(pa) != len(pr):                       # different marker count
+        return False
+    if pa[1::2] != pr[1::2] or len(pa[1::2]) < 2:
+        return False                              # skeleton mismatch / thin
+    for pre in (pa[0], pr[0]):                   # clean skeleton start
+        if {w for w in pre.split() if w not in _SEM_STOPWORDS}:
+            return False
+    for ca, cr in zip(pa[2::2], pr[2::2]):
+        cand = [w for w in ca.split() if w not in _SEM_STOPWORDS]
+        if not cand:                              # empty segment = drop
+            return False
+        stream = iter(cr.split())
+        if not all(w in stream for w in cand):    # in-order subsequence
+            return False
+    return True
+
+
 def judge_semantic(question: str, answer: str, reference: str) -> str:
     """Deterministic semantic-equivalence judge (#090 simplified port).
 
@@ -2108,6 +2151,13 @@ def judge_semantic(question: str, answer: str, reference: str) -> str:
         # gpt4_45189cb4 narrative abbreviation — the latter stays
         # vetoed, deferred until a non-fitted rule exists).
         if _sem_either_or_face(question, answer, reference):
+            return "CORRECT"
+        # Marker-subsequence answer face (C532): same discourse-marker
+        # skeleton + per-segment in-order subsequence ⇒ same narrative
+        # abbreviated. Resolves the C531 pinned debt (gpt4_45189cb4)
+        # without a coverage threshold: event-skipping partials break
+        # the skeleton, reorders/foreign tokens break alignment.
+        if _sem_marker_subsequence_face(question, answer, reference):
             return "CORRECT"
         return "WRONG"
     if toks_r and toks_r < toks_c:       # superset candidate

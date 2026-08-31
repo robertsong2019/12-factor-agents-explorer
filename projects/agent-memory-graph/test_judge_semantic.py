@@ -132,21 +132,58 @@ def test_either_or_rescue_guards():
         "the bake sale", "the bake sale came first") == "WRONG"
 
 
-def test_narrative_abbreviation_stays_vetoed():
-    """C531 census residual debt (gpt4_45189cb4): 'First NBA game, then
-    College Football National Championship game, finally NFL playoffs'
-    is semantically correct vs the verbose reference, but no non-fitted
-    lexical rule separates faithful narrative abbreviation from partial
-    answers (event-skipping). Deliberately left vetoed — rescuing it
-    needs a principled formulation or the oracle. pinned so a future
-    fix must consciously update this spec."""
+def test_narrative_abbreviation_rescued_by_marker_subsequence():
+    """C532 — conscious update of the C531 spec anchor: the principled
+    formulation now exists. A narrative answer that shares the reference's
+    discourse-marker skeleton (first/then/finally...) and whose every
+    segment is an in-order token subsequence of the corresponding
+    reference segment is the SAME narrative, abbreviated — not a weaker
+    subset. gpt4_45189cb4: the candidate merely drops the verbose filler
+    ("I attended a ... at the Staples Center") around each event."""
     assert judge_semantic(
         "What is the order of the sports events I watched in January?",
         "First NBA game, then College Football National Championship "
         "game, finally NFL playoffs",
         "First, I attended a NBA game at the Staples Center, then I "
         "watched the College Football National Championship game, and "
-        "finally, I watched the NFL playoffs.") == "WRONG"
+        "finally, I watched the NFL playoffs.") == "CORRECT"
+
+
+def test_marker_subsequence_guards():
+    """The rescue fires only on the full skeleton + aligned segments:
+    dropped events (marker missing), reordered events, foreign tokens,
+    non-order questions, single markers and pre-marker preambles all
+    stay vetoed (event-skipping partial answers are the population the
+    subset veto exists for — C531's reason for pinning the debt)."""
+    q = ("What is the order of the sports events I watched in January?")
+    ref = ("First, I attended a NBA game at the Staples Center, then I "
+           "watched the College Football National Championship game, and "
+           "finally, I watched the NFL playoffs.")
+    # event skipped: marker skeleton 'first, finally' != 'first, then, finally'
+    assert judge_semantic(
+        q, "First NBA game, finally NFL playoffs", ref) == "WRONG"
+    # reordered events: segment alignment fails (NFL not in ref seg 1)
+    assert judge_semantic(
+        q, "First NFL playoffs, then College Football National "
+           "Championship game, finally NBA game", ref) == "WRONG"
+    # foreign token in a segment: not an abbreviation of that segment
+    assert judge_semantic(
+        q, "First NBA playoffs, then College Football National "
+           "Championship game, finally NFL playoffs", ref) == "WRONG"
+    # non-order question: no marker face, plain subset veto
+    assert judge_semantic(
+        "What did I watch in January?",
+        "First NBA game, then College Football National Championship "
+        "game, finally NFL playoffs", ref) == "WRONG"
+    # single marker: no skeleton to align
+    assert judge_semantic(
+        q, "First NBA game", ref) == "WRONG"
+    # pre-marker preamble on the candidate: skeleton must start clean
+    # (verdict falls out of the subset branch — guard property is
+    # "no rescue", either WRONG or honest NEEDS_JUDGE)
+    assert judge_semantic(
+        q, "On monday first NBA game, then NFL playoffs, finally "
+           "nothing else", ref) != "CORRECT"
 
 
 # ── judge_semantic: honest abstention ────────────────────────────
