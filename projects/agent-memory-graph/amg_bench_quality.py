@@ -3039,9 +3039,9 @@ _WHERE_PROPER_RE = re.compile(
     _WHERE_PREP + r"\s+" + _WHERE_DET + r"((?:[A-Z][\w'&.\-]*\s?){1,4})")
 _WHERE_COMMON_RE = re.compile(
     _WHERE_PREP + r"\s+" + _WHERE_DET + r"("
-    r"suburbs?|cities|downtown|countryside|mountains?|beaches?|"
-    r"campus|office|gyms?|garage|bedrooms?|closets?|kitchens?|"
-    r"yard|balcony|basement|attic|beds?|shelves?|shelf|walls?|"
+    r"suburbs?|cit(y|ies)|towns?|downtown|countryside|mountains?|beaches?|"
+    r"campus|offices?|gyms?|garage|bedrooms?|closets?|kitchens?|"
+    r"yards?|balcon(y|ies)|basement|attic|beds?|shelves?|shelf|walls?|"
     r"desks?|drawers?|cars?|bags?|backpacks?|cabinets?"
     r")\b", re.I)
 _WHERE_TRAIL = frozenset({
@@ -3156,9 +3156,28 @@ def answer_where(question: str, sessions: list[dict],
         return None, {"sessions": len(sess_rank), "cands": 0}
     cands.sort(key=lambda c: -c["score"])
     best = cands[0]
+    # C533: relevance floor. The question is the join condition
+    # (#086): a locative-dense line sharing ZERO question keywords
+    # is not evidence for THIS question — when the top candidate has
+    # kh=0 but some candidate echoes the question (kh>=1), the
+    # best-scoring kh>=1 candidate wins instead (locative priors
+    # still rank within the kh>=1 band). Forensic trigger (C533,
+    # 3d86fd0a): kh=0 "organize my gym bag ... to the gym" beat the
+    # GT-bearing "For Sophia, it was a coffee shop in the city."
+    # (kh=1) purely on role/first-person priors. kh=0 winners with
+    # NO kh>=1 candidate are untouched (the question's vocabulary
+    # genuinely never recurs — answer stays locative-best).
+    floor = False
+    if best["kh"] == 0:
+        rel = [c for c in cands if c["kh"] > 0]
+        if rel:
+            rel.sort(key=lambda c: -c["score"])
+            best = rel[0]
+            floor = True
     detail = {"sessions": len(sess_rank), "cands": len(cands),
               "best": {"role": best["role"], "kh": best["kh"],
                        "score": best["score"]},
+              "relevance_floor": floor,
               "top3": [(c["role"], c["score"], c["sent"][:80])
                        for c in cands[:3]]}
     return best["sent"], detail

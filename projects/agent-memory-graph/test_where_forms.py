@@ -72,6 +72,17 @@ class TestLocCandidates(unittest.TestCase):
             "My friend Rachel moved back to the suburbs again.")
         self.assertIn(("suburbs", 1), cands)
 
+    def test_singular_place_nouns(self):
+        # C533: "cities" was listed but "city" was not — the GT
+        # sentence of 3d86fd0a ("For Sophia, it was a coffee shop
+        # in the city.") never entered the candidate set.
+        cands = m._where_loc_candidates(
+            "For Sophia, it was a coffee shop in the city.")
+        self.assertIn(("city", 1), cands)
+        cands2 = m._where_loc_candidates(
+            "We stayed in a town outside the valley.")
+        self.assertIn(("town", 1), cands2)
+
 
 class TestAnswerWhere(unittest.TestCase):
     def _sessions(self):
@@ -120,6 +131,45 @@ class TestAnswerWhere(unittest.TestCase):
              ],
             ["n1"], {"n1": {"session_id": "s1"}}, "")
         self.assertIsNone(ans)
+
+    def test_relevance_floor_zero_echo_loses(self):
+        # C533: kh=0 locative-dense winner must lose to the best
+        # kh>=1 candidate when one exists — the question is the
+        # join condition (#086). Replicates 3d86fd0a's shape: the
+        # GT-bearing sentence echoes "sophia" but carries a weaker
+        # locative than the kh=0 gym-bag distractor.
+        sessions = [
+            {"session_id": "s1", "turns": [
+                turn("user",
+                     "I also need to organize my gym bag, which I "
+                     "took with me to the gym last week."),
+                turn("user",
+                     "For Sophia, it was a coffee shop in the city."),
+            ]},
+        ]
+        ans, detail = answer_where(
+            "Where did I meet Sophia?", sessions,
+            ["n1"], {"n1": {"session_id": "s1"}}, "")
+        self.assertIsNotNone(ans)
+        self.assertIn("Sophia", ans)
+        self.assertTrue(detail["relevance_floor"])
+
+    def test_relevance_floor_no_candidate_untouched(self):
+        # kh=0 winner with NO kh>=1 candidate anywhere stays
+        # locative-best (the question's vocabulary never recurs).
+        sessions = [
+            {"session_id": "s1", "turns": [
+                turn("user",
+                     "I need to organize my gym bag, which I took "
+                     "to the gym last week."),
+            ]},
+        ]
+        ans, detail = answer_where(
+            "Where did I meet Sophia?", sessions,
+            ["n1"], {"n1": {"session_id": "s1"}}, "")
+        self.assertIsNotNone(ans)
+        self.assertIn("gym", ans)
+        self.assertFalse(detail["relevance_floor"])
 
 
 class TestAdapterGate(unittest.TestCase):
