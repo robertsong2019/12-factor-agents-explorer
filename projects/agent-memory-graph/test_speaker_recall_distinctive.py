@@ -214,5 +214,107 @@ class TestAdapterWiring(unittest.TestCase):
         self.assertTrue(ans.startswith("Sure"))
 
 
+
+class TestAnswerTypeFace(unittest.TestCase):
+    """C534 — answer-type face for fact-type-seeking recall questions.
+
+    A question demanding a fact type ("how much" → currency, "handle"
+    → @handle, "what year" → year, "how many" → digit) prefers a
+    candidate that BEARS the type: tier preference among
+    floor-passers, bounded exemption pass when the distinctive/raw
+    floors hid every type-bearing candidate (b759caee handle line,
+    7a8d0b71 budget line — both official-run casualties).
+    """
+
+    FILLER = [
+        "The lake was calm that morning.",
+        "We walked around the lake after breakfast.",
+    ] * 8
+
+    def _nodes(self, *pairs):
+        """pairs of (key, sentence) -> assistant nodes + filler."""
+        nodes = {k: _node(s, session="s1") for k, s in pairs}
+        nodes.update({f"f{i}": _node(t, session="s1")
+                      for i, t in enumerate(self.FILLER)})
+        return nodes
+
+    def test_money_tier_prefers_currency_line(self):
+        """Type-less top scorer yields to a lower-scoring $-bearer.
+
+        Without the face, the 5-hit line wins; the face restricts the
+        winner to type-bearing passers, where only the $2,000 line
+        qualifies — the 7a8d0b71 mechanism."""
+        q = ("How much of the event budget did you allocate for "
+             "influencer outreach?")
+        nodes = self._nodes(
+            ("a", "The event budget allocated for influencer outreach "
+                  "covers venue logistics."),
+            ("b", "Influencer outreach: $2,000 from the event budget."),
+        )
+        ans, det = answer_speaker_recall(q, nodes)
+        self.assertIsNotNone(ans)
+        self.assertEqual(det["type_demand"], "money")
+        self.assertEqual(det["type_face"], "tier")
+        self.assertIn("$2,000", ans)
+
+    def test_handle_exemption_rescues_distinctive_filtered_line(self):
+        """@handle line under the raw floor is rescued by exemption.
+
+        The handle header matches only jewellery+designer (raw 2 < 3)
+        yet is the only type-bearing candidate — the b759caee
+        mechanism."""
+        q = ("What is the Instagram handle of the jewellery designer "
+             "you mentioned?")
+        nodes = self._nodes(
+            ("d", "The jewellery designer you mentioned works with "
+                  "unusual gemstones."),
+            ("h", "Jessica Poole (@jess_poole): Jessica is a UK-based "
+                  "jewellery designer."),
+        )
+        ans, det = answer_speaker_recall(q, nodes)
+        self.assertIsNotNone(ans)
+        self.assertIn("@jess_poole", ans)
+        self.assertEqual(det["type_demand"], "handle")
+        self.assertEqual(det["type_face"], "exemption")
+
+    def test_year_exemption_rescues_year_line(self):
+        """Year-bearing line under the raw floor wins a year question."""
+        q = "What year did you visit the vineyard for the marathon?"
+        nodes = self._nodes(
+            ("a", "The vineyard visit was amazing and the marathon "
+                  "was unforgettable."),
+            ("b", "I visited the vineyard in 2019."),
+        )
+        ans, det = answer_speaker_recall(q, nodes)
+        self.assertIsNotNone(ans)
+        self.assertIn("2019", ans)
+        self.assertEqual(det["type_demand"], "year")
+        self.assertEqual(det["type_face"], "exemption")
+
+    def test_no_demand_keeps_plain_ranking(self):
+        """No fact-type demand -> plain w^2 winner, no face flag."""
+        q = "Did the event budget cover influencer outreach?"
+        nodes = self._nodes(
+            ("a", "The event budget allocated for influencer outreach "
+                  "covers venue logistics."),
+            ("b", "Influencer outreach: $2,000 from the event budget."),
+        )
+        ans, det = answer_speaker_recall(q, nodes)
+        self.assertIsNotNone(ans)
+        self.assertIn("venue logistics", ans)
+        self.assertIsNone(det.get("type_demand"))
+        self.assertNotIn("type_face", det)
+
+    def test_digit_junk_never_rescued(self):
+        """A digit alone (zero keyword support) is not an answer."""
+        q = "How many guests attended the dinner?"
+        nodes = self._nodes(
+            ("j", "Room 4 is available for the night."),
+        )
+        ans, det = answer_speaker_recall(q, nodes)
+        self.assertIsNone(ans)
+        self.assertEqual(det["type_demand"], "number")
+
+
 if __name__ == "__main__":
     unittest.main()

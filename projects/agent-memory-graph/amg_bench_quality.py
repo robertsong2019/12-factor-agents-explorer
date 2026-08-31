@@ -3002,7 +3002,7 @@ def answer_speaker_recall(question: str,
           for kw in kws}
     w = {kw: (1.0 + math.log(N / d) if d else 0.0) for kw, d in df.items()}
     detail["df"] = {k: v for k, v in df.items() if v}
-    best = None
+    passers: list[tuple[float, str, str | None, int]] = []
     for s, sid in pool:
         if s.endswith("?"):
             detail["questions_skipped"] += 1
@@ -3015,8 +3015,48 @@ def answer_speaker_recall(question: str,
         score = sum(w[kw] ** 2 for kw in matched)
         if _RECALL_PREAMBLE_RE.match(s):
             score *= 0.25
-        if best is None or score > best[0]:
-            best = (score, s, sid, len(matched))
+        passers.append((score, s, sid, len(matched)))
+    best = max(passers, key=lambda p: p[0]) if passers else None
+    # C534 answer-type face: a question demanding a fact type ("how
+    # many" → digit, "how much" → currency, "what year" → year,
+    # "handle" → @handle) prefers a candidate that bears it — a
+    # type-less descriptive line parasitizes overlap like a preface
+    # (C475), and the guarantee comes from question structure, not a
+    # tuned threshold (C531 either/or principle). Tier preference
+    # among floor-passers; when no passer bears the type, a bounded
+    # exemption pass (type-bearing, raw >= 2, preface penalty and
+    # weighted_floor kept) rescues candidates the distinctive filter
+    # hid — the @handle line (b759caee) and the "$2,000" budget line
+    # (7a8d0b71) each lost only to that filter on the official run.
+    demand = next((t for t, qre, _ in _RECALL_TYPE_DEMANDS
+                   if qre.search(question)), None)
+    detail["type_demand"] = demand
+    if demand and best is not None:
+        tier_re = next(tre for t, _, tre in _RECALL_TYPE_DEMANDS
+                       if t == demand)
+        tier = [p for p in passers if tier_re.search(p[1])]
+        if tier:
+            faced = max(tier, key=lambda p: p[0])
+            if faced[1] != best[1]:
+                best = faced
+                detail["type_face"] = "tier"
+        else:
+            exempt: list[tuple[float, str, str | None, int]] = []
+            for s, sid in pool:
+                if not tier_re.search(s):
+                    continue
+                matched = [kw for kw in kws if w[kw]
+                           and _keyword_hits(s, [kw])]
+                if len(matched) < 2:
+                    continue
+                score = sum(w[kw] ** 2 for kw in matched)
+                if _RECALL_PREAMBLE_RE.match(s):
+                    score *= 0.25
+                if score >= weighted_floor:
+                    exempt.append((score, s, sid, len(matched)))
+            if exempt:
+                best = max(exempt, key=lambda p: p[0])
+                detail["type_face"] = "exemption"
     detail["best_score"] = round(best[0], 1) if best else 0
     if best is None:
         return None, detail
@@ -3025,6 +3065,21 @@ def answer_speaker_recall(question: str,
     if best[0] < weighted_floor:
         return None, detail
     return best[1], detail
+
+
+# ── C534: answer-type demands (recall answer-type face) ────────────
+# (demand name, question-side detector, candidate-side bearer pattern).
+# Ordered: more specific demands first (a "handle" question that also
+# says "how much" is a handle question).
+_RECALL_TYPE_DEMANDS = (
+    ("handle", re.compile(r"\bhandle\b", re.I), re.compile(r"@\w+")),
+    ("money", re.compile(r"\bhow much\b", re.I),
+     re.compile(r"[$€£]\s?\d[\d,]*"
+                r"|\b\d+\s?(?:dollars|euros|pounds)\b", re.I)),
+    ("year", re.compile(r"\b(?:what|which) year\b", re.I),
+     re.compile(r"\b(?:19|20)\d{2}\b")),
+    ("number", re.compile(r"\bhow many\b", re.I), re.compile(r"\d")),
+)
 
 
 # ── Cycle 508: where-form locative extraction (Research #084) ──────
