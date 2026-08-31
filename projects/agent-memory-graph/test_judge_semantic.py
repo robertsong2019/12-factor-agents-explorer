@@ -186,6 +186,72 @@ def test_marker_subsequence_guards():
            "nothing else", ref) != "CORRECT"
 
 
+# ── Cycle 535: normalization residue fold (punctuation glue + BrE/AmE) ──
+
+def test_markdown_escape_and_variant_handle_rescued():
+    """C535 queue-#1 (b759caee): GT is an underscore handle; the
+    candidate renders it markdown-escaped (@jessica\\_poole\\_jewellery)
+    and describes the same person with the American spelling (jewelry).
+    Escapes fold to separators, underscores split, jewellery→jewelry
+    folds — the handle fact is present, superset details are OK."""
+    assert judge_semantic(
+        "What was the Instagram handle of the jewelry designer?",
+        "Jessica Poole (@jessica\\_poole\\_jewellery): Jessica is a "
+        "UK-based jewelry designer who creates stunning, unique "
+        "engagement rings.",
+        "@jessica_poole_jewellery") == "CORRECT"
+
+
+def test_punctuation_glue_token_identity():
+    """C535 census family (86f00804 / fea54f57 / gpt4_483dd43c): tokens
+    wrapped in quotes/brackets/colons must normalize to their bare
+    lexemes — token identity must not depend on markup glue."""
+    # quote-style difference alone (single vs double)
+    assert judge_semantic(
+        "q?", '"Game of Thrones"', "'Game of Thrones'") == "CORRECT"
+    # wrapped+colon-glued token inside a superset answer
+    assert judge_semantic(
+        "q?", 'Based on my analysis, the song "Evolution" exemplifies '
+               "the band's growth.", "Evolution") == "CORRECT"
+    # norm-level: attached punctuation does not survive into tokens
+    assert abq._sem_norm('(hugo):') == abq._sem_norm('hugo')
+    assert abq._sem_norm('give"') == abq._sem_norm("give'")
+
+
+def test_bre_ame_lexeme_folding():
+    """Same lexeme, different spelling — equal after the fold, either
+    direction, with inflected neighbours folding too."""
+    assert judge_semantic(
+        "q?", "my favorite color is teal",
+        "my favourite colour is teal") == "CORRECT"
+    assert abq._sem_norm("favourite colour") == abq._sem_norm("favorite color")
+    assert abq._sem_norm("jewellery") == abq._sem_norm("jewelry")
+    assert abq._sem_norm("analysed") != abq._sem_norm("organized")  # untouched
+
+
+def test_number_comma_folding_unchanged():
+    """The separator pass must stay downstream of [,$.] removal:
+    comma-grouped numbers still fold to bare digits (never '2 000')."""
+    assert abq._sem_norm("2,000") == "2000"
+    assert abq._sem_norm("$2,000") == "2000 usd"
+    assert judge_semantic("q?", "$2,000", "2,000 dollars") == "CORRECT"
+
+
+def test_our_hour_sour_not_corrupted():
+    """The fold is an explicit word table, not a suffix rule — an
+    our→or rewrite would corrupt the pronoun 'our' (and hour/sour)."""
+    assert abq._sem_norm("our hour sour flavour") == \
+        "our hour sour flavor"
+
+
+def test_sense_split_pairs_not_folded():
+    """Deliberate exclusions: programme/program, storey/story and
+    licence/license denote different things within one variant — the
+    table must not fold them (pins the census decision)."""
+    assert abq._sem_norm("programme storey licence") == \
+        "programme storey licence"
+
+
 # ── judge_semantic: honest abstention ────────────────────────────
 
 @pytest.mark.parametrize("ref,cand", [

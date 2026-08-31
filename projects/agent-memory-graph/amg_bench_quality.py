@@ -1947,11 +1947,57 @@ _SEM_TIME_UNITS = {"hours": 3600, "hour": 3600, "minutes": 60,
 _SEM_STOPWORDS = {"is", "his", "her", "the", "a", "an", "of", "to",
                   "in", "at", "on", "and", "was"}
 
+# British→American lexeme folding (C535): same word, different spelling.
+# Explicit word table, not a suffix rule — an our→or rewrite would corrupt
+# the pronoun "our". Sense-splitting pairs (programme/program,
+# storey/story, licence/license, practise/practice) are deliberately
+# excluded: the two spellings denote different things in one variant.
+# C535 census over the frozen cascade-500: jewellery/jewelry is the only
+# pair occurring in the data (b759caee); the full standard set is kept so
+# the rule stays a lexeme-class fold rather than a row-targeted patch.
+_SEM_BRE_VARIANTS = {
+    # -our/-or
+    "colour": "color", "colours": "colors", "favourite": "favorite",
+    "favourites": "favorites", "honour": "honor", "honours": "honors",
+    "neighbour": "neighbor", "neighbours": "neighbors",
+    "behaviour": "behavior", "flavour": "flavor", "flavours": "flavors",
+    "humour": "humor", "labour": "labor", "armour": "armor",
+    "rumour": "rumor", "rumours": "rumors", "harbour": "harbor",
+    "endeavour": "endeavor",
+    # -re/-er
+    "centre": "center", "centres": "centers", "metre": "meter",
+    "metres": "meters", "theatre": "theater", "theatres": "theaters",
+    "litre": "liter", "litres": "liters", "fibre": "fiber",
+    "calibre": "caliber",
+    # -ise/-ize, -yse/-yze
+    "organise": "organize", "realise": "realize", "recognise": "recognize",
+    "apologise": "apologize", "specialise": "specialize",
+    "criticise": "criticize", "summarise": "summarize",
+    "analyse": "analyze", "paralyse": "paralyze",
+    # -ogue/-og
+    "catalogue": "catalog", "catalogues": "catalogs",
+    "dialogue": "dialog", "analogue": "analog",
+    # doubled consonant
+    "jewellery": "jewelry", "jeweller": "jeweler",
+    "jewellers": "jewelers", "travelling": "traveling",
+    "cancelled": "canceled", "labelled": "labeled",
+    "marvellous": "marvelous", "modelling": "modeling",
+    "fuelled": "fueled", "signalling": "signaling",
+    # misc unambiguous
+    "grey": "gray", "mould": "mold", "smoulder": "smolder",
+    "plough": "plow", "sceptical": "skeptical", "defence": "defense",
+    "offence": "offense", "pretence": "pretense", "judgement": "judgment",
+    "acknowledgement": "acknowledgment", "tyre": "tire",
+    "cheque": "check", "aluminium": "aluminum",
+}
+
 
 def _sem_norm(text: str) -> str:
     """Judge-side normalization: number words folded, trailing/prefix
     $ adsorbed + currency words canonicalized, ordinals stripped,
-    separators dropped, lowercased."""
+    non-lexical residue (markdown escapes, quotes, brackets, attached
+    punctuation) folded to word separators, British→American lexemes
+    folded, separators dropped, lowercased."""
     t = text.strip().lower()
     t = re.sub(r"([\d,])\s*\$(?!\d)", r"\1 usd", t)      # trailing $
     t = re.sub(r"\$\s*([\d,]+(?:\.\d+)?)", r"\1 usd", t)  # prefix $
@@ -1963,6 +2009,14 @@ def _sem_norm(text: str) -> str:
     for w, d in _SEM_NUMBER_WORDS.items():
         t = re.sub(rf"\b{w}\b", d, t)
     t = re.sub(r"[,$.]", "", t)
+    # Markdown/punctuation residue folds to word separators (C535):
+    # escaped handles "@jessica\\_poole\\_jewellery", wrapped tokens
+    # "(hugo):", attached quotes 'give"' all normalize to their bare
+    # lexemes — token identity must not depend on markup glue. The
+    # [,$.] removal above stays narrow so "2,000" still folds to "2000".
+    t = re.sub(r"[^a-z0-9@%\s]", " ", t)
+    for w, d in _SEM_BRE_VARIANTS.items():
+        t = re.sub(rf"\b{w}\b", d, t)
     t = re.sub(r"\s+", " ", t)
     return t.strip()
 
