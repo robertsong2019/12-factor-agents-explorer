@@ -3083,6 +3083,30 @@ def answer_speaker_recall(question: str,
             score *= 0.25
         passers.append((score, s, sid, len(matched)))
     best = max(passers, key=lambda p: p[0]) if passers else None
+    # C537 speech-act face: a you-addressed question referencing the
+    # assistant's own past act ("...the restaurant you recommended")
+    # is answered by the sentence where the assistant PERFORMS that
+    # act in first person ("For a romantic dinner, I would recommend
+    # Roscioli."), not by a list row that merely shares content words
+    # (La Pergola's fine-dining/Italian/Rome line parasitizes overlap
+    # like a C475 preface — 4c36ccef official-run casualty, losing
+    # 150.8 vs 145.5). Question structure, not a tuned threshold
+    # (C531 principle): tier preference among floor-passers only —
+    # the content floor keeps relevance, the act verb breaks the
+    # tie. No exemption pass: if the act sentence is not even a
+    # passer the floors excluded it for a reason (C536 census lesson).
+    # Applied BEFORE the C534 type-demand face so a type question
+    # ("how many ... did you recommend") still resolves to the
+    # type-bearing sentence — the demand is the more specific face.
+    if best is not None and _SPEECH_ACT_Q_RE.search(question):
+        tier = [p for p in passers
+                if _speech_act_bearer(p[1])
+                and not _RECALL_PREAMBLE_RE.match(p[1])]
+        if tier:
+            faced = max(tier, key=lambda p: p[0])
+            if faced[1] != best[1]:
+                best = faced
+                detail["speech_act_face"] = "tier"
     # C534 answer-type face: a question demanding a fact type ("how
     # many" → digit, "how much" → currency, "what year" → year,
     # "handle" → @handle) prefers a candidate that bears it — a
@@ -3131,6 +3155,58 @@ def answer_speaker_recall(question: str,
     if best[0] < weighted_floor:
         return None, detail
     return best[1], detail
+
+
+# ── C537: speech-act face — "you recommended" ⇒ first-person act ──
+# (question-side detector, candidate-side bearer). The question
+# references the assistant's own past speech act; the direct answer
+# lives in a sentence performing that act ("I would recommend X").
+# Irregular pasts (told/said/gave) listed beside their stems; \w*
+# covers regular inflections (recommended/suggesting/gives).
+_SPEECH_ACT_VERB = (r"(?:recommend|suggest|mention|advise|share|"
+                    r"provide|tell|said|say|told|gave|give)")
+_SPEECH_ACT_Q_RE = re.compile(
+    r"\byou\b[^.?!]{0,80}?\b" + _SPEECH_ACT_VERB + r"\w*", re.I)
+_I_SPEECH_ACT_RE = re.compile(
+    r"\bi\b(?:['’](?:ve|ll|m))?(?:\s+\w+){0,2}?\s+\b("
+    + _SPEECH_ACT_VERB + r")\w*", re.I)
+
+# C537 A/B kills (488d3006, c8f1aeed) — an act sentence only answers
+# a "what did you recommend" question when it performs the act ON A
+# CONCRETE OBJECT. Three structural exclusions, no thresholds:
+# propositional clause ("I can suggest THAT hiking …"), negated or
+# absent act ("since you DIDN'T mention … I'll provide …"), generic
+# object ("recommend SOME OTHER bands …" — topic-incoherent
+# parasitism of the act verb itself). The GT bearer ("I would
+# recommend Roscioli.") passes all three. A fourth exclusion lives
+# at the call site: preamble-prefixed passers (C475 penalty) are
+# never bearers — "Sure, here are the options I mentioned …" is a
+# hand-over, not an act on an object (C475: prefaces parasitize
+# you-addressed questions by construction).
+_SPEECH_ACT_NEG_BEFORE_RE = re.compile(
+    r"\b(?:not|never|didn't|don't|doesn't|can't|cannot|won't|"
+    r"haven't|hasn't|did not|do not)\b[^.?!]{0,40}$", re.I)
+_SPEECH_ACT_PROP_RE = re.compile(r"^\s+that\b", re.I)
+_SPEECH_ACT_GENERIC_OBJ_RE = re.compile(
+    r"^(?:\s+\w+){0,2}?\s+\b(?:some|any|other|another|general|"
+    r"various|certain|few)\b", re.I)
+
+
+def _speech_act_bearer(sent: str) -> bool:
+    """True when *sent* performs a first-person speech act with a
+    concrete object (C537 guards — see block comment above)."""
+    for m in _I_SPEECH_ACT_RE.finditer(sent):
+        verb_start = m.start(1)
+        before = sent[max(0, verb_start - 45):verb_start]
+        after = sent[m.end(1):]
+        if _SPEECH_ACT_NEG_BEFORE_RE.search(before):
+            continue
+        if _SPEECH_ACT_PROP_RE.match(after):
+            continue
+        if _SPEECH_ACT_GENERIC_OBJ_RE.match(after):
+            continue
+        return True
+    return False
 
 
 # ── C534: answer-type demands (recall answer-type face) ────────────
