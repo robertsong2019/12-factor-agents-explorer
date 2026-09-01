@@ -840,3 +840,100 @@ class TestNegativeExistenceIntegration:
         q = "How long has Caroline lived in Shinjuku?"
         text = "I moved to Harajuku last April."
         assert abq.negative_existence(q, text) is None
+
+
+# ── C536: ordinal-item face ("the fifth bottle you recommended") ───
+
+class TestOrdinalItemFace:
+    GT_NODE = (
+        "To make the widest variety of gin-based cocktails, I would "
+        "recommend purchasing the following five bottles of liquors, "
+        "aperitifs, and digestifs:\n"
+        "1. Sweet Vermouth: Sweet vermouth is a fortified wine used in "
+        "classic cocktails like the Negroni.\n"
+        "2. Dry Vermouth: Dry vermouth is also a fortified wine.\n"
+        "3. Campari: Campari is a bitter aperitif.\n"
+        "4. Elderflower Liqueur: Elderflower liqueur is a sweet and "
+        "floral liqueur for gin-based cocktails.\n"
+        "5. Absinthe: Absinthe is a strong herbal liqueur used in "
+        "classic cocktails like the Sazerac."
+    )
+
+    @staticmethod
+    def _nodes(labels):
+        return {f"n{i}": {"role": "assistant", "label": lab,
+                           "session_id": f"s{i}"}
+                for i, lab in enumerate(labels)}
+
+    def test_form_detector_positive(self):
+        assert abq.ordinal_item_form(
+            "You recommended five bottles for gin cocktails. What was "
+            "the fifth bottle?") is True
+        assert abq.ordinal_item_form(
+            "Can you remind me what the 7th work from home job you "
+            "listed was?") is True
+
+    def test_form_detector_negative(self):
+        # narrative "first" with no you-addressed list act
+        assert abq.ordinal_item_form(
+            "First I helped my friend, then I fixed the fence.") is False
+        # no ordinal word at all
+        assert abq.ordinal_item_form(
+            "You recommended a restaurant in Rome. What was its name?"
+        ) is False
+        # ordinal but user's own act, not the assistant's
+        assert abq.ordinal_item_form(
+            "What was the first city I visited on my trip?") is False
+
+    def test_answer_ordinal_returns_head_term(self):
+        nodes = self._nodes(["I talked about cocktails once.",
+                             self.GT_NODE])
+        ans, detail = abq.answer_ordinal(
+            "What was the fifth bottle you recommended for gin "
+            "cocktails?", nodes)
+        assert ans == "Absinthe"
+        assert detail["ordinal"] == 5
+        assert detail["session_id"] == "s1"
+
+    def test_answer_ordinal_prefers_relevant_node(self):
+        # decoy with a "5." item but no question-keyword relevance
+        decoy = ("Pack list:\n5. Tent: bring the rain fly too.")
+        nodes = self._nodes([decoy, self.GT_NODE])
+        ans, _ = abq.answer_ordinal(
+            "What was the fifth bottle you recommended for gin "
+            "cocktails?", nodes)
+        assert ans == "Absinthe"
+
+    def test_answer_ordinal_none_when_no_item(self):
+        nodes = self._nodes(["I would recommend some bottles of "
+                             "vermouth for cocktails, five or so."])
+        ans, detail = abq.answer_ordinal(
+            "What was the fifth bottle you recommended?", nodes)
+        assert ans is None
+
+    def test_extractive_gate_does_not_wire_ordinal_face(self):
+        # C536 census-negative pin: the tight form detector fires
+        # (population 3/500, all frozen-wrong), the mechanics work on
+        # clean fixtures, but the gate stays UNWIRED — frozen-500
+        # forensics showed node-level lexical joins hit adversarial
+        # twin lists (3249768e, kh tied 12/12) and bare GT lists die
+        # under relevance floors (1903aded, kh=1). Wiring this face
+        # would have banked "Triple Sec"/"Encourage Questions" as
+        # answers. Unwiring = pipeline byte-identical on frozen 500.
+        ad = abq.LongMemEvalAdapter()
+        ad.ingest_sessions([{
+            "session_id": "s1",
+            "messages": [
+                {"role": "user", "content":
+                 "I'm building a cocktail bar. Which bottles should I "
+                 "buy to make the widest variety of gin-based "
+                 "cocktails?"},
+                {"role": "assistant", "content": self.GT_NODE},
+            ],
+        }], session_dates=None)
+        q = ("You recommended five bottles for gin cocktails. What "
+             "was the fifth bottle?")
+        assert abq.ordinal_item_form(q) is True   # detector fires...
+        ans, meta = ad.answer_extractive(q, "")
+        assert meta.get("gate") != "ordinal"      # ...but gate never claims
+        assert "ordinal" not in meta

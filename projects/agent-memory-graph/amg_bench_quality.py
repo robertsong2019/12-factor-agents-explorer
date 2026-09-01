@@ -1160,6 +1160,18 @@ class LongMemEvalAdapter:
                 meta["abstained"] = c_ans == ABSTAIN_ANSWER
                 return c_ans, meta
 
+        # C536 census-negative: the ordinal-item face (question-
+        # keyed join onto "N."-marked list items — see
+        # ordinal_item_form below) is intentionally NOT wired here:
+        # frozen-500 forensics (3249768e / 1903aded / 8752c811, the
+        # full tight-detector population, all currently wrong) showed
+        # node-level lexical joins are structurally fragile — 3249768e
+        # has TWIN five-bottle cocktail lists (kh tied 12/12, only
+        # "gin-based" phrasing separates them) and 1903aded's GT is a
+        # bare numbered list (kh=1, dead under any relevance floor).
+        # ordinal_item_form/answer_ordinal stay as census-documented
+        # negative-result infrastructure, test-pinned.
+
         # Cycle 468: speaker-recall path — you-addressed "remind me
         # what you recommended" forms. Assistant answers are multi-
         # paragraph and the specific fact sits mid-body, so message-
@@ -3134,6 +3146,128 @@ _RECALL_TYPE_DEMANDS = (
      re.compile(r"\b(?:19|20)\d{2}\b")),
     ("number", re.compile(r"\bhow many\b", re.I), re.compile(r"\d")),
 )
+
+
+# ── C536: ordinal-item face — "the fifth bottle you recommended" ──
+#
+# NEGATIVE RESULT (census-negative, unwired — see answer_extractive
+# note). Question structure, not score, should locate the answer
+# (C531 either/or principle, #086 "the question is the join
+# condition"): an ordinal index into the assistant's enumerated
+# list joins directly onto the "N."-marked item. The join works on
+# clean mini-fixtures (tests below) but the frozen-500 census
+# falsified it at node level: 3249768e's corpus contains TWIN
+# five-bottle cocktail lists (both kh=12, both act-prefaced, only
+# "gin-based" phrasing separates GT from "5. Triple Sec") and
+# 1903aded's GT is a bare numbered list ("1. Virtual customer
+# service representative … 7. Transcriptionist", kh=1 — any
+# relevance floor excludes it while an act-bearing presentation-
+# tips list wins kh=8). Enumerated lists lack a unique structural
+# key; rescuing these rows needs an embedding side-channel join
+# (C506 precedent), not lexical ranking. 8752c811 did extract the
+# right item ("27. Sound effects …") but exact_judge is
+# truth⊆predicted and the GT wraps the item in a full sentence —
+# judge-side, not retrieval-side.
+#
+# 3249768e forensics kept for the record: the GT line "5. Absinthe:
+# …" scores only 2 raw keyword hits (below the C475 raw floor 3)
+# while the list PREFACE wins speaker_recall outright — and
+# _split_sentences strips the "5." marker, so any sentence-level
+# ordinal face must join on the node label.
+_ORDINAL_WORDS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+    "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9,
+    "tenth": 10, "eleventh": 11, "twelfth": 12,
+}
+_ORDINAL_ITEM_Q_RE = re.compile(
+    r"\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|"
+    r"tenth|eleventh|twelfth|(\d{1,2})(?:st|nd|rd|th))\s+"
+    r"([a-z][a-z\-]*)", re.I)
+_YOU_LIST_ACT_RE = re.compile(
+    r"\byou\b[^.?!]*\b(recommend|suggest|list|give|mention|share|"
+    r"provid)\w*", re.I)
+# A/B lesson (C536 first cut): node relevance alone joins the WRONG
+# enumerated list — "5. Triple Sec" in an unrelated cocktail list and
+# "7. Encourage Questions" in a presentation-tips list both out-
+# scored the GT nodes. The real join keys are structural: the head
+# noun after the ordinal ("bottle"/"job"/"parameter") must appear in
+# the carrying node, and a question-stated list size ("five bottles")
+# pins the candidate list's item count.
+_SIZE_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+               "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+               "eleven": 11, "twelve": 12, "twenty": 20}
+_LIST_SIZE_Q_RE = re.compile(
+    r"\b(ten|twenty|two|three|four|five|six|seven|eight|nine|eleven|"
+    r"twelve|\d{1,3})\s+[a-z][a-z\-]*s\b", re.I)
+
+
+def ordinal_item_form(question: str) -> bool:
+    """True when the question demands an indexed item of a list the
+    assistant previously gave (tight dual guard — see C536 notes)."""
+    return bool(_ORDINAL_ITEM_Q_RE.search(question)
+                and _YOU_LIST_ACT_RE.search(question))
+
+
+def answer_ordinal(question: str,
+                   nodes: dict) -> tuple[str | None, dict]:
+    """Nth enumerated-list item head term from the assistant corpus.
+
+    Scans assistant node labels (sentence splitting destroys the
+    ``N.`` marker) for the question's ordinal ``N``, selects the
+    carrying node by question-keyword relevance (floor 3 — a
+    spurious ``N.`` item in an unrelated node cannot win), and
+    returns the item's HEAD TERM (text before ``:`` / `` - `` /
+    sentence end, the "Absinthe" of "5. Absinthe: Absinthe
+    is …"). Unresolvable → ``(None, detail)`` and the caller falls
+    through to the speaker-recall path untouched.
+    """
+    m = _ORDINAL_ITEM_Q_RE.search(question or "")
+    n = (_ORDINAL_WORDS.get(m.group(1).lower()) if m
+         else None) or (int(m.group(2)) if m and m.group(2) else None)
+    detail: dict = {"ordinal": n}
+    if not n or n > 99:
+        return None, detail
+    kws = _keywords(question)
+    noun = (m.group(3).lower() if m and m.group(3) else "")
+    noun_base = noun[:-1] if noun.endswith("s") else noun
+    size_m = _LIST_SIZE_Q_RE.search(question or "")
+    want_size = (_SIZE_WORDS.get(size_m.group(1).lower())
+                 if size_m and size_m.group(1).isalpha()
+                 else (int(size_m.group(1)) if size_m else None))
+    detail["join_noun"] = noun_base or None
+    detail["join_size"] = want_size
+    item_re = re.compile(rf"^\s*{n}[.)]\s+(.+)$", re.M)
+    best: tuple[int, str, str | None] | None = None
+    for node in (nodes or {}).values():
+        if node.get("role") != "assistant":
+            continue
+        label = node.get("label", "") or ""
+        im = item_re.search(label)
+        if not im:
+            continue
+        nlab = _normalize(label)
+        if noun_base and noun_base not in nlab:
+            continue          # head noun not in this node -> wrong list
+        if want_size:
+            n_items = len(re.findall(r"^\s*\d{1,3}[.)]\s", label, re.M))
+            if n_items != want_size:
+                continue      # list length pins the question's "five"
+        kh = _keyword_hits(label, kws)
+        if kh < 3:          # relevance floor on the carrying node
+            continue
+        if best is None or kh > best[0]:
+            best = (kh, im.group(1).strip(), node.get("session_id"))
+    detail["nodes_with_item"] = best is not None
+    if best is None:
+        return None, detail
+    head = re.split(r"\s*[:\u2013\u2014]\s*|\s+-\s+|\.\s",
+                    best[1], 1)[0].strip()
+    if not (2 <= len(head) <= 80):
+        head = best[1][:80]     # no clean separator: bounded raw item
+    detail["node_kh"] = best[0]
+    detail["session_id"] = best[2]
+    detail["item"] = head
+    return head, detail
 
 
 # ── Cycle 508: where-form locative extraction (Research #084) ──────
