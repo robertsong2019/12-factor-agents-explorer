@@ -456,6 +456,7 @@ class LongMemEvalAdapter:
                  role_answer: bool = True,
                  role_margin: int = 0,
                  acq_face: bool = True,
+                 opener_floor: bool = True,
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
                  recall_mode: str = "distinctive",
@@ -566,6 +567,7 @@ class LongMemEvalAdapter:
         self.role_answer = role_answer
         self.role_margin = role_margin
         self.acq_face = acq_face
+        self.opener_floor = opener_floor
         self.assistant_recall = assistant_recall
         self.recall_min_score = recall_min_score
         self.recall_mode = recall_mode
@@ -1464,6 +1466,18 @@ class LongMemEvalAdapter:
                                  and best_n["body"] != face_body)}
             if meta["session_complete_face"]["override"]:
                 best_line = f"[{best_n['role']}] {best_n['body']}"
+        # C539: opener demotion floor. Runs BEFORE the acquisition
+        # face (most form-specific claims last, C482/C488): the floor
+        # only demotes hand-over-shaped winners for a strictly-better
+        # first-person statement; acquisition rows the face claims are
+        # then overridden by it regardless.
+        if self.opener_floor:
+            kws_f = meta.get("keywords") or _keywords(question)
+            ofl_line, ofl_detail = answer_opener_floor(
+                best_line, lines, kws_f)
+            meta["opener_floor"] = ofl_detail
+            if ofl_line is not None:
+                best_line = ofl_line
         # C538: first-person acquisition/conversation statement face.
         # The C499-family remainder at this point: message-level
         # ranking hands the face the top message's FIRST line, which
@@ -3004,6 +3018,40 @@ _RECALL_PREAMBLE_RE = re.compile(
     r"would you like me to)", re.I)
 
 
+# Cycle 539 opener-floor lexicon: the dialogue-management opener
+# family (hand-over/acknowledgment/request-for-help) whose members
+# win the answer-gate ranking purely on echo overlap. C539 census:
+# 16/16 GT-in-window answer-gate rows had an opener-shaped winner
+# while the GT line sat same-band below. Distinct from
+# _RECALL_PREAMBLE_RE (reader-side acks) — this is the USER/assistant
+# conversational hand-over family, plus ask-patterns anywhere in the
+# line's first 200 chars ("...was wondering if you could help...").
+_OPENER_HANDOVER_RE = re.compile(
+    r"^(?:sure[,;! ]|absolutely|of course|certainly|"
+    r"great (?:idea|question|news)|"
+    r"i(?:'d| would) (?:be happy|love|be delighted) to|"
+    r"i can help|i'?m happy to|"
+    r"here(?:\s+are|\s+is|'s)|let me know if|"
+    r"(?:i|we) hope (?:this|that|these) help|"
+    r"happy to (?:help|provide|share|suggest)|"
+    r"thank you for (?:sharing|providing)|would you like me to|"
+    r"that(?:'s| is) (?:great|good) to (?:hear|know)|"
+    r"i think (?:there)?'?s been a misunderstanding|"
+    r"i apologize|i'?m (?:really )?sorry)", re.I)
+_OPENER_ASK_RE = re.compile(
+    r"\b(?:can|could) you (?:help|suggest|recommend|tell|give|provide)\b|"
+    r"\bdo you have any\b|\bwondering if\b|"
+    r"\bany (?:suggestions|recommendations|advice|ideas|tips)\b|"
+    r"\bi want you to be\b|\bwhat do you think\b", re.I)
+# Candidate-side personal-statement guard: first clause carries a
+# first-person subject. Excludes the naive-census kill shapes —
+# assistant lists ("3. **Art Festivals..."), lectures ("The number
+# of free nights..."), meta-transitions ("Now, about that...").
+_OPENER_FLOOR_STMT_RE = re.compile(
+    r"^(?:by the way|anyway|well|so|oh)?[,:\s]*"
+    r"i(?:'ll|'ve|'d|'m)?\b", re.I)
+
+
 def _split_sentences(text: str) -> list[str]:
     """Sentences (and line-broken fragments) longer than 10 chars."""
     parts = re.split(r"(?<=[.!?])\s+|\n", text or "")
@@ -3045,6 +3093,53 @@ _WHO_CONV_FORM_RE = re.compile(
 _WHO_CONV_STATEMENT_RE = re.compile(
     r"\bmy\s+(?:conversation|chat|discussion)\s+with\b"
     r"|\bi\s+(?:talked|spoke|chatted)\s+(?:to|with)\b", re.I)
+
+
+def answer_opener_floor(best_line: str, lines: list[str],
+                        kws: list[str]) -> tuple[str | None, dict]:
+    """C539: opener demotion floor for the answer gate.
+
+    When the best-ranked line is a dialogue-management opener (the
+    _OPENER_HANDOVER_RE/ask family — C539 census: 16/16 GT-in-window
+    answer-gate rows had an opener-shaped winner while the GT line
+    sat same-band below), demote it ONLY for a candidate that is,
+    jointly: strictly richer in question evidence (kh > win_kh —
+    same-kh demotions are the naive census's 5-kill shape: opener
+    lines that CONTINUE into the answer), a first-person personal
+    statement (excludes assistant lists/lectures — the
+    masked-degradation shape), and itself not opener-shaped.
+    C533 where-floor lineage: a floor demotes a defective winner for
+    a structurally better candidate; no thresholds fitted (C531).
+
+    Returns ``(line, detail)`` — line ``None`` = no qualifying
+    candidate, caller falls through untouched (C488).
+    """
+    body = (best_line.split("] ", 1)[-1]
+            if best_line.startswith("[") else best_line).strip()
+    if not (_OPENER_HANDOVER_RE.match(body)
+            or _OPENER_ASK_RE.search(body[:200])):
+        return None, {"fired": False, "reason": "winner-not-opener"}
+    win_kh = _keyword_hits(body, kws)
+    best = None
+    best_h = win_kh
+    for ln in lines:
+        if ln == best_line:
+            continue
+        cand = (ln.split("] ", 1)[-1]
+                if ln.startswith("[") else ln).strip()
+        if (not cand or _OPENER_HANDOVER_RE.match(cand)
+                or _RECALL_PREAMBLE_RE.match(cand)
+                or _OPENER_ASK_RE.search(cand[:200])):
+            continue
+        if not _OPENER_FLOOR_STMT_RE.match(cand):
+            continue
+        h = _keyword_hits(cand, kws)
+        if h > best_h:
+            best, best_h = ln, h
+    if best is None:
+        return None, {"fired": False, "win_kh": win_kh,
+                      "reason": "no-strict-statement-candidate"}
+    return best, {"fired": True, "win_kh": win_kh, "rep_kh": best_h}
 
 
 def answer_acquisition_face(question: str, lines: list[str],
