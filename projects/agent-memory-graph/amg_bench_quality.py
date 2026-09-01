@@ -455,6 +455,7 @@ class LongMemEvalAdapter:
                  session_complete_face: bool = True,
                  role_answer: bool = True,
                  role_margin: int = 0,
+                 acq_face: bool = True,
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
                  recall_mode: str = "distinctive",
@@ -564,6 +565,7 @@ class LongMemEvalAdapter:
         self.deterministic_recall = deterministic_recall
         self.role_answer = role_answer
         self.role_margin = role_margin
+        self.acq_face = acq_face
         self.assistant_recall = assistant_recall
         self.recall_min_score = recall_min_score
         self.recall_mode = recall_mode
@@ -1462,6 +1464,27 @@ class LongMemEvalAdapter:
                                  and best_n["body"] != face_body)}
             if meta["session_complete_face"]["override"]:
                 best_line = f"[{best_n['role']}] {best_n['body']}"
+        # C538: first-person acquisition/conversation statement face.
+        # The C499-family remainder at this point: message-level
+        # ranking hands the face the top message's FIRST line, which
+        # for multi-paragraph messages is a hand-over opener or a
+        # tangent (66f24dbb: "Here's a start - I've bought gifts for
+        # my sister's birthday, my mom…" names recipients while the
+        # GT line "For my sister's birthday, I got her a yellow
+        # dress…" sits hits=2 in the same window). Question structure
+        # picks the verb family (what did I buy/complete/get; who did
+        # I have a conversation with); tier preference among C501
+        # floor-passers that first-person-perform the verb; openers
+        # excluded wherever they sit (C475). Runs LAST: most
+        # form-specific face claims its family (C482/C488 gate-order
+        # discipline), fall-through with no passer untouched.
+        if self.acq_face:
+            kws = meta.get("keywords") or _keywords(question)
+            acq_line, acq_detail = answer_acquisition_face(
+                question, lines, kws)
+            meta["acq_face"] = acq_detail
+            if acq_line is not None:
+                best_line = acq_line
         return best_line.split("] ", 1)[-1], meta
 
     def _counting_sessions(self) -> list[dict]:
@@ -2985,6 +3008,92 @@ def _split_sentences(text: str) -> list[str]:
     """Sentences (and line-broken fragments) longer than 10 chars."""
     parts = re.split(r"(?<=[.!?])\s+|\n", text or "")
     return [p.strip() for p in parts if len(p.strip()) > 10]
+
+
+# Cycle 538 answer-face verb lexicon: question head-verb →
+# first-person past-tense surface family. The question's own
+# main verb predicts the ANSWER LINE's verb (answer-type prior,
+# C534 precedent, applied to acquisition/statement lines): "What
+# did I buy…" is answered by "…I got her a yellow dress", not by
+# a gift-recipient list or advice echo. Families are closed
+# (suppletive past forms only — no stemming): buy→bought/purchased,
+# complete/finish→completed/finished/earned, get→got/received.
+# No free parameters: the C501 hits>=2 floor is reused, ranking
+# is structural (tier preference among floor-passers, C534/C537
+# shape), and openers are excluded wherever they sit (C475:
+# prefaces parasitize overlap — "Here's a start - I've bought
+# gifts for…" names recipients, not the item).
+_ACQ_FORM_RE = re.compile(
+    r"^(?:what|which)\b[^\n]{0,80}?\b(?:did|have)\s+i\s+"
+    r"(buy|purchase|complete|finish|get)\b", re.I)
+_ACQ_FAMILY = {
+    "buy": ("bought", "purchased", "got", "received"),
+    "purchase": ("bought", "purchased", "got", "received"),
+    "complete": ("completed", "finished", "earned"),
+    "finish": ("completed", "finished", "earned"),
+    "get": ("got", "received", "bought", "picked up"),
+}
+_ACQ_STATEMENT_RE = re.compile(
+    r"(?<!can )(?<!could )(?<!should )(?<!would )(?<!will )(?<!shall )"
+    r"(?<!may )(?<!might )(?<!must )"
+    r"\bi(?:'ve\s+|'d\s+|\s+have\s+|\s+had\s+|\s+)"
+    r"(?:bought|purchased|completed|finished|earned|got|received)\b",
+    re.I)
+_WHO_CONV_FORM_RE = re.compile(
+    r"^who\b[^\n]{0,80}?\bdid\s+i\s+(?:have\s+(?:a\s+)?)?"
+    r"(?:conversation|chat|talk)\b", re.I)
+_WHO_CONV_STATEMENT_RE = re.compile(
+    r"\bmy\s+(?:conversation|chat|discussion)\s+with\b"
+    r"|\bi\s+(?:talked|spoke|chatted)\s+(?:to|with)\b", re.I)
+
+
+def answer_acquisition_face(question: str, lines: list[str],
+                            kws: list[str]) -> tuple[str | None, dict]:
+    """C538: first-person acquisition/conversation statement face.
+
+    Among the answer-gate window lines, the sentence that actually
+    PERFORMS the question's verb in first person past tense (and
+    clears the C501 hits>=2 floor) is the answer-bearing line —
+    openers name recipients, tangents discuss the topic, but only
+    "For my sister's birthday, I got her a yellow dress" answers
+    "What did I buy for my sister's birthday gift?". Question
+    structure picks the family; no thresholds are fitted (C531).
+
+    Returns ``(line, detail)`` — line ``None`` = no tier-1 passer,
+    caller falls through untouched (C488).
+    """
+    m = _ACQ_FORM_RE.search(question)
+    if m:
+        verb = m.group(1).lower()
+        family = _ACQ_FAMILY.get(verb, ())
+        stmt_re = _ACQ_STATEMENT_RE
+        kind = f"acq:{verb}"
+    elif _WHO_CONV_FORM_RE.search(question):
+        family = ("conversation",)
+        stmt_re = _WHO_CONV_STATEMENT_RE
+        kind = "who:conversation"
+    else:
+        return None, {"kind": None, "override": False}
+    best_a = None
+    best_a_hits = 0
+    for ln in lines:
+        body = (ln.split("] ", 1)[-1]
+                if ln.startswith("[") else ln)
+        if _RECALL_PREAMBLE_RE.match(body.strip()):
+            continue  # openers parasitize overlap (C475)
+        if not stmt_re.search(body):
+            continue
+        if family[0] != "conversation":
+            if not any(v in body.lower() for v in family):
+                continue
+        h = _keyword_hits(body, kws)
+        if h < 2:  # C501 floor, reused verbatim
+            continue
+        if h > best_a_hits:
+            best_a, best_a_hits = ln, h
+    return best_a, {"kind": kind,
+                    "candidate_hits": best_a_hits,
+                    "override": best_a is not None}
 
 
 def answer_speaker_recall(question: str,
