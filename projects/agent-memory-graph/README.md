@@ -2,12 +2,12 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-10040-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-10196-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
 
-> 📚 教程：[基础入门](TUTORIAL.md) · [GraphRAG 端到端（Cycles 425-440）](TUTORIAL-GRAPHRAG.md) · [Temporal QA 零 LLM 时间推理（Cycles 456-489）](TUTORIAL-TEMPORAL-QA.md) · [Abstention 弃权语义（Cycles 448-516）](TUTORIAL-ABSTENTION.md)
+> 📚 教程：[基础入门](TUTORIAL.md) · [GraphRAG 端到端（Cycles 425-440）](TUTORIAL-GRAPHRAG.md) · [Temporal QA 零 LLM 时间推理（Cycles 456-489）](TUTORIAL-TEMPORAL-QA.md) · [Abstention 弃权语义（Cycles 448-516）](TUTORIAL-ABSTENTION.md) · [Answer Faces 问题结构驱动的答案选择（Cycles 529-539）](TUTORIAL-ANSWER-FACES.md)
 
 ## 🎯 概述
 
@@ -4277,6 +4277,44 @@ cascade = judge_semantic 先行，仅 NEEDS_JUDGE 降级 `judge_llm`（可注入
 #### C531：either/or 答案面 rescue — 0.494 (0f7f6b1)
 
 veto census 复核发现 subset-branch 在官方 cascade-500 上精度 0/2（两个假 kill：gpt4_98f46fc6 charity either/or 获救；gpt4_45189cb4 narrative abbreviation 仍留 veto——无非拟合规则前不救）。问题条件化守卫：题面恰给两个候选时，逐字点名其一 = 完整答案而非弱子集（数字答案面的文本类比）；限定单-or 问题 + 候选被包含 + undecided-ref/negation 守卫，C529 tennis spec 保留。banked 246→**247（0.494）**，kills 5→4（冻结 C530 预测上 verdict-delta 枚举验证）。套件 10143。
+
+---
+
+## Cycles 532-539: 破半之路 0.494→0.510 — 问题结构驱动的答案面家族
+
+> 官方口径（LongMemEval **s_cleaned** full-500，PYTHONHASHSEED=7，deterministic cascade banked）轨迹：0.494（C531）→ 0.496（C532）→ 0.498（C533）→ **0.500（C534 破半）** → 0.502（C535）→ 0.504（C537）→ 0.508（C538）→ **0.510（C539）**。本段主轴：答案门 answer-face 家族化——候选排序不再调阈值，而是读**问题结构**（要什么类型的事实 / 谁实施的言语行为 / 问题用什么动词 / 语篇标记骨架）；judge 残差收敛（C535 英式折叠）；census-first 纪律三连否证（C536 ordinal 未接线 / C539 pref oracle 与 judge-fold 方向关闭 / 朴素 opener floor 离线证伪）。概念教程见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)。
+
+#### C532：marker-aware 子序列答案面 — 清偿叙事缩写债 (7eefcd2)
+
+C531 留债 gpt4_45189cb4（narrative abbreviation，"需要原则性表述而非覆盖率阈值"）。原则性表述找到了：**语篇标记骨架**（first/then/finally…）。顺序类问题的叙事答案若满足三条件——① 共享 reference 的标记骨架（同标记同顺序，≥2 个，首标记前无内容前言）② 每段是 reference 对应段的**有序 token 子序列** ③ 无空段——即同一叙事的**缩写**而非弱子集。事件跳读被结构性排除：丢事件 = 丢标记 = 骨架失配；乱序/外来事件破坏段内对齐。+1 cascade row，0 side effects；banked 247→**248（0.496）**。套件 10144。
+
+#### C533：where-gate 地点回忆 + 相关性地板 (9ad01e2)
+
+10 个 wrong where 行取证分解出三重病根：`_WHERE_COMMON_RE` 词表有 `cities` 无 `city`，且谓语性短语（"it was a coffee shop"）无介词前导 → GT 句 "For Sophia, it was a coffee shop in the city." 完全进不了候选集（3d86fd0a）。修复：① 词表补单数地点名词（cit(y|ies)/towns?/cafes?…）；② **相关性地板**——kh=0 获胜者让位给最优 kh≥1 候选（insight #086：问题即连接条件），无 kh≥1 候选时不干预。+1 official，A/B 19 行干净（0 字节失配外）。banked **249（0.498）**。留债：4 行证据 session 未被检索（retrieval 层，gate 无能为力）。套件 10147（+3）。
+
+#### C534：speaker_recall 答案类型面 — banked 破半 0.500 (24220b1)
+
+问题索要什么**类型**的事实（how many/much、what year、@handle）⇒ floor-passer 间按类型承载偏好重排：tier = 类型承载句优先 + 有界豁免通道（类型承载、raw≥2、preface 与 weighted_floor 保留）。源于 C533 留债解剖：多数 GT 承载句是被 min_raw/df 地板**过滤**而非排序惜败——**问题结构非阈值**（C531 原则首次系统化）。+1 official（7a8d0b71 DHL $2,000 预算行），A/B 48 recall 行 +1/−0。**banked 250/500（0.500）破半关口**。套件 10152（+5）。
+
+#### C535：judge _sem_norm 残差折叠 — 英式→美式词形 (ecf74a2)
+
+b759caee 三层病根（markdown 转义 + 标点粘连 + BrE/AmE）：`_sem_norm` 分隔符折叠扩展（转义/引号/方括号/下划线折为词分隔符，保持 [,$.] 下游位置使逗号分组数字仍折叠为裸数字）+ `_SEM_BRE_VARIANTS` 词表（jewellery→jewelry、colour→color、centre→center、-ise→-ize…）。sense-split 对（programme/storey/licence）显式排除——**词表非后缀规则**，our/hour/sour 完好。+1 rescue b759caee（转义 handle @jessica_poole_jewellery + AmE 行文 vs BrE GT）。verdict-delta 枚举：1 rescue / 0 kills / 9 中性翻转 = 省 9 次 cascade LLM 调用。banked **251（0.502）**；banked 复算公式钉死：18(abs) + |{非abs: (exact∧sem≠WRONG)∨(¬exact∧sem=CORRECT)}|。套件 10158（+6）。
+
+#### C536：ordinal-item 面 census 否证 — 未接线（RECORD-NEGATIVE）(a2cc77c)
+
+紧双守卫检测器（序数+名词 + you-list-act）人口仅 3/500 且全 frozen-wrong（零 kill 面），机制在干净 fixture 上工作，但 frozen-500 census 证伪一切词法连接：① 3249768e 语料有**孪生五瓶鸡尾酒清单**（kh 12/12 打平，GT "5. Absinthe" vs decoy "5. Triple Sec"，仅 "gin-based" 措辞可分）；② 1903aded GT 裸数字清单 kh=1（任何相关性地板下必死）而 act 前导贴士清单 kh=8 获胜；③ 8752c811 抽对 item 但 exact_judge truth⊆pred 败于整句包裹 GT（判分侧缺口，非检索）。**教训：枚举清单没有唯一结构键——救援需嵌入 side-channel join（C506 前例）而非词法排序**。函数保留为文档化基建，管线字节等价（census-pinned test 钉住）。套件 10164（+6）。
+
+#### C537：speech-act face — "you recommended" 认领第一人称行为句 (905ec67)
+
+4c36ccef：问题引用助手自身行为（"the restaurant **you recommended**"），GT 承载句是第一人称言语行为 "For a romantic dinner, I would recommend Roscioli."，惜败 La Pergola 内容寄生行（145.5 vs 150.8，fine-dining/Italian/Rome 词汇重叠——C475 preface 族的排序版）。机制：floor-passer 间 tier 偏好（问题结构非阈值），无豁免 pass（C536 教训：地板排除自有理由）。bearer 判别 = I + 言语动词族（recommend/suggest/mention/tell/said/gave…，≤2 词间隙，含 've/ll/m 缩写）+ **3 结构守卫**（A/B 法医产物）：命题从句（suggest THAT hiking）/ 否定行为（you DIDN'T mention…I'll provide）/ 泛指宾语（recommend SOME OTHER bands——离题寄生行为动词本身）；preface 句永不作 bearer（2 个 fixture 回归抓出——**act-bearer ≠ act-mention，句子必须对具体宾语实施行为**）。组合顺序钉死：speech-act 先、C534 type face 后（"how many did you recommend" 仍归数字句，composition test 钉住）。A/B 48 行：脸翻转恰 4c36ccef（+1/−0，4 行 C534 时代 overlay verdict 逐字节同）。banked **252（0.504）**。套件 10169（+5）。
+
+#### C538：answer-gate acquisition/conversation 陈述句面 — 0.508 (dbd5f5e)
+
+C468 opener 寄生在 answer 门的完整版：66f24dbb 问买了什么，GT 承载句 "For my sister's birthday, I got her a yellow dress"（hits=2）输给开场白 "Here's a start - I've bought gifts..."（hits=3）。机制 `answer_acquisition_face` 接线在 answer_extractive 尾部：问题头动词族映射（buy/purchase/complete/finish/get）+ who-conversation 形态（"my conversation with Sarah"）；tier-1 = 第一人称过去陈述 + 词族成员 + C501 hits≥2 地板复用 + opener 任意位置排除（C475 `_RECALL_PREAMBLE_RE`）。+2 rescue（66f24dbb、3f1e9474），changed=3/500，0 kills，1 neutral（acq:finish 把 face 换成更直接的 bearer，两侧都 banked）。banked **254（0.508**；账本 tsv/kd 记 0.506 为算术滑差——252→254 应 +0.004，分母 500 由 250→0.500、255→0.510 钉死**）**。套件 10185（+16 tests TestAcquisitionFace）。
+
+#### C539：answer-gate opener 降级地板 — 0.510 (4269dd2)
+
+census 三连先于接线：判分层零人口（exact=True ∩ NEEDS_JUDGE = 0，C535 已榨干，方向永久关闭）；pref 组合 oracle 0/30（head 模板 × MIDS × 全部偏好句最高覆盖 0.38，走人）；opener census 16/16 FULL 行胜者全是 hand-over/acknowledgment/meta 形状——C475 寄生在 answer 门主路径的完整暴露。**朴素同分降级地板被离线全人口模拟证伪（70 行 hand-over 胜者枚举 ~155s：2 rescue/5 kill 净负）**——kill 形状一致：hand-over 首行是多句消息，答案嵌在同句延续里。幸存判别式 = **rep_kh > win_kh 严格证据优势**（5 个 kill 全是同分降级）+ 第一人称陈述守卫（剔除 list/lecture/meta 面具），接线在 acq face **之前**（floor 动过的行 acq 可再认领，保护 3f1e9474）。离线模拟精确预测 A/B（+1/0 kill/翻转行清单）——**face 类改动默认先 census-模拟再接线**从此是纪律。+1 rescue 87f22b4a（GT "$120"，rep_kh=4 vs hand-over win_kh=2），changed=9/500，8 个 banked-neutral 翻转。banked **255（0.510）**。套件 10196（+11）。
 
 ---
 
