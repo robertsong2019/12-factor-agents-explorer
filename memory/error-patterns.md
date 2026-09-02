@@ -134,3 +134,10 @@
 - **根因：** 为日志可读而截断存储字段，字段同时被复用为回放数据源——显示层截断污染数据层（同 tie-break 伪影/stale-base/分母常量家族）
 - **修正：** 本轮以「overlay 已生效 + live 逐字节复现 + 记账自洽 255+1=256」三证伪回归；后续 ab 脚本 new_pred/old_pred 存全文（截断只放打印行）
 - **出现次数：** 家族第 4 次；检查规则：A/B 基线异常先验「存储字段是否被展示层转换过（截断/舍入/格式化）」再怀疑代码
+
+### [2026-09-03] A/B 双臂 exact 字段不同源伪装 NET-NEGATIVE（显示层家族第 5 例）
+- **场景：** amg C542 judge-only A/B（face_ab.py），首跑报 banked 259→257（-2 NET-NEGATIVE），3 个 "KILL"
+- **错误：** baseline 臂用 frozen `correct_exact`（live500_head.py 写入 r["banked"] 的公式），new 臂却用 live `exact_judge` 结果（r["exact"]）——两个 exact 源在 3 行上不一致，verdict 明明不变（NEEDS_JUDGE→NEEDS_JUDGE）banked 却翻转
+- **根因：** A/B 双臂公式未逐字段同源；翻转打印救了一命（"KILL" 行 verdict 不变即露馅）
+- **修正：** 双臂统一 frozen correct_exact + 每行 `assert ok_old == r["banked"]`（基线漂移 tripwire）；修正后 259→260 +1/0 kill。同周期 chain_vs_live.py 尾部又犯同族（live 总数 +18 双计）——已修未采用
+- **出现次数：** 家族第 5 次（本周期连犯 2 例）→ TOOLS.md 规则升级：A/B 双臂必须逐字段同源 + baseline 逐行 assert

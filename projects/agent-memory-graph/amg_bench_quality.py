@@ -2234,6 +2234,41 @@ def _sem_paren_acronym_face(reference: str, answer: str) -> bool:
     return re.search(r"(?<![a-z0-9])" + acr + r"(?![a-z0-9])", nc) is not None
 
 
+_QUOTE_SPAN_RES = (
+    re.compile(r"(?<![A-Za-z0-9])'([^']{2,})'(?![A-Za-z0-9])"),
+    re.compile(r'(?<![A-Za-z0-9])"([^"]{2,})"(?![A-Za-z0-9])'),
+    re.compile(r"(?<![A-Za-z0-9])[\u2018]([^\u2019]{2,})[\u2019](?![A-Za-z0-9])"),
+    re.compile(r'(?<![A-Za-z0-9])[\u201c]([^\u201d]{2,})[\u201d](?![A-Za-z0-9])'),
+)
+
+
+def _sem_quoted_core_face(reference: str, answer: str) -> bool:
+    """C542 reference-wrap face: quoted-core equality.
+
+    A reference that wraps its asserted fact in quotation marks —
+    ``The 27th parameter was 'Sound effects (e.g., ...)'.`` — carries
+    the answer twice: a narrative frame plus the quoted core. The
+    quoted core is the fact the dataset asserts; a candidate equal to
+    it (normalized) is the complete answer, not a weaker subset
+    (8752c811: the frame's ``27th parameter`` tokens made the subset
+    veto read the wrapped, byte-identical answer as missing content).
+    Word-boundary lookarounds keep apostrophes from opening spans
+    (``it's 'test'`` quotes ``test``, never ``s ``). Guarded by exact
+    normalized equality — the strongest possible match form — and
+    only reachable from the subset-veto branch, where guards 1-2
+    already passed (a quoted core's numbers are reference numbers by
+    construction).
+    """
+    nc = _sem_norm(answer)
+    if not nc:
+        return False
+    for rx in _QUOTE_SPAN_RES:
+        for m in rx.finditer(reference or ""):
+            core = _sem_norm(m.group(1))
+            if core and core == nc:
+                return True
+    return False
+
 _PLACE_COMPLEMENT_RE = re.compile(
     r"^(?P<head>.+?),?\s+\b(?:in|at)\s+"
     r"(?P<tail>[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2})$")
@@ -2335,6 +2370,13 @@ def judge_semantic(question: str, answer: str, reference: str) -> str:
         # without a coverage threshold: event-skipping partials break
         # the skeleton, reorders/foreign tokens break alignment.
         if _sem_marker_subsequence_face(question, answer, reference):
+            return "CORRECT"
+        # C542 quoted-core face: the reference wraps its asserted fact
+        # in quotes (frame + core); a candidate equal to the quoted
+        # core IS the complete fact, not a weaker subset. Branch-local:
+        # only converts this branch's WRONG to CORRECT, never touches
+        # superset/number-currency paths (guards 1-2 returned already).
+        if _sem_quoted_core_face(r, c):
             return "CORRECT"
         return "WRONG"
     if toks_r and toks_r < toks_c:       # superset candidate
