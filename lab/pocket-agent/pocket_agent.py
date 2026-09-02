@@ -21,7 +21,16 @@ class ToolRegistry:
     def __init__(self):
         self._tools: dict[str, Tool] = {}
 
-    def register(self, func: Callable, description: str = ""):
+    def register(self, func: Callable | None = None, description: str = ""):
+        """Register a tool. Works as bare decorator (@reg.register) or
+        parameterized (@reg.register(description="..."))."""
+        if func is None:
+            def decorator(f: Callable) -> Callable:
+                return self._add(f, description)
+            return decorator
+        return self._add(func, description)
+
+    def _add(self, func: Callable, description: str) -> Callable:
         sig = inspect.signature(func)
         props, required = {}, []
         for name, param in sig.parameters.items():
@@ -58,6 +67,8 @@ class Memory:
         self.max = max_entries
 
     def store(self, thought: str):
+        if self.max <= 0:
+            return  # capacity zero remembers nothing
         if len(self.entries) >= self.max:
             self.entries.pop(0)
         self.entries.append(f"[{time.strftime('%H:%M:%S')}] {thought}")
@@ -70,6 +81,8 @@ class Memory:
         return [e for s, e in scored[:top_k] if s > 0]
 
     def recent(self, n: int = 5) -> list[str]:
+        if n <= 0:
+            return []
         return self.entries[-n:]
 
 # ── Mock LLM (swap this for real API) ───────────────────────
