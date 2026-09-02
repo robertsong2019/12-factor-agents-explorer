@@ -1,7 +1,7 @@
-# TUTORIAL: Answer Faces — 问题结构驱动的答案选择（Cycles 529-539）
+# TUTORIAL: Answer Faces — 问题结构驱动的答案选择（Cycles 529-542）
 
 > 本文解释 amg 评测管线里最反直觉的一个设计：**答案选哪个句子，不该由"分数阈值"决定，而该由"问题在问什么"决定**。
-> 覆盖 Cycle 529-539 的机制演进（banked 0.494 → 0.510），所有例子都是 LongMemEval s_cleaned full-500 里的真实题目。
+> 覆盖 Cycle 529-542 的机制演进（banked 0.494 → 0.520），所有例子都是 LongMemEval s_cleaned full-500 里的真实题目。
 
 ---
 
@@ -49,7 +49,7 @@
   ↓ ② face 层：问题结构 → tier 偏好（重排，不新增候选）
  答案句
   ↓ ③ judge 层：exact → semantic → LLM cascade（C529-C531，见 README Cycles 520-531 段）
- 判分
+ 判分   ← ④ judge 侧 face（C541-C542）：NEEDS_JUDGE 区间按 reference 形态 rescue（见 §4）
 ```
 
 **两条铁律**（都是从真实 kill 里学出来的）：
@@ -59,7 +59,7 @@
 
 ---
 
-## 3. 家族巡礼：五个 face，五个真实病例
+## 3. 家族巡礼：gate 侧六个 face，六个真实病例
 
 ### 3.1 C532 marker face — 叙事缩写 vs 弱子集
 
@@ -108,9 +108,37 @@
 
 **C539 的朴素版本是被证伪后幸存的**：同分也降级的版本，离线全人口模拟出 2 rescue/5 kill **净负**——因为 hand-over 首行常是多句消息，答案嵌在同句延续里。幸存的判别式是"严格证据优势"。
 
+### 3.6 C540 ordinal face + phrase-run — RECORD-NEGATIVE 的正确打开方式
+
+**背景**：C536 把序数清单判了"没有结构键，不接线"（见 §5）。C540 复活它的方式值得细读——**先杀死自己原本的方案**：
+
+- C536 声明的方案是嵌入 side-channel join（C506 前例）。C540 在实现**之前**先 probe：message-level cos(q, decoy) = 0.7068 > GT 0.5607——MiniLM 把问题里 "gin-based" 约束当次要质量，干扰清单恰是问题域的语义超集。**嵌入 join 被证伪，省掉一次注定失败的接线**。
+- 幸存的分隔符是**问题短语连续性**：候选按"最长连续问题关键词 run"打分（`_kw_phrase_run`），best run ≥2 才认领。孪生鸡尾酒清单 kh 12/12 打平，但 GT 的短语 run 是 3、干扰只有 2——**排序键从"词袋重叠"换成了"问题措辞的连续复现"**。
+- 单靠 kh 地板选承载句恰是 C536 失败模式：presentation-tips 清单 kh=8 但 run=0，会答出清单标题 'Encourage Questions'——被 run floor 阻断，逐字节 fall-through 验证。
+
+**教训**：RECORD-NEGATIVE 记录的是"此路不通"，不是"此题无解"。复活它的钥匙往往是换一种结构信号，而不是在旧信号上加权重。
+
 ---
 
-## 4. 反面教材：枚举清单没有结构键（C536，RECORD-NEGATIVE）
+## 4. face 概念的延伸：judge 侧 rescue faces（C541-C542）
+
+前六个 face 都活在 **gate 侧**——改变"选哪句"。C541-C542 把 face 概念推到 **judge 侧**——改变"判对没判对"。
+
+judge cascade（exact → semantic → LLM）里有一个 NEEDS_JUDGE 区间：exact 不中、sem 也不中，留给 LLM 判。C541/C542 发现，这个区间里有一批**系统性误判**，病根是 reference 的**书写形态**被当成了**内容差异**：
+
+| face | reference 形态 | 为什么会误判 | rescue 例 |
+|------|---------------|-------------|----------|
+| **paren-acronym**（C541） | "Full Name (ACRONYM)" 自带别名 | answer 只有缩写 token → sem 不中 | 1d4da289（OTP）、25e5aa4f（UCLA） |
+| **place-complement**（C541） | "<head> in <Place>" | tail 是判分者消歧，answer 没有 tail → 被当缺内容 | 3b6f954b（University of Melbourne in Australia） |
+| **quoted-core**（C542） | "The 27th parameter was 'Sound effects…'." | frame tokens 使逐字节相同的答案成"严格子集" → Guard-3 subset veto | 8752c811 |
+
+**为什么这三个 face 数学上纯上行**：它们都挂在 NEEDS_JUDGE / subset-veto 分支上——只有已通过 guards 1-2（或已进 NEEDS_JUDGE）的行才可达，只可能 NEEDS_JUDGE→CORRECT 或 WRONG→CORRECT，不可能把 CORRECT 改坏。
+
+**识别套路**：对着一堆 NEEDS_JUDGE 行问一句——"GT 的**写法**里有什么约定俗成的形态，被当成了**内容差异**？"括号别名、地名补语、引号包裹，都是"写法伪装成内容"的三个样本。另一个教训藏在 C542 的 A/B 基建里：双臂判分公式必须**逐字段同源**（frozen exact vs live exact 混用会伪造 NET-NEGATIVE），且每行对 baseline 做 drift assert——"翻转打印里 verdict 不变的 KILL"是最便宜的露馅信号。
+
+---
+
+## 5. 反面教材：枚举清单没有结构键（C536，RECORD-NEGATIVE）
 
 序数清单（"5. Absinthe"）看起来也能做个 face。实现后发现 **census 全负**：
 
@@ -118,13 +146,15 @@
 - 裸数字清单 GT kh=1，任何相关性地板下必死
 - 有题抽对了 item，却败在 judge 侧的整句包裹（判分缺口，非检索）
 
-**结论**：枚举清单没有唯一结构键，词法排序救不了；要救需嵌入 side-channel join（C506 前例）。**函数保留、不接线**，census-pinned test 钉住"管线字节等价"。
+**结论**（C536 当时）：枚举清单没有唯一结构键，词法排序救不了。**函数保留、不接线**，census-pinned test 钉住"管线字节等价"。
 
-> RECORD-NEGATIVE 也是资产：它把"此路不通 + 为什么不通"写进了代码库，后来的 cycle（C539 pref oracle 0/30）直接引用先例关闭方向，不再烧 A/B 预算。
+**续集（C540）**：这个结论后来被修正了两次——① 它建议的嵌入 join 在实现前被 probe 证伪（干扰是问题域的语义超集，余弦反而更高，见 §3.6）；② 真正的解法是换分隔符：问题**短语连续 run** ≥2。face 已接线，C536 从 RECORD-NEGATIVE 变成"负结果如何被迭代修正"的样本。
+
+> RECORD-NEGATIVE 也是资产：它把"此路不通 + 为什么不通"写进了代码库，后来的 cycle（C539 pref oracle 0/30、C540 嵌入 join 证伪）直接引用先例关闭方向，不再烧 A/B 预算。但注意负结果的有效范围：它否定的是**那条路**，不是**那类题**。
 
 ---
 
-## 5. 方法论：census-first，接线之前先数人口
+## 6. 方法论：census-first，接线之前先数人口
 
 answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 
@@ -138,7 +168,7 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 
 ---
 
-## 6. 一页速查
+## 7. 一页速查
 
 | 信号源 | Face | 动作 | Cycle |
 |--------|------|------|-------|
@@ -149,12 +179,17 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 | 问题引用你的行为 | speech-act bearer | 第一人称行为句 tier | C537 |
 | 问题用获取动词 | acquisition face | 词族过去陈述 tier-1 | C538 |
 | 胜者是 hand-over | opener floor | 严格证据优势才降级 | C539 |
+| 问题含序数清单 | ordinal + phrase-run | 最长连续问题短语 run≥2 才认领 | C540 |
+| GT 自带括号别名 | paren-acronym（judge 侧） | NEEDS_JUDGE→CORRECT | C541 |
+| GT 带地名消歧补语 | place-complement（judge 侧） | NEEDS_JUDGE→CORRECT | C541 |
+| GT 用引号包事实 | quoted-core（judge 侧） | WRONG→CORRECT（subset veto 分支） | C542 |
 
-**三条带走的原则**：
+**四条带走的原则**：
 1. 答案选择读**问题结构**，不调阈值
 2. face 重排不越权翻地板；地板排除自有理由
 3. census-first：先数人口，先离线模拟，再接线；证伪的方向写进台账
+4. face 不止在 gate：judge 侧 NEEDS_JUDGE 区间同样有"写法伪装成内容"的系统性误判可救，且数学上纯上行
 
 ---
 
-*生成：documentation-morning cron，2026-09-02。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-539 段。*
+*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-542 段。*

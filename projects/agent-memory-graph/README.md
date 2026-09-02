@@ -4316,6 +4316,22 @@ C468 opener 寄生在 answer 门的完整版：66f24dbb 问买了什么，GT 承
 
 census 三连先于接线：判分层零人口（exact=True ∩ NEEDS_JUDGE = 0，C535 已榨干，方向永久关闭）；pref 组合 oracle 0/30（head 模板 × MIDS × 全部偏好句最高覆盖 0.38，走人）；opener census 16/16 FULL 行胜者全是 hand-over/acknowledgment/meta 形状——C475 寄生在 answer 门主路径的完整暴露。**朴素同分降级地板被离线全人口模拟证伪（70 行 hand-over 胜者枚举 ~155s：2 rescue/5 kill 净负）**——kill 形状一致：hand-over 首行是多句消息，答案嵌在同句延续里。幸存判别式 = **rep_kh > win_kh 严格证据优势**（5 个 kill 全是同分降级）+ 第一人称陈述守卫（剔除 list/lecture/meta 面具），接线在 acq face **之前**（floor 动过的行 acq 可再认领，保护 3f1e9474）。离线模拟精确预测 A/B（+1/0 kill/翻转行清单）——**face 类改动默认先 census-模拟再接线**从此是纪律。+1 rescue 87f22b4a（GT "$120"，rep_kh=4 vs hand-over win_kh=2），changed=9/500，8 个 banked-neutral 翻转。banked **255（0.510）**。套件 10196（+11）。
 
+## Cycles 540-542: 0.510→0.520 — 序数面收债 + judge 侧 face 家族
+
+> 官方口径（LongMemEval **s_cleaned** full-500，PYTHONHASHSEED=7，deterministic cascade banked）轨迹：0.510（C539）→ **0.512（C540）** → **0.518（C541）** → **0.520（C542）**。本段主轴：C536 RECORD-NEGATIVE 债务以**另一种分隔符**（短语连续 run，非被证伪的嵌入 join）清偿接线；face 概念从 gate 侧（候选重排）延伸到 **judge 侧**（NEEDS_JUDGE 区间的 verdict rescue，数学上只可能 NEEDS_JUDGE→CORRECT）；基础设施上 authoritative full-500 live 重跑验证台账并退役脆弱的 delta chain。概念教程见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)。
+
+#### C540：ordinal-item 面 WIRED — phrase-run tie-break 清偿 C536 债务 (277f90b)
+
+C536 声明的嵌入 side-channel join 在实现前被证伪（3249768e probe：message-level cos(q,decoy) 0.7068 > GT 0.5607——MiniLM 把问题里 'gin-based' 约束当次要质量，干扰清单是问题域的语义超集）。幸存分隔符是**问题短语连续性**：`answer_ordinal` 按 `_kw_phrase_run`（label tokens 中最长连续问题关键词 run，两侧 Cycle-471 归一化）打分，仅当 best run ≥2 才认领——**单靠 kh 地板的承载句选择恰是 C536 失败模式**（1903aded presentation-tips 清单 kh=8/run=0 会答 'Encourage Questions'，被阻断，逐字节 fall-through 验证）。gate 接线在 speaker_recall **之前**（它修的 preface 寄生胜者正是 speaker_recall 输出，C468 家族）；C536 守卫全保留。A/B full-500：changed=10，+1 rescue 3249768e（孪生鸡尾酒清单 kh 12/12 打平，GT 短语 run 3 vs 干扰 2），0 kills。**A/B 基建陷阱**（error-patterns 家族 #4）：overlay dumps `str(ans)[:200]` 截断使 banked(HEAD) 误读 254——live 管线逐字节复现 C539 答案，账目自洽 255+1=256。**同周期 HEARTBEAT 陈旧情报修正**：entropy-gate '6 题误杀' 被全量复跑证伪（7 行重答全 NEEDS_JUDGE，零真误杀，负结果归档）。banked **256（0.512）**。套件 10199（+3）。
+
+#### C541：judge reference-alias faces + where-gate intent guard — 0.518 (14e8991)
+
+两个 judge face 落在 NEEDS_JUDGE 区间（guards 1-3 与 subset veto 之后才可达，纯上行）：`_sem_paren_acronym_face`——reference 自带别名断言 'Full Name (ACRONYM)'，token 守卫的缩写匹配（rescue 1d4da289 OTP、25e5aa4f UCLA）；`_sem_place_complement_face`——GT '<head> in <Capitalized Tail>' 是判分者消歧而非答案一部分，head tokens ⊆ answer ∧ tail 缺席即 CORRECT（rescue 3b6f954b University of Melbourne in Australia）。where-gate intent guard：did-form 地点问题中 locative clause 呈 intention 形态（_WHERE_INTENT_RE，16 标记）的候选降级，band-restricted + **clause-scoped**——朴素全句扫描被 census 证伪（1 rescue/2 kills：d52b4f67 已 banked 行被旁支 'want to get her something' 从句误伤），从句级变体 = 恰 1 变化/0 kills，与 acronym face 组合拳把 25e5aa4f 的 pred 从'考虑读硕'计划句翻到 'completed my undergrad in CS from UCLA'。51a45a95 弃置（跨 turn 推理，无诚实可机化规则）。验证：500 行 verdict 枚举 = 2 flips 全 rescue 0 降级；**C540 截断陷阱结构化** → changed-row delta 协议。banked **259（0.518）**。套件 10213（+14，test_reference_faces.py）。
+
+#### C542：judge quoted-core GT-wrap face — 0.520 + authoritative live chain (2adcf92)
+
+C540 留下的 in-pipeline live debt：8752c811 抽取出了**正确 item**，但 GT "The 27th parameter was 'Sound effects…'." 的 frame tokens 使逐字节相同的 pred 成为严格 token 子集 → Guard-3 subset veto → WRONG。`_sem_quoted_core_face`：reference 把断言事实包进引号（frame + quoted core）时，引号核心就是数据集断言的答案——norm(candidate)==norm(quoted-span) ⇒ 完整事实而非弱化子集；4 条引号 regex（ASCII+curly）带 word-boundary lookaround（撇号永不开 span），2-char span floor，branch-local 于 subset veto 分支 → 只可能 WRONG→CORRECT。Census：hit set 恰 {8752c811}；subset-veto 分支全人口 40 行。**基建**：HEAD 全量 live 重跑 500 行（1144s，FULL preds）精确验证 C541 台账 259，chain-vs-live diff 恰 1 行 stale（25e5aa4f true pred 未写回）——**delta chain 退役**，后续判分实验直接用 live500。**假 NET-NEGATIVE 险情**（显示层家族 #5，TOOLS.md 规则升级）：首跑 A/B 双臂公式不同源（frozen correct_exact vs live exact_judge）伪造 -2，修复 = 双臂逐字段同源 + 每行 baseline assert。banked **260（0.520）**。套件 10224（+11，test_quoted_core_face.py）。
+
 ---
 
 ## 许可
