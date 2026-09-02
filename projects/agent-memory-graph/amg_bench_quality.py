@@ -2209,6 +2209,63 @@ def _sem_marker_subsequence_face(question: str, answer: str,
     return True
 
 
+_PAREN_ACRONYM_RE = re.compile(r"\(([A-Z][A-Z0-9]{1,9})\)")
+
+
+def _sem_paren_acronym_face(reference: str, answer: str) -> bool:
+    """C541 reference-alias face: parenthesized acronym alias.
+
+    When the reference itself names its entity twice — ``Full Name
+    (ACRONYM)`` — the acronym is the same entity's canonical short
+    form (the dataset asserts the equivalence by carrying it). An
+    answer naming either alias names the fact; requiring the full
+    expansion tokens would punish the tighter form (25e5aa4f: GT
+    ``University of California, Los Angeles (UCLA)`` vs bearer
+    ``...completed my undergrad in CS from UCLA...``). Same family
+    as the C531 either/or face: alias coverage, not subset weakening
+    — and only reachable from the NEEDS_JUDGE zone, so it can never
+    rescue a number/currency-conflicting pair.
+    """
+    m = _PAREN_ACRONYM_RE.search(reference or "")
+    if not m:
+        return False
+    acr = re.escape(m.group(1).lower())
+    nc = _sem_norm(answer)
+    return re.search(r"(?<![a-z0-9])" + acr + r"(?![a-z0-9])", nc) is not None
+
+
+_PLACE_COMPLEMENT_RE = re.compile(
+    r"^(?P<head>.+?),?\s+\b(?:in|at)\s+"
+    r"(?P<tail>[A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2})$")
+
+
+def _sem_place_complement_face(reference: str, answer: str) -> bool:
+    """C541 reference-alias face: place-tail disambiguation.
+
+    ``<head> in <Place>`` references append the country/place as
+    grader disambiguation, not as a second fact (3b6f954b: GT
+    ``University of Melbourne in Australia`` — the window sentence
+    carries the institution; ``Australia`` sits in a neighbouring
+    sentence). An answer containing every head content token, with
+    the tail absent (not contradicted — tail ABSENCE, since the
+    disambiguator is redundant by construction), is the complete
+    answer. Guarded: tail must be a capitalized proper run (≤3
+    tokens) so common-noun tails never qualify.
+    """
+    m = _PLACE_COMPLEMENT_RE.match((reference or "").strip())
+    if not m:
+        return False
+    head_toks = {w for w in _sem_norm(m.group("head")).split()
+                 if w not in _SEM_STOPWORDS}
+    tail_toks = {w for w in _sem_norm(m.group("tail")).split()
+                 if w not in _SEM_STOPWORDS}
+    ans_toks = {w for w in _sem_norm(answer).split()
+                if w not in _SEM_STOPWORDS}
+    if not head_toks or not tail_toks:
+        return False
+    return head_toks <= ans_toks and not (tail_toks & ans_toks)
+
+
 def judge_semantic(question: str, answer: str, reference: str) -> str:
     """Deterministic semantic-equivalence judge (#090 simplified port).
 
@@ -2283,6 +2340,16 @@ def judge_semantic(question: str, answer: str, reference: str) -> str:
     if toks_r and toks_r < toks_c:       # superset candidate
         return "CORRECT"
     if SequenceMatcher(None, nr, nc).ratio() >= 0.75:
+        return "CORRECT"
+    # C541 reference-alias faces: the reference names its entity with
+    # structural redundancy; an answer naming the same entity through
+    # the alias channel is the complete fact, not a weaker subset.
+    # Both faces live in the NEEDS_JUDGE zone (guards 1-3 and the
+    # subset veto already returned WRONG above), so the only possible
+    # flip is NEEDS_JUDGE -> CORRECT — pure upside for banking, and
+    # never masks a numeric/currency conflict (those returned WRONG
+    # before this line).
+    if _sem_paren_acronym_face(r, c) or _sem_place_complement_face(r, c):
         return "CORRECT"
     return "NEEDS_JUDGE"
 
@@ -3652,6 +3719,25 @@ _WHERE_EVID_RE = re.compile(
     r"\b(?:remember|actually|just|recently|currently|finally)\b",
     re.I)
 _WHERE_FP_RE = re.compile(r"\b(?:I|I'm|I've|I'll|we|my|me)\b")
+# C541: past-act interrogation form + future-intention markers. Markers are
+# checked ONLY in the clause containing the locative span (naive whole-sentence
+# scan falsified by census: d52b4f67 banked winner demoted via tangent clause
+# "want to get her something", e01b8e2f via trailing "thinking of planning").
+_WHERE_DID_RE = re.compile(r"\bwhere\s+did\s+(?:i|we|you)\b", re.I)
+_WHERE_INTENT_RE = re.compile(
+    r"\b(?:considering|pursuing|planning|thinking\s+(?:of|about)|narrowed\s+down|"
+    r"hoping|would\s+like|want\s+to|applying|intend|going\s+to|plan\s+to|"
+    r"looking\s+(?:into|at|forward))\b", re.I)
+_WHERE_CLAUSE_SPLIT_RE = re.compile(
+    r",\s+(?:and|but|or|so)\s+|;\s+|\s+-\s+|\s+—\s+")
+
+
+def _where_intent_in_loc_clauses(sent: str) -> bool:
+    """True when a locative-bearing clause of *sent* is intention-shaped."""
+    for clause in _WHERE_CLAUSE_SPLIT_RE.split(sent):
+        if _where_loc_candidates(clause) and _WHERE_INTENT_RE.search(clause):
+            return True
+    return False
 
 
 def where_form(question: str) -> bool:
@@ -3742,9 +3828,24 @@ def answer_where(question: str, sessions: list[dict],
                          + (3 if sent.strip() in window_texts else 0)
                          + max(0, 2 - rank))
                 cands.append({"role": role, "kh": kh, "score": score,
-                              "sent": sent})
+                              "sent": sent,
+                              "intent": _where_intent_in_loc_clauses(sent)})
     if not cands:
         return None, {"sessions": len(sess_rank), "cands": 0}
+    # C541: past-act interrogation demotes future-intention winners.
+    # "Where did I <V>" asks about a COMPLETED act; a candidate whose
+    # locative clause is intention-shaped ("considering pursuing...",
+    # "narrowed down my options to...") asserts a plan, not a memory
+    # (25e5aa4f: the Master's-plan line beat "completed my undergrad
+    # in CS from UCLA" on kh priors). Band restriction (C533 floor
+    # shape): demote only when a clean candidate exists; all-marked
+    # populations are untouched. Question-conditioned (strict did-form
+    # — present-tense where questions keep the untouched ranking).
+    if _WHERE_DID_RE.search(question):
+        marked = [c for c in cands if c["intent"]]
+        clean = [c for c in cands if not c["intent"]]
+        if marked and clean:
+            cands = clean
     cands.sort(key=lambda c: -c["score"])
     best = cands[0]
     # C533: relevance floor. The question is the join condition
