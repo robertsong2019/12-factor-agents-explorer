@@ -457,6 +457,7 @@ class LongMemEvalAdapter:
                  role_margin: int = 0,
                  acq_face: bool = True,
                  opener_floor: bool = True,
+                 ordinal_face: bool = True,
                  assistant_recall: bool = True,
                  recall_min_score: int = 5,
                  recall_mode: str = "distinctive",
@@ -545,6 +546,7 @@ class LongMemEvalAdapter:
         self.delta_agg = delta_agg
         self.pref_abstain = pref_abstain
         self.neg_exist = neg_exist
+        self.ordinal_face = ordinal_face
         # Cycle 501: role-aware answer face (echo pathology fix) —
         # see _user_fact_form. role_margin: how many keyword hits a
         # user line may trail the top assistant line by and still
@@ -1164,17 +1166,32 @@ class LongMemEvalAdapter:
                 meta["abstained"] = c_ans == ABSTAIN_ANSWER
                 return c_ans, meta
 
-        # C536 census-negative: the ordinal-item face (question-
-        # keyed join onto "N."-marked list items — see
-        # ordinal_item_form below) is intentionally NOT wired here:
-        # frozen-500 forensics (3249768e / 1903aded / 8752c811, the
-        # full tight-detector population, all currently wrong) showed
-        # node-level lexical joins are structurally fragile — 3249768e
-        # has TWIN five-bottle cocktail lists (kh tied 12/12, only
-        # "gin-based" phrasing separates them) and 1903aded's GT is a
-        # bare numbered list (kh=1, dead under any relevance floor).
-        # ordinal_item_form/answer_ordinal stay as census-documented
-        # negative-result infrastructure, test-pinned.
+        # C540: ordinal-item face WIRED (closes the C536 debt). The
+        # C536 falsification killed kh-only ranking (twin cocktail
+        # lists tie 12/12); the C536-declared embedding fix was
+        # probed and ALSO falsified this cycle (3249768e: cos(q,
+        # decoy msg) 0.7068 > GT 0.5607, preface level 0.7725 >
+        # 0.7286 — MiniLM treats the question's "gin-based"
+        # constraint as minor mass; the decoy list is a semantic
+        # superset of the question domain). The surviving separator
+        # is question-PHRASE continuity: the full keyword run
+        # ("widest variety of gin based cocktails") appears only in
+        # the GT node (run 5 vs decoy 2). answer_ordinal now breaks
+        # kh ties by longest question-keyword phrase run, keeping
+        # C536's head-noun + list-size + kh-floor guards. Tight gate
+        # unchanged (ordinal + you-list act, census 3/500): the 2
+        # siblings stay neutral — 1903aded falls through under the
+        # size pin (GT bare list kh=1, tips list fails the pin),
+        # 8752c811 is judge-side (truth⊆pred vs sentence-wrapped
+        # GT). Runs BEFORE speaker_recall — the preface-parasitism
+        # winner it fixes IS a speaker_recall output (C468 family).
+        if self.ordinal_face and ordinal_item_form(question):
+            o_ans, o_detail = answer_ordinal(question, self._nodes)
+            meta["ordinal"] = o_detail
+            if o_ans is not None:
+                meta["gate"] = "ordinal"
+                meta["abstained"] = False
+                return o_ans, meta
 
         # Cycle 468: speaker-recall path — you-addressed "remind me
         # what you recommended" forms. Assistant answers are multi-
@@ -3454,6 +3471,16 @@ _RECALL_TYPE_DEMANDS = (
 # while the list PREFACE wins speaker_recall outright — and
 # _split_sentences strips the "5." marker, so any sentence-level
 # ordinal face must join on the node label.
+#
+# C540 addendum — the "embedding side-channel join" plan above was
+# probed and FALSIFIED (3249768e, MiniLM via the C506 engine):
+# message-level cos(q, decoy)=0.7068 > cos(q, GT)=0.5607, preface-
+# sentence level 0.7725 > 0.7286, item-line level 0.2404 > 0.1926 —
+# the decoy list is a semantic superset of the question domain and
+# MiniLM treats the "gin-based" constraint as minor mass. The
+# surviving separator is question-PHRASE continuity: the full
+# keyword run "widest variety of gin based cocktails" appears only
+# in the GT node (run 5 vs decoy 2). See answer_ordinal.
 _ORDINAL_WORDS = {
     "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
     "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9,
@@ -3481,6 +3508,33 @@ _LIST_SIZE_Q_RE = re.compile(
     r"twelve|\d{1,3})\s+[a-z][a-z\-]*s\b", re.I)
 
 
+def _kw_phrase_run(label: str, kws: list[str]) -> int:
+    """Longest contiguous question-keyword run found in *label*.
+
+    C540 tie-break for enumerated-list joins: bag-of-keyword counts
+    tie on twin lists (3249768e, both kh=12) while the QUESTION's
+    own phrase — "widest variety of gin based cocktails" — appears
+    verbatim only in the GT node. Both sides use the Cycle 471
+    token normalization (quote/possessive strip + inflectional
+    _token_matches), so "gin-based" in the question yields the
+    keyword pair ``gin, based`` and matches "gin-based" in a label.
+    Runs shorter than 2 keywords carry no phrase evidence (0).
+    """
+    if len(kws) < 2:
+        return 0
+    toks = [_strip_quotes(t.removesuffix("'s"))
+            for t in re.findall(r"[a-z']+", label.lower())]
+    n, m = len(kws), len(toks)
+    for size in range(min(n, 8), 1, -1):
+        for i in range(n - size + 1):
+            seq = kws[i:i + size]
+            for j in range(m - size + 1):
+                if all(_token_matches(toks[j + k], seq[k])
+                       for k in range(size)):
+                    return size
+    return 0
+
+
 def ordinal_item_form(question: str) -> bool:
     """True when the question demands an indexed item of a list the
     assistant previously gave (tight dual guard — see C536 notes)."""
@@ -3498,8 +3552,13 @@ def answer_ordinal(question: str,
     spurious ``N.`` item in an unrelated node cannot win), and
     returns the item's HEAD TERM (text before ``:`` / `` - `` /
     sentence end, the "Absinthe" of "5. Absinthe: Absinthe
-    is …"). Unresolvable → ``(None, detail)`` and the caller falls
-    through to the speaker-recall path untouched.
+    is …"). Kh ties — twin enumerated lists, the C536
+    falsification — are broken by the longest contiguous
+    question-keyword phrase run in the label (``_kw_phrase_run``;
+    the embedding alternative was probed and falsified in C540,
+    see the census notes above). Unresolvable → ``(None, detail)``
+    and the caller falls through to the speaker-recall path
+    untouched.
     """
     m = _ORDINAL_ITEM_Q_RE.search(question or "")
     n = (_ORDINAL_WORDS.get(m.group(1).lower()) if m
@@ -3517,7 +3576,7 @@ def answer_ordinal(question: str,
     detail["join_noun"] = noun_base or None
     detail["join_size"] = want_size
     item_re = re.compile(rf"^\s*{n}[.)]\s+(.+)$", re.M)
-    best: tuple[int, str, str | None] | None = None
+    cands: list[tuple[int, int, str, str | None]] = []
     for node in (nodes or {}).values():
         if node.get("role") != "assistant":
             continue
@@ -3535,17 +3594,26 @@ def answer_ordinal(question: str,
         kh = _keyword_hits(label, kws)
         if kh < 3:          # relevance floor on the carrying node
             continue
-        if best is None or kh > best[0]:
-            best = (kh, im.group(1).strip(), node.get("session_id"))
-    detail["nodes_with_item"] = best is not None
-    if best is None:
+        run = _kw_phrase_run(label, kws)
+        cands.append((run, kh, im.group(1).strip(), node.get("session_id")))
+    detail["nodes_with_item"] = bool(cands)
+    if not cands:
         return None, detail
+    # phrase-run beats kh (C540); equal (run, kh) keeps ingest order
+    best = max(cands, key=lambda c: (c[0], c[1]))
+    if best[0] < 2:
+        # No question-phrase echo in ANY carrier — the kh floor alone
+        # selected this node, and C536 showed kh floors join wrong
+        # lists (1903aded: presentation-tips "7. Encourage Questions"
+        # out-scores the kh=1 GT bare list). Fall through honestly.
+        return None, detail
+    detail["run"] = best[0]
+    detail["node_kh"] = best[1]
+    detail["session_id"] = best[3]
     head = re.split(r"\s*[:\u2013\u2014]\s*|\s+-\s+|\.\s",
-                    best[1], 1)[0].strip()
+                    best[2], 1)[0].strip()
     if not (2 <= len(head) <= 80):
-        head = best[1][:80]     # no clean separator: bounded raw item
-    detail["node_kh"] = best[0]
-    detail["session_id"] = best[2]
+        head = best[2][:80]     # no clean separator: bounded raw item
     detail["item"] = head
     return head, detail
 

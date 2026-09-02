@@ -859,6 +859,20 @@ class TestOrdinalItemFace:
         "classic cocktails like the Sazerac."
     )
 
+    DECOY_NODE = (
+        "To make the widest variety of cocktails, I would recommend "
+        "purchasing the following five bottles:\n"
+        "1. Gin: Gin is a versatile spirit used in classic cocktails "
+        "like the Martini and the Negroni.\n"
+        "2. Vodka: Vodka is another versatile spirit for many "
+        "cocktails.\n"
+        "3. Rum: Rum is a great addition for tropical drinks like "
+        "the Mojito.\n"
+        "4. Whiskey: Whiskey is a classic cocktail ingredient.\n"
+        "5. Triple Sec: Triple Sec is an orange-flavored liqueur "
+        "used in cocktails like the Margarita."
+    )
+
     @staticmethod
     def _nodes(labels):
         return {f"n{i}": {"role": "assistant", "label": lab,
@@ -886,22 +900,30 @@ class TestOrdinalItemFace:
             "What was the first city I visited on my trip?") is False
 
     def test_answer_ordinal_returns_head_term(self):
+        # question phrasing mirrors the real 3249768e shape — the
+        # C540 run floor requires the question's own phrase ("five
+        # bottles / widest variety of gin based cocktails") in the
+        # carrier, so abstracted one-liner questions won't claim
+        # (C536 lesson: fixtures must mirror the real corpus shape).
         nodes = self._nodes(["I talked about cocktails once.",
                              self.GT_NODE])
         ans, detail = abq.answer_ordinal(
-            "What was the fifth bottle you recommended for gin "
-            "cocktails?", nodes)
+            "You recommended five bottles to make the widest variety "
+            "of gin-based cocktails. What was the fifth bottle?",
+            nodes)
         assert ans == "Absinthe"
         assert detail["ordinal"] == 5
         assert detail["session_id"] == "s1"
+        assert detail["run"] >= 2
 
     def test_answer_ordinal_prefers_relevant_node(self):
         # decoy with a "5." item but no question-keyword relevance
         decoy = ("Pack list:\n5. Tent: bring the rain fly too.")
         nodes = self._nodes([decoy, self.GT_NODE])
         ans, _ = abq.answer_ordinal(
-            "What was the fifth bottle you recommended for gin "
-            "cocktails?", nodes)
+            "You recommended five bottles to make the widest variety "
+            "of gin-based cocktails. What was the fifth bottle?",
+            nodes)
         assert ans == "Absinthe"
 
     def test_answer_ordinal_none_when_no_item(self):
@@ -911,17 +933,96 @@ class TestOrdinalItemFace:
             "What was the fifth bottle you recommended?", nodes)
         assert ans is None
 
-    def test_extractive_gate_does_not_wire_ordinal_face(self):
-        # C536 census-negative pin: the tight form detector fires
-        # (population 3/500, all frozen-wrong), the mechanics work on
-        # clean fixtures, but the gate stays UNWIRED — frozen-500
-        # forensics showed node-level lexical joins hit adversarial
-        # twin lists (3249768e, kh tied 12/12) and bare GT lists die
-        # under relevance floors (1903aded, kh=1). Wiring this face
-        # would have banked "Triple Sec"/"Encourage Questions" as
-        # answers. Unwiring = pipeline byte-identical on frozen 500.
+    def test_answer_ordinal_phrase_run_breaks_kh_tie(self):
+        # C540: the REAL 3249768e shape — twin five-bottle lists, kh
+        # ties at 12/12; the question's own phrase run ("widest
+        # variety of gin based cocktails") survives only in the GT
+        # node. (The C536-declared embedding join was probed and
+        # falsified: MiniLM prefers the decoy at every granularity.)
+        q = ("I'm looking back at our previous conversation about "
+             "building a cocktail bar. You recommended five bottles "
+             "to make the widest variety of gin-based cocktails. Can "
+             "you remind me what the fifth bottle was?")
+        nodes = self._nodes([self.DECOY_NODE, self.GT_NODE])
+        ans, detail = abq.answer_ordinal(q, nodes)
+        assert ans == "Absinthe"
+        # full contiguous run in the GT label is "gin based cocktails"
+        # (the question's 'of' is a stopword — _keywords drops it, so
+        # the size-5 slice can't match across "variety of gin"); the
+        # decoy tops out at "widest variety" = 2.
+        assert detail["run"] >= 3
+        assert detail["node_kh"] >= 3
+
+    def test_answer_ordinal_run_beats_higher_kh(self):
+        # phrase evidence outranks bag counts: the decoy wins on kh
+        # (its Gin item echoes the question's "gin") but has no
+        # question-phrase run to speak of.
+        q = ("You recommended five bottles to make the widest "
+             "variety of gin-based cocktails. What was the fifth "
+             "bottle?")
+        nodes = self._nodes([self.DECOY_NODE, self.GT_NODE])
+        ans, detail = abq.answer_ordinal(q, nodes)
+        assert ans == "Absinthe"
+
+    def test_answer_ordinal_no_phrase_echo_falls_through(self):
+        # C540 run floor: 1903aded shape — the question has no phrase
+        # echo in the only carrier (work-from-home presentation-tips
+        # list, kh>3 but run=0; the kh=1 GT bare list dies under the
+        # floor). The kh floor alone selecting a carrier is exactly
+        # the C536 failure mode, so the face refuses to claim and the
+        # extractive path keeps its frozen verdict.
+        tips = ("Here are tips to find work, run a home office, and "
+                "land remote jobs after retirement:\n"
+                "1. Set up a dedicated workspace.\n"
+                "2. Keep a regular schedule.\n"
+                "7. Encourage Questions: invite the audience to ask "
+                "questions.\n")
+        nodes = self._nodes([tips])
+        ans, detail = abq.answer_ordinal(
+            "I think we discussed work from home jobs for seniors "
+            "earlier. Can you remind me what was the 7th job in the "
+            "list you gave?", nodes)
+        assert ans is None
+        assert detail["nodes_with_item"] is True
+        assert "run" not in detail
+
+    def test_extractive_gate_wires_ordinal_face(self):
+        # C540 flip of the C536 census-negative pin: the gate now
+        # claims ordinal questions via the phrase-run tie-break
+        # (embedding join falsified, kh-only falsified in C536 —
+        # phrase continuity is the surviving separator). Fixture =
+        # the real twin-list corpus shape; the speaker_recall
+        # preface-parasitism winner (C468 family) is preempted.
         ad = abq.LongMemEvalAdapter()
         ad.ingest_sessions([{
+            "session_id": "s1",
+            "messages": [
+                {"role": "user", "content":
+                 "I'm building a cocktail bar. Which bottles should I "
+                 "buy to make the widest variety of gin-based "
+                 "cocktails?"},
+                {"role": "assistant", "content": self.DECOY_NODE},
+            ],
+        }, {
+            "session_id": "s2",
+            "messages": [
+                {"role": "user", "content":
+                 "Same question again — five bottles for gin-based "
+                 "cocktails, widest variety possible?"},
+                {"role": "assistant", "content": self.GT_NODE},
+            ],
+        }], session_dates=None)
+        q = ("You recommended five bottles to make the widest "
+             "variety of gin-based cocktails. What was the fifth "
+             "bottle?")
+        assert abq.ordinal_item_form(q) is True
+        ans, meta = ad.answer_extractive(q, "")
+        assert meta.get("gate") == "ordinal"
+        assert meta["ordinal"]["item"] == "Absinthe"
+        assert "Absinthe" in ans
+        # flag-off restores the C536 byte-identical behavior
+        ad2 = abq.LongMemEvalAdapter(ordinal_face=False)
+        ad2.ingest_sessions([{
             "session_id": "s1",
             "messages": [
                 {"role": "user", "content":
@@ -931,9 +1032,6 @@ class TestOrdinalItemFace:
                 {"role": "assistant", "content": self.GT_NODE},
             ],
         }], session_dates=None)
-        q = ("You recommended five bottles for gin cocktails. What "
-             "was the fifth bottle?")
-        assert abq.ordinal_item_form(q) is True   # detector fires...
-        ans, meta = ad.answer_extractive(q, "")
-        assert meta.get("gate") != "ordinal"      # ...but gate never claims
-        assert "ordinal" not in meta
+        ans2, meta2 = ad2.answer_extractive(q, "")
+        assert meta2.get("gate") != "ordinal"
+        assert "ordinal" not in meta2
