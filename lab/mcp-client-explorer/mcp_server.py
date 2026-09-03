@@ -36,12 +36,32 @@ class MCPServer:
                     sys.stdout.flush()
             except json.JSONDecodeError:
                 continue
+            except Exception:
+                # 单行处理异常绝不允许杀死主循环（否则服务器对后续所有请求静默失联）
+                continue
 
     def _handle_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """处理单个请求"""
+        # 合法 JSON 但非 object（如 [1,2,3] / 42 / null）→ -32600 Invalid Request
+        if not isinstance(request, dict):
+            return {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32600, "message": "Invalid Request: expected object"}
+            }
+
         method = request.get("method")
         params = request.get("params", {})
         request_id = request.get("id")
+
+        # initialized 通知（无响应）
+        if method == "notifications/initialized":
+            self.initialized = True
+            return None
+
+        # JSON-RPC 2.0：通知（无 id）绝不回包——否则下游客户端会收到 id:null 的孤儿错误
+        if request_id is None:
+            return None
 
         # 初始化
         if method == "initialize":
@@ -61,11 +81,6 @@ class MCPServer:
                     }
                 }
             }
-
-        # initialized 通知（无响应）
-        if method == "notifications/initialized":
-            self.initialized = True
-            return None
 
         # 资源列表
         if method == "resources/list":

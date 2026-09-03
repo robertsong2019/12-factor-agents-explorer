@@ -290,6 +290,40 @@ def test_malformed_json_line_ignored_server_survives(server):
     assert "result" in resp
 
 
+def test_non_dict_json_does_not_kill_server(server):
+    """红色回归：合法 JSON 但非 object（list/number）曾触发 AttributeError 杀死主循环"""
+    server.send_raw("[1, 2, 3]")
+    server.send_raw("42")
+    # 每条垃圾行各得一个 -32600，排掉后再验证服务器存活
+    assert server.recv(timeout=2.0)["error"]["code"] == -32600
+    assert server.recv(timeout=2.0)["error"]["code"] == -32600
+    resp = server.request(INIT_REQUEST)
+    assert resp is not None and "result" in resp
+    resp2 = server.request({"jsonrpc": "2.0", "id": "21", "method": "resources/list"})
+    assert "result" in resp2
+
+
+def test_null_json_line_gets_invalid_request_error(server):
+    """合法 JSON（null）→ 应回 -32600 Invalid Request 且服务器存活（官方 SDK 同语义）"""
+    server.send_raw("null")
+    resp = server.recv(timeout=2.0)
+    assert resp is not None
+    assert resp["error"]["code"] == -32600
+    resp2 = server.request({"jsonrpc": "2.0", "id": "22", "method": "resources/list"})
+    assert "result" in resp2
+
+
+def test_unknown_notification_gets_no_response(server):
+    """红色回归：JSON-RPC 2.0 规定通知绝不回包，旧实现会回 id:null 的 -32601 错误"""
+    server.request(INIT_REQUEST)
+    server.send({"jsonrpc": "2.0", "method": "notifications/progress",
+                 "params": {"ratio": 0.5}})
+    assert server.silent()
+    # 服务器必须存活且继续服务
+    resp = server.request({"jsonrpc": "2.0", "id": "23", "method": "resources/list"})
+    assert "result" in resp
+
+
 # ========== MCPClient E2E（真实客户端 ↔ 真实服务器） ==========
 
 @pytest.fixture
