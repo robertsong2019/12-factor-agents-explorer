@@ -89,14 +89,16 @@ class MCPClient:
     通过 stdio 与 MCP 服务器通信，实现 JSON-RPC 2.0 协议
     """
 
-    def __init__(self, server_command: List[str]):
+    def __init__(self, server_command: List[str], request_timeout: float = 5.0):
         """
         初始化客户端
 
         Args:
             server_command: 启动服务器的命令列表，如 ["python", "server.py"]
+            request_timeout: 单个请求等待响应的超时秒数
         """
         self.server_command = server_command
+        self.request_timeout = request_timeout
         self.process: Optional[subprocess.Popen] = None
         self.request_id = 0
         self.pending_requests: Dict[str, threading.Event] = {}
@@ -104,7 +106,7 @@ class MCPClient:
         self._initialized = False
 
     def start(self) -> bool:
-        """启动 MCP 服务器进程"""
+        """启动 MCP 服务器进程；initialize 无应答/出错时回收进程并返回 False"""
         try:
             self.process = subprocess.Popen(
                 self.server_command,
@@ -118,25 +120,36 @@ class MCPClient:
             # 启动响应监听线程
             threading.Thread(target=self._listen_responses, daemon=True).start()
 
-            # 发送 initialize 请求
-            self._initialize()
+            # 发送 initialize 请求——无应答即失败，绝不假成功
+            response = self._initialize()
+            if response is None or "error" in response:
+                self.stop()
+                return False
             self._initialized = True
             return True
         except Exception as e:
             print(f"[MCP Client] 启动失败: {e}")
+            self.stop()
             return False
 
     def stop(self):
         """停止 MCP 服务器"""
         if self.process:
-            self.process.terminate()
-            self.process.wait()
+            try:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=2)
+            except Exception:
+                pass
             self.process = None
         self._initialized = False
 
     def _initialize(self):
-        """发送初始化请求"""
-        self._send_request({
+        """发送初始化请求，返回响应（超时/错误时为 None 或含 error 的响应）"""
+        return self._send_request({
             "jsonrpc": "2.0",
             "id": self._next_id(),
             "method": "initialize",
@@ -182,13 +195,17 @@ class MCPClient:
         event = threading.Event()
         self.pending_requests[request_id] = event
 
-        # 发送请求
-        message = json.dumps(request) + "\n"
-        self.process.stdin.write(message)
-        self.process.stdin.flush()
+        try:
+            # 发送请求（服务器死亡时 write/flush 抛 BrokenPipeError→OSError）
+            message = json.dumps(request) + "\n"
+            self.process.stdin.write(message)
+            self.process.stdin.flush()
+        except OSError:
+            del self.pending_requests[request_id]
+            return None
 
         # 等待响应
-        event.wait(timeout=5.0)
+        event.wait(timeout=self.request_timeout)
 
         # 清理
         del self.pending_requests[request_id]

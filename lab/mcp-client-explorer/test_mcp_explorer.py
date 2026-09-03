@@ -405,3 +405,34 @@ def test_client_connect_helper(client=None):
         assert len(c.list_tools()) == 3
     finally:
         c.stop()
+
+
+# ========== 客户端健壮性（Cycle 3 红色回归） ==========
+
+def test_start_returns_false_when_server_never_responds():
+    """红色回归：旧实现 initialize 超时后仍 _initialized=True、start() 报成功——
+    对一个永远不应答的服务器静默假成功比连接失败更危险"""
+    c = MCPClient(["sleep", "30"], request_timeout=0.5)
+    try:
+        assert c.start() is False
+        assert c._initialized is False
+    finally:
+        c.stop()
+
+
+def test_start_failure_does_not_leak_server_process():
+    """红色回归：start() 失败路径必须回收已 spawn 的子进程，不留孤儿"""
+    c = MCPClient(["sleep", "30"], request_timeout=0.5)
+    assert c.start() is False
+    assert c.process is None  # stop() 已被失败路径调用
+
+
+def test_methods_after_server_death_return_none_not_raise(client):
+    """红色回归：服务器死亡后旧实现 write() 抛 BrokenPipeError——
+    与存活服务器的错误面（返回 None）不一致"""
+    client.process.kill()
+    client.process.wait()
+    assert client.list_tools() == []
+    assert client.call_tool("calculate", {"operation": "add", "a": 1, "b": 2}) is None
+    assert client.read_resource("data://weather/current") is None
+    assert client.get_prompt("code_review") is None
