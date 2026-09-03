@@ -10,7 +10,7 @@ describe('subgraph()', () => {
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'sg-'));
-    svc = new MemoryService({ dir });
+    svc = new MemoryService({ dbPath: dir });
     await svc.init();
   });
 
@@ -91,7 +91,7 @@ describe('shortestPath()', () => {
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'sp-'));
-    svc = new MemoryService({ dir });
+    svc = new MemoryService({ dbPath: dir });
     await svc.init();
   });
 

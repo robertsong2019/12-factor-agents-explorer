@@ -10,7 +10,7 @@ describe('searchByBranch()', () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'mem-sbb-'));
-    svc = new MemoryService({ dataDir: dir });
+    svc = new MemoryService({ dbPath: dir });
   });
 
   afterEach(async () => {

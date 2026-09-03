@@ -13,7 +13,7 @@ describe('searchByTimeRange', () => {
   before(async () => {
     dir = mkdtempSync(join(tmpdir(), 'sbytr-'));
     // Ensure truly empty dir
-    svc = new MemoryService(dir);
+    svc = new MemoryService({ dbPath: dir });
     await svc.init();
     const r1 = await svc.add({ content: 'alpha', layer: 'L1', tags: ['a', 'x'], weight: 5 });
     const r2 = await svc.add({ content: 'beta', layer: 'L1', tags: ['b', 'x'], weight: 3 });

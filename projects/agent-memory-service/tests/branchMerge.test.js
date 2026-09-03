@@ -10,7 +10,7 @@ describe('branchMerge(branchId, opts)', () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'mem-branchmerge-'));
-    svc = new MemoryService({ dataDir: dir });
+    svc = new MemoryService({ dbPath: dir });
   });
 
   afterEach(async () => {

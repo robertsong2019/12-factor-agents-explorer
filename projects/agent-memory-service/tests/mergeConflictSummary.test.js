@@ -10,7 +10,7 @@ describe('mergeConflictSummary()', () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'mem-mcs-'));
-    svc = new MemoryService({ dataDir: dir });
+    svc = new MemoryService({ dbPath: dir });
   });
 
   afterEach(async () => {

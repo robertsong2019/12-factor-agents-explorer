@@ -869,6 +869,17 @@ export class MemoryService {
    * @param {{dbPath?: string, embedFn?: EmbedFn}} options
    */
   constructor(options = {}) {
+    // Guard: wrong option names were silently ignored, making tests write to the
+    // default './data/memory' (2026-09-04 incident: 'dataDir', 'dir', string arg).
+    // Fail loudly on anything that is not a known option.
+    const KNOWN = new Set(['dbPath', 'embedFn', 'maxCacheSize']);
+    if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+      throw new TypeError('MemoryService: expected an options object, e.g. new MemoryService({ dbPath })');
+    }
+    const unknown = Object.keys(options).filter(k => !KNOWN.has(k));
+    if (unknown.length > 0) {
+      throw new TypeError(`MemoryService: unknown option(s) '${unknown.join("', '")}' — valid: dbPath, embedFn, maxCacheSize`);
+    }
     this.#dirPath = options.dbPath || './data/memory';
     this.#store = new MemoryStore(this.#dirPath);
     this.#links = new LinkStore(this.#dirPath);

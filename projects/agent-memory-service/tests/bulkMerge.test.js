@@ -10,7 +10,7 @@ describe('bulkMerge()', () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'mem-bm-'));
-    svc = new MemoryService({ dataDir: dir });
+    svc = new MemoryService({ dbPath: dir });
   });
 
   afterEach(async () => {

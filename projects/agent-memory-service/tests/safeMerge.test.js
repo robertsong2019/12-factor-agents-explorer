@@ -10,7 +10,7 @@ describe('safeMerge()', () => {
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'mem-sm-'));
-    svc = new MemoryService({ dataDir: dir });
+    svc = new MemoryService({ dbPath: dir });
   });
 
   afterEach(async () => {
