@@ -2301,6 +2301,84 @@ def _sem_place_complement_face(reference: str, answer: str) -> bool:
     return head_toks <= ans_toks and not (tail_toks & ans_toks)
 
 
+_PAREN_SPAN_RE = re.compile(r"\(([^()]{2,})\)")
+_DEIXIS_FOLD = {"you": "i", "your": "my", "yours": "mine",
+                "yourself": "myself"}
+
+
+def _sem_paren_complement_face(reference: str, answer: str) -> bool:
+    """C544 reference-elaboration face: parenthetical complement.
+
+    A reference shaped ``Head (elaboration)`` asserts its graded fact
+    in the head; the parenthetical adds detail (c6853660: GT ``You
+    increased the limit (from one cup to two cups)`` vs answer ``I
+    have increased the limit to two cups``). An answer carrying every
+    head content token asserts the head fact — the elaboration may or
+    may not be repeated. Guarded: the head must keep >=2 content
+    tokens after paren stripping, so thin heads (``Yes. (You have a
+    road bike too.)``) never qualify, and every head token must be
+    present in the answer — an answer lacking the head tokens never
+    fires. Same family as the C541 place-complement face (elaboration
+    as redundancy, not second fact) and, like it, only reachable from
+    the NEEDS_JUDGE zone.
+    """
+    spans = _PAREN_SPAN_RE.findall(reference or "")
+    if not spans:
+        return False
+    if re.search(r"\([^()]*\(", reference):
+        return False                      # nested parens: bail, conservative
+    head = reference
+    for s in spans:
+        head = head.replace(f"({s})", " ")
+    head_toks = {w for w in _sem_norm(head).split()
+                 if w not in _SEM_STOPWORDS}
+    if len(head_toks) < 2:
+        return False
+    ans_toks = {w for w in _sem_norm(answer).split()
+                if w not in _SEM_STOPWORDS}
+    # person-deixis fold: the GT speaks in the grader's second person
+    # ("You increased the limit"), the answer in the user's first person
+    # ("I have increased the limit") — the same fact under deixis
+    # shift, not a missing token (c6853660).
+    head_toks = {_DEIXIS_FOLD.get(w, w) for w in head_toks}
+    ans_toks = {_DEIXIS_FOLD.get(w, w) for w in ans_toks}
+    return head_toks <= ans_toks
+
+
+_TENSE_FOLDS = (("had", "has"), ("was", "is"), ("were", "are"))
+
+
+def _sem_tense_superset_face(reference: str, answer: str) -> bool:
+    """C544 tense-fold superset face.
+
+    The same assertion in a different tense — 89527b6b: GT ``The
+    Plesiosaur had a blue scaly body.`` vs answer ``The Plesiosaur
+    has a blue scaly body, and its eyes are fixed on something in the
+    distance`` — misses the plain superset branch only because
+    had/has (was/is, were/are) are distinct tokens. Folding the three
+    tense pairs on both sides restores the token-superset relation.
+    Requires at least one tense pair to actually occur, so it never
+    widens the superset path for tense-identical pairs (those already
+    returned CORRECT earlier). NEEDS_JUDGE-zone only — the only
+    possible flip is NEEDS_JUDGE -> CORRECT.
+    """
+    nr, nc = _sem_norm(reference), _sem_norm(answer)
+    if not (nr and nc):
+        return False
+    if not any(re.search(rf"\b{a}\b", nr) or re.search(rf"\b{a}\b", nc)
+               for a, _ in _TENSE_FOLDS):
+        return False
+
+    def fold(t: str) -> str:
+        for a, b in _TENSE_FOLDS:
+            t = re.sub(rf"\b{a}\b", b, t)
+        return t
+
+    tr = {w for w in fold(nr).split() if w not in _SEM_STOPWORDS}
+    tc = {w for w in fold(nc).split() if w not in _SEM_STOPWORDS}
+    return bool(tr and tc and tr < tc)
+
+
 def judge_semantic(question: str, answer: str, reference: str) -> str:
     """Deterministic semantic-equivalence judge (#090 simplified port).
 
@@ -2383,15 +2461,18 @@ def judge_semantic(question: str, answer: str, reference: str) -> str:
         return "CORRECT"
     if SequenceMatcher(None, nr, nc).ratio() >= 0.75:
         return "CORRECT"
-    # C541 reference-alias faces: the reference names its entity with
-    # structural redundancy; an answer naming the same entity through
-    # the alias channel is the complete fact, not a weaker subset.
-    # Both faces live in the NEEDS_JUDGE zone (guards 1-3 and the
-    # subset veto already returned WRONG above), so the only possible
-    # flip is NEEDS_JUDGE -> CORRECT — pure upside for banking, and
-    # never masks a numeric/currency conflict (those returned WRONG
-    # before this line).
-    if _sem_paren_acronym_face(r, c) or _sem_place_complement_face(r, c):
+    # C541/C544 reference-alias faces: the reference names its entity
+    # (or asserts its fact) with structural redundancy; an answer
+    # naming/asserting the same thing through the alias channel is the
+    # complete fact, not a weaker subset. All four faces live in the
+    # NEEDS_JUDGE zone (guards 1-3 and the subset veto already
+    # returned WRONG above), so the only possible flip is
+    # NEEDS_JUDGE -> CORRECT — pure upside for banking, and never
+    # masks a numeric/currency conflict (those returned WRONG before
+    # this line).
+    if (_sem_paren_acronym_face(r, c) or _sem_place_complement_face(r, c)
+            or _sem_paren_complement_face(r, c)
+            or _sem_tense_superset_face(r, c)):
         return "CORRECT"
     return "NEEDS_JUDGE"
 
