@@ -2379,6 +2379,75 @@ def _sem_tense_superset_face(reference: str, answer: str) -> bool:
     return bool(tr and tc and tr < tc)
 
 
+_BARE_AFFIRM_GTS = {"yes", "yes."}
+_BARE_AFFIRM_AUX_RE = re.compile(
+    r"^(do|does|did|is|are|was|were|have|has|had|can|could|will|would|am)\b",
+    re.I)
+_BARE_AFFIRM_NEG_RE = re.compile(
+    r"\b(not|never|no|nothing|nobody|none|nor|cannot|cant|dont|didnt|doesnt|"
+    r"hasnt|havent|wont|isnt|arent|wasnt|werent|couldnt|shouldnt|wouldnt|t)\b",
+    re.I)
+
+
+def _sem_bare_affirm_face(question: str, answer: str, reference: str) -> bool:
+    """C545 bare-affirmation face.
+
+    Yes/no-auxiliary questions whose reference is a bare ``Yes`` (b01defab:
+    ``Did I finish reading 'The Nightingale' by Kristin Hannah?`` vs an
+    answer narrating ``... which I finished reading recently``): the
+    answer AFFIRMS the questioned predicate without the literal "yes",
+    so neither superset branch can see the reference tokens. Gates:
+    (1) bare-affirmation reference, (2) auxiliary-initial question,
+    (3) every question content token covered in the answer (exact or
+    4-char stem), (4) >=2 stem hits, (5) no negator within +-6 tokens
+    of a hit (kills "didn't finish"), (6) no interrogative-echo
+    sentence among the hits (kills the question-back form, 42ec0761).
+    NEEDS_JUDGE-zone only — number/currency guards and the subset veto
+    return WRONG before this line, so the only possible flip is
+    NEEDS_JUDGE -> CORRECT. C545 census: bare-yes population 5 rows,
+    exactly 1 fire (b01defab), 0 false positives.
+    """
+    if reference.strip().lower() not in _BARE_AFFIRM_GTS:
+        return False
+    if not _BARE_AFFIRM_AUX_RE.match(question.strip()):
+        return False
+    a_toks = re.sub(r"[^a-z0-9 ]", " ", answer.lower()).split()
+    if not a_toks:
+        return False
+    a_set = set(a_toks)
+    q_toks = re.sub(r"[^a-z0-9 ]", " ", question.lower()).split()
+    content = [t for t in q_toks[1:]
+               if t not in _SEM_STOPWORDS and len(t) >= 3]
+    if not content:
+        return False
+
+    def covered(t: str) -> bool:
+        if t in a_set:
+            return True
+        stem = t[:4]
+        return len(stem) >= 3 and any(p.startswith(stem) for p in a_toks)
+
+    if not all(covered(t) for t in content):
+        return False
+    hits = [t for t in content
+            if any(p.startswith(t[:4]) for p in a_toks)]
+    if len(hits) < 2:
+        return False
+    for h in hits:                       # negation window
+        for idx, p in enumerate(a_toks):
+            if not p.startswith(h[:4]):
+                continue
+            window = a_toks[max(0, idx - 6):idx + 7]
+            if any(_BARE_AFFIRM_NEG_RE.fullmatch(w) for w in window):
+                return False
+    for sent in re.split(r"(?<=[.!?])\s+", answer.strip()):
+        if sent.rstrip().endswith("?") and any(
+                re.search(rf"\b{re.escape(h[:4])}", sent.lower())
+                for h in hits):
+            return False                 # interrogative echo
+    return True
+
+
 def judge_semantic(question: str, answer: str, reference: str) -> str:
     """Deterministic semantic-equivalence judge (#090 simplified port).
 
@@ -2472,7 +2541,8 @@ def judge_semantic(question: str, answer: str, reference: str) -> str:
     # this line).
     if (_sem_paren_acronym_face(r, c) or _sem_place_complement_face(r, c)
             or _sem_paren_complement_face(r, c)
-            or _sem_tense_superset_face(r, c)):
+            or _sem_tense_superset_face(r, c)
+            or _sem_bare_affirm_face(question, c, r)):
         return "CORRECT"
     return "NEEDS_JUDGE"
 
