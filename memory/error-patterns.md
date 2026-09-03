@@ -141,3 +141,11 @@
 - **根因：** A/B 双臂公式未逐字段同源；翻转打印救了一命（"KILL" 行 verdict 不变即露馅）
 - **修正：** 双臂统一 frozen correct_exact + 每行 `assert ok_old == r["banked"]`（基线漂移 tripwire）；修正后 259→260 +1/0 kill。同周期 chain_vs_live.py 尾部又犯同族（live 总数 +18 双计）——已修未采用
 - **出现次数：** 家族第 5 次（本周期连犯 2 例）→ TOOLS.md 规则升级：A/B 双臂必须逐字段同源 + baseline 逐行 assert
+
+### [2026-09-04] 覆盖已存在文件未先检查（experiments.tsv 历史被 clobber）
+- **场景：** 测试循环记录实验结果，直接 write 到 projects/agent-memory-service/experiments.tsv
+- **错误：** 未检查文件是否已存在，write 工具整体覆盖，77 行 4-8 月实验历史丢失（提交 28b2d0b）
+- **根因：** 假设文件不存在（find 命令当时只列了 lab/ 下的同名文件，误导了我）；write 前没做存在性检查
+- **修正：** git show HEAD~1 恢复全部历史 + 追加新行（ed54b8b）
+- **规则：** 任何"记录/新建"类 write 前，先 `[ -f file ] || ls 同名文件`；对带历史的台账文件一律 append 而非 overwrite
+- **出现次数：** 1
