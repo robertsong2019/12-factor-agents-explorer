@@ -39,7 +39,8 @@ class Resource:
             uri=data.get("uri", ""),
             name=data.get("name", ""),
             description=data.get("description", ""),
-            mime_type=data.get("mime_type", "text/plain")
+            # 兼容两种字段名：MCP 规范 camelCase（mimeType）与早期 snake_case（mime_type）
+            mime_type=data.get("mime_type") or data.get("mimeType") or "text/plain"
         )
 
 
@@ -55,7 +56,9 @@ class Tool:
         return cls(
             name=data.get("name", ""),
             description=data.get("description", ""),
-            input_schema=data.get("input_schema", {})
+            # 兼容两种字段名：MCP 规范 camelCase（inputSchema）与早期 snake_case（input_schema）
+            # 旧实现只读 snake_case，服务器发来的 inputSchema 被静默丢弃成 {}
+            input_schema=data.get("input_schema") or data.get("inputSchema") or {}
         )
 
 
