@@ -1,7 +1,7 @@
-# TUTORIAL: Answer Faces — 问题结构驱动的答案选择（Cycles 529-542）
+# TUTORIAL: Answer Faces — 问题结构驱动的答案选择（Cycles 529-545）
 
 > 本文解释 amg 评测管线里最反直觉的一个设计：**答案选哪个句子，不该由"分数阈值"决定，而该由"问题在问什么"决定**。
-> 覆盖 Cycle 529-542 的机制演进（banked 0.494 → 0.520），所有例子都是 LongMemEval s_cleaned full-500 里的真实题目。
+> 覆盖 Cycle 529-545 的机制演进（banked 0.494 → 0.526），所有例子都是 LongMemEval s_cleaned full-500 里的真实题目。
 
 ---
 
@@ -120,9 +120,9 @@
 
 ---
 
-## 4. face 概念的延伸：judge 侧 rescue faces（C541-C542）
+## 4. face 概念的延伸：judge 侧 rescue faces（C541-C545）
 
-前六个 face 都活在 **gate 侧**——改变"选哪句"。C541-C542 把 face 概念推到 **judge 侧**——改变"判对没判对"。
+前六个 face 都活在 **gate 侧**——改变"选哪句"。C541 起把 face 概念推到 **judge 侧**——改变"判对没判对"。
 
 judge cascade（exact → semantic → LLM）里有一个 NEEDS_JUDGE 区间：exact 不中、sem 也不中，留给 LLM 判。C541/C542 发现，这个区间里有一批**系统性误判**，病根是 reference 的**书写形态**被当成了**内容差异**：
 
@@ -131,10 +131,22 @@ judge cascade（exact → semantic → LLM）里有一个 NEEDS_JUDGE 区间：e
 | **paren-acronym**（C541） | "Full Name (ACRONYM)" 自带别名 | answer 只有缩写 token → sem 不中 | 1d4da289（OTP）、25e5aa4f（UCLA） |
 | **place-complement**（C541） | "<head> in <Place>" | tail 是判分者消歧，answer 没有 tail → 被当缺内容 | 3b6f954b（University of Melbourne in Australia） |
 | **quoted-core**（C542） | "The 27th parameter was 'Sound effects…'." | frame tokens 使逐字节相同的答案成"严格子集" → Guard-3 subset veto | 8752c811 |
+| **paren-complement**（C544） | "Head (elaboration)" | head 本身即断言事实，括号只是展开；薄头（`Yes. (You have a road bike too.)`）除外 | c6853660（You increased the limit (from one cup to two cups)） |
+| **tense-superset**（C544） | had/has、was/is、were/are 时态差 | 时态不同 + 严格超集被当成内容不同；要求至少一对时态词实际出现，不放宽既有路径 | 89527b6b（The Plesiosaur had → has a blue scaly body） |
+| **bare-affirm**（C545） | GT 归一化后 = "yes"（bare-Yes） | yes/no 问题 + 叙事式肯定句（"finished reading"）不含 "yes" token → exact/sem 全不中 | b01defab，六门：bare-Yes / auxiliary-initial 疑问 / content 全覆盖 / ≥2 stem hits / 否定窗口 ±6 / 反问 echo 拦截 |
 
-**为什么这三个 face 数学上纯上行**：它们都挂在 NEEDS_JUDGE / subset-veto 分支上——只有已通过 guards 1-2（或已进 NEEDS_JUDGE）的行才可达，只可能 NEEDS_JUDGE→CORRECT 或 WRONG→CORRECT，不可能把 CORRECT 改坏。
+**为什么这些 face 数学上纯上行**：它们都挂在 NEEDS_JUDGE / subset-veto 分支上——只有已通过 guards 1-2（或已进 NEEDS_JUDGE，且数字/货币守卫先行 return）的行才可达，只可能 NEEDS_JUDGE→CORRECT 或 WRONG→CORRECT，不可能把 CORRECT 改坏。
 
-**识别套路**：对着一堆 NEEDS_JUDGE 行问一句——"GT 的**写法**里有什么约定俗成的形态，被当成了**内容差异**？"括号别名、地名补语、引号包裹，都是"写法伪装成内容"的三个样本。另一个教训藏在 C542 的 A/B 基建里：双臂判分公式必须**逐字段同源**（frozen exact vs live exact 混用会伪造 NET-NEGATIVE），且每行对 baseline 做 drift assert——"翻转打印里 verdict 不变的 KILL"是最便宜的露馅信号。
+**识别套路**：对着一堆 NEEDS_JUDGE 行问一句——"GT 的**写法**里有什么约定俗成的形态，被当成了**内容差异**？"括号别名、地名补语、引号包裹、括号展开、时态差、bare-Yes，都是"写法伪装成内容"的样本。
+
+**C544 的两课**：
+
+1. **fire 的理由要语义正确，不止要 fire**。paren-complement 的 naive 版本靠 pred 另一句里顺带的 "you" 才命中 c6853660——数字上等价，语义上错误（pred 根本没说那句话）。修正 = 人称 deixis fold（you/your→i/my）：判分者口中的"你"就是用户口中的"我"，同事实换人称陈述应诚实 fire。测试用最小答案复现正确 fire 理由。
+2. **基线复核也要同源**。census 脚本第一遍只数"纯语义 CORRECT"得 236，vs 台账 260，差点误判 ledger 崩坏——实际差值就是 C542 那条 face 增量。读基线必须用 ledger 公式重算（frozen exact + abs 行），同源纪律不只管 A/B 双臂。
+
+**C545 的 tokenizer 课**：bare-affirm 第一遍 census 0 fires 是伪影——问题用单引号 `'The Nightingale'`、pred 用双引号，norm 保留 `'` 造成假 miss。token 化必须去引号（引号样式不是内容）；反向陷阱也要防：`didn't` 归一化拆成 `didn`+`t`，裸 token `t` 恰好只来自缩写，可安全用作否定标记——红灯先行测试抓到的。
+
+另一个教训藏在 C542 的 A/B 基建里：双臂判分公式必须**逐字段同源**（frozen exact vs live exact 混用会伪造 NET-NEGATIVE），且每行对 baseline 做 drift assert——"翻转打印里 verdict 不变的 KILL"是最便宜的露馅信号。
 
 ---
 
@@ -166,6 +178,16 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 
 **投入产出**：C539 的 22 分钟 A/B 被 2.5 分钟离线模拟完整预测。face 类改动的 A/B 很贵，census 模拟是它的廉价前置。
 
+**census 的第二产出：方向级证伪（C543/C545）**。census-first 不只给 face 接线当廉价前置，也能在**接线之前**否决整个方向：
+
+- **C543 kh-floor**：53 行 wrong 里 kh-floor 能救的只有 1 行（containment 巧合），会误杀的却有 14/72 correct 行——~1 救 vs ~14 杀 = NET-NEGATIVE，A/B 都不用跑。
+- **C545 sidechannel 生产化**：#083 离线 @5 recall 18→26/30 看着很美，但 form census 显示 500 题里只有 48 行 hybrid 可能受影响，三臂实验（stored / scFalse-now / scTrue-now）= **25=25=25 net-zero**——检索顺序的变化被 answer gate + judge 通路完全吸收。离线中间指标的提升 ≠ 端到端收益。
+
+两条配套纪律：
+
+1. **只跑可能变化面**：form 门保证其余 452 行结构性不受影响 → 48 行定向实验结论 = 全量结论，预算 110min→17min。跑全量前先问：哪些行结构上不可能变？
+2. **负结果用 absence pin 钉住**：census-negative 的方向写进台账还不够，C543 加了 test_kh_floor_absence.py——若未来有人真接 kh-floor，测试先红。负结果从"文档记忆"升级为"机器强制"。
+
 ---
 
 ## 7. 一页速查
@@ -183,13 +205,20 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 | GT 自带括号别名 | paren-acronym（judge 侧） | NEEDS_JUDGE→CORRECT | C541 |
 | GT 带地名消歧补语 | place-complement（judge 侧） | NEEDS_JUDGE→CORRECT | C541 |
 | GT 用引号包事实 | quoted-core（judge 侧） | WRONG→CORRECT（subset veto 分支） | C542 |
+| GT 括号展开，头即事实 | paren-complement（judge 侧） | NEEDS_JUDGE→CORRECT + deixis fold | C544 |
+| GT 与 answer 只差时态 | tense-superset（judge 侧） | 时态折叠 + 严格超集 → CORRECT | C544 |
+| GT 就是裸 "yes" | bare-affirm（judge 侧） | 六门全过才 CORRECT，反问 echo 拦截 | C545 |
+| kh-floor 想救 kh=0 GT | 🚫 census-negative，不接线 | 1 救 vs 14 杀，absence pin 钉死 | C543 |
+| 嵌入 side-channel 重排 | 🚫 census-negative，默认 False | 离线增益被 gate+judge 吸收，pin 死默认值 | C545 |
 
-**四条带走的原则**：
+**六条带走的原则**：
 1. 答案选择读**问题结构**，不调阈值
 2. face 重排不越权翻地板；地板排除自有理由
-3. census-first：先数人口，先离线模拟，再接线；证伪的方向写进台账
+3. census-first：先数人口，先离线模拟，再接线；证伪的方向写进台账并用 absence pin 钉住
 4. face 不止在 gate：judge 侧 NEEDS_JUDGE 区间同样有"写法伪装成内容"的系统性误判可救，且数学上纯上行
+5. fire 的理由要语义正确，不止要 fire——数字等价 ≠ 语义正确（C544 deixis fold）
+6. 离线中间指标的提升不等于端到端收益；下游通路可能吸收全部扰动（C545 net-zero）
 
 ---
 
-*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-542 段。*
+*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-545 段。*

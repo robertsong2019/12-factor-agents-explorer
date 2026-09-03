@@ -66,7 +66,7 @@
 - **拓扑快捷统计** — hub_nodes/peripheral_nodes/mean_degree 一键获取关键结构指标 (Cycle 339)
 - **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 + 噪声鲁棒性测试 (Cycles 326-341)
 - **Temporal QA 家族 (5 路由)** — LongMemEval temporal-reasoning 零 LLM 解法：temporal_arith 日历算术 + pp_duration/pure_tenure 状态时长 + order 排序 + pairwise which-first，form gate + 最早-FRESH 锚定 + 负存在弃权，temporal-133 0.323→0.474 全程 zero-flip (Cycles 457-489)
-- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 **0.494** (Cycles 520-531)
+- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 破半后持续进化：0.494（Cycles 520-531）→ **0.526**（Cycles 545，答案面家族 + judge 侧 rescue faces，见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)）
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 - **传播激活家族 (5 API)** — ACT-R 认知模型: spreading_activation (基础) → activation_trace (可解释) → competitive_spreading (多种子竞争) → temporal_spreading (时间衰减) → activation_diff (对比分析) (Cycles 366-383)
 - **流式熵追踪** — FINGEREntropy O(Δ) 增量 von Neumann 熵 + StreamingGraph 实时异常检测 (Cycle 361)
@@ -4331,6 +4331,32 @@ C536 声明的嵌入 side-channel join 在实现前被证伪（3249768e probe：
 #### C542：judge quoted-core GT-wrap face — 0.520 + authoritative live chain (2adcf92)
 
 C540 留下的 in-pipeline live debt：8752c811 抽取出了**正确 item**，但 GT "The 27th parameter was 'Sound effects…'." 的 frame tokens 使逐字节相同的 pred 成为严格 token 子集 → Guard-3 subset veto → WRONG。`_sem_quoted_core_face`：reference 把断言事实包进引号（frame + quoted core）时，引号核心就是数据集断言的答案——norm(candidate)==norm(quoted-span) ⇒ 完整事实而非弱化子集；4 条引号 regex（ASCII+curly）带 word-boundary lookaround（撇号永不开 span），2-char span floor，branch-local 于 subset veto 分支 → 只可能 WRONG→CORRECT。Census：hit set 恰 {8752c811}；subset-veto 分支全人口 40 行。**基建**：HEAD 全量 live 重跑 500 行（1144s，FULL preds）精确验证 C541 台账 259，chain-vs-live diff 恰 1 行 stale（25e5aa4f true pred 未写回）——**delta chain 退役**，后续判分实验直接用 live500。**假 NET-NEGATIVE 险情**（显示层家族 #5，TOOLS.md 规则升级）：首跑 A/B 双臂公式不同源（frozen correct_exact vs live exact_judge）伪造 -2，修复 = 双臂逐字段同源 + 每行 baseline assert。banked **260（0.520）**。套件 10224（+11，test_quoted_core_face.py）。
+
+---
+
+## Cycles 543-545: 0.520→0.526 — census-negative 双方向收尾 + judge 面第 4-6 发
+
+> 官方口径轨迹：0.520（C542）→ 0.520（C543，RECORD-NEUTRAL）→ **0.524（C544）** → **0.526（C545）**。本段主轴：**负结果也是资产**——两条排队多轮的方向（队列② kh-floor 接线、队列③ 嵌入 side-channel 生产化）在接线前被 census 决定性证伪并用 absence pin 钉死默认行为；judge 侧 NEEDS_JUDGE 矿脉再出三发（paren-complement / tense-superset / bare-affirm），全部 census-first 全枚举后接线、纯上行 0 kill。教程同步更新：[TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)。
+
+#### C543：kh-floor absence pin — 接线前证伪 answer-gate 残余方向，队列②关闭 (f625fe9)
+
+C542 后 pred 侧最后一个排队方向。方法沿用 C542 live500 replay + 窗口重构（C525 教训）+ 逐行 banked assert：**216 answer-gate 行 replay byte-identical**（drift=0，确定性第 3 次验证）。53 行 wrong 分解：15 containment 口径 GT 在窗 / 24 仅 semantic 口径在窗 / **29 无 GT 行（窗口组成死区，检索侧攻击面）**。kh-floor 方向判决：收益面只有 1 行（a9f6b44c，C523 containment 巧合家族），杀面却高达 **14/72 correct 行存在窗内严格更高 kh 的行**——现行 ranker（近因/role/session 信号）比 kh-max 排得对得多。~1 救 vs ~14 杀 = NET-NEGATIVE，**不接线**。附带发现 win_kh=-1 拓扑：4/10 候选行 winner 来自窗外（C525/C526 face override 本就合法越窗）。+3 tests（test_kh_floor_absence.py）钉死「更高 kh 窗内行不得抢走 winner」的 absence——未来若有人真接 kh-floor，测试先红。banked **0.520 不变**。套件 10227。
+
+#### C544：judge paren-complement + tense-superset faces — 0.524 (e9c9f96)
+
+judge 侧 NEEDS_JUDGE 矿脉（C541/C542 已验证）第 4-5 发。census 先行：同源基线复核（live500 存储快照 + C535 ledger 公式重算 = 260 精确）后，146 NJ ∧ frozen-exact-False 行 = 113 zero-overlap（诚实弃权区，不碰）+ 33 partial-overlap（矿脉）。两个 face 全 500 census 后接线，均挂 NEEDS_JUDGE zone（数字/货币守卫与 subset veto 先行 return）→ 数学上只可能 NJ→CORRECT：
+
+- **`_sem_paren_complement_face`**：GT = `Head (elaboration)` 时 head 本身即断言事实（c6853660：GT `You increased the limit (from one cup to two cups)` vs pred `I have increased the limit to two cups`）。守卫：薄头排除（`Yes. (You have a road bike too.)`）、嵌套括号 bail、**人称 deixis fold（you/your→i/my）**——census 抓到 naive 版是靠 pred 另一句里顺带的 "you" 才 fire：数字上等价、语义上错误；fold 后按「判分者第二人称 = 用户第一人称」的同事实诚实 fire。
+- **`_sem_tense_superset_face`**：had/has、was/is、were/are 三对时态折叠 + 两侧严格 token 超集（89527b6b：GT `The Plesiosaur had a blue scaly body.` vs pred `The Plesiosaur has a blue scaly body, and…`）。要求至少一对时态词实际出现——时态一致的行早走原 superset 分支，face 不放宽既有路径。
+
+Census：face A 3 fires（1 gain）/ face B 31 fires（1 gain），0 假阳性。A/B 3 flips 全 upgrade 0 kill。**教训**（census 脚本第一遍只数纯语义 CORRECT 得 236 vs 260 假崩坏）：基线复核也要用 ledger 公式**同源重算**——同源纪律不只管 A/B 双臂，也管「读基线」本身。banked **262（0.524）**。套件 10240（+13，test_paren_tense_faces.py）。
+
+#### C545：bare-affirm face 0.526 + sidechannel 生产化决定性 census-negative，队列③永久关闭 (7f525f4)
+
+双结果周期：
+
+- **结果 A（负结果资产）**：队列③（连续两轮推后的队首）生产化实验实质 = 验证 hybrid form 重排对 banked 的端到端价值。form census：500 题 = 393 none + 48 hybrid + 29 embed + 30 abs；**embed 模式结构性 banked-dead**（`pref_abstain=True` 在 ranking 前弃权全部 pref 行）；hybrid 三臂实验（stored / scFalse-now / scTrue-now）= **25=25=25 net-zero**，仅 1 行 pred 变化且仍 NJ。#083 的 offline @5 recall 增益（18→26/30）**不转化为端到端 banked**——检索顺序变了，但 answer gate + judge 通路吸收了全部扰动。`sidechannel` 默认保持 **False**，+2 tests pin 死默认值（默认翻转前必须重读本 census）。工程纪律： TIMI smoke + profile 发现 500 题 = 500 个独立 hay_key（缓存跨题永不命中，冷嵌入 13s/haystack）→ **只跑可能变化面**（48/500 定向，110min→17min）——form 门保证其余 452 行结构性不受影响，定向结论 = 全量结论。
+- **结果 B（+1，纯上行）**：`_sem_bare_affirm_face`——yes/no auxiliary-initial 疑问 + bare-Yes GT（归一化后 = "yes"）族，六门：bare-Yes GT / auxiliary-initial 疑问句 / 问题 content token 全覆盖（exact 或 4-char stem）/ ≥2 stem hits / 否定窗口（hit ±6 token）/ 反问 echo 拦截（含 hit 句以 ? 结尾 → block）。Census：5 行 bare-Yes 全枚举，唯一 fire b01defab（narrative affirmative 'finished reading'），0 FP。两个 tokenizer 教训：①第一遍 census 0 fires 是**引号样式伪影**（问题用单引号 `'The Nightingale'`、pred 用双引号，norm 保留 `'` 造成假 miss）——token 化必须去引号；②红先行测试抓到 `didn't` → `didn`+`t` 拆分——归一化文本中裸 token `t` 只来自缩写，安全作否定标记入 NEG 表。banked **263（0.526）**。套件 10250（+8 bare-affirm +2 sidechannel pin，test_bare_affirm_face.py / test_sidechannel_default_off.py）。
 
 ---
 
