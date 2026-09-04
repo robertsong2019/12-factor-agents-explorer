@@ -2388,6 +2388,26 @@ _BARE_AFFIRM_NEG_RE = re.compile(
     r"hasnt|havent|wont|isnt|arent|wasnt|werent|couldnt|shouldnt|wouldnt|t)\b",
     re.I)
 
+# C547 affirm-elaboration face constants. Lead: affirmation word opening
+# the reference (bare-affirm's superset — elaboration may follow). Aux-any:
+# a yes/no interrogative clause ANYWHERE in the question ("Before I
+# purchased the gravel bike, do I have ...?" fails the aux-INITIAL match
+# but is still a yes/no question). Drop-set: pronouns/connectives are
+# grammar, not facts — the elaboration's fact tokens are what an answer
+# must carry ("too" in "You have a road bike too." need not echo).
+_AFFIRM_ELAB_LEAD_RE = re.compile(r"^(yes|yeah|yep|yup|correct)\b[\s.,!]*",
+                                  re.I)
+_AFFIRM_ELAB_AUX_ANY_RE = re.compile(
+    r"\b(do|does|did|is|are|was|were|have|has|had|can|could|will|would|am)"
+    r"\s+i\b", re.I)
+_AFFIRM_ELAB_WH_LEAD_RE = re.compile(
+    r"\b(what|which|when|where|who|whom|whose|why|how)\b", re.I)
+_AFFIRM_ELAB_DROP = ("i", "my", "me", "you", "your", "we", "our",
+                     "too", "also", "either", "though", "anyway",
+                     "however", "still", "already", "again",
+                     "not", "nor", "never", "nothing", "nobody", "none",
+                     "cannot")
+
 
 def _sem_bare_affirm_face(question: str, answer: str, reference: str) -> bool:
     """C545 bare-affirmation face.
@@ -2444,6 +2464,86 @@ def _sem_bare_affirm_face(question: str, answer: str, reference: str) -> bool:
         if sent.rstrip().endswith("?") and any(
                 re.search(rf"\b{re.escape(h[:4])}", sent.lower())
                 for h in hits):
+            return False                 # interrogative echo
+    return True
+
+
+def _sem_affirm_elaboration_face(question: str, answer: str,
+                                 reference: str) -> bool:
+    """C547 affirm-elaboration face (bare-affirm's elaborated cousin).
+
+    A reference shaped ``Affirmation. (Elaboration.)`` (89941a94: GT
+    ``Yes. (You have a road bike too.)`` vs an answer naming the road
+    bike among its bikes): the affirmation answers the yes/no question
+    and the elaboration carries the asserted fact. The C545
+    bare-affirm face cannot reach it (the GT is not bare), and the
+    C544 paren-complement face deliberately excludes it (thin head:
+    the head after paren stripping is just ``Yes.``). The question's
+    auxiliary clause may sit behind a preamble (``Before I purchased
+    the gravel bike, do I have ...?``), so aux-INITIAL anchoring is
+    replaced by aux-clause-anywhere + ``?``. Coverage is required for
+    the elaboration's FACT tokens only (pronouns/connectives dropped:
+    the grader's ``too`` need not echo in the answer), reusing the
+    exact/4-char-stem rule, the +-6 negation window and the
+    interrogative-echo block from bare-affirm. NEEDS_JUDGE-zone only:
+    number/currency guards and the subset veto return WRONG before
+    this line, so the only possible flip is NEEDS_JUDGE -> CORRECT.
+    C547 census: affirmation-led GT population across the full-500 is
+    6 rows; only 89941a94 carries an elaboration rest, exactly 1 fire,
+    0 false positives (bare-rest rows stay in bare-affirm's hands;
+    42ec0761 stays blocked by the echo gate).
+    """
+    ref = reference.strip()
+    m = _AFFIRM_ELAB_LEAD_RE.match(ref)
+    if not m:
+        return False
+    rest = ref[m.end():].strip()
+    rest_norm_toks = _sem_norm(rest).split()
+    # Polarity gate: the elaboration must be affirmative. A negative
+    # elaboration ("Yes. (You did not sell it.)") asserts a negated fact
+    # whose verification is outside deterministic reach — dropping its
+    # negator would let a contradicting answer fire. Stay abstaining.
+    if any(_BARE_AFFIRM_NEG_RE.fullmatch(t) for t in rest_norm_toks):
+        return False
+    content = [t for t in rest_norm_toks
+               if t not in _SEM_STOPWORDS and t not in _AFFIRM_ELAB_DROP
+               and len(t) >= 3]
+    if not content:
+        return False        # bare affirmation -> _sem_bare_affirm_face
+    q = question.strip()
+    if not q.endswith("?"):
+        return False
+    if not _AFFIRM_ELAB_AUX_ANY_RE.search(q):
+        return False
+    # A wh-lead ('What other bikes do I have ...?') is not a yes/no
+    # question even though it carries an aux+I clause — the affirmation
+    # GT cannot answer it. Preamble forms ('Before I purchased ..., do
+    # I have ...?') have no wh word and stay reachable.
+    if _AFFIRM_ELAB_WH_LEAD_RE.search(q[:12]):
+        return False
+    a_toks = re.sub(r"[^a-z0-9 ]", " ", answer.lower()).split()
+    if not a_toks:
+        return False
+
+    def covered(t: str) -> bool:
+        if t in a_toks:
+            return True
+        stem = t[:4]
+        return len(stem) >= 3 and any(p.startswith(stem) for p in a_toks)
+
+    if not all(covered(t) for t in content):
+        return False
+    for h in content:                    # negation window
+        for idx, p in enumerate(a_toks):
+            if not p.startswith(h[:4]):
+                continue
+            window = a_toks[max(0, idx - 6):idx + 7]
+            if any(_BARE_AFFIRM_NEG_RE.fullmatch(w) for w in window):
+                return False
+    for sent in re.split(r"(?<=[.!?])\s+", answer.strip()):
+        if sent.rstrip().endswith("?") and any(
+                re.search(rf"\b{re.escape(h[:4])}", sent.lower())
+                for h in content):
             return False                 # interrogative echo
     return True
 
@@ -2542,7 +2642,8 @@ def judge_semantic(question: str, answer: str, reference: str) -> str:
     if (_sem_paren_acronym_face(r, c) or _sem_place_complement_face(r, c)
             or _sem_paren_complement_face(r, c)
             or _sem_tense_superset_face(r, c)
-            or _sem_bare_affirm_face(question, c, r)):
+            or _sem_bare_affirm_face(question, c, r)
+            or _sem_affirm_elaboration_face(question, c, r)):
         return "CORRECT"
     return "NEEDS_JUDGE"
 
