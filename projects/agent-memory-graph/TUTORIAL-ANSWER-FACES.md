@@ -1,7 +1,7 @@
-# TUTORIAL: Answer Faces — 问题结构驱动的答案选择（Cycles 529-545）
+# TUTORIAL: Answer Faces — 问题结构驱动的答案选择（Cycles 529-548）
 
 > 本文解释 amg 评测管线里最反直觉的一个设计：**答案选哪个句子，不该由"分数阈值"决定，而该由"问题在问什么"决定**。
-> 覆盖 Cycle 529-545 的机制演进（banked 0.494 → 0.526），所有例子都是 LongMemEval s_cleaned full-500 里的真实题目。
+> 覆盖 Cycle 529-548 的机制演进（banked 0.494 → 0.540），所有例子都是 LongMemEval s_cleaned full-500 里的真实题目。
 
 ---
 
@@ -118,9 +118,21 @@
 
 **教训**：RECORD-NEGATIVE 记录的是"此路不通"，不是"此题无解"。复活它的钥匙往往是换一种结构信号，而不是在旧信号上加权重。
 
+### 3.7 C548 cross-session user-statement face — 从证伪的尸体里解剖出新 face
+
+**背景**：C546 用 impostor census 否决了 kh-elite 准入（见 §6）。但同一份杀面数据里藏着一个规律：**潜在 rescue 全部来自 user 行，kill-trigger 全部来自 assistant 行**——伤害与收益的分界不是 kh 高低问题，是**角色**问题。
+
+**face 定义**：当生产排序的胜者是 assistant echo 行，而存在**跨会话**（C526 领地）的 user 第一人称事实句、其问题短语 run **严格更长**（run > win_run，floor 2，复用 C540 的 `_kw_phrase_run` 原语）时，越权 outrank。跨会话 + role=user 是关键护栏：同会话里 assistant 复述用户的话天经地义，kill 面几乎全部来自同会话 assistant 行。
+
+**两遍 census 的对照**：第一遍 plain admission（无 role 门）复现 7/50 kill，确认 C546 判决；加上 role 门后第二遍 **5 RESCUE / 0 KILL / 0 kill-side 触发**（50 行样本）。+6 rescue 0 kill 0 降级（Nike 跑鞋等跨会话用户自述压过 assistant echo 胜者），15 行 banked-neutral churn（pred 变了但仍对）。
+
+**教训**：
+1. **证伪数据是矿，不是垃圾**——C546 关闭方向的同一份 census，解剖出了纯上行 face 的门槛设计。否决机制 ≠ 否决数据。
+2. **live smoke 值得保留**：C525 的 context-split 多行 winner 陷阱（胜者句被拆成多行时匹配错行）在上线冒烟里被抓到，first-line match 修复 + trap test 红先行钉死。
+
 ---
 
-## 4. face 概念的延伸：judge 侧 rescue faces（C541-C545）
+## 4. face 概念的延伸：judge 侧 rescue faces（C541-C547）
 
 前六个 face 都活在 **gate 侧**——改变"选哪句"。C541 起把 face 概念推到 **judge 侧**——改变"判对没判对"。
 
@@ -134,6 +146,7 @@ judge cascade（exact → semantic → LLM）里有一个 NEEDS_JUDGE 区间：e
 | **paren-complement**（C544） | "Head (elaboration)" | head 本身即断言事实，括号只是展开；薄头（`Yes. (You have a road bike too.)`）除外 | c6853660（You increased the limit (from one cup to two cups)） |
 | **tense-superset**（C544） | had/has、was/is、were/are 时态差 | 时态不同 + 严格超集被当成内容不同；要求至少一对时态词实际出现，不放宽既有路径 | 89527b6b（The Plesiosaur had → has a blue scaly body） |
 | **bare-affirm**（C545） | GT 归一化后 = "yes"（bare-Yes） | yes/no 问题 + 叙事式肯定句（"finished reading"）不含 "yes" token → exact/sem 全不中 | b01defab，六门：bare-Yes / auxiliary-initial 疑问 / content 全覆盖 / ≥2 stem hits / 否定窗口 ±6 / 反问 echo 拦截 |
+| **affirm-elaboration**（C547） | "Yes. (You have a road bike too.)" 展开式肯定 | 肯定词 + 事实在延续里；bare-Yes 门够不着（归一化 ≠ "yes"）、薄头排除恰好挡住 → 本 face 是两者的**补集** | 89941a94（road bike），affirm-lead + 极性门 + aux/wh veto + 覆盖 + echo 拦截 |
 
 **为什么这些 face 数学上纯上行**：它们都挂在 NEEDS_JUDGE / subset-veto 分支上——只有已通过 guards 1-2（或已进 NEEDS_JUDGE，且数字/货币守卫先行 return）的行才可达，只可能 NEEDS_JUDGE→CORRECT 或 WRONG→CORRECT，不可能把 CORRECT 改坏。
 
@@ -147,6 +160,8 @@ judge cascade（exact → semantic → LLM）里有一个 NEEDS_JUDGE 区间：e
 **C545 的 tokenizer 课**：bare-affirm 第一遍 census 0 fires 是伪影——问题用单引号 `'The Nightingale'`、pred 用双引号，norm 保留 `'` 造成假 miss。token 化必须去引号（引号样式不是内容）；反向陷阱也要防：`didn't` 归一化拆成 `didn`+`t`，裸 token `t` 恰好只来自缩写，可安全用作否定标记——红灯先行测试抓到的。
 
 另一个教训藏在 C542 的 A/B 基建里：双臂判分公式必须**逐字段同源**（frozen exact vs live exact 混用会伪造 NET-NEGATIVE），且每行对 baseline 做 drift assert——"翻转打印里 verdict 不变的 KILL"是最便宜的露馅信号。
+
+**C547 的收尾课**：接 face 之前先把邻居正式关门——census 显示 WRONG 侧 82/82 是 guard1 数字不相交、14/14 是诚实弃权样本，partial-overlap 31 行逐行审计后，这条矿脉的 WRONG 侧正式关闭。三个肯定式 face（bare-affirm / affirm-elaboration / 薄头 paren-complement 互为补集）合起来，肯定式 GT 的 NEEDS_JUDGE 区没有漏网形态。
 
 ---
 
@@ -182,6 +197,7 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 
 - **C543 kh-floor**：53 行 wrong 里 kh-floor 能救的只有 1 行（containment 巧合），会误杀的却有 14/72 correct 行——~1 救 vs ~14 杀 = NET-NEGATIVE，A/B 都不用跑。
 - **C545 sidechannel 生产化**：#083 离线 @5 recall 18→26/30 看着很美，但 form census 显示 500 题里只有 48 行 hybrid 可能受影响，三臂实验（stored / scFalse-now / scTrue-now）= **25=25=25 net-zero**——检索顺序的变化被 answer gate + judge 通路完全吸收。离线中间指标的提升 ≠ 端到端收益。
+- **C546 kh-elite 准入（窗口组成死区）**：29 行无 GT 死区归因后（16 gt-shape 聚合抽取免疫 + 11 seed-miss + 2 in-candidates），唯一能触及 4 行 viable 的 kh-elite 准入经 impostor census（banked-correct 随机样本）实测 23.3% 杀率（7/30 KILL）vs 4 行救率上限 → NET-NEGATIVE。**impostor census 从此是双向测量**：不只问"能救几行"，先问"会杀几行已对的行"。附带洞见：抽取赢家 = argmax(−kh, −seq)，无 kh 优势的候选资格一文不值 → admission-only 机制全族否决。三连 census-negative（C543 pred 侧 / C545 sidechannel / C546 窗口组成）后，零 LLM 抽取管线的答案门抵达结构天花板——但同一份证伪数据在 C548 解剖出了角色分离 face（§3.7）。
 
 两条配套纪律：
 
@@ -208,7 +224,10 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 | GT 括号展开，头即事实 | paren-complement（judge 侧） | NEEDS_JUDGE→CORRECT + deixis fold | C544 |
 | GT 与 answer 只差时态 | tense-superset（judge 侧） | 时态折叠 + 严格超集 → CORRECT | C544 |
 | GT 就是裸 "yes" | bare-affirm（judge 侧） | 六门全过才 CORRECT，反问 echo 拦截 | C545 |
+| GT 是展开式肯定 Yes. (…) | affirm-elaboration（judge 侧） | bare-affirm 与薄头的补集，NJ→CORRECT | C547 |
+| 跨会话用户自述被 assistant echo 压过 | cross-session user-statement（gate 侧） | role=user + phrase-run 严格优势才 outrank | C548 |
 | kh-floor 想救 kh=0 GT | 🚫 census-negative，不接线 | 1 救 vs 14 杀，absence pin 钉死 | C543 |
+| kh-elite 准入救窗口死区 | 🚫 census-negative，不接线 | impostor 杀率 23.3% vs 4 救，admission-only 全族否决 | C546 |
 | 嵌入 side-channel 重排 | 🚫 census-negative，默认 False | 离线增益被 gate+judge 吸收，pin 死默认值 | C545 |
 
 **六条带走的原则**：
@@ -218,7 +237,8 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 4. face 不止在 gate：judge 侧 NEEDS_JUDGE 区间同样有"写法伪装成内容"的系统性误判可救，且数学上纯上行
 5. fire 的理由要语义正确，不止要 fire——数字等价 ≠ 语义正确（C544 deixis fold）
 6. 离线中间指标的提升不等于端到端收益；下游通路可能吸收全部扰动（C545 net-zero）
+7. 证伪的尸体是矿：关闭方向后别扔 census 数据——杀面的分布里可能藏着让机制起死回生的门（C546 杀面全 assistant → C548 role=user 门）
 
 ---
 
-*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-545 段。*
+*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04；Cycles 546-548 增补：2026-09-05。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-548 段。*

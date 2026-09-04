@@ -66,7 +66,7 @@
 - **拓扑快捷统计** — hub_nodes/peripheral_nodes/mean_degree 一键获取关键结构指标 (Cycle 339)
 - **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 + 噪声鲁棒性测试 (Cycles 326-341)
 - **Temporal QA 家族 (5 路由)** — LongMemEval temporal-reasoning 零 LLM 解法：temporal_arith 日历算术 + pp_duration/pure_tenure 状态时长 + order 排序 + pairwise which-first，form gate + 最早-FRESH 锚定 + 负存在弃权，temporal-133 0.323→0.474 全程 zero-flip (Cycles 457-489)
-- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 破半后持续进化：0.494（Cycles 520-531）→ **0.526**（Cycles 545，答案面家族 + judge 侧 rescue faces，见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)）
+- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 破半后持续进化：0.494（Cycles 520-531）→ **0.540**（Cycles 548，答案面家族 + judge 侧 rescue faces + cross-session 角色分离面，见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)）
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 - **传播激活家族 (5 API)** — ACT-R 认知模型: spreading_activation (基础) → activation_trace (可解释) → competitive_spreading (多种子竞争) → temporal_spreading (时间衰减) → activation_diff (对比分析) (Cycles 366-383)
 - **流式熵追踪** — FINGEREntropy O(Δ) 增量 von Neumann 熵 + StreamingGraph 实时异常检测 (Cycle 361)
@@ -4357,6 +4357,24 @@ Census：face A 3 fires（1 gain）/ face B 31 fires（1 gain），0 假阳性�
 
 - **结果 A（负结果资产）**：队列③（连续两轮推后的队首）生产化实验实质 = 验证 hybrid form 重排对 banked 的端到端价值。form census：500 题 = 393 none + 48 hybrid + 29 embed + 30 abs；**embed 模式结构性 banked-dead**（`pref_abstain=True` 在 ranking 前弃权全部 pref 行）；hybrid 三臂实验（stored / scFalse-now / scTrue-now）= **25=25=25 net-zero**，仅 1 行 pred 变化且仍 NJ。#083 的 offline @5 recall 增益（18→26/30）**不转化为端到端 banked**——检索顺序变了，但 answer gate + judge 通路吸收了全部扰动。`sidechannel` 默认保持 **False**，+2 tests pin 死默认值（默认翻转前必须重读本 census）。工程纪律： TIMI smoke + profile 发现 500 题 = 500 个独立 hay_key（缓存跨题永不命中，冷嵌入 13s/haystack）→ **只跑可能变化面**（48/500 定向，110min→17min）——form 门保证其余 452 行结构性不受影响，定向结论 = 全量结论。
 - **结果 B（+1，纯上行）**：`_sem_bare_affirm_face`——yes/no auxiliary-initial 疑问 + bare-Yes GT（归一化后 = "yes"）族，六门：bare-Yes GT / auxiliary-initial 疑问句 / 问题 content token 全覆盖（exact 或 4-char stem）/ ≥2 stem hits / 否定窗口（hit ±6 token）/ 反问 echo 拦截（含 hit 句以 ? 结尾 → block）。Census：5 行 bare-Yes 全枚举，唯一 fire b01defab（narrative affirmative 'finished reading'），0 FP。两个 tokenizer 教训：①第一遍 census 0 fires 是**引号样式伪影**（问题用单引号 `'The Nightingale'`、pred 用双引号，norm 保留 `'` 造成假 miss）——token 化必须去引号；②红先行测试抓到 `didn't` → `didn`+`t` 拆分——归一化文本中裸 token `t` 只来自缩写，安全作否定标记入 NEG 表。banked **263（0.526）**。套件 10250（+8 bare-affirm +2 sidechannel pin，test_bare_affirm_face.py / test_sidechannel_default_off.py）。
+
+---
+
+## Cycles 546-548: 0.526→0.540 — 答案门收官 + judge 面第 7 发 + cross-session 角色分离面
+
+> 官方口径轨迹：0.526（C545）→ 0.526（C546，census-negative）→ **0.528（C547）** → **0.540（C548）**。本段主轴：**证伪的尸体里解剖出新 face**——C546 用 impostor census 关闭窗口组成死区（admission-only 机制全族否决，答案门三连 census-negative 归因收官），却在杀面数据里发现角色分离（kill-trigger 全部来自 assistant 行），反手提炼成 C548 的 role=user + phrase-run dominance 门槛（+6 rescue / 0 kill）；judge 侧矿脉第 7 发 affirm-elaboration（C547）把 bare-affirm 的 elaborated 表亲补进 NEEDS_JUDGE 区。教程同步更新：[TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)。
+
+#### C546：窗口组成死区归因 + kh-elite impostor census — 答案门收官，admission-only 全族否决 (5b20353)
+
+C543 留下的 29 行无 GT 死区（窗口组成攻击面）最终归因：**16 gt-shape**（干草堆内零语义匹配行——聚合型 GT 是抽取产物，行级管线结构性免疫）+ **11 seed-miss**（GT 存在但从未入候选，其中仅 4 行 GT kh≥窗顶可机械救治，全部是计数/数字题、GT 行 kh 6-9 压窗顶）+ **2 in-candidates kh 劣势**。唯一能触及这 4 行 viable 的机制 kh-elite 准入，经 **impostor census**（30 行 banked-correct 随机样本）实测：8/30 触发、7/30 KILL = **23.3% 杀率**，对 4 行救率上限 → NET-NEGATIVE，C473 temporal flood（36→14）独立佐证。**机制洞见：抽取赢家 = argmax(−kh, −seq)，无 kh 优势的候选资格一文不值**——否决一切 admission-only 机制。至此答案门残余归因完成：**C543（pred 侧）/ C545（sidechannel）/ C546（窗口组成）三连 census-negative，零 LLM 抽取管线抵达结构天花板**。Infra：无限预算 replay 技巧（`max_context_tokens=10⁹` 把 retrieved_ids 变成全排序候选表，零代码重复走生产排序路径）+ 基线逐行 drift assert（C542 live500_head.json 链仍权威）。无代码变更 +0 测试（套件 10250 维持 @7f525f4），台账行入 tsv；C474 期杂物清理（experiment_status.log / memory_graph.py.backup 2.2MB → /tmp/c546/junk/）。
+
+#### C547：judge affirm-elaboration face — 0.528 (3fbc339)
+
+NEEDS_JUDGE 矿脉第 7 发，bare-affirm（C545）的 elaborated 表亲：GT `Yes. (You have a road bike too.)` 类——**展开式肯定**（肯定词 + 延续里点名事实），pred 按内容作答（`my road bike`）。C545 的 bare-Yes 门够不着（GT 归一化后 ≠ "yes"），C544 的薄头排除恰好挡住它——本 face 是两者的**补集**。门槛：affirm-lead + 极性（否定展开弃权）+ aux-anywhere/wh-lead veto + 事实 token 覆盖 + ±6 否定窗口 + echo 拦截；NEEDS_JUDGE-zone only，数学上纯上行。Census 收尾质量：WRONG 侧正式关闭（82/82 = guard1 数字不相交，14/14 诚实弃权样本），partial-overlap 31 行逐行审计。+1 rescue（89941a94）0 kill，banked **263→264（0.528）**。套件 10250→10261（+11，202s）。
+
+#### C548：cross-session user-statement challenge face — 0.540，角色分离 (780b00e)
+
+C546 证伪数据的再利用：impostor census 里潜在 rescue 全部来自 **user** 行、kill-trigger 全部来自 **assistant** 行——伤害与收益的分界不是 kh 高低，是**角色**。face 定义：当生产排序胜者是 assistant echo 行，而存在**跨会话**（C526 领地）user 第一人称事实句、其问题短语 run **严格更长**（run > win_run，floor 2，复用 C540 `_kw_phrase_run` 原语）时，越权 outrank。两遍 census：第一遍 plain admission（无 role 门）复现 7/50 kill，确认 C546 NET-NEGATIVE；加 role 门后第二遍 **5 RESCUE / 0 KILL / 0 kill-side 触发**（50 行样本）。+6 rescue 0 kill 0 降级（c8c3f81d Nike 跑鞋 / 8ebdbe50 / c19f7a0b / gpt4_5dcc0aab / f523d9fe 跨会话用户自述压过 assistant echo 胜者；8fb83627 A/B-only rescue，post-C526 winner），15 行 banked-neutral churn。Live smoke 抓到 C525 context-split 多行 winner 陷阱（胜者句被拆成多行时匹配错行）→ first-line match 修复，trap test 红先行钉死。banked **264→270（0.540）**。套件 10261→10271（+10，219s）。
 
 ---
 

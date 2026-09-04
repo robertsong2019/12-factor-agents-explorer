@@ -52,6 +52,27 @@ A2A 协议以 Task 为中心：
 - 连接 LLM 后端实现智能路由
 - 多 agent 编排（agent A 调用 agent B 的能力）
 
+## 测试（32 用例，零依赖 unittest）
+
+```bash
+python test_a2a_minimal.py        # 或 python -m unittest test_a2a_minimal -v
+```
+
+五个分组：**TaskStore**（5，创建/显式 id/get-missing/状态更新）、**AgentExecutor**（4，echo/reverse、artifact 索引递增、空 parts 完成、unicode 码点反转）、**HTTP E2E**（10，agent card 发现、404、message/send 往返、多轮 taskId 累积、tasks/get -32602、cancel、未知方法 -32601、card 隔离）、**畸形输入**（5）、**服务存活**（1）。
+
+### 稳健性保证：畸形输入不崩连接
+
+`BaseHTTPRequestHandler` 里未捕获异常会直接掐断连接——客户端拿到 `RemoteDisconnected` 而非 JSON-RPC 错误响应。修复后的行为：
+
+| 输入 | 响应 |
+|------|------|
+| 非 JSON / 畸形 JSON | `-32700` Parse error |
+| JSON 数组 / 字符串 / null 等非 dict body | `-32600` Invalid Request |
+| 空 body | `-32700` |
+| 合法 JSON-RPC 但未知方法 | `-32601` Method not found |
+
+每个畸形用例都是先红后修（修前实测连接被提断），另有一枚 server-alive pin：吞垃圾后继续服务正常请求。
+
 ## 参考
 
 - [A2A Protocol Spec](https://github.com/google/A2A)
