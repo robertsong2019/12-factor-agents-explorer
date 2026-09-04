@@ -131,7 +131,25 @@ class A2AHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """JSON-RPC 2.0 端点"""
         length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length))
+        raw = self.rfile.read(length)
+        # 垃圾输入防御：畸形 JSON / 非 object 体必须回 JSON-RPC 错误，
+        # 而不是让 handler 抛异常断连（客户端只见 RemoteDisconnected）。
+        try:
+            body = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._send_json({
+                "jsonrpc": "2.0",
+                "error": {"code": -32700, "message": "Parse error: body is not valid JSON"},
+                "id": None,
+            })
+            return
+        if not isinstance(body, dict):
+            self._send_json({
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "Invalid Request: body must be a JSON object"},
+                "id": None,
+            })
+            return
 
         method = body.get("method", "")
         params = body.get("params", {})
