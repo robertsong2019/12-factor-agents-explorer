@@ -453,6 +453,7 @@ class LongMemEvalAdapter:
                  quant_rerank: bool = True,
                  ku_session_face: bool = True,
                  session_complete_face: bool = True,
+                 user_challenge_face: bool = True,
                  role_answer: bool = True,
                  role_margin: int = 0,
                  acq_face: bool = True,
@@ -555,6 +556,7 @@ class LongMemEvalAdapter:
         self.quant_rerank = quant_rerank
         self.ku_session_face = ku_session_face
         self.session_complete_face = session_complete_face
+        self.user_challenge_face = user_challenge_face
         # Cycle 528: read-only recall in the eval path — retrieval
         # becomes a pure function of the ingested graph (no wall-clock
         # decay, no access-boost writes). Root-cause fix for the
@@ -1483,6 +1485,19 @@ class LongMemEvalAdapter:
                                  and best_n["body"] != face_body)}
             if meta["session_complete_face"]["override"]:
                 best_line = f"[{best_n['role']}] {best_n['body']}"
+        # C548: cross-session user-statement challenge face. Runs
+        # AFTER session_complete_face (same-session repair is C526's
+        # territory — claimed first, C482/C488) and BEFORE the
+        # opener floor / acquisition face (the specialized downstream
+        # faces still own their forms on a promoted line).
+        if self.user_challenge_face:
+            kws_c = meta.get("keywords") or _keywords(question)
+            uc_line, uc_detail = answer_user_challenge(
+                best_line, meta.get("retrieved_ids") or [],
+                self._messages, kws_c)
+            meta["user_challenge_face"] = uc_detail
+            if uc_line is not None:
+                best_line = uc_line
         # C539: opener demotion floor. Runs BEFORE the acquisition
         # face (most form-specific claims last, C482/C488): the floor
         # only demotes hand-over-shaped winners for a strictly-better
@@ -3471,6 +3486,85 @@ _WHO_CONV_FORM_RE = re.compile(
 _WHO_CONV_STATEMENT_RE = re.compile(
     r"\bmy\s+(?:conversation|chat|discussion)\s+with\b"
     r"|\bi\s+(?:talked|spoke|chatted)\s+(?:to|with)\b", re.I)
+
+
+def answer_user_challenge(best_line: str,
+                          retrieved_ids: list,
+                          messages: dict,
+                          kws: list) -> tuple[str | None, dict]:
+    """C548: cross-session user-statement challenge face.
+
+    The LAST pred-side vein after C546's kh-elite falsification. A
+    line OUTSIDE the retrieval window that outranks the current
+    winner under the production ranking (-hits, -seq) is promoted
+    ONLY when it passes all three census-separated gates:
+
+      (a) role == "user" — personal-fact answers are asserted by the
+          user; assistant empathy preambles/echoes are exactly the
+          C546 impostor family (first census pass: 2/2 kill-side
+          triggers were assistant lines, all 5 rescues user lines);
+      (b) cross-session — same-session repair is C526's territory;
+          its unscoped variant hijacked ONLY cross-session;
+      (c) phrase-run dominance — _kw_phrase_run(challenger) beats
+          the winner's with floor 2 (C540 primitive: the question's
+          own contiguous phrase is GT evidence bag-of-hits lacks).
+
+    Census (/tmp/c548/census_user.py, 187 answer-gate rows: 50
+    banked-correct seed-7 sample + all 137 banked-wrong): 5 RESCUE
+    (c8c3f81d, 8ebdbe50, c19f7a0b, gpt4_5dcc0aab, f523d9fe) / 0 KILL
+    / 0 kill-side triggers of 50. Plain admission without (a)-(c)
+    is C546's NET-NEGATIVE 14%-kill — the gates ARE the result, not
+    decoration.
+    """
+    face_body = best_line.split("] ", 1)[-1]
+    win_ids = set(retrieved_ids or [])
+    # C525 lesson: context.split("\n") maps lines 1:1 onto window
+    # messages EXCEPT multi-paragraph labels — lines[0] is then the
+    # winner's FIRST line (the C526 face no-ops there by exact
+    # match). Match on the label's first line so the face still
+    # sees the winner; the outrank/run comparison stays on the
+    # first-line evidence exactly as censused (stored preds ARE
+    # first lines).
+    win_info = next((messages[nid] for nid in retrieved_ids or []
+                     if nid in messages
+                     and messages[nid].get("label", "").split(
+                         "\n", 1)[0] == face_body),
+                    None)
+    detail = {"face_found": win_info is not None, "override": False}
+    if win_info is None:
+        return None, detail
+    win_kh = _keyword_hits(face_body, kws)
+    win_run = _kw_phrase_run(face_body, kws)
+    win_seq = win_info.get("seq") or 0
+    win_sid = win_info.get("session_id")
+    detail.update({"win_kh": win_kh, "win_run": win_run,
+                   "win_session": win_sid})
+    best_n = None
+    for nid, info in messages.items():
+        if nid in win_ids or info.get("role") != "user":
+            continue
+        if win_sid is not None and info.get("session_id") == win_sid:
+            continue
+        body = info.get("label", "")
+        kh = _keyword_hits(body, kws)
+        if not (kh > win_kh
+                or (kh == win_kh and (info.get("seq") or 0) > win_seq)):
+            continue
+        run = _kw_phrase_run(body, kws)
+        if run <= win_run or run < 2:
+            continue
+        if (best_n is None or kh > best_n["kh"]
+                or (kh == best_n["kh"]
+                    and (info.get("seq") or 0) > best_n["seq"])):
+            best_n = {"body": body, "kh": kh,
+                      "seq": info.get("seq") or 0, "run": run,
+                      "session_id": info.get("session_id")}
+    detail.update({"candidate_kh": best_n["kh"] if best_n else 0,
+                   "candidate_run": best_n["run"] if best_n else 0,
+                   "override": best_n is not None})
+    if best_n is None:
+        return None, detail
+    return f"[user] {best_n['body']}", detail
 
 
 def answer_opener_floor(best_line: str, lines: list[str],
