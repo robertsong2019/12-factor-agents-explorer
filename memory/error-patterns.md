@@ -149,3 +149,10 @@
 - **修正：** git show HEAD~1 恢复全部历史 + 追加新行（ed54b8b）
 - **规则：** 任何"记录/新建"类 write 前，先 `[ -f file ] || ls 同名文件`；对带历史的台账文件一律 append 而非 overwrite
 - **出现次数：** 1
+
+### [2026-09-05] 脚本内 os.environ.setdefault("PYTHONHASHSEED") 是 no-op（钉种子假阳性）
+- **场景：** amg C549 kd 循环，exec preflight 拒绝 `PYTHONHASHSEED=7 python3 ...` env 前缀形式，改用脚本内 `os.environ.setdefault` 兜底
+- **错误：** hash 随机化在解释器启动时固化，运行中 setdefault 完全无效——step2 全量普查在未播种状态下跑，与 C548 seeded 产物（ab500.json）并排比较时存在 tie-jitter 风险（e61a7584 分类漂移疑似同源）
+- **根因：** 把「设置环境变量」当成即时生效的开关；C548 期 ab500.py/census_user.py 等脚本同样带此模式（靠外部 env 前缀救了，但脚本本身是假钉）
+- **修正：** 脚本顶部 self-re-exec：`if os.environ.get("PYTHONHASHSEED") != "7": os.execve(sys.executable, [sys.executable, __file__], {**os.environ, "PYTHONHASHSEED": "7"})`（step3 起）；ledger assert 270 双跑一致，结论未受污染
+- **出现次数：** 1；规则：任何「钉种子」脚本用 env 前缀或 self-re-exec，脚本内 setdefault 视为假钉；跨 run 比对前先验两侧播种方式一致
