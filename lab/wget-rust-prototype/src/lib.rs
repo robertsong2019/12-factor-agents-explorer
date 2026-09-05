@@ -94,7 +94,9 @@ pub mod dns_resolver {
     }
 
     /// 使用 tokio 的异步解析能力解析主机。
+    /// URL 语法中的 IPv6 主机带方括号（[::1]），getaddrinfo 只认裸地址——先归一化再解析。
     pub async fn resolve(host: &str, port: u16) -> Result<ResolvedEndpoint> {
+        let host = host.trim_start_matches('[').trim_end_matches(']');
         let addresses = tokio::net::lookup_host((host, port))
             .await
             .with_context(|| format!("DNS 解析失败: {host}:{port}"))?
@@ -339,6 +341,7 @@ pub fn output_path(parsed_url: &ParsedUrl, explicit_output: Option<PathBuf>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser as _;
 
     #[test]
     fn parses_http_and_https_urls() {
@@ -408,7 +411,7 @@ mod tests {
     #[test]
     fn ipv6_host_keeps_brackets() {
         // url crate 的 host_str 保留方括号（[::1]）；下载路径把完整 URL 交给 reqwest，无影响。
-        // 已知潜在债：dns_resolver::resolve 若收到带方括号的主机名会解析失败（当前无调用方）。
+        // 方括号由 dns_resolver::resolve 归一化剥除（main.rs 下载前置 DNS 检查的调用方）。
         let parsed = ParsedUrl::parse("http://[::1]:9000/x").unwrap();
 
         assert_eq!(parsed.host().unwrap(), "[::1]");
@@ -436,5 +439,58 @@ mod tests {
 
         assert_eq!(http.port_or_default().unwrap(), 80);
         assert_eq!(https.port_or_default().unwrap(), 443);
+    }
+
+    #[tokio::test]
+    async fn dns_resolver_accepts_bracketed_ipv6() {
+        // main.rs 下载前置 DNS 检查把 ParsedUrl::host()（IPv6 带方括号）直接传进来；
+        // getaddrinfo 只认裸地址，修复前 [::1] 会 EAI_NONAME。
+        let ep = dns_resolver::resolve("[::1]", 80).await.unwrap();
+
+        assert_eq!(ep.host, "::1", "归一化后方括号应剥除");
+        assert_eq!(ep.port, 80);
+        assert!(!ep.addresses.is_empty());
+        assert!(ep.addresses.iter().any(|a| a.ip() == std::net::Ipv6Addr::LOCALHOST));
+    }
+
+    #[tokio::test]
+    async fn dns_resolver_resolves_ip_literal_without_dns() {
+        let ep = dns_resolver::resolve("127.0.0.1", 443).await.unwrap();
+
+        assert_eq!(ep.host, "127.0.0.1");
+        assert_eq!(ep.addresses.len(), 1);
+        assert_eq!(ep.addresses[0].to_string(), "127.0.0.1:443");
+    }
+
+    #[test]
+    fn cli_defaults_are_sane() {
+        let cli = cli::Cli::try_parse_from(["mini-wget", "http://example.com/f.bin"]).unwrap();
+
+        assert_eq!(cli.url, "http://example.com/f.bin");
+        assert_eq!(cli.output_file, None);
+        assert!(!cli.resume);
+        assert_eq!(cli.timeout, 30);
+        assert_eq!(cli.retries, 3);
+    }
+
+    #[test]
+    fn cli_flags_parse() {
+        let cli = cli::Cli::try_parse_from([
+            "mini-wget",
+            "http://example.com/f.bin",
+            "-o",
+            "out.bin",
+            "--resume",
+            "--timeout",
+            "10",
+            "--retries",
+            "5",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.output_file, Some(PathBuf::from("out.bin")));
+        assert!(cli.resume);
+        assert_eq!(cli.timeout, 10);
+        assert_eq!(cli.retries, 5);
     }
 }

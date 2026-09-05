@@ -11,8 +11,6 @@ use std::time::Duration;
 use wget_rust::downloader::DownloadConfig;
 use wget_rust::{Downloader, ParsedUrl};
 
-type Handler = Box<dyn Fn(usize, &str, &HashMap<String, String>) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync>;
-
 struct ServerHandle {
     port: u16,
     requests: Arc<AtomicUsize>,
