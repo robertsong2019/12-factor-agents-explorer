@@ -22,6 +22,19 @@ window line of a multi-paragraph message is its FIRST line only;
 the face must match the winner on the label's first line (live
 smoke on c19f7a0b/f523d9fe caught face_found=False before the
 fix — this test was red before the first-line fix landed).
+
+C549 absence pins (census /tmp/c549, 0.540 chain, wrong 218 =
+131 answer-gate + 87 non-answer-gate): every run-gate relaxation
+with rescue upside is NET-NEGATIVE — R-tie (run >= win_run) +8
+rescues vs 2 KILLs of 9 triggers, R-norun +15 vs 3 KILLs of 15
+(the run-dominance gate IS the kill-blocker); R-f1 is a no-op.
+The two live impostors behind every kill (e66b632c, 10e09553)
+are run-TIE shapes: run == win_run with kh dominance — exactly
+what the strict `run > win_run` comparator excludes. The two
+run-tie pins below go red under any such relaxation. The C526
+claimed-first pin freezes the e61a7584 contract: a C526-promoted
+same-session winner is a NON-window line, so the challenge face
+bails (face_found=False) rather than hijacking the repair.
 """
 import os
 import sys
@@ -230,6 +243,80 @@ class TestUserChallengeFace(unittest.TestCase):
         self.assertGreaterEqual(len(kws), 3)
         self.assertEqual(_keyword_hits(WINNER, kws), 3)
         self.assertEqual(_keyword_hits(CHALLENGER, kws), 4)
+
+    # ── C549 absence pins: run-gate relaxations are NET-NEGATIVE ──
+
+    WINNER2 = ("The size tent you bought for camping trips "
+               "sounds perfect.")   # assistant, kh=3, run=2
+
+    def _build_winner2(self, challenger):
+        a = LongMemEvalAdapter()
+        a.ingest_sessions([
+            {"session_id": "s1", "messages": [
+                turn("assistant", self.WINNER2)]},
+            {"session_id": "s2", "messages": [
+                turn("user", challenger)]},
+        ])
+        return drop_from_window(a, challenger)
+
+    def test_run_tie_impostor_blocked(self):
+        # e66b632c/10e09553 shape (C549 census): user cross-session
+        # line outranks via kh-tie + later-seq and carries a 2-run
+        # EQUAL to the winner's — the strict `run > win_run`
+        # dominance comparator blocks it. RED under any R-tie
+        # relaxation (run >= win_run): +8 rescues but 2 KILLs / 9
+        # triggers = NET-NEGATIVE, the gate is the result.
+        tie = "Yes, the size tent for our camping trip arrived."
+        a = self._build_winner2(tie)   # kh=3 tie, run=2 == win_run
+        ans, meta = a.answer_extractive(Q, "")
+        self.assertEqual(ans, self.WINNER2)
+        self.assertFalse(meta["user_challenge_face"]["override"])
+
+    def test_run_tie_kh_strict_blocked(self):
+        # strict-tie2 variant (C549 census: +4 rescues, 2 KILLs of 6
+        # triggers, 33% impostor rate): kh STRICTLY above the winner
+        # must not buy a run tie past the dominance gate either.
+        strict = ("What size tent did you buy for camping trips?"
+                  )                  # user echo, kh=4, run=2 tie
+        a = self._build_winner2(strict)
+        ans, meta = a.answer_extractive(Q, "")
+        self.assertEqual(ans, self.WINNER2)
+        self.assertFalse(meta["user_challenge_face"]["override"])
+
+    def test_c526_claimed_first_bails_challenge(self):
+        # e61a7584 contract (C549 census): when session_complete_face
+        # promotes a NON-window same-session line, the challenge face
+        # cannot see that winner among retrieved_ids and must BAIL
+        # (face_found=False) — same-session repair is C526's
+        # territory, claimed first. A cross-session challenger that
+        # would outrank the C526 winner must NOT hijack the repair.
+        a = LongMemEvalAdapter()
+        a.ingest_sessions([
+            {"session_id": "s2", "messages": [
+                turn("assistant", OTHER)]},
+            {"session_id": "s1", "messages": [
+                turn("user", "I completed another marathon this "
+                     "week and the pacing felt good."),
+                turn("user", "The spring trail last month was "
+                     "absolutely beautiful.")]},
+            {"session_id": "s3", "messages": [
+                turn("user", "I joined the running club last "
+                     "spring and love it.")]},
+        ])
+        drop_from_window(a, "The spring trail last month was "
+                            "absolutely beautiful.")
+        drop_from_window(a, "I joined the running club last spring "
+                            "and love it.")
+        ans, meta = a.answer_extractive(
+            "How many marathons have I finished since joining the "
+            "running club last spring?", "")
+        self.assertEqual(
+            ans, "The spring trail last month was absolutely "
+                 "beautiful.")
+        self.assertTrue(meta["session_complete_face"]["override"])
+        uc = meta["user_challenge_face"]
+        self.assertFalse(uc["face_found"])
+        self.assertFalse(uc["override"])
 
 
 def _kw_phrase_run_guard(label):
