@@ -111,7 +111,14 @@ class TestQuantRerank(unittest.TestCase):
                                   "sort your playlists into folders."),
             ]}]
         ans, meta = self._answer(
-            hay=hay, q="How many playlists do I have on Spotify?")
+            hay=hay, counting=False,
+            q="How many playlists do I have on Spotify?")
+        # C550: counting=False because this question is enum_count-
+        # claimable and the user turn carries a digit statement
+        # ("around 20 playlists") — at the production default the
+        # qty-stated face now answers "20" (user fact over assistant
+        # echo; see test_qty_stated_face). counting=False keeps this
+        # test pinned to the C523 top-with-number guard no-op.
         self.assertNotIn("quant_rerank", meta)
         self.assertIn("50", ans)
 
@@ -167,6 +174,12 @@ class TestQuantRerank(unittest.TestCase):
     def test_recency_tiebreak_latest_message_wins(self):
         # two number-bearing user lines with equal hits: strict `>`
         # keeps the first in ranked (-hits, -seq) order → the LATEST
+        # C550: this question is enum_count-claimable, so at the
+        # production default (counting=True) the qty-stated face now
+        # answers it at the counting gate with the same recency
+        # semantics (test_qty_stated_face.test_recency_latest_wins
+        # pins that pathway). counting=False keeps THIS test pinned
+        # to the quant_rerank mechanism it exists to test.
         hay = [{
             "session_id": "s1",
             "messages": [
@@ -180,7 +193,7 @@ class TestQuantRerank(unittest.TestCase):
                                   "content grow the account fast."),
             ]}]
         ans, meta = self._answer(
-            hay=hay,
+            hay=hay, counting=False,
             q="How many followers do I have on my Instagram "
               "food account?")
         self.assertTrue(meta["quant_rerank"]["override"])

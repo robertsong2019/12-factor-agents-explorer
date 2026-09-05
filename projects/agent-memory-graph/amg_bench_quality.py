@@ -9238,6 +9238,61 @@ def _cnt_age_diff(question: str, sessions: list[dict]):
     return None
 
 
+def _cnt_qty_stated(question: str, sessions: list[dict]) -> str | None:
+    """C550: explicit digit-quantity statements about the question's
+    head noun (``600 followers``, ``15 crash course videos``).
+
+    Census /tmp/c550 (2026-09-06, full-500 enum_count population = 10
+    rows): 3 RESCUE / 0 KILL / 7 no-fire. Digits-only — word numerals
+    are determiner poison here ("a baby", "one tank" = article usage,
+    not counts; the naive all-numerals variant simulated 14 KILLs and
+    was falsified pre-wiring). Recency: the LATEST user turn carrying
+    a digit mention wins (current-state questions); coordinated
+    questions (and/both/combined) SUM distinct values (5 tomato +
+    3 cucumber plants = 8). Non-candidate turns still scan clauses
+    carrying the head stem — evidence often drops the topic word
+    ("now at 600 followers" without "Instagram").
+    """
+    np_words = _enum_np(question)
+    if not np_words:
+        return None
+    stems = [_enum_stem(w) for w in np_words]
+    hstem = _enum_stem(np_words[-1])
+    pat = re.compile(r'(\d+(?:,\d{3})*)(?=(?:\s+\w+){0,3}?\s+'
+                     + re.escape(hstem) + r'\w*)')
+    # lookahead (non-consuming) so multiple values ahead of one head
+    # noun are all seen — "40 or 50 followers" must abstain, not
+    # resolve to whichever number the consuming scan anchored first
+    mentions: list[tuple[int, float]] = []
+    seq = 0
+    for s in sessions:
+        for t in s.get('turns', []):
+            content = t.get('content', '')
+            if t.get('role') != 'user' or len(content) <= 3:
+                continue
+            cand = any(st in content.lower() for st in stems)
+            for cl in re.split(r'[.;!?]', content):
+                cl_l = cl.lower()
+                if not cand and hstem not in cl_l:
+                    continue
+                for m in pat.finditer(cl_l):
+                    mentions.append(
+                        (seq, float(m.group(1).replace(',', ''))))
+            seq += 1
+    if not mentions:
+        return None
+    ql = question.lower()
+    if re.search(r'\b(?:and|both|combined)\b', ql):
+        total = sum({v for _, v in mentions})
+        return str(int(total)) if total == int(total) else str(total)
+    latest = max(s for s, _ in mentions)
+    vals = {v for s, v in mentions if s == latest}
+    if len(vals) != 1:
+        return None          # same-turn ambiguity: honest abstention
+    v = vals.pop()
+    return str(int(v)) if v == int(v) else str(v)
+
+
 def _cnt_enum_count(question: str, sessions: list[dict]):
     """Enumeration-signature count (#084 v5.2 oracle parity 4/4).
 
@@ -9253,6 +9308,15 @@ def _cnt_enum_count(question: str, sessions: list[dict]):
         return None
     if not _enum_form_gate(question.lower(), np_words):
         return None
+    # C550: an explicit digit-quantity statement about the head noun
+    # ("600 followers", "15 crash course videos") outranks signature
+    # counting — the names/roles signature leaks the topic itself as
+    # an instance ("crash course" counted = 1). Census-validated
+    # 3 RESCUE / 0 KILL; runs after the form gate so the claim scope
+    # is unchanged.
+    qty = _cnt_qty_stated(question, sessions)
+    if qty is not None:
+        return qty
     stems = [_enum_stem(w) for w in np_words]
     all_names: set[str] = set()
     all_roles: set[str] = set()
