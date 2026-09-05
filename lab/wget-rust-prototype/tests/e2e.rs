@@ -59,12 +59,16 @@ fn read_request(stream: &mut TcpStream) -> Option<(String, HashMap<String, Strin
     Some((request_line, headers))
 }
 
-fn spawn_server(handler: impl Fn(usize, &str, &HashMap<String, String>) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync + 'static) -> ServerHandle {
+fn spawn_server(
+    handler: impl Fn(usize, &str, &HashMap<String, String>) -> (u16, Vec<(String, String)>, Vec<u8>, Option<u64>) + Send + Sync + 'static,
+) -> ServerHandle {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind 127.0.0.1:0");
     let port = listener.local_addr().unwrap().port();
     let requests = Arc::new(AtomicUsize::new(0));
     let counter = requests.clone();
-    let handler: Arc<dyn Fn(usize, &str, &HashMap<String, String>) -> (u16, Vec<(String, String)>, Vec<u8>) + Send + Sync> = Arc::new(handler);
+    let handler: Arc<
+        dyn Fn(usize, &str, &HashMap<String, String>) -> (u16, Vec<(String, String)>, Vec<u8>, Option<u64>) + Send + Sync,
+    > = Arc::new(handler);
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { break };
@@ -73,11 +77,12 @@ fn spawn_server(handler: impl Fn(usize, &str, &HashMap<String, String>) -> (u16,
             std::thread::spawn(move || {
                 let Some((raw, headers)) = read_request(&mut stream) else { return };
                 let n = counter.fetch_add(1, Ordering::SeqCst);
-                let (status, extra, body) = handler(n, &raw, &headers);
+                let (status, extra, body, declared_len) = handler(n, &raw, &headers);
+                // declared_len 允许谎报 Content-Length（模拟「声明 11 字节实际只送 5 字节」的流中断）。
                 let mut resp = format!(
                     "HTTP/1.1 {status} {}\r\nConnection: close\r\nContent-Length: {}\r\n",
                     reason(status),
-                    body.len()
+                    declared_len.unwrap_or(body.len() as u64)
                 );
                 for (k, v) in extra {
                     resp.push_str(&format!("{k}: {v}\r\n"));
@@ -131,7 +136,7 @@ async fn downloads_full_body_without_range() {
         assert_eq!(n, 0);
         assert!(raw.starts_with("GET /data.txt"));
         assert!(!headers.contains_key("range"), "非续传请求不应携带 Range");
-        (200, vec![], FULL_BODY.to_vec())
+        (200, vec![], FULL_BODY.to_vec(), None)
     });
 
     let cfg = config_for(&format!("http://127.0.0.1:{}/data.txt", server.port), &out, false, 0);
@@ -152,6 +157,7 @@ async fn resume_sends_range_and_appends_partial_content() {
             206,
             vec![("Content-Range".into(), "bytes 3-10/11".into())],
             b"lo world".to_vec(),
+            None,
         )
     });
 
@@ -169,7 +175,7 @@ async fn server_ignoring_range_truncates_and_redownloads() {
     let server = spawn_server(move |_, _, headers| {
         // 服务器不支持 Range：忽略请求头，返回 200 完整内容。
         assert!(headers.contains_key("range"));
-        (200, vec![], FULL_BODY.to_vec())
+        (200, vec![], FULL_BODY.to_vec(), None)
     });
 
     let cfg = config_for(&format!("http://127.0.0.1:{}/data.txt", server.port), &out, true, 0);
@@ -187,7 +193,7 @@ async fn server_ignoring_range_truncates_and_redownloads() {
 async fn non_resume_overwrites_existing_longer_file() {
     let out = temp_file("overwrite");
     write_file(&out, b"OLD CONTENT THAT IS LONGER THAN BODY");
-    let server = spawn_server(|_, _, _| (200, vec![], b"hi".to_vec()));
+    let server = spawn_server(|_, _, _| (200, vec![], b"hi".to_vec(), None));
 
     let cfg = config_for(&format!("http://127.0.0.1:{}/data.txt", server.port), &out, false, 0);
     run_download(&cfg).await.expect("overwrite ok");
@@ -199,7 +205,7 @@ async fn non_resume_overwrites_existing_longer_file() {
 #[tokio::test]
 async fn error_status_retries_then_bails() {
     let out = temp_file("retry_exhaust");
-    let server = spawn_server(|_, _, _| (404, vec![], b"nope".to_vec()));
+    let server = spawn_server(|_, _, _| (404, vec![], b"nope".to_vec(), None));
 
     let cfg = config_for(&format!("http://127.0.0.1:{}/data.txt", server.port), &out, false, 1);
     let err = run_download(&cfg).await.expect_err("must fail after retries");
@@ -214,9 +220,9 @@ async fn transient_failure_then_success_within_retries() {
     let out = temp_file("retry_recover");
     let server = spawn_server(|n, _, _| {
         if n == 0 {
-            (500, vec![], b"boom".to_vec())
+            (500, vec![], b"boom".to_vec(), None)
         } else {
-            (200, vec![], b"ok".to_vec())
+            (200, vec![], b"ok".to_vec(), None)
         }
     });
 
@@ -224,6 +230,28 @@ async fn transient_failure_then_success_within_retries() {
     run_download(&cfg).await.expect("transient failure must recover");
 
     assert_eq!(read_file(&out), b"ok");
+    assert_eq!(server.request_count(), 2);
+    let _ = std::fs::remove_file(&out);
+}
+
+#[tokio::test]
+async fn mid_stream_disconnect_recovers_via_retry() {
+    // 第 1 次请求：头部声明完整长度但中途断开（流错误，非状态错误）；
+    // 第 2 次请求：完整响应。retries=1 必须恢复且文件为完整内容。
+    let out = temp_file("mid_stream");
+    let server = spawn_server(|n, _, _| {
+        if n == 0 {
+            // 声明 11 字节但只送 5 字节后断开（declared_len 谎报长度）
+            (200, vec![], FULL_BODY[..5].to_vec(), Some(11))
+        } else {
+            (200, vec![], FULL_BODY.to_vec(), None)
+        }
+    });
+
+    let cfg = config_for(&format!("http://127.0.0.1:{}/data.txt", server.port), &out, false, 1);
+    run_download(&cfg).await.expect("流中断必须通过重试恢复");
+
+    assert_eq!(read_file(&out), FULL_BODY, "重试后重下不得残留半截内容");
     assert_eq!(server.request_count(), 2);
     let _ = std::fs::remove_file(&out);
 }
@@ -240,6 +268,7 @@ async fn resume_of_complete_file_treats_416_as_done() {
             416,
             vec![("Content-Range".into(), "bytes */11".into())],
             b"".to_vec(),
+            None,
         )
     });
 
@@ -260,6 +289,7 @@ async fn resume_416_with_length_mismatch_is_stale_file_error() {
             416,
             vec![("Content-Range".into(), "bytes */11".into())],
             b"".to_vec(),
+            None,
         )
     });
 
