@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::StreamExt;
-use reqwest::header::{CONTENT_LENGTH, RANGE};
+use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
@@ -250,13 +250,36 @@ pub mod downloader {
                 .await?;
 
             let status = response.status();
+            let ranged = config.resume && existing_len > 0;
+            if ranged && status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+                // 服务器拒绝 Range：要么本地文件已覆盖整个资源（视为完成，GNU wget 语义），
+                // 要么本地长度与服务器资源不一致（陈旧文件，报错比静默成功更安全）。
+                let total_from_server = response
+                    .headers()
+                    .get(CONTENT_RANGE)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.rsplit('/').next())
+                    .and_then(|value| value.parse::<u64>().ok());
+                match total_from_server {
+                    Some(total) if total != existing_len => bail!(
+                        "断点续传校验失败: 本地 {} 字节，服务器资源 {} 字节",
+                        existing_len,
+                        total
+                    ),
+                    _ => {
+                        let progress =
+                            crate::progress::DownloadProgress::new(Some(existing_len), existing_len);
+                        progress.finish(&config.output_file);
+                        return Ok(());
+                    }
+                }
+            }
             if !status.is_success() {
                 bail!("服务器返回错误状态: {status}");
             }
 
-            let append =
-                config.resume && existing_len > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT;
-            if config.resume && existing_len > 0 && !append {
+            let append = ranged && status == reqwest::StatusCode::PARTIAL_CONTENT;
+            if ranged && !append {
                 // 服务器忽略 Range 时从头重下，避免把完整响应追加到旧文件后面。
                 fs::remove_file(&config.output_file).await.ok();
             }
