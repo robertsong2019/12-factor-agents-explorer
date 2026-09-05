@@ -76,7 +76,7 @@ class EvolutionEngine:
                 ids = [str(uuid.uuid4()) for _ in range(count)]
                 return json.dumps({"uuids": ids, "count": count})
         """),
-        "base64_tool": textwrap.dedent("""\
+        "base64_encode": textwrap.dedent("""\
             import base64
             def base64_encode(text: str) -> str:
                 encoded = base64.b64encode(text.encode()).decode()
@@ -127,7 +127,12 @@ class SelfEvolvingAgent:
 
     def evolve(self, spec: str) -> str:
         """Generate and register a new tool from spec."""
-        tool = self.engine.generate(spec)
+        if not spec:
+            return "❌ Invalid spec: empty"
+        try:
+            tool = self.engine.generate(spec)
+        except SyntaxError as e:
+            return f"❌ Failed to evolve '{spec}': generated code is not valid Python ({e.msg})"
 
         if tool.name in self.tools:
             tool.generation = self.tools[tool.name].generation + 1
