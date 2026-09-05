@@ -1,11 +1,18 @@
 """Cycle 472 tests: temporal anchor-targeted full-graph fallback.
 
-Window-first anchoring (C457/471) is preserved; when the window
-misses an anchor line that the ingested graph contains, the temporal
-path retries against ALL messages and flags ``fallback:
-"full_graph"`` for telemetry. Forensics: 6/37 anchor-missed questions
-resolve on the full haystack (6/6 correct); the other 31 are a
-lexical wall (anchor entities never appear verbatim in the haystack).
+C551 UPDATE: the production DEFAULT is now full-graph-first
+(one resolution call on the complete candidate set; telemetry
+``fallback: "fullgraph_first"``) — see test_temporal_fullgraph.py.
+The C472 window-first + retry mechanism these tests pin lives behind
+``temporal_fullgraph=False`` and stays pinned here red-verified.
+
+Window-first anchoring (C457/471) is preserved on the legacy path;
+when the window misses an anchor line that the ingested graph
+contains, the temporal path retries against ALL messages and flags
+``fallback: "full_graph"`` for telemetry. Forensics: 6/37
+anchor-missed questions resolve on the full haystack (6/6 correct);
+the other 31 are a lexical wall (anchor entities never appear
+verbatim in the haystack).
 """
 import unittest
 
@@ -35,6 +42,9 @@ CROWD_FIRST = [
 
 class TestTemporalFullGraphFallback(unittest.TestCase):
     def _adapter(self, sessions, dates, **kw):
+        # C551: these are LEGACY-path pins — build every adapter on
+        # the flag-off (window-first + C472 retry) mechanism.
+        kw.setdefault("temporal_fullgraph", False)
         kw.setdefault("max_context_tokens", 40)   # ~2 lines fit
         a = LongMemEvalAdapter(**kw)
         a.ingest_sessions(

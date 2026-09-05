@@ -442,6 +442,7 @@ class LongMemEvalAdapter:
                  abstain_entropy: float | None = 0.95,
                  entropy_weak_score: int = 1,
                  temporal_arith: bool = True,
+                 temporal_fullgraph: bool = True,
                  counting: bool = True,
                  pp_duration: bool = True,
                  order_sort: bool = True,
@@ -539,6 +540,17 @@ class LongMemEvalAdapter:
         self.abstain_entropy = abstain_entropy
         self.entropy_weak_score = entropy_weak_score
         self.temporal_arith = temporal_arith
+        # C551: resolve temporal anchors on the FULL graph first.
+        # Census-first over the 46-row temporal population: window
+        # resolution loses 4 rows to distractor-corpus crowding
+        # (Tribunal-style noise lines lexically mirror the question
+        # harder than the true event line, and the true line sits
+        # outside the retrieval top-k) while the C471 tie ladder
+        # picks the true event lines when it can see the full
+        # candidate set — +4 rescue / 0 kill (33 currently-correct
+        # rows byte-identical). C472's window-first caution is
+        # empirically dead here; flag-off restores it.
+        self.temporal_fullgraph = temporal_fullgraph
         self.counting = counting
         self.pp_duration = pp_duration
         self.order_sort = order_sort
@@ -1042,26 +1054,32 @@ class LongMemEvalAdapter:
                          self._nodes[nid]["session_id"], ""))
                     for nid in nids if nid in self._nodes]
 
-            t_ans, t_detail = answer_temporal_arith(
-                question, _dated(meta.get("retrieved_ids", [])),
-                question_date)
-            if t_ans is None and t_detail.get("form"):
-                # Cycle 472: full-graph anchor retry. When the window
-                # cannot resolve the form (missing anchors OR both
-                # anchors landing on the same session — the dominant
-                # failure: assistant advice lines that lexically
-                # mirror the question crowd out the true event lines
-                # and collapse both anchors onto one wrong session),
-                # retry against ALL ingested messages where the C471
-                # tie ladder has the full candidate set. Window-first
-                # is preserved: an in-window answer is never second-
-                # guessed; walls that persist on the full graph
-                # still fall through untouched (C472 A/B: the 4
-                # prev-correct same-session cases stay None).
+            if self.temporal_fullgraph:
+                # C551: full-graph-first anchor resolution — one call
+                # on the complete candidate set (see flag comment).
                 t_ans, t_detail = answer_temporal_arith(
                     question, _dated(self._messages), question_date)
                 if t_ans is not None:
-                    t_detail["fallback"] = "full_graph"
+                    t_detail["fallback"] = "fullgraph_first"
+            else:
+                t_ans, t_detail = answer_temporal_arith(
+                    question, _dated(meta.get("retrieved_ids", [])),
+                    question_date)
+                if t_ans is None and t_detail.get("form"):
+                    # Cycle 472: full-graph anchor retry (flag-off
+                    # legacy path). When the window cannot resolve the
+                    # form (missing anchors OR both anchors landing on
+                    # the same session — the dominant failure: assistant
+                    # advice lines that lexically mirror the question
+                    # crowd out the true event lines and collapse both
+                    # anchors onto one wrong session), retry against ALL
+                    # ingested messages where the C471 tie ladder has
+                    # the full candidate set. C472 A/B: the 4
+                    # prev-correct same-session cases stay None.
+                    t_ans, t_detail = answer_temporal_arith(
+                        question, _dated(self._messages), question_date)
+                    if t_ans is not None:
+                        t_detail["fallback"] = "full_graph"
             meta["temporal"] = t_detail
             if t_ans is not None:
                 meta["gate"] = "temporal_arith"
@@ -1750,6 +1768,7 @@ class LongMemEvalAdapter:
             "results": [r.to_dict() for r in results],
             "config": {"use_ppr": self.use_ppr,
                        "temporal_arith": self.temporal_arith,
+                       "temporal_fullgraph": self.temporal_fullgraph,
                        "order_sort": self.order_sort,
                        "pairwise_sort": self.pairwise_sort,
                        "max_context_tokens": self.max_context_tokens,
