@@ -153,3 +153,91 @@ def test_answer_counting_wiring():
         "How many Instagram followers do I currently have?", s)
     assert ans == "600"
     assert meta.get("form") == "enum_count"
+
+
+# --------------------------------------- C552: qualifier-scoped selection
+#
+# Census /tmp/c552 (2026-09-06, gate=counting production replay, 66 rows
+# byte-identical at HEAD; 22 enum_count rows): the two C550 latent KILLs
+# share one shape — the question carries a temporal scope qualifier and
+# plain recency overrides it. Gate A: "before the 7/22 trip" → resolve
+# among explicitly dated mentions, dropping the excluded date.
+# Gate B: "first three months" → resolve among clauses carrying that
+# same duration phrase. Both fall through to recency when no qualifier
+# match exists (conservative).
+
+def test_before_date_exclusion():
+    """10e09553: 7 on 7/10 (early trip), 9 on 7/22 (late) + undated
+    anaphoric '9'. Question asks for the trip BEFORE 7/22 → the dated
+    mention with a different date wins; the undated echo never votes."""
+    s = multi_sess(
+        "Oh, and by the way, I caught 7 largemouth bass on my trip to "
+        "Lake Michigan with Alex on 7/10 - that was a great day!",
+        "By the way, I'm thinking of using spinnerbaits and plastic "
+        "worms as lures again, since they worked so well when I was "
+        "there with Alex on 7/22 - we caught 9 largemouth bass that day.",
+        "Remember that trip when we caught 9 largemouth bass with Alex?")
+    got = _cnt_enum_count(
+        "How many largemouth bass did I catch with Alex on the earlier "
+        "fishing trip to Lake Michigan before the 7/22 trip?", s)
+    assert got == "7"
+
+
+def test_before_date_no_dated_survivor_abstains():
+    """Question says 'before 7/22' but no clause carries any M/D date
+    → the face cannot honor the scope, and answering via bare
+    recency would be the exact failure the gate exists to prevent.
+    Honest abstention at the FACE level (downstream then falls
+    through to signature counting, which owns the row)."""
+    from amg_bench_quality import _cnt_qty_stated
+    s = multi_sess(
+        "I caught 7 largemouth bass with Alex, great day!",
+        "Later we caught 9 largemouth bass with Alex again.")
+    got = _cnt_qty_stated(
+        "How many largemouth bass did I catch with Alex before the "
+        "7/22 trip?", s)
+    assert got is None         # abstain — recency would violate scope
+
+
+def test_first_duration_scope():
+    """0ddfec37: '15 ... three months ago' (onset window) vs
+    '20 ... past few months' (later window). Question asks about the
+    FIRST three months → the clause carrying 'three months' wins."""
+    s = multi_sess(
+        "I just got a signed baseball of his last week and it's a "
+        "great addition to my collection - that's 15 autographed "
+        "baseballs since I started collecting three months ago!",
+        "I just got back from a weekend trip and had some time to "
+        "organize my collection - I've added 20 autographed baseballs "
+        "to my collection in the past few months, which is crazy!")
+    got = _cnt_enum_count(
+        "How many autographed baseballs have I added to my collection "
+        "in the first three months of collection?", s)
+    assert got == "15"
+
+
+def test_first_duration_digit_form():
+    """'first 3 months' (digit in question) matches 'three months'
+    (word in clause) and vice versa."""
+    s = multi_sess(
+        "That's 15 autographed baseballs since I started collecting "
+        "three months ago!",
+        "I've added 20 autographed baseballs in the past few months.")
+    got = _cnt_enum_count(
+        "How many autographed baseballs have I added to my collection "
+        "in the first 3 months?", s)
+    assert got == "15"
+
+
+def test_first_duration_no_match_abstains():
+    """'first three months' question but clauses only carry 'past few
+    months' → no phrase match, honest abstention at the FACE level
+    over out-of-scope recency."""
+    from amg_bench_quality import _cnt_qty_stated
+    s = multi_sess(
+        "That's 15 autographed baseballs so far!",
+        "I've added 20 autographed baseballs in the past few months.")
+    got = _cnt_qty_stated(
+        "How many autographed baseballs have I added to my collection "
+        "in the first three months of collection?", s)
+    assert got is None         # abstain — recency would violate scope

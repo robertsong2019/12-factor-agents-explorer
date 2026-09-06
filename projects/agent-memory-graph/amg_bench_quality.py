@@ -9257,6 +9257,17 @@ def _cnt_age_diff(question: str, sessions: list[dict]):
     return None
 
 
+# C552: temporal-scope qualifiers that override plain recency in
+# _cnt_qty_stated — "before the 7/22 trip" (excluded date) and
+# "first three months" (onset-window phrase). Census /tmp/c552:
+# 2 RESCUE / 0 KILL on the 22-row enum_count population.
+_DATE_MD = re.compile(r'\b\d{1,2}/\d{1,2}\b')
+_BEFORE_DATE_Q = re.compile(
+    r'\b(?:before|prior to)\s+(?:the\s+)?(\d{1,2}/\d{1,2})\b')
+_FIRST_DUR_Q = re.compile(
+    r'\bfirst\s+([a-z]+|\d+)\s+(months?|weeks?|years?|days?)\b')
+
+
 def _cnt_qty_stated(question: str, sessions: list[dict]) -> str | None:
     """C550: explicit digit-quantity statements about the question's
     head noun (``600 followers``, ``15 crash course videos``).
@@ -9271,6 +9282,18 @@ def _cnt_qty_stated(question: str, sessions: list[dict]) -> str | None:
     3 cucumber plants = 8). Non-candidate turns still scan clauses
     carrying the head stem — evidence often drops the topic word
     ("now at 600 followers" without "Instagram").
+
+    C552 (census /tmp/c552, gate=counting production replay, 66 rows
+    byte-identical at HEAD / 22 enum_count rows): 2 RESCUE / 0 KILL.
+    Plain recency loses when the question itself carries a temporal
+    scope qualifier: "before the 7/22 trip" (10e09553) must resolve
+    among explicitly DATED mentions, dropping the excluded date;
+    "first three months" (0ddfec37) must resolve among clauses
+    carrying that same duration phrase. When the qualifier is present
+    but evidence cannot discriminate, the face ABSTAINS (None) —
+    answering out-of-scope via bare recency is the failure mode the
+    gates exist to prevent (same honesty contract as the same-turn
+    ambiguity abstention below).
     """
     np_words = _enum_np(question)
     if not np_words:
@@ -9283,6 +9306,7 @@ def _cnt_qty_stated(question: str, sessions: list[dict]) -> str | None:
     # noun are all seen — "40 or 50 followers" must abstain, not
     # resolve to whichever number the consuming scan anchored first
     mentions: list[tuple[int, float]] = []
+    clauses: list[tuple[int, float, str]] = []   # (seq, val, clause_lower)
     seq = 0
     for s in sessions:
         for t in s.get('turns', []):
@@ -9297,6 +9321,8 @@ def _cnt_qty_stated(question: str, sessions: list[dict]) -> str | None:
                 for m in pat.finditer(cl_l):
                     mentions.append(
                         (seq, float(m.group(1).replace(',', ''))))
+                    clauses.append(
+                        (seq, float(m.group(1).replace(',', '')), cl_l))
             seq += 1
     if not mentions:
         return None
@@ -9304,6 +9330,50 @@ def _cnt_qty_stated(question: str, sessions: list[dict]) -> str | None:
     if re.search(r'\b(?:and|both|combined)\b', ql):
         total = sum({v for _, v in mentions})
         return str(int(total)) if total == int(total) else str(total)
+    # C552 Gate A: "before the 7/22 trip" — resolve among explicitly
+    # dated mentions, dropping clauses that carry the excluded date.
+    # The undated anaphoric echo ("remember that trip when we caught
+    # 9...") never votes: when the question pins a date boundary,
+    # only dated evidence can discriminate.
+    ma = _BEFORE_DATE_Q.search(ql)
+    if ma:
+        excl = ma.group(1)
+        survivors = [(s, v) for s, v, cl in clauses
+                     if _DATE_MD.search(cl) and excl not in cl]
+        if survivors:
+            vals = {v for _, v in survivors}
+            if len(vals) == 1:
+                v = vals.pop()
+                return str(int(v)) if v == int(v) else str(v)
+        return None          # qualifier pinned, evidence can't date it
+    # C552 Gate B: "first three months" — resolve among clauses
+    # carrying that same duration phrase (word/digit forms cross-
+    # matched). Onset-window questions and recency windows disagree
+    # by design; the phrase match is the discriminating signal.
+    mb = _FIRST_DUR_Q.search(ql)
+    if mb:
+        num, unit = mb.group(1), mb.group(2)
+        # numeral variants both ways: "first 3 months" must match a
+        # "three months" clause and vice versa (a/an excluded upstream
+        # from _CNT_NUMWORD so no article poison here)
+        num_int = (int(num) if num.isdigit()
+                   else _CNT_WORD2NUM.get(num))
+        variants = {num}
+        if num_int is not None:
+            variants.add(str(num_int))
+            variants.add(_CNT_NUMWORD.get(num_int, ''))
+        dpat = re.compile(
+            r'\b(' + '|'.join(re.escape(x) for x in variants if x)
+            + r')\s+' + re.escape(unit) + r'\b')
+        survivors = [(s, v) for s, v, cl in clauses
+                     if dpat.search(cl)]
+        if survivors:
+            latest = max(s for s, _ in survivors)
+            vals = {v for s, v in survivors if s == latest}
+            if len(vals) == 1:
+                v = vals.pop()
+                return str(int(v)) if v == int(v) else str(v)
+        return None          # qualifier pinned, no phrase match
     latest = max(s for s, _ in mentions)
     vals = {v for s, v in mentions if s == latest}
     if len(vals) != 1:
