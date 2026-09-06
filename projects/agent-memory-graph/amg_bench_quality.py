@@ -7371,6 +7371,15 @@ _DUR_REALIZED_RE = re.compile(
     r'((?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d+(?:\.\d+)?)'
     r'[-\s]*(?:minute|minutes|hour|hours))\s+([a-z\- ]{3,30})')
 
+# C553: object-NP "hours spent on my <np>" questions — topic-anchored
+# hour mentions resolved by recency (71315a70), not activity regexes.
+_DUR_Q_SPENT = re.compile(
+    r'how (?:many hours|much time) have i spent on (?:my|the|a|an)\s+'
+    r'((?:[a-z]+[\- ]){0,5}[a-z]+)', re.I)
+_DUR_HR_MENTION = re.compile(
+    r'\b(\d+(?:\.\d+)?(?:\s*[-–]|to\s*)\s*\d+(?:\.\d+)?|\d+(?:\.\d+)?)\s*'
+    r'hours?\b|\bhalf an hour\b', re.I)
+
 _DUR_PLAN_MARKERS = re.compile(
     r"(?i)\b(used to|trying to get back|hoping to|plan(?:ning)? to|"
     r"want to|would like to|i'?ll (?:start|try|schedule|do)|"
@@ -7516,10 +7525,15 @@ def _dur_m1(question, sessions):
             fams = {_DUR_FRANCHISE.get(w) for w in _dur_words(c)} - {None}
             for m in _DUR_BINGE_RE.finditer(c):
                 n, unit = _dur_parse_dur(m.group(3))
-                if n is None:
+                if n is None or not unit:
+                    # C553: a unit-less capture ("read the subreddit for
+                    # like a") is not duration evidence; output is weeks.
                     continue
-                if unit and 'day' in unit:
+                if 'day' in unit:
                     n = round(n / 7.0, 2)
+                elif 'week' not in unit:
+                    # C553: hour-denominated binges have no week-math.
+                    continue
                 key = frozenset(fams) if fams else frozenset(
                     _dur_cstems((m.group(2) or '').lstrip('TtHhEe '))) or None
                 if key is None:
@@ -7561,6 +7575,35 @@ def _dur_m3(question, sessions):
         return None
     acts = {_dur_stem(w) for w in _dur_words(question.lower())
             if w in _DUR_ACT_WORDS}
+    # C553 topic-anchored recency face: object-NP questions ("hours spent
+    # on my <np>") carry no activity words — the realized-activity regex
+    # models the wrong evidence family (a 30-minute walk fired for the
+    # abstract ocean sculpture, 71315a70). Resolve from hour mentions in
+    # clauses anchoring the question NP; latest occurrence wins
+    # (knowledge-update convention, C550 recency).
+    qm = _DUR_Q_SPENT.search(question.lower())
+    if not acts and qm:
+        q_stems = _dur_cstems(qm.group(1))
+        latest, seq = None, -1
+        for _, _, c in _dur_user_turns(sessions):
+            seq += 1
+            for cl in _dur_clauses(c):
+                cl_l = cl.lower()
+                if not any(st in cl_l for st in q_stems):
+                    continue
+                for m in _DUR_HR_MENTION.finditer(cl):
+                    if m.group(0).lower() == 'half an hour':
+                        tok = '0.5 hours'
+                    else:
+                        ntok = m.group(1).replace(' ', '').replace('–', '-')
+                        tok = f"{ntok} hours"
+                    latest = (seq, tok)
+        if latest is not None:
+            return latest[1]
+        # C553 honesty contract: object-NP form recognized but no
+        # anchored evidence — abstain rather than answer from the
+        # wrong evidence family (realized-activity regex).
+        return None
     total_h, fired = 0.0, False
     for _, _, c in _dur_user_turns(sessions):
         for cl in _dur_clauses(c):
