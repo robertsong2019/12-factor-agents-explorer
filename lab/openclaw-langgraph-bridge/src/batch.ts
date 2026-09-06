@@ -24,6 +24,15 @@ export interface BatchConfig {
 export function batch(config: BatchConfig) {
   const { name, nodes, concurrency = Infinity, continueOnError = false } = config;
 
+  // Config validation: a non-positive/fractional/NaN concurrency yields zero
+  // worker coroutines, which would silently execute NO nodes and return
+  // { completedCount: 0 } — a false success. Fail loudly instead.
+  if (concurrency !== Infinity && (!Number.isFinite(concurrency) || concurrency < 1)) {
+    throw new RangeError(
+      `batch("${name}"): concurrency must be a number >= 1 or Infinity, got ${concurrency}`
+    );
+  }
+
   return async (state: AgentState): Promise<Record<string, unknown>> => {
     const results: Record<string, unknown>[] = [];
     const errors = new Map<number, Error>();

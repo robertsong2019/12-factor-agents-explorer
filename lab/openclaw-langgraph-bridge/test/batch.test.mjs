@@ -129,3 +129,44 @@ describe("batch", () => {
     assert.deepEqual(order, [1, 2, 3]);
   });
 });
+
+describe("batch config validation (C1 red-first)", () => {
+  const noop = async () => ({ x: 1 });
+
+  it("concurrency=0 must NOT silently run zero nodes (fails at construction)", () => {
+    assert.throws(() => batch({ name: "b", nodes: [noop, noop], concurrency: 0 }), RangeError);
+  });
+
+  it("concurrency negative must throw RangeError", () => {
+    assert.throws(() => batch({ name: "b", nodes: [noop], concurrency: -3 }), RangeError);
+  });
+
+  it("concurrency fractional < 1 must throw RangeError (would mean 0 workers)", () => {
+    assert.throws(() => batch({ name: "b", nodes: [noop], concurrency: 0.5 }), RangeError);
+  });
+
+  it("concurrency NaN must throw RangeError", () => {
+    assert.throws(() => batch({ name: "b", nodes: [noop], concurrency: NaN }), RangeError);
+  });
+
+  it("valid edge: concurrency=1 still runs all nodes", async () => {
+    let calls = 0;
+    const run = batch({ name: "b", nodes: [async () => { calls++; return { c: calls }; }], concurrency: 1 });
+    const result = await run({});
+    assert.equal(calls, 1);
+    assert.equal(result.completedCount, 1);
+  });
+
+  it("valid edge: concurrency=Infinity (explicit) runs all", async () => {
+    let calls = 0;
+    const run = batch({ name: "b", nodes: [async () => { calls++; return {}; }, async () => { calls++; return {}; }], concurrency: Infinity });
+    await run({});
+    assert.equal(calls, 2);
+  });
+
+  it("empty nodes array returns completedCount=0 (legit, not an error)", async () => {
+    const run = batch({ name: "b", nodes: [] });
+    const result = await run({});
+    assert.equal(result.completedCount, 0);
+  });
+});
