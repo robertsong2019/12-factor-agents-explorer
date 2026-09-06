@@ -1,7 +1,7 @@
 # TUTORIAL: Answer Faces — 问题结构驱动的答案选择（Cycles 529-548）
 
 > 本文解释 amg 评测管线里最反直觉的一个设计：**答案选哪个句子，不该由"分数阈值"决定，而该由"问题在问什么"决定**。
-> 覆盖 Cycle 529-548 的机制演进（banked 0.494 → 0.540），所有例子都是 LongMemEval s_cleaned full-500 里的真实题目。
+> 覆盖 Cycle 529-554 的机制演进（banked 0.494 → 0.566），所有例子都是 LongMemEval s_cleaned full-500 里的真实题目。
 
 ---
 
@@ -165,7 +165,53 @@ judge cascade（exact → semantic → LLM）里有一个 NEEDS_JUDGE 区间：e
 
 ---
 
-## 5. 反面教材：枚举清单没有结构键（C536，RECORD-NEGATIVE）
+## 5. 值解析族 face：数字、日期、时长（C549-C554）
+
+§3-§4 的 face 都长在"**选哪句话**"上；C549-C554 是第三波：答案本身是个数值/日期/时长，face 长在"**值解析**"上——不是从候选里挑句子，而是从通过 gate 的内容里提炼出**正确的值**。外加一次方法论升级（C549：census-negative 的第三种用法）。
+
+### 5.1 C549 松弛空间穷举 — census-negative 变成局部最优证书
+
+C548 接线后，下一轮不是找新 face，而是**审问 incumbent**：把 run-dominance 门的每个可松弛维度各跑一遍 census——R-tie（允许 run 打平时也 outrank）8 救 / 2 杀，R-norun（彻底去掉 run 门）15 救 / 3 杀，R-f1 与 strict-dom2 精确 no-op。**全部 kill 都是 run-TIE impostor**：恰恰是"run 严格更长"这一条在挡住它们。结论倒转——C548 的严格 dominance 门不是保守的旋钮，而是 kill-blocker 本体；C548 配置是局部最优。+3 absence-pin 测试把"别再松弛这个门"钉成机器强制。
+
+> census-negative 的三种用法至此集齐：**否决新方向**（C543 kh-floor）、**否决准入机制**（C546 kh-elite）、**证明现配置是局部最优**（C549 松弛穷举）。第三种最便宜——不用 A/B，几个 census 就把"这个旋钮别再拧了"写死。
+
+### 5.2 C550 qty-stated face — 用户亲口说的数字压过签名计数
+
+病例：问题问 "How many followers do I currently have?"，签名计数（enum_count）答 500，但用户后来亲口说 "I'm now at 600 followers"。**显式数字数量陈述 outrank 签名推断**：
+
+- 单类型问题取 recency：最新 user turn 赢（500→600）
+- coordinated 问题（and/both）对 distinct 值求和：3 cucumber + 5 tomato = 8 plants
+- 模糊量弃权："40 or 50 followers" 不是可解析的值
+- 证据常常丢主题词：非候选 turn 也扫头名词词干的从句（"now at 600 followers" 没有 "Instagram"）
+
+**接线前证伪才是本课重点**：naive 全数字变体（word numerals 也当计数）离线模拟出 **14 KILL**——"a baby"、"one tank" 是冠词用法，不是数量。digits-only 门在写第一行实现代码之前确立：先模拟人口，后接线。
+
+### 5.3 C551 temporal full-graph-first — 锚点解析先看全图
+
+时序题（"how long ago"）需要两个锚点（事件日 + 参照日）。窗口内解析的失败模式：assistant 建议行在词汇上镜像问题，把真事件行挤出检索窗口，双锚点坍缩到同一个错误 session。修复：`temporal_fullgraph` 默认 on——锚点解析**先对全图候选集**跑，失败才走窗口路径。+4 rescue（26d→18d / 1mo→6mo / 49d→30d / 23d→7d），46 行时序行 42 byte-identical。
+
+> 这条不是新 face，是**解析顺序**的修复。42/46 byte-identical 证明它对绝大多数行是零扰动——"只动目标形态"的 face 纪律在解析层同样适用。
+
+### 5.4 C552 qualifier-scoped selection — 限定词收窄解析人口
+
+C550 留下 2 个 latent KILL，同根：**问题自带时间限定词时，plain recency 必错**。"How many before the 7/22 trip?" 要在显式带日期的提及里解析、还要排除 7/22 及以后（9→7）；"How many in the first three months?" 要在携带同一时长短语的从句里解析（20→15）。
+
+规则：**限定词在场 → 解析人口收窄到携带同形证据的从句；找不到可区分证据 → 弃权**（诚实契约），而不是退回越域 recency 硬答。工程上漂亮的一点：66 行 gate=counting 生产重放 64 byte-identical + 恰 2 designed flips——**census 枚举集 = gate 路由集**，改动的影响面被 gate 结构精确框住。
+
+### 5.5 C553 duration unit discipline + topic-anchored recency
+
+两个时长病例：
+
+- **M1 单位纪律**："watched all 22 MCU movies in two weeks" + Star Wars 马拉松 "a week and a half" → 正确半和 **3.5 weeks**。曾翻车：无单位捕获（"read the subreddit for like **a**"）以 starwars key 入册，把 1.5 饿死成 3。**输出单位是 weeks 时，"a" 不是时长证据**——单位不匹配的捕获不贡献数值。
+- **M3 主题锚定 recency**：object-NP 问题（"how long did it take you to finish X?"）走知识更新链（主题词锚定的 hour 提及 + recency → "10-12 hours"），而不是 realized-activity walk regex（抓到 30-min 散步 → "0.5"）。活动类问句（"how often do you walk"）保持原路径——**问题形态决定通路**。
+
+### 5.6 C554 slash-date adverbial — "on the 3/8" 是日期不是分数
+
+真锚行 "graduation gift on the 3/8" 的数字月/日没被日期正则认出，锚点退回裸 session 日期（03-29），between-diff 算出 14 天（GT 7）。修复：正则加第三分支 `on (the )?M/D(/YY|YYYY)?`，锚点精化到 03-08，diff 7 = GT。**"on" 前缀强制保留**——裸 "3/8" 也匹配分数/比例（"3/8 of the budget"），副词形态才是日期信号。
+
+---
+
+## 6. 反面教材：枚举清单没有结构键（C536，RECORD-NEGATIVE）
 
 序数清单（"5. Absinthe"）看起来也能做个 face。实现后发现 **census 全负**：
 
@@ -181,7 +227,7 @@ judge cascade（exact → semantic → LLM）里有一个 NEEDS_JUDGE 区间：e
 
 ---
 
-## 6. 方法论：census-first，接线之前先数人口
+## 7. 方法论：census-first，接线之前先数人口
 
 answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 
@@ -198,6 +244,7 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 - **C543 kh-floor**：53 行 wrong 里 kh-floor 能救的只有 1 行（containment 巧合），会误杀的却有 14/72 correct 行——~1 救 vs ~14 杀 = NET-NEGATIVE，A/B 都不用跑。
 - **C545 sidechannel 生产化**：#083 离线 @5 recall 18→26/30 看着很美，但 form census 显示 500 题里只有 48 行 hybrid 可能受影响，三臂实验（stored / scFalse-now / scTrue-now）= **25=25=25 net-zero**——检索顺序的变化被 answer gate + judge 通路完全吸收。离线中间指标的提升 ≠ 端到端收益。
 - **C546 kh-elite 准入（窗口组成死区）**：29 行无 GT 死区归因后（16 gt-shape 聚合抽取免疫 + 11 seed-miss + 2 in-candidates），唯一能触及 4 行 viable 的 kh-elite 准入经 impostor census（banked-correct 随机样本）实测 23.3% 杀率（7/30 KILL）vs 4 行救率上限 → NET-NEGATIVE。**impostor census 从此是双向测量**：不只问"能救几行"，先问"会杀几行已对的行"。附带洞见：抽取赢家 = argmax(−kh, −seq)，无 kh 优势的候选资格一文不值 → admission-only 机制全族否决。三连 census-negative（C543 pred 侧 / C545 sidechannel / C546 窗口组成）后，零 LLM 抽取管线的答案门抵达结构天花板——但同一份证伪数据在 C548 解剖出了角色分离 face（§3.7）。
+- **C549 松弛空间穷举 = 局部最优证书**：census-negative 还能反向用——不是"这个方向不行"，而是"现配置已是局部最优"。把 incumbent gate 的每个可松弛维度（放平局、去 run 门、换支配序）各跑一遍 census：全部 kill 都是 run-TIE impostor → **严格 run>win_run dominance 本身就是 kill-blocker**。absence pin 钉死后，"别再拧这个旋钮"从文档记忆升级为机器强制（§5.1）。
 
 两条配套纪律：
 
@@ -206,7 +253,7 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 
 ---
 
-## 7. 一页速查
+## 8. 一页速查
 
 | 信号源 | Face | 动作 | Cycle |
 |--------|------|------|-------|
@@ -226,11 +273,18 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 | GT 就是裸 "yes" | bare-affirm（judge 侧） | 六门全过才 CORRECT，反问 echo 拦截 | C545 |
 | GT 是展开式肯定 Yes. (…) | affirm-elaboration（judge 侧） | bare-affirm 与薄头的补集，NJ→CORRECT | C547 |
 | 跨会话用户自述被 assistant echo 压过 | cross-session user-statement（gate 侧） | role=user + phrase-run 严格优势才 outrank | C548 |
+| 问题要数字，用户亲口报过数 | qty-stated（counting gate） | 显式数字陈述压过签名计数；recency 单类型 / 求和 coordinated；模糊量弃权 | C550 |
+| 时序锚点在检索窗口内坍缩 | temporal full-graph-first | 锚点解析先对全图候选集，失败才回退窗口 | C551 |
+| 问题自带时间限定词（before 7/22 / first three months） | qualifier-scoped（gateA/gateB） | 限定词收窄解析人口；无可区分证据 → 弃权 | C552 |
+| 无单位捕获混进时长累计 | duration M1 unit discipline | 无单位 ≠ 时长证据；半周和保留（3.5 weeks） | C553 |
+| object-NP 问题被活动 regex 劫持 | duration M3 topic-anchored recency | 知识更新链压过 realized-activity walk；无锚定证据弃权 | C553 |
+| 行内数字月/日没被认成日期 | slash-date adverbial（temporal） | "on" 前缀强制（防分数），M/D(/YY) 入日期正则 | C554 |
 | kh-floor 想救 kh=0 GT | 🚫 census-negative，不接线 | 1 救 vs 14 杀，absence pin 钉死 | C543 |
 | kh-elite 准入救窗口死区 | 🚫 census-negative，不接线 | impostor 杀率 23.3% vs 4 救，admission-only 全族否决 | C546 |
+| 松弛 run 门想多救几行 | 🚫 census-negative = 局部最优证书 | 全部 kill 是 run-TIE impostor；absence pin 钉死 C548 配置 | C549 |
 | 嵌入 side-channel 重排 | 🚫 census-negative，默认 False | 离线增益被 gate+judge 吸收，pin 死默认值 | C545 |
 
-**六条带走的原则**：
+**八条带走的原则**：
 1. 答案选择读**问题结构**，不调阈值
 2. face 重排不越权翻地板；地板排除自有理由
 3. census-first：先数人口，先离线模拟，再接线；证伪的方向写进台账并用 absence pin 钉住
@@ -238,7 +292,8 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 5. fire 的理由要语义正确，不止要 fire——数字等价 ≠ 语义正确（C544 deixis fold）
 6. 离线中间指标的提升不等于端到端收益；下游通路可能吸收全部扰动（C545 net-zero）
 7. 证伪的尸体是矿：关闭方向后别扔 census 数据——杀面的分布里可能藏着让机制起死回生的门（C546 杀面全 assistant → C548 role=user 门）
+8. 值解析题（多少/多久/哪天）的 face 不选句子，选**值**——限定词收窄解析人口（C552）、单位即证据（C553）、模糊量诚实弃权（C550）；且"现配置是局部最优"也能被 census 证明（C549）
 
 ---
 
-*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04；Cycles 546-548 增补：2026-09-05。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-548 段。*
+*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04；Cycles 546-548 增补：2026-09-05；Cycles 549-554 增补：2026-09-07。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-554 段。*

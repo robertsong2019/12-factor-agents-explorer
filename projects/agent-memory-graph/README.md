@@ -66,7 +66,7 @@
 - **拓扑快捷统计** — hub_nodes/peripheral_nodes/mean_degree 一键获取关键结构指标 (Cycle 339)
 - **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 + 噪声鲁棒性测试 (Cycles 326-341)
 - **Temporal QA 家族 (5 路由)** — LongMemEval temporal-reasoning 零 LLM 解法：temporal_arith 日历算术 + pp_duration/pure_tenure 状态时长 + order 排序 + pairwise which-first，form gate + 最早-FRESH 锚定 + 负存在弃权，temporal-133 0.323→0.474 全程 zero-flip (Cycles 457-489)
-- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 破半后持续进化：0.494（Cycles 520-531）→ **0.540**（Cycles 548，答案面家族 + judge 侧 rescue faces + cross-session 角色分离面，见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)）
+- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 破半后持续进化：0.494（Cycles 520-531）→ **0.566**（Cycles 548-554，答案面家族 + judge 侧 rescue faces + 计数/时序/时长值解析族，见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)）
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 - **传播激活家族 (5 API)** — ACT-R 认知模型: spreading_activation (基础) → activation_trace (可解释) → competitive_spreading (多种子竞争) → temporal_spreading (时间衰减) → activation_diff (对比分析) (Cycles 366-383)
 - **流式熵追踪** — FINGEREntropy O(Δ) 增量 von Neumann 熵 + StreamingGraph 实时异常检测 (Cycle 361)
@@ -4375,6 +4375,36 @@ NEEDS_JUDGE 矿脉第 7 发，bare-affirm（C545）的 elaborated 表亲：GT `Y
 #### C548：cross-session user-statement challenge face — 0.540，角色分离 (780b00e)
 
 C546 证伪数据的再利用：impostor census 里潜在 rescue 全部来自 **user** 行、kill-trigger 全部来自 **assistant** 行——伤害与收益的分界不是 kh 高低，是**角色**。face 定义：当生产排序胜者是 assistant echo 行，而存在**跨会话**（C526 领地）user 第一人称事实句、其问题短语 run **严格更长**（run > win_run，floor 2，复用 C540 `_kw_phrase_run` 原语）时，越权 outrank。两遍 census：第一遍 plain admission（无 role 门）复现 7/50 kill，确认 C546 NET-NEGATIVE；加 role 门后第二遍 **5 RESCUE / 0 KILL / 0 kill-side 触发**（50 行样本）。+6 rescue 0 kill 0 降级（c8c3f81d Nike 跑鞋 / 8ebdbe50 / c19f7a0b / gpt4_5dcc0aab / f523d9fe 跨会话用户自述压过 assistant echo 胜者；8fb83627 A/B-only rescue，post-C526 winner），15 行 banked-neutral churn。Live smoke 抓到 C525 context-split 多行 winner 陷阱（胜者句被拆成多行时匹配错行）→ first-line match 修复，trap test 红先行钉死。banked **264→270（0.540）**。套件 10261→10271（+10，219s）。
+
+---
+
+## Cycles 549-554: 0.540→0.566 — census-negative 局部最优证明 + 计数/时序/时长三族收债
+
+> 官方口径轨迹：0.540（C548）→ 0.540（C549，census-negative）→ **0.546（C550）** → **0.556（C551）** → **0.560（C552）** → **0.564（C553）** → **0.566（C554）**，banked 270→283，套件 10271→10312。本段主轴：C549 用**松弛空间穷举**证明 C548 是局部最优（run-dominance 门就是 kill-blocker 本体），随后三族 face 在"数字、日期、时长"三种值形态上收债——qty-stated（用户亲口说的数字压过签名计数）、temporal full-graph-first（锚点解析先看全图）、duration unit discipline（单位纪律 + 主题锚定 recency）。face 概念从"选哪句话"延伸到"**值解析**"，教程同步增补：[TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md) §5。
+
+#### C549：松弛空间穷举 = 局部最优证明 — census-negative 第三用法 (16e034e)
+
+不找新 face，先审问 incumbent（C548 cross-session face）：把 run-dominance 门的每个可松弛维度各跑一遍 census——R-tie（放平 run 平局）+8 rescue / 2 KILL（33%），R-norun（去掉 run 门）+15 / 3 KILL，R-f1 与 strict-dom2 精确 no-op。**全部 kill 都是 run-TIE impostor**（e66b632c / 10e09553）——"run 严格更长"这一条本身就是 kill-blocker，不是可松动的旋钮；C548 配置 = 局部最优。face_found 修复面同时为空（e61a7584 = C526 claimed-first 契约的设计行为，非 bug）。+3 absence-pin 测试（run-tie impostor std+kh-strict、C526 claimed-first bail）——未来任何 R-tie 松弛先红。Infra 课：脚本内 `os.environ.setdefault("PYTHONHASHSEED",…)` 是 no-op（hash 在解释器启动时固化）→ 自 re-exec 模式入册。套件 10271→10274。
+
+#### C550：counting qty-stated face — 用户说的数字压过签名计数 (f50002e)
+
+病例：问题问 "How many followers do I currently have?"，签名计数（enum_count）答 500，但用户后来亲口说 "I'm now at 600 followers"。face 定义：问题头名词上的**显式数字数量陈述 outrank 签名推断**（`_cnt_qty_stated`）。单类型问题取 recency（最新 user turn 赢：500→600，1cea1afa / 5831f84d 10→15）；coordinated 问题（and/both）对 distinct 值求和（3+5 plants=8，6456829e）；模糊量弃权（"40 or 50 followers"，lookahead value scan）；非候选 turn 扫头名词词干从句（"now at 600 followers" 不含 "Instagram" 也命中）。**接线前证伪**：naive 全数字变体离线模拟 14 KILL——"a baby"、"one tank" 是冠词用法不是计数，digits-only 门在写代码前确立。+3 rescue 0 kill，banked 270→273（0.546），+11 tests（10274→10285）。台账怪癖入册：live500_head banked flags 是 0.520 时代，0.540 链在 C548 ab500 new_preds。
+
+#### C551：temporal full-graph-first 锚点解析 (871ff64)
+
+时序题双锚点在检索窗口内解析的失败模式：assistant 建议行词汇镜像问题，把真事件行挤出窗口，双锚点坍缩到同一错误 session。修复：`temporal_fullgraph` flag（默认 on）——锚点解析**先对全图候选集**跑（`answer_temporal_arith` 全候选一次调用），失败才回退窗口路径（C472 retry 降为 legacy）。+4 rescue 0 kill（0db4c65d 26d→18d / gpt4_21adecb5 1mo→6mo / 08f4fc43 49d→30d / a3045048 23d→7d），46 行时序行 42 byte-identical；banked 273→278 live（0.556），+5 tests（10285→10290）。附带产出：live refresh 揪出 C550 counting-face live drift（+3/−2 net +1，台账 273 低估 live 一行）——"census 枚举集 ≠ gate 路由集"教训首次记录，2 个 latent KILL 排队 C552。
+
+#### C552：counting qualifier-scoped selection — 限定词收窄解析人口 (935a16c)
+
+C550 的 2 个 latent KILL 同根：**问题自带时间限定词时 plain recency 必错**。gateA before-date exclusion："before the 7/22 trip" → 只在显式带日期的提及里解析并排除该日期及以后（10e09553 9→7）；gateB first-duration scope："first three months" → 只在携带同一时长短语的从句里解析（0ddfec37 20→15）。**诚实契约**：限定词在场但无可区分证据 → 弃权（test_before_date_no_dated_survivor_abstains），不退回越域 recency。census 收尾质量：66 行 gate=counting 生产重放 64 byte-identical + 恰 2 designed flips——**census 枚举集 = gate 路由集**，改动影响面被 gate 结构精确框住（C551 教训的正面兑现）。banked 278→280（0.560），+5 tests（10290→10295）。
+
+#### C553：duration-family faces — 单位纪律 + 主题锚定 recency (d73b6e6)
+
+M1 单位纪律：无单位捕获（"read the subreddit for like **a**"）不是时长证据，却曾以 starwars key 入册饿死真马拉松 "a week and a half"=1.5 → franchise 半和 3+1.5=**3.5 weeks**（e831120c 3→3.5）；输出单位是 weeks 时 "a" 不贡献数值。M3 主题锚定 recency：object-NP 问题（"how long did X take"）走**知识更新链**（主题词锚定 hour 提及 + recency → "10-12 hours"），不再被 realized-activity walk regex 的 30-min 散步劫持（71315a70 0.5→10-12 hours）；活动类问句保持原路径（test_m3_activity_question_keeps_realized_path）。诚实契约：object-NP 形态在场但无锚定证据 → 弃权。+2 rescue 0 kill，66 行 gate=counting 重放 64 byte-identical（弃权收紧后复验），banked 280→282（0.564），+10 tests test_duration_face.py（10295→10305）。
+
+#### C554：slash-date adverbial face — "on the 3/8" 是日期不是分数 (39ac859)
+
+病例 8c18457d：GT 7 days；真锚行 "graduation gift on the 3/8" 的数字月/日未被 `_line_adverbial_date` 认出，锚点退回裸 session 日期（03-29），between-diff 算出 14 天。修复：日期正则加第三分支 `on (the )?M/D(/YY|YYYY)?`（**"on" 前缀强制**——裸 "3/8" 也匹配分数/比例 "3/8 of the budget"，副词形态才是日期信号）+ 2 位年展开（/23→2023）。锚点精化到 03-08，diff 7 = GT。离线 A/B：temporal 45 行 1 rescue / 0 flip。banked 282→283（0.566），+7 tests test_amg_temporal_arith.py（10305→10312）。
 
 ---
 
