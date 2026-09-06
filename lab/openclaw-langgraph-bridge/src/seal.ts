@@ -44,7 +44,10 @@ export function seal(
     const result = await node(state);
     const frozen = Object.freeze({ ...result });
     if (config?.detectMutations) {
-      return sealedProxy({ ...result }, config.onChange);
+      // Freeze the target too: Object.isFrozen(proxy) forwards to the target,
+      // so without this isSealed() would disown our own output. The set trap
+      // still blocks writes and fires onChange (freeze makes it doubly safe).
+      return sealedProxy(Object.freeze({ ...result }), config.onChange);
     }
     return frozen;
   };

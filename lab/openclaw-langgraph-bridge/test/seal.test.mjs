@@ -63,3 +63,38 @@ describe("unseal", () => {
     assert.strictEqual(frozen.x, 1); // original unchanged
   });
 });
+
+describe("seal identity contract (C3 red-first)", () => {
+  it("seal with detectMutations must satisfy isSealed", async () => {
+    const node = seal(async (s) => ({ v: s.x * 2 }), { detectMutations: true });
+    const out = await node({ x: 1 });
+    assert.equal(isSealed(out), true, "mutation-detecting seal must report sealed");
+  });
+
+  it("detectMutations seal still blocks writes AND fires onChange", async () => {
+    const events = [];
+    const node = seal(async () => ({ v: 1 }), {
+      detectMutations: true,
+      onChange: (k, val, old) => events.push([k, val, old]),
+    });
+    const out = await node({});
+    "use strict";
+    let blocked = false;
+    try {
+      out.v = 99;
+    } catch {
+      blocked = true; // TypeError expected in strict mode
+    }
+    assert.equal(out.v, 1, "write must not take effect");
+    assert.deepEqual(events, [["v", 99, 1]], "onChange must fire with old value");
+  });
+
+  it("unseal of a detectMutations-sealed state returns writable copy", async () => {
+    const node = seal(async () => ({ v: 1 }), { detectMutations: true });
+    const out = await node({});
+    const copy = unseal(out);
+    copy.v = 42;
+    assert.equal(copy.v, 42);
+    assert.equal(out.v, 1);
+  });
+});
