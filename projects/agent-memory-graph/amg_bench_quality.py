@@ -3096,7 +3096,14 @@ _TA_LINE_DATE_RE = re.compile(
     r"\bon\s+(?:the\s+)?(?P<m1>" + _MONTH_WORD_RE + r")\.?,?\s+"
     r"(?P<d1>\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(?P<y1>\d{4}))?"
     r"|\bon\s+the\s+(?P<d2>\d{1,2})(?:st|nd|rd|th)?\s+of\s+"
-    r"(?P<m2>" + _MONTH_WORD_RE + r")\.?(?:,?\s+(?P<y2>\d{4}))?",
+    r"(?P<m2>" + _MONTH_WORD_RE + r")\.?(?:,?\s+(?P<y2>\d{4}))?"
+    # C554: numeric month/day slash form — "on the 3/8" / "on
+    # 3/8/23". The graduation-gift anchor lost its in-text date to
+    # this form (8c18457d: 14 days vs GT 7 — the true line kept the
+    # bare session date). "on" prefix stays mandatory: bare "3/8"
+    # also matches fractions/ratios ("3/8 of the budget").
+    r"|\bon\s+(?:the\s+)?(?P<nm>\d{1,2})/(?P<nd>\d{1,2})"
+    r"(?:/(?P<ny>\d{2,4}))?\b",
     re.I)
 _TA_MONTH_NUM = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5,
                  "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10,
@@ -3112,9 +3119,11 @@ def _line_adverbial_date(line: str, year_hint: str = "") -> str | None:
     """First adverbial date in *line* as ISO ``YYYY-MM-DD``.
 
     Matches ``on January 10th`` / ``on Jun 14`` / ``on the 3rd of
-    March`` / ``on March 5, 2022`` (explicit year beats *year_hint*).
-    Dated nouns and month-year mentions without a day return
-    ``None`` (see the module comment for the regression guard).
+    March`` / ``on March 5, 2022`` / ``on the 3/8`` (C554: numeric
+    month/day; optional 2- or 4-digit year) — explicit year beats
+    *year_hint*. Dated nouns and month-year mentions without a day
+    return ``None`` (see the module comment for the regression
+    guard).
     """
     m = _TA_LINE_DATE_RE.search(line or "")
     if not m:
@@ -3122,6 +3131,12 @@ def _line_adverbial_date(line: str, year_hint: str = "") -> str | None:
     if m.group("m1"):
         mon = _TA_MONTH_NUM[m.group("m1")[:3].lower()]
         day, yr = int(m.group("d1")), m.group("y1")
+    elif m.group("nm"):
+        # C554 numeric slash form (US month/day convention)
+        mon, day = int(m.group("nm")), int(m.group("nd"))
+        yr = m.group("ny")
+        if yr and len(yr) == 2:
+            yr = str(2000 + int(yr))
     else:
         day = int(m.group("d2"))
         mon = _TA_MONTH_NUM[m.group("m2")[:3].lower()]

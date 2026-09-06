@@ -16,6 +16,7 @@ from amg_bench_quality import (
     temporal_arith_judge,
     run_eval,
     _anchor_keywords,
+    _line_adverbial_date,
 )
 
 
@@ -324,6 +325,73 @@ class TestRunEvalWiring(unittest.TestCase):
         report = run_eval([item], temporal_arith=False)
         row = report["results"][0]
         self.assertNotEqual(row["predicted_answer"], "4 weeks")
+
+
+class TestSlashAdverbialDate(unittest.TestCase):
+    """C554: numeric month/day slash form in _line_adverbial_date.
+
+    The 8c18457d rescue: "graduation gift on the 3/8" kept the bare
+    session date (03-29) instead of refining to 03-08, and the
+    between-anchor diff came out 14 days vs GT 7.
+    """
+
+    def test_on_the_slash(self):
+        self.assertEqual(
+            _line_adverbial_date(
+                "I got a wireless headphone for my brother as a "
+                "graduation gift on the 3/8", "2023"),
+            "2023-03-08")
+
+    def test_bare_on_slash(self):
+        self.assertEqual(
+            _line_adverbial_date("we launched it on 3/8 last year", "2023"),
+            "2023-03-08")
+
+    def test_two_digit_year(self):
+        self.assertEqual(
+            _line_adverbial_date("bought the shoes on 1/18/23", ""),
+            "2023-01-18")
+
+    def test_no_year_hint(self):
+        self.assertIsNone(
+            _line_adverbial_date("got it on the 3/8", ""))
+
+    def test_fraction_no_on(self):
+        # "on" prefix mandatory — bare fractions/ratios must not match
+        self.assertIsNone(
+            _line_adverbial_date("use 3/8 of the budget for catering", "2023"))
+
+    def test_month_word_still_wins(self):
+        # first adverbial date in the line wins (month-word form here)
+        self.assertEqual(
+            _line_adverbial_date(
+                "hiked on June 14th; gear list finalized on 6/20", "2023"),
+            "2023-06-14")
+
+    def test_end_to_end_between_rescue(self):
+        # 8c18457d geometry: session dated 03-29 carrying "on the 3/8"
+        # vs a 03-15 session; answer must be 7 days, not 14.
+        a = LongMemEvalAdapter()
+        a.ingest_sessions(
+            [{"session_id": "s1", "messages": [
+                {"role": "user", "content":
+                 "I got a wireless headphone for my brother as a "
+                 "graduation gift on the 3/8 and he loved it"}]},
+             {"session_id": "s2", "messages": [
+                {"role": "user", "content":
+                 "I got a silver necklace for my best friend's "
+                 "birthday on March 15th"}]}],
+            session_dates={"s1": "2023-03-29", "s2": "2023-03-15"})
+        dl = [(f"[{a._nodes[n]['role'] or '?'}] {a._nodes[n]['label']}",
+               a._session_dates.get(a._nodes[n]['session_id'], ""))
+              for n in a._messages]
+        ans, det = answer_temporal_arith(
+            "How many days had passed between the day I bought a gift "
+            "for my brother's graduation ceremony and the day I bought "
+            "a birthday gift for my best friend?",
+            dl, "2023-03-29")
+        self.assertEqual(ans, "7 days")
+        self.assertEqual(det["dates"], ["2023-03-08", "2023-03-15"])
 
 
 if __name__ == "__main__":
