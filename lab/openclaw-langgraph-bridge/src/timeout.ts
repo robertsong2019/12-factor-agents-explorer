@@ -24,6 +24,18 @@ export interface TimeoutConfig {
  * // Returns { _timeoutError: "Node timed out after 5000ms" } on timeout
  * ```
  */
+/**
+ * Sentinel thrown by the internal race when the timeout fires. Detection is
+ * by instanceof — NOT by message matching (an upstream error that merely
+ * mentions "timed out" must propagate, not become our fallback).
+ */
+class TimeoutError extends Error {
+  constructor(ms: number) {
+    super(`Node timed out after ${ms}ms`);
+    this.name = "TimeoutError";
+  }
+}
+
 export function withTimeout<T extends AgentState>(
   fn: (state: T) => Promise<Partial<T>>,
   config: TimeoutConfig | number,
@@ -40,7 +52,7 @@ export function withTimeout<T extends AgentState>(
         fn(state),
         new Promise<never>((_, reject) =>
           controller.signal.addEventListener("abort", () =>
-            reject(new Error(`Node timed out after ${ms}ms`)),
+            reject(new TimeoutError(ms)),
           ),
         ),
       ]);
@@ -48,7 +60,7 @@ export function withTimeout<T extends AgentState>(
       return result;
     } catch (err: any) {
       clearTimeout(timer);
-      if (err.message?.includes?.("timed out")) {
+      if (err instanceof TimeoutError) {
         return {
           ...(fallbackState ?? {}),
           _timeoutError: err.message,

@@ -67,3 +67,25 @@ describe("withTimeout", () => {
     });
   });
 });
+
+describe("timeout classification (C4 red-first)", () => {
+  it("must NOT swallow upstream errors that merely mention 'timed out'", async () => {
+    const flaky = withTimeout(async () => {
+      throw new Error("upstream fetch failed: request timed out after 30s");
+    }, { ms: 5000 });
+    await assert.rejects(
+      () => flaky({}),
+      (err) => err.message.includes("upstream fetch failed"),
+      "upstream error must propagate, not become _timeoutError"
+    );
+  });
+
+  it("genuine timeout still returns _timeoutError", async () => {
+    const slow = withTimeout(async () => {
+      await new Promise((r) => setTimeout(r, 200));
+      return { done: true };
+    }, { ms: 30 });
+    const result = await slow({});
+    assert.ok(result._timeoutError.includes("timed out"));
+  });
+});
