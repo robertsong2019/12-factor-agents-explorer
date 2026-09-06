@@ -29,6 +29,14 @@ export function throttle(
   const timestamps: number[] = [];
   const queue: QueueEntry[] = [];
 
+  // Config validation: limit < 1 means `timestamps.length < limit` can never
+  // hold, so every call would queue forever — a deadlock. Fail loudly instead.
+  if (!Number.isFinite(config.limit) || config.limit < 1) {
+    throw new RangeError(
+      `throttle: limit must be a number >= 1, got ${config.limit}`
+    );
+  }
+
   function cleanWindow(now: number) {
     const cutoff = now - config.windowMs;
     while (timestamps.length > 0 && timestamps[0] <= cutoff) {

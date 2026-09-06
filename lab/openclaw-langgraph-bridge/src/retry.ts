@@ -36,6 +36,15 @@ export function withRetry(
   const maxAttempts = config.maxAttempts ?? 3;
   const baseDelayMs = config.baseDelayMs ?? 100;
 
+  // Config validation: maxAttempts < 1 means the loop never runs and the
+  // wrapper would `throw undefined` — violating the "throws the last error"
+  // contract. Fail loudly at construction instead.
+  if (!Number.isFinite(maxAttempts) || maxAttempts < 1) {
+    throw new RangeError(
+      `withRetry: maxAttempts must be a number >= 1, got ${maxAttempts}`
+    );
+  }
+
   return async (state) => {
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {

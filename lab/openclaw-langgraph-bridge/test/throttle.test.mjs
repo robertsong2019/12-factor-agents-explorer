@@ -63,3 +63,25 @@ describe("throttle", () => {
     assert.strictEqual(result.added, "yes");
   });
 });
+
+describe("throttle config validation (C2 red-first)", () => {
+  const noop = async (s) => ({ ok: true });
+
+  it("limit=0 must throw RangeError (would deadlock: every call queues forever)", () => {
+    assert.throws(() => throttle(noop, { limit: 0, windowMs: 50 }), RangeError);
+  });
+
+  it("limit negative must throw RangeError", () => {
+    assert.throws(() => throttle(noop, { limit: -1, windowMs: 50 }), RangeError);
+  });
+
+  it("limit fractional < 1 must throw RangeError (never admits a call)", () => {
+    assert.throws(() => throttle(noop, { limit: 0.5, windowMs: 50 }), RangeError);
+  });
+
+  it("limit=1 valid, still works", async () => {
+    const t = throttle(noop, { limit: 1, windowMs: 20 });
+    const r = await t({});
+    assert.equal(r.ok, true);
+  });
+});

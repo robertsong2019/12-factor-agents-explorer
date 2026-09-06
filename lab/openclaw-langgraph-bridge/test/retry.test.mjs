@@ -95,3 +95,19 @@ describe("withRetry", () => {
     assert.equal(states[0], states[1]);
   });
 });
+
+describe("withRetry config validation (C2 red-first)", () => {
+  const boom = async () => { throw new Error("boom"); };
+
+  it("maxAttempts=0 must throw RangeError at construction (would throw undefined)", () => {
+    assert.throws(() => withRetry(boom, { maxAttempts: 0 }), RangeError);
+  });
+
+  it("maxAttempts negative must throw RangeError at construction", () => {
+    assert.throws(() => withRetry(boom, { maxAttempts: -2 }), RangeError);
+  });
+
+  it("maxAttempts fractional < 1 must throw RangeError (zero executions, throw undefined)", () => {
+    assert.throws(() => withRetry(boom, { maxAttempts: 0.5 }), RangeError);
+  });
+});
