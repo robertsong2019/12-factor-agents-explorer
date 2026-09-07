@@ -115,9 +115,38 @@ export class Tracer {
   }
 
   importJSON(json: string): void {
-    const data = JSON.parse(json);
-    if (data.traceId) this.traceId = data.traceId;
-    if (Array.isArray(data.spans)) this.spans = data.spans;
+    // Validate everything BEFORE mutating state: a failed import must leave
+    // the tracer untouched (no mixed traceId/spans state).
+    let data: unknown;
+    try {
+      data = JSON.parse(json);
+    } catch (err) {
+      throw new TypeError(`importJSON: invalid JSON (${(err as Error).message})`);
+    }
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      throw new TypeError('importJSON: expected an object with traceId and spans array');
+    }
+    const d = data as { traceId?: unknown; spans?: unknown };
+    if (d.traceId !== undefined && typeof d.traceId !== 'string') {
+      throw new TypeError('importJSON: traceId must be a string');
+    }
+    if (d.spans !== undefined) {
+      if (!Array.isArray(d.spans)) {
+        throw new TypeError('importJSON: spans must be an array');
+      }
+      for (const s of d.spans) {
+        if (typeof s !== 'object' || s === null
+          || typeof (s as { spanId?: unknown }).spanId !== 'string'
+          || typeof (s as { startTime?: unknown }).startTime !== 'number') {
+          throw new TypeError('importJSON: each span needs string spanId and number startTime');
+        }
+      }
+    }
+    if (typeof d.traceId === 'string') this.traceId = d.traceId;
+    if (Array.isArray(d.spans)) {
+      this.spans = d.spans as Span[];
+      this.activeStack = []; // a snapshot has no in-flight spans
+    }
   }
 
   findSpans(predicate: (span: Span) => boolean): Span[] {
@@ -337,7 +366,8 @@ export class Tracer {
 
   /** Deterministic hash of the trace structure (operation sequence + status). */
   getTraceHash(): string {
-    const parts = this.spans
+    // Sort a copy: this is a read API and must not reorder stored spans.
+    const parts = [...this.spans]
       .sort((a, b) => a.startTime - b.startTime)
       .map(s => `${s.operation}:${s.status}`);
     // Simple hash

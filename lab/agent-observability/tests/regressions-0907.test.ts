@@ -73,3 +73,66 @@ describe('regressions 2026-09-07: tracer', () => {
     assert.equal(ids.length, new Set(ids).size);
   });
 });
+
+describe('regressions 2026-09-07: tracer purity + importJSON atomicity', () => {
+  const snapshot = () => JSON.stringify({
+    traceId: 'tid-orig',
+    spans: [
+      { traceId: 'tid-orig', spanId: 's2', parentSpanId: null, operation: 'llm.call', startTime: 200, endTime: 300, attributes: {}, status: 'ok', events: [] },
+      { traceId: 'tid-orig', spanId: 's1', parentSpanId: null, operation: 'agent.run', startTime: 100, endTime: 400, attributes: {}, status: 'ok', events: [] },
+    ],
+  });
+
+  test('getTraceHash does not mutate internal span order (pure read)', () => {
+    const tracer = new Tracer();
+    tracer.importJSON(snapshot());
+    const before = tracer.getSpans().map(s => s.spanId);
+    tracer.getTraceHash();
+    const after = tracer.getSpans().map(s => s.spanId);
+    assert.deepEqual(after, before, 'a read API must not reorder stored spans');
+  });
+
+  test('importJSON: malformed JSON throws with diagnostics, state untouched', () => {
+    const tracer = new Tracer();
+    const s = tracer.startSpan('agent.run');
+    tracer.endSpan(s.spanId);
+    const spansBefore = tracer.getSpans();
+    assert.throws(() => tracer.importJSON('{not json'), TypeError);
+    assert.deepEqual(tracer.getSpans(), spansBefore, 'failed import must not mutate spans');
+  });
+
+  test('importJSON: non-object / wrong-shape payloads rejected atomically', () => {
+    const tracer = new Tracer();
+    tracer.startSpan('agent.run');
+    const tidBefore = tracer.getTraceReport().traceId;
+    const countBefore = tracer.spanCount();
+
+    assert.throws(() => tracer.importJSON('[1,2,3]'), TypeError);
+    assert.throws(() => tracer.importJSON('null'), TypeError);
+    // traceId-only object: currently silently rewrites traceId while keeping old spans (mixed state)
+    assert.throws(() => tracer.importJSON('{"spans": "not-an-array"}'), TypeError);
+    assert.throws(() => tracer.importJSON('{"traceId": 42, "spans": []}'), TypeError);
+
+    assert.equal(tracer.getTraceReport().traceId, tidBefore, 'traceId unchanged after failed imports');
+    assert.equal(tracer.spanCount(), countBefore, 'spans unchanged after failed imports');
+  });
+
+  test('importJSON: valid snapshot resets active stack (no cross-trace ghost parents)', () => {
+    const tracer = new Tracer();
+    tracer.startSpan('agent.run'); // leave active
+    tracer.importJSON(snapshot());
+    assert.equal(tracer.getActiveSpanCount(), 0, 'imported snapshot has no active spans');
+    const fresh = tracer.startSpan('llm.call');
+    assert.equal(fresh.parentSpanId, null, 'span after import must not inherit pre-import active parent');
+  });
+
+  test('importJSON: valid round-trip still works (export/import pinned)', () => {
+    const t1 = new Tracer();
+    const s = t1.startSpan('agent.run');
+    t1.endSpan(s.spanId);
+    const t2 = new Tracer();
+    t2.importJSON(t1.exportJSON());
+    assert.equal(t2.spanCount(), 1);
+    assert.equal(t2.getSpans()[0].operation, 'agent.run');
+  });
+});
