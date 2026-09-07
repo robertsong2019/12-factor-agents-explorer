@@ -170,22 +170,25 @@ export class Tracer {
   }
 
   getCausalChain(spanId: string, direction: 'upstream' | 'downstream' = 'upstream'): Span[] {
-    const visited = new Set<string>();
+    const visited = new Set<string>([spanId]);
     const result: Span[] = [];
     const queue = [spanId];
     while (queue.length > 0) {
       const current = queue.shift()!;
-      if (visited.has(current)) continue;
-      visited.add(current);
       const links = direction === 'upstream'
         ? this.causalLinks.filter(l => l.to === current)
         : this.causalLinks.filter(l => l.from === current);
       for (const link of links) {
         const nextId = direction === 'upstream' ? link.from : link.to;
-        const span = this.spans.find(s => s.spanId === nextId);
-        if (span && !visited.has(nextId)) {
-          result.push(span);
-          queue.push(nextId);
+        // Mark visited at enqueue time: diamond topologies (two parents -> one
+        // child) would otherwise push the same span into the result twice.
+        if (!visited.has(nextId)) {
+          visited.add(nextId);
+          const span = this.spans.find(s => s.spanId === nextId);
+          if (span) {
+            result.push(span);
+            queue.push(nextId);
+          }
         }
       }
     }
@@ -266,6 +269,7 @@ export class Tracer {
     const newTraceId = randomUUID();
     this.spans = [];
     this.traceId = newTraceId;
+    this.activeStack = []; // spans started after clear() must not inherit a dead parent
   }
 
   /** Get duration of a completed span in ms, or null if still active */

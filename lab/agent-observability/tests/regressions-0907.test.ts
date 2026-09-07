@@ -1,0 +1,75 @@
+/**
+ * Regression tests 2026-09-07 evening code-lab cycle 1.
+ * Red-first bugs:
+ *  1. Tracer.clear() did not reset activeStack -> spans started after clear()
+ *     got a dead parentSpanId (ghost parent), vanishing from getSpanTree().
+ *  2. getCausalChain pushed spans to the result before marking them visited,
+ *     so diamond topologies (A->B, A->C, B->D, C->D) yielded duplicates.
+ */
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { Tracer } from '../src/tracer.js';
+
+describe('regressions 2026-09-07: tracer', () => {
+  test('clear() resets active stack: spans started after clear are parentless roots', () => {
+    const tracer = new Tracer();
+    const stale = tracer.startSpan('agent.run');
+    tracer.clear();
+
+    assert.equal(tracer.getActiveSpanCount(), 0, 'active stack must be empty after clear');
+
+    const fresh = tracer.startSpan('llm.call');
+    assert.equal(fresh.parentSpanId, null, 'span after clear must not inherit a dead parent');
+    assert.notEqual(fresh.parentSpanId, stale.spanId);
+
+    // Fresh span must be reachable from the tree roots (ghost-parent bug = invisible span)
+    const tree = tracer.getSpanTree();
+    assert.equal(tree.length, 1, 'fresh span must appear as a root in the span tree');
+    assert.equal(tree[0].spanId, fresh.spanId);
+  });
+
+  test('clear() resets active stack: getActiveSpan no longer returns cleared spans', () => {
+    const tracer = new Tracer();
+    tracer.startSpan('agent.run');
+    tracer.clear();
+    assert.equal(tracer.getActiveSpan(), undefined);
+    assert.equal(tracer.spanCount(), 0);
+  });
+
+  test('getCausalChain diamond topology: each span appears exactly once', () => {
+    const tracer = new Tracer();
+    const a = tracer.startSpan('agent.run');
+    const b = tracer.startSpan('llm.call');
+    const c = tracer.startSpan('tool.execute');
+    const d = tracer.startSpan('retrieval.search');
+    for (const s of [a, b, c, d]) tracer.endSpan(s.spanId);
+
+    tracer.linkSpans(a.spanId, b.spanId);
+    tracer.linkSpans(a.spanId, c.spanId);
+    tracer.linkSpans(b.spanId, d.spanId);
+    tracer.linkSpans(c.spanId, d.spanId);
+
+    const chain = tracer.getCausalChain(a.spanId, 'downstream');
+    const ids = chain.map(s => s.spanId);
+    assert.equal(ids.length, new Set(ids).size, `expected unique spans, got ${ids.length} entries`);
+    assert.deepEqual([...new Set(ids)].sort(), [b.spanId, c.spanId, d.spanId].sort());
+  });
+
+  test('getCausalChain upstream diamond: no duplicates either direction', () => {
+    const tracer = new Tracer();
+    const a = tracer.startSpan('agent.run');
+    const b = tracer.startSpan('llm.call');
+    const c = tracer.startSpan('tool.execute');
+    const d = tracer.startSpan('retrieval.search');
+    for (const s of [a, b, c, d]) tracer.endSpan(s.spanId);
+
+    tracer.linkSpans(a.spanId, b.spanId);
+    tracer.linkSpans(a.spanId, c.spanId);
+    tracer.linkSpans(b.spanId, d.spanId);
+    tracer.linkSpans(c.spanId, d.spanId);
+
+    const chain = tracer.getCausalChain(d.spanId, 'upstream');
+    const ids = chain.map(s => s.spanId);
+    assert.equal(ids.length, new Set(ids).size);
+  });
+});
