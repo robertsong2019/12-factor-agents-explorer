@@ -264,10 +264,16 @@ cmd_date() {
   echo
   if [[ -f "$file" ]]; then cat "$file"; else echo -e "${GRAY}(no daily notes for $d)${RESET}"; fi
   if [[ -d "$SESSIONS_DIR" ]]; then
+    # F25 fix: upper bound is next-day 00:00:00, not 23:59:59 — the old
+    # boundary silently dropped sessions modified in the day's final second
+    # (23:59:59.001–.999) from that day's activity list.
+    local nextday; nextday=$(date -d "$d + 1 day" +%Y-%m-%d 2>/dev/null || echo "")
     echo; echo -e "${YELLOW}Session activity:${RESET}"
-    find "$SESSIONS_DIR" -name '*.md' -newermt "$d 00:00:00" ! -newermt "$d 23:59:59" -print0 2>/dev/null \
-      | xargs -0 -I{} bash -c 'echo -e "  ${GRAY}$(stat -c %y "{}" 2>/dev/null | cut -d. -f1)${RESET} {}"' 2>/dev/null \
-      | sort | head -20
+    if [[ -n "$nextday" ]]; then
+      find "$SESSIONS_DIR" -name '*.md' -newermt "$d 00:00:00" ! -newermt "$nextday 00:00:00" -print0 2>/dev/null \
+        | xargs -0 -I{} bash -c 'echo -e "  ${GRAY}$(stat -c %y "{}" 2>/dev/null | cut -d. -f1)${RESET} {}"' 2>/dev/null \
+        | sort | head -20
+    fi
   fi
 }
 
@@ -600,10 +606,18 @@ cmd_grep() {
   [[ -z "$pattern" ]] && die "Usage: agent-log grep <pattern> [-j|--json]"
 
   [[ -d "$SESSIONS_DIR" ]] || die "No sessions directory"
-  local grep_color=()
+  # F25 fix: capture matches instead of `grep | head || echo`.
+  # The old form under set -o pipefail printed a false "(no matches)" AFTER
+  # 50 real results when head's early close SIGPIPE'd grep (exit 141).
+  # `|| true` absorbs that SIGPIPE status; head's output is still captured.
+  local matches="" grep_color=()
   [[ -t 1 && -z "${NO_COLOR:-}" ]] && grep_color=(--color=always)
-  grep -r --include='*.md' "${grep_color[@]}" -n "$pattern" "$SESSIONS_DIR" 2>/dev/null \
-    | head -50 || echo -e "${GRAY}(no matches)${RESET}"
+  matches=$(grep -r --include='*.md' "${grep_color[@]}" -n "$pattern" "$SESSIONS_DIR" 2>/dev/null | head -50) || true
+  if [[ -z "$matches" ]]; then
+    echo -e "${GRAY}(no matches)${RESET}"
+  else
+    printf '%s\n' "$matches"
+  fi
 }
 
 cmd_tail() {
