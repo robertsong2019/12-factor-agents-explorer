@@ -4335,8 +4335,23 @@ def temporal_arith_form(question: str) -> tuple | None:
                 m.group(2).strip(), m.group(3).strip())
     m = _TA_AGO_RE.match(q)
     if m:
-        return ("ago", m.group(1).rstrip("s") or "day",
-                m.group(2).strip(), None)
+        anchor = m.group(2).strip()
+        # Cycle 556: "how many days ago did I X when I Y" — the
+        # annotator's value is the X→Y event SPAN, not the ask-to-
+        # event distance (census: the only two ago+when members in
+        # the full 500 are eac54adc 19 = 03-01 contract minus 02-10
+        # launch; 9a707b81 21 = 04-10 cake minus 03-20 class, where
+        # the class line says "yesterday" — qd-anchored arithmetic
+        # gives 24/25 and misses both). Split on " when " and map
+        # onto the between-style span arithmetic (same convention
+        # as _TA_SINCEWHEN above).
+        wm = re.search(r"\s+when\s+", anchor, re.I)
+        if wm:
+            b = anchor[wm.end():].strip()
+            b = re.sub(r"^i\s+", "", b, flags=re.I)
+            return ("ago_when", m.group(1).rstrip("s") or "day",
+                    anchor[:wm.start()].strip(), b)
+        return ("ago", m.group(1).rstrip("s") or "day", anchor, None)
     m = _TA_SINCE_RE.match(q)
     if m:
         return ("since", m.group(1).rstrip("s") or "day",
@@ -4469,6 +4484,14 @@ _TA_PAST_RE = re.compile(
     r"did|made|bought|started|volunteered|helped|hosted|joined|won)\b",
     re.I)
 
+# Cycle 556: line-relative day shift for ago_when span anchors —
+# a line saying the event was "yesterday" dates the event one day
+# before its session (9a707b81: class line in the 03-21 session,
+# event 03-20; span to the 04-10 cake session = 21 = GT). Only
+# engaged by the ago_when path (span_mode), never by the shared
+# ladder's other callers.
+_TA_YESTERDAY_RE = re.compile(r"\byesterday\b", re.I)
+
 
 def answer_temporal_arith(question: str,
                           dated_lines: list[tuple[str, str]],
@@ -4497,7 +4520,8 @@ def answer_temporal_arith(question: str,
     kind, unit, a, b = form
     detail = {"form": kind, "unit": unit}
 
-    def best_line(anchor: str) -> tuple[int, str] | None:
+    def best_line(anchor: str,
+                  span_mode: bool = False) -> tuple[int, str] | None:
         """Best dated line for *anchor* (≥1 distinctive hit).
 
         Cycle 471 tie ladder (was: silent first-max = list-position
@@ -4512,12 +4536,31 @@ def answer_temporal_arith(question: str,
         anchor the event (census: 45-row gate-routing set,
         mirror 45/45 chain-identical, exactly 1 designed rescue
         gpt4_b0863698 '16 days'→'7 days', 0 kills).
+        span_mode (C556): ago_when span anchors only — (a) a
+        winning line that says the event happened "yesterday"
+        dates the event one day before its session (an explicit
+        adverbial date always wins over the relative word);
+        (b) a possessive tie-break slot after user-role — "my
+        <keyword>" adjacency marks the asker's own event, which
+        keyword-only ties otherwise lose to same-verb tangents
+        (eac54adc: "I just launched my website" vs the WhatGPT
+        "launching a service ... website campaigns" line, where
+        the true line loses the future/past keys to its own
+        "I want to make sure" scaffolding).
         """
         ks = _anchor_keywords(anchor)
         if not ks:
             return None
         gen = [w for w in _keywords(anchor)
                if w in _ANCHOR_GENERIC and w not in ks]
+
+        def _poss_hits(line: str) -> int:
+            """Possessive-adjacent keyword hits (span_mode only):
+            \"my|our <keyword>\" — the asker's own event."""
+            return sum(1 for w in ks
+                       if re.search(r"\b(?:my|our)\s+%s\b"
+                                    % re.escape(w), line, re.I))
+
         best, best_key = None, None
         for line, sdate in dated_lines:
             hits = _keyword_hits(line, ks)
@@ -4552,6 +4595,12 @@ def answer_temporal_arith(question: str,
                 if (delta is not None
                         and (delta <= _TA_DATE_PROXIMITY or ad < sdate)):
                     eff = ad
+            elif span_mode and _TA_YESTERDAY_RE.search(line):
+                try:
+                    eff = (date.fromisoformat(eff)
+                           - timedelta(days=1)).isoformat()
+                except ValueError:
+                    pass
             try:
                 date_key = (0, -date.fromisoformat(eff).toordinal())
             except ValueError:
@@ -4559,6 +4608,7 @@ def answer_temporal_arith(question: str,
             key = (
                 -hits,
                 0 if line.startswith("[user]") else 1,
+                -(_poss_hits(line) if span_mode else 0),
                 -(_keyword_hits(line, gen) if gen else 0),
                 1 if _TA_FUTURE_RE.search(line) else 0,
                 0 if _TA_PAST_RE.search(line) else 1,
@@ -4580,6 +4630,31 @@ def answer_temporal_arith(question: str,
         n = duration_units(qd, ra[1], unit)
         detail["dates"] = [ra[1], qd]
         detail["value"] = n
+        return f"{n} {unit}{'' if n == 1 else 's'}", detail
+
+    if kind == "ago_when":
+        # Cycle 556: X→Y event span (see temporal_arith_form) —
+        # both anchors resolve, span = calendar distance; same
+        # date guards as "between" below. Both anchors run
+        # span_mode: the X clause is where a recalled
+        # "... class yesterday" line dates the event off its
+        # session date, and the possessive slot separates the
+        # asker's own event from same-verb tangents. Honesty
+        # contract: either anchor unresolved (or both land on
+        # one date) → abstain, never fall back to the qd-
+        # anchored single-anchor arithmetic that misreads the
+        # form (24/25 vs GT 19/21 on the census pair).
+        ra = best_line(a, span_mode=True)
+        rb = best_line(b, span_mode=True)
+        detail["anchors"] = [bool(ra), bool(rb)]
+        if not ra or not rb:
+            return None, detail
+        if ra[1] == rb[1]:
+            return None, detail
+        n = duration_units(ra[1], rb[1], unit)
+        detail["dates"] = [ra[1], rb[1]]
+        detail["value"] = n
+        detail["span"] = True
         return f"{n} {unit}{'' if n == 1 else 's'}", detail
 
     # between
