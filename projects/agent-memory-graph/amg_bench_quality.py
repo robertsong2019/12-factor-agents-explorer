@@ -4502,9 +4502,16 @@ def answer_temporal_arith(question: str,
 
         Cycle 471 tie ladder (was: silent first-max = list-position
         tie-break, which decided 3 of 9 forensics failures):
-        distinctive hits ↓, generic hits ↓ (tie-break only),
-        user-role, past aspect over future marker, in-text date
-        (Cycle 482), later date.
+        distinctive hits ↓, user-role, generic hits ↓ (tie-break
+        only), past aspect over future marker, in-text date
+        (Cycle 482), later date. C555: user-role moved ahead of
+        the generic-keyword tie-break — assistant tangents
+        systematically echo the question's own scaffolding verbs
+        ("encourage them to participate in your event"), so
+        generic hits are assistant-biased; the asker's own words
+        anchor the event (census: 45-row gate-routing set,
+        mirror 45/45 chain-identical, exactly 1 designed rescue
+        gpt4_b0863698 '16 days'→'7 days', 0 kills).
         """
         ks = _anchor_keywords(anchor)
         if not ks:
@@ -4551,8 +4558,8 @@ def answer_temporal_arith(question: str,
                 date_key = (1, 0)     # missing/unparseable date last
             key = (
                 -hits,
-                -(_keyword_hits(line, gen) if gen else 0),
                 0 if line.startswith("[user]") else 1,
+                -(_keyword_hits(line, gen) if gen else 0),
                 1 if _TA_FUTURE_RE.search(line) else 0,
                 0 if _TA_PAST_RE.search(line) else 1,
                 0 if eff != sdate else 1,
