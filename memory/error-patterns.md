@@ -156,3 +156,11 @@
 - **根因：** 把「设置环境变量」当成即时生效的开关；C548 期 ab500.py/census_user.py 等脚本同样带此模式（靠外部 env 前缀救了，但脚本本身是假钉）
 - **修正：** 脚本顶部 self-re-exec：`if os.environ.get("PYTHONHASHSEED") != "7": os.execve(sys.executable, [sys.executable, __file__], {**os.environ, "PYTHONHASHSEED": "7"})`（step3 起）；ledger assert 270 双跑一致，结论未受污染
 - **出现次数：** 1；规则：任何「钉种子」脚本用 env 前缀或 self-re-exec，脚本内 setdefault 视为假钉；跨 run 比对前先验两侧播种方式一致
+
+### [2026-09-08] git add 卷入外来 worktree 改动（全文件标点转换事故）
+- **场景：** documentation-morning cron 给 amg README 补 C555-557 文档，`git add README.md` 提交（07ca9c3）
+- **错误：** worktree 里躺着一个非本会话的全文件 fullwidth→halfwidth 标点转换（175 hunks，来源不明，早于本次编辑）；edit 工具模糊匹配让含全角标点的 oldText 照样命中，掩盖了 worktree 已被换血的事实；提交后才发现 diff stat 1040+/963- 远超预期的 ~35 行
+- **根因：** ①提交前没核对 staged diff 与预期改动规模 ②edit 成功 ≠ worktree 干净（模糊匹配可跨过外来改动）③初始 `git status` 只看了 head -20 截断输出，没确认目标文件状态
+- **修正：** `git show 65b7ee4:README.md` 恢复全角基底 → Python 脚本字节级重放 3 处内容编辑（assert count==1）→ fd71bf8 已 push；净效果 = 只有内容编辑 + 排版还原
+- **规则：** TOOLS.md 新增「git add 前必查 staged diff」——commit 前 `git diff --cached --stat` 与预期规模核对，超预期 = 逐块过目；恢复时勿再用 edit 工具（同会被模糊匹配坑）
+- **出现次数：** 1
