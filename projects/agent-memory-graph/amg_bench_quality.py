@@ -3153,6 +3153,92 @@ def _line_adverbial_date(line: str, year_hint: str = "") -> str | None:
         return None
 
 
+def _line_adverbial_dates(line: str, year_hint: str = "") -> list[tuple[str, int]]:
+    """All adverbial dates in *line* as ``(iso, char_offset)``.
+
+    C557 companion to :func:`_line_adverbial_date` (which keeps the
+    leftmost-match contract for its other callers): same regex,
+    same parsing, every match.
+    """
+    out: list[tuple[str, int]] = []
+    for m in _TA_LINE_DATE_RE.finditer(line or ""):
+        iso = None
+        try:
+            if m.group("m1"):
+                mon = _TA_MONTH_NUM[m.group("m1")[:3].lower()]
+                day, yr = int(m.group("d1")), m.group("y1")
+            elif m.group("nm"):
+                mon, day = int(m.group("nm")), int(m.group("nd"))
+                yr = m.group("ny")
+                if yr and len(yr) == 2:
+                    yr = str(2000 + int(yr))
+            else:
+                day = int(m.group("d2"))
+                mon = _TA_MONTH_NUM[m.group("m2")[:3].lower()]
+                yr = m.group("y2")
+            if yr:
+                year = int(yr)
+            elif year_hint and str(year_hint).isdigit():
+                year = int(year_hint)
+            else:
+                year = None
+            if year:
+                iso = date(year, mon, day).isoformat()
+        except (ValueError, KeyError):
+            iso = None
+        if iso:
+            out.append((iso, m.start()))
+    return out
+
+
+def _line_eff_date(line: str, sdate: str, question_date: str = "",
+                   ks: list[str] | None = None) -> str | None:
+    """Anchor-aware adverbial date for one line (C482 gate + C557 pick).
+
+    The C482 closeness gate applies to every candidate
+    individually (within _TA_DATE_PROXIMITY days of the session, or
+    in the past relative to it — far-future plan dates are poison).
+    C557: when several candidates survive the gate, pick the one
+    nearest the anchor's keyword cluster. Multi-event lines anchor
+    their SECOND event in the anchor's words: "got a pair of
+    sneakers ... on February 1st ... realized that the shoelaces on
+    my old Converse sneakers had broken on January 24th" — the
+    realized-shoelaces anchor must date 01-24, not leftmost 02-01
+    (dcfa8644: 22 days vs GT 14). Single surviving candidate or no
+    keyword positions → leftmost, byte-identical with the pre-C557
+    path.
+    """
+    year_hint = sdate[:4] or (question_date[:4] if question_date else "") or ""
+    cands: list[tuple[str, int]] = []
+    for iso, pos in _line_adverbial_dates(line, year_hint):
+        try:
+            delta = abs((date.fromisoformat(iso)
+                         - date.fromisoformat(sdate)).days)
+        except ValueError:
+            continue
+        if delta <= _TA_DATE_PROXIMITY or iso < sdate:
+            cands.append((iso, pos))
+    if not cands:
+        return None
+    if len(cands) == 1 or not ks:
+        return cands[0][0]
+    kpos = [m.start() for w in ks
+            for m in re.finditer(r"\b%s\b" % re.escape(w), line, re.I)]
+    if not kpos:
+        return cands[0][0]
+    return min(cands,
+               key=lambda t: (min(abs(t[1] - p) for p in kpos), t[1]))[0]
+
+
+# C557: consecutive-pair descriptor in "since" anchors — "two
+# charity events in a row, on consecutive days" asserts a temporal
+# RELATION between two events, so the anchor date is the pair's
+# completion (the later day), not the most recent single event
+# (b46e15ed: pair = 02-14 bike ride + 02-15 book drive; the recency
+# ladder anchored the 03-19 walk → '1 month' vs GT 2).
+_TA_PAIR_RE = re.compile(r"\bin a row\b|\bconsecutive\b", re.I)
+
+
 def recall_form(question: str) -> str | None:
     """Classify a speaker-recall question form (Cycle 468).
 
@@ -4584,17 +4670,9 @@ def answer_temporal_arith(question: str,
             # plan's date (C482 A/B loss gpt4_7a0daae1: 1 week →
             # 12 weeks).
             eff = sdate
-            ad = _line_adverbial_date(
-                line, sdate[:4] or question_date[:4] or "")
+            ad = _line_eff_date(line, sdate, question_date, ks)
             if ad:
-                try:
-                    delta = abs((date.fromisoformat(ad)
-                                 - date.fromisoformat(sdate)).days)
-                except ValueError:
-                    delta = None
-                if (delta is not None
-                        and (delta <= _TA_DATE_PROXIMITY or ad < sdate)):
-                    eff = ad
+                eff = ad
             elif span_mode and _TA_YESTERDAY_RE.search(line):
                 try:
                     eff = (date.fromisoformat(eff)
@@ -4622,6 +4700,34 @@ def answer_temporal_arith(question: str,
     if kind in ("ago", "since"):
         qd = parse_lme_date(question_date)
         ra = best_line(a)
+        # C557: consecutive-pair refinement ("since" only). The
+        # anchor clause describes TWO events on adjacent days; the
+        # completion of that pair — not the most recent lone event —
+        # is the ask-relative anchor. Scans the same candidate set
+        # best_line sees, resolves each line's effective date via
+        # the shared C482/C557 helper, and looks for a Δ1 pair.
+        # No pair (or pair end after the ask) → keep best_line's
+        # recency anchor (graceful degradation, never abstain).
+        if (kind == "since" and qd and ra
+                and _TA_PAIR_RE.search(a)):
+            ks_p = _anchor_keywords(a)
+            ds = set()
+            for line, sdate in dated_lines:
+                if not ks_p or _keyword_hits(line, ks_p) <= 0:
+                    continue
+                eff = (_line_eff_date(line, sdate, question_date,
+                                      ks_p) or sdate)
+                try:
+                    date.fromisoformat(eff)
+                except ValueError:
+                    continue
+                ds.add(eff)
+            ordered = sorted(ds)
+            pair_ends = [b for x, b in zip(ordered, ordered[1:])
+                         if (date.fromisoformat(b)
+                             - date.fromisoformat(x)).days == 1]
+            if pair_ends and max(pair_ends) <= qd:
+                ra = (ra[0], max(pair_ends))
         detail["anchors"] = [bool(ra)]
         if not qd or not ra:
             return None, detail
