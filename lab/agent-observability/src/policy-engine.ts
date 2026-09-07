@@ -161,7 +161,7 @@ export class PolicyEngine {
   }
 
   /** Import rules from toJSON output (note: evaluate fns are lost, only metadata) */
-  static fromJSON(data: Record<string, Array<{ name: string; description: string }>>): PolicyEngine {
+  static fromJSON(data: Record<string, Array<{ name: string; description: string; enabled?: boolean }>>): PolicyEngine {
     const engine = new PolicyEngine();
     for (const [cat, rules] of Object.entries(data)) {
       for (const r of rules) {
@@ -171,6 +171,9 @@ export class PolicyEngine {
           category: cat,
           evaluate: () => ({ allow: true }),
         });
+        // Preserve the disabled flag exported by toJSON — otherwise every
+        // round-trip silently re-enables rules that were turned off.
+        if (r.enabled === false) engine.disableRule(cat, r.name);
       }
     }
     return engine;
@@ -184,7 +187,12 @@ export class PolicyEngine {
       piiFilter: piiFilter,
     };
     const builder = helpers[def.type];
-    return builder ? builder(def.config ?? {}) : null;
+    const rule = builder ? builder(def.config ?? {}) : null;
+    if (!rule) return null;
+    // Honor the def's declared identity: builders hardcode preset names, which
+    // made disableRule/removePolicy/isRuleEnabled target a name that never
+    // existed (silent no-op disable) and made same-type defs indistinguishable.
+    return { ...rule, name: def.name, description: def.description || rule.description };
   }
 
   /** Remove an entire category of rules */

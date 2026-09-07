@@ -9,6 +9,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { Tracer } from '../src/tracer.js';
+import { PolicyEngine } from '../src/policy-engine.js';
 
 describe('regressions 2026-09-07: tracer', () => {
   test('clear() resets active stack: spans started after clear are parentless roots', () => {
@@ -134,5 +135,39 @@ describe('regressions 2026-09-07: tracer purity + importJSON atomicity', () => {
     t2.importJSON(t1.exportJSON());
     assert.equal(t2.spanCount(), 1);
     assert.equal(t2.getSpans()[0].operation, 'agent.run');
+  });
+});
+
+describe('regressions 2026-09-07: policy-engine round-trip', () => {
+  test('toJSON -> fromJSON preserves disabled rule state', () => {
+    const engine = new PolicyEngine();
+    engine.loadFromJSON([
+      { name: 'block-rm', description: 'no rm', category: 'tool', type: 'blockDestructiveOps' },
+      { name: 'cost-cap', description: 'cap', category: 'llm', type: 'costLimit', config: { maxCost: 1 } },
+    ]);
+    engine.disableRule('tool', 'block-rm');
+
+    const revived = PolicyEngine.fromJSON(engine.toJSON());
+    assert.equal(revived.getRule('tool', 'block-rm')?.name, 'block-rm', 'rules restored');
+    assert.equal(revived.isRuleEnabled('tool', 'block-rm'), false, 'disabled state must survive the round-trip');
+    assert.equal(revived.isRuleEnabled('llm', 'cost-cap'), true, 'enabled rules stay enabled');
+  });
+});
+
+describe('regressions 2026-09-07: policy-engine name identity', () => {
+  test('loadFromJSON honors def name; disableRule deactivates the LIVE rule', () => {
+    const engine = new PolicyEngine();
+    engine.loadFromJSON([
+      { name: 'block', description: 'block rm', category: 'tool_execution', type: 'blockDestructiveOps' },
+    ]);
+    assert.equal(engine.getRule('tool_execution', 'block')?.name, 'block', 'rule registered under def name');
+    assert.equal(engine.evaluate('tool_execution', { command: 'rm -rf /' }).allowed, false, 'rule active');
+
+    engine.disableRule('tool_execution', 'block');
+    assert.equal(
+      engine.evaluate('tool_execution', { command: 'rm -rf /' }).allowed,
+      true,
+      'disable by def name must reach the live rule (was a silent no-op via hardcoded builder name)'
+    );
   });
 });
