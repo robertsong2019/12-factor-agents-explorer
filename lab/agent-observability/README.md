@@ -10,7 +10,7 @@ Three composable components unified via a high-level `AgentObserver` facade:
 | **PolicyEngine** | Guardrails | Block destructive ops, rate/cost limits, PII detection |
 | **Evaluator** | Quality scoring | Weighted multi-dimension evaluation (latency, reliability, compliance) |
 
-**91 tests passing · Zero dependencies · Pure TypeScript**
+**245 tests passing · Zero dependencies · Pure TypeScript**
 
 ## ⚡ 30-Second Quick Start
 
@@ -275,11 +275,17 @@ src/
   tracer.ts         # Distributed tracing (Span, TraceReport, causal links, OTLP)
   policy-engine.ts  # Guardrails & policy evaluation
   evaluator.ts      # Quality scoring across dimensions
-tests/
-  tracer.test.ts           # 35 tests
-  policy-engine.test.ts    # 26 tests
-  evaluator.test.ts        # 21 tests
-  integration.test.ts      # 13 tests
+  otel-genai.ts     # OTel GenAI semantic-conventions export adapter
+
+tests/                     # 245 tests, 26 suites
+  tracer.test.ts           # 73  — spans, stack, tree, causal links, serialization
+  evaluator.test.ts        # 44  — checks, weights, aggregation
+  policy-engine.test.ts    # 35  — rules, categories, enable/disable
+  otel-genai.test.ts       # 30  — semantic mapping + lint gate
+  integration.test.ts      # 23  — facade end-to-end flows
+  rate-limit.test.ts       # 11  — windowed rate limiting
+  regressions-0907.test.ts # 12  — red-first regression bugs (see below)
+  cycle1/2/3.test.ts       # 17  — review-cycle findings
 ```
 
 ## Running Tests
@@ -287,6 +293,26 @@ tests/
 ```bash
 npm test
 ```
+
+### What the tests guard against
+
+The regression suites (`regressions-0907` + `cycle1-3`) are built **red-first** from
+real bugs caught in review cycles. Each one is a generalizable failure concept:
+
+| Concept | The bug | The guard |
+|---------|---------|-----------|
+| **Ghost parents** | `clear()` reset spans but not the active stack — new spans silently inherited a dead `parentSpanId` and vanished from `getSpanTree()` | Reset APIs must be behavioral twins; a span started after `clear()` must appear as a tree root |
+| **Duplicate chains** | `getCausalChain()` pushed a span to results *before* marking it visited — diamond topologies (A→B, A→C, B→D, C→D) reported D twice | Mark visited before push; every span appears exactly once |
+| **Partial imports** | `importJSON()` mutated state straight from untrusted JSON — a malformed payload left mixed state (new traceId, old spans) | Validate-then-mutate atomically: bad input changes nothing |
+| **Read APIs that write** | `getTraceHash()` sorted `this.spans` in place — a pure query reordered stored data | Readers never mutate; hash a sorted copy instead |
+| **Name-as-identity** | `buildRule()` dropped `def.name`/`description`, so JSON-loaded rules got hard-coded identities and `disableRule(category, name)` was a silent no-op | A rule's declared name is its identity; export→import round-trip must preserve it (and disabled flags) |
+| **Dead-key counts** | `enabledCount()` derived from a stale bookkeeping set diverging from live rules | Counts come from live keys, never parallel state |
+
+The meta-lesson: **a fake-green test is worse than no test**. The round-trip test for
+rule disabling kept passing while the disable itself was a no-op — the assertion
+checked the wrong thing, so the suite looked healthy while the guardrail was dead.
+When a green suite still surprises you, audit what the assertions actually observe,
+not just that they pass.
 
 ## OTel GenAI-Convention Export
 

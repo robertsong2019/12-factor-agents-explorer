@@ -165,9 +165,9 @@ judge cascade（exact → semantic → LLM）里有一个 NEEDS_JUDGE 区间：e
 
 ---
 
-## 5. 值解析族 face：数字、日期、时长（C549-C554）
+## 5. 值解析与锚点族 face：数字、日期、时长、锚点选择（C549-C557）
 
-§3-§4 的 face 都长在"**选哪句话**"上；C549-C554 是第三波：答案本身是个数值/日期/时长，face 长在"**值解析**"上——不是从候选里挑句子，而是从通过 gate 的内容里提炼出**正确的值**。外加一次方法论升级（C549：census-negative 的第三种用法）。
+§3-§4 的 face 都长在"**选哪句话**"上；C549-C554 是第三波：答案本身是个数值/日期/时长，face 长在"**值解析**"上——不是从候选里挑句子，而是从通过 gate 的内容里提炼出**正确的值**。C555-C557 是第四波：值对了还不够，**锚点选择**本身也是信号源——锚是谁说的（角色）、跨度怎么定义（口径）、行内多个日期选哪个（临近度/连续对）。外加一次方法论升级（C549：census-negative 的第三种用法）。
 
 ### 5.1 C549 松弛空间穷举 — census-negative 变成局部最优证书
 
@@ -208,6 +208,24 @@ C550 留下 2 个 latent KILL，同根：**问题自带时间限定词时，plai
 ### 5.6 C554 slash-date adverbial — "on the 3/8" 是日期不是分数
 
 真锚行 "graduation gift on the 3/8" 的数字月/日没被日期正则认出，锚点退回裸 session 日期（03-29），between-diff 算出 14 天（GT 7）。修复：正则加第三分支 `on (the )?M/D(/YY|YYYY)?`，锚点精化到 03-08，diff 7 = GT。**"on" 前缀强制保留**——裸 "3/8" 也匹配分数/比例（"3/8 of the budget"），副词形态才是日期信号。
+
+### 5.7 C555 user-anchor priority — 词表偏袒用优先级修，不修词表
+
+temporal 欠账队首的 census 证伪了原假设：潜在救回行的"真赢家"不是用户的计划行，而是 assistant 营销 tangent（"encourage them to **participate** in your charity event"）。根因是结构性的：`_ANCHOR_GENERIC` 词表全是**提问脚手架动词**（plan/organize/run…），而 assistant 回复会系统性复读提问的语言——打分键的词表来自提问，复述这个语言的行就会赢。修复不换词表（换哪个词表都有复读者），而是在 C471 tie ladder 里把 **user-role 提到 gen-hits 前面**（distinctive hits 仍第一键）。
+
+> 同轮的 982b5123 是反面镜像：GT "Five months ago" 需要两跳相对日期合成（"exactly two months ago" + "book three months in advance"），haystack 里根本没有早期 booking 行——**不是所有欠账都能用现机制还**。承认不可达，留观为新家族（relative-phrase composition），比硬接线一个错误机制便宜。
+
+### 5.8 C556 ago-when span — 先问标注口径，再写算术
+
+"how many days ago did I X when I Y"：表面问 "ago"（提问日到事件），标注口径却是 **X→Y 两事件的跨度**（qd 锚定给 24/25，双双错；跨度算术给 19/21，全对）。temporal 家族翻车的第一嫌疑不是算术而是**口径**——先 census 标注者的值从哪两个日期导出，再决定算术形态。两个锚点精化可复用：'yesterday' 是**行级**相对日期（课行自述 "yesterday"，从 session 日 −1，而不是从提问日）；possessive 邻接（"my website"）是比未来/过去关键词更强的主题信号（把真 launch 行从 WhatGPT "website campaigns" 干扰里拉回来）。诚实契约照旧：任一锚未解析或同日 → 弃权。
+
+### 5.9 C557 multi-date proximity + consecutive-pair — 行内多日期与"连续"词形
+
+两个锚点精化，只动锚选择不动算术：
+
+- **行内多日期**：同一条消息可以装下两件事——篮球 "February 1st" 和 Converse "January 24th" 在同一行，最左匹配（`.search()`）把 14 天劫持成 22 天。修复：finditer 收集行内**全部** adverbial 日期，各过既有 gate，选**距锚关键词簇最近**者（平局取最左）。单候选行为 byte-identical，pairwise/ecm 路径零影响——精度提升不付扰动代价。
+- **连续对锚**：问题含 "in a row"/"consecutive" 时，这是**显式锚点指令**：找 Δ=1 事件对（02-14 Bike Ride + 02-15 Books for Kids），取对中较晚者（02-15），qd 04-18 − 02-15 = 2 个月 ✓。单事件 recency 锚（03-19）只给 1 个月。census 附带确认全 500 含该词形恰 2 行且另一行走别的路由——零误伤面。
+- **弃行也是产出**：370a8ff4（"10th jog" GT 15 weeks）用标注者自己的证据对验算只有 81 天 ≈ 11.57 周，任何机制都给 11-12 周——GT 本身不可达（生成器伪影）。census 拦下死队列，省一个 cycle 的实现加验证。
 
 ---
 
@@ -279,6 +297,9 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 | 无单位捕获混进时长累计 | duration M1 unit discipline | 无单位 ≠ 时长证据；半周和保留（3.5 weeks） | C553 |
 | object-NP 问题被活动 regex 劫持 | duration M3 topic-anchored recency | 知识更新链压过 realized-activity walk；无锚定证据弃权 | C553 |
 | 行内数字月/日没被认成日期 | slash-date adverbial（temporal） | "on" 前缀强制（防分数），M/D(/YY) 入日期正则 | C554 |
+| 打分词表来自提问脚手架，assistant 复读者获胜 | user-anchor priority（tie ladder） | user-role 提到 gen-hits 前面；distinctive hits 仍第一键 | C555 |
+| 问题形如 "ago X when Y" | ago-when span（temporal） | 值 = X→Y 事件跨度，非 qd 距离；'yesterday' 行级日期 + possessive tie-break | C556 |
+| 同一行多个日期 / 问题含 "in a row" | multi-date proximity + consecutive-pair | 选距锚关键词簇最近日期（平局最左）；Δ=1 事件对取后一天（≤ qd） | C557 |
 | kh-floor 想救 kh=0 GT | 🚫 census-negative，不接线 | 1 救 vs 14 杀，absence pin 钉死 | C543 |
 | kh-elite 准入救窗口死区 | 🚫 census-negative，不接线 | impostor 杀率 23.3% vs 4 救，admission-only 全族否决 | C546 |
 | 松弛 run 门想多救几行 | 🚫 census-negative = 局部最优证书 | 全部 kill 是 run-TIE impostor；absence pin 钉死 C548 配置 | C549 |
@@ -296,4 +317,4 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 
 ---
 
-*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04；Cycles 546-548 增补：2026-09-05；Cycles 549-554 增补：2026-09-07。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-554 段。*
+*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04；Cycles 546-548 增补：2026-09-05；Cycles 549-554 增补：2026-09-07；Cycles 555-557 增补：2026-09-08。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-557 段。*
