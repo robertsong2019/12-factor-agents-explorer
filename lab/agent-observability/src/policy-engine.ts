@@ -209,11 +209,19 @@ export class PolicyEngine {
     return true;
   }
 
-  /** Count enabled rules across all categories */
+  /** Count enabled rules across all categories (dead disabled-keys don't count) */
   enabledCount(): number {
     let total = 0;
     for (const rules of this.rules.values()) total += rules.length;
-    return total - this.disabledRules.size;
+    let disabledLive = 0;
+    const liveKeys = new Set<string>();
+    for (const [cat, rules] of this.rules) {
+      for (const r of rules) liveKeys.add(`${cat}::${r.name}`);
+    }
+    for (const key of this.disabledRules) {
+      if (liveKeys.has(key)) disabledLive++;
+    }
+    return total - disabledLive;
   }
 
   /** Merge another PolicyEngine's rules into this one (additive) */

@@ -171,3 +171,14 @@ describe('regressions 2026-09-07: policy-engine name identity', () => {
     );
   });
 });
+
+describe('regressions 2026-09-07: policy-engine enabledCount', () => {
+  test('enabledCount ignores disabled keys that match no live rule', () => {
+    const engine = new PolicyEngine();
+    engine.addPolicy('cat', { name: 'r1', description: '', category: 'cat', evaluate: () => ({ allow: true }) });
+    engine.disableRule('cat', 'ghost-rule'); // dead key: no such rule
+    assert.equal(engine.enabledCount(), 1, 'one live rule, none of them disabled -> enabled=1');
+    engine.disableRule('cat', 'r1');
+    assert.equal(engine.enabledCount(), 0, 'live rule disabled -> enabled=0');
+  });
+});
