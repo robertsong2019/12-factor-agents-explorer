@@ -4071,6 +4071,50 @@ def answer_speaker_recall(question: str,
             if exempt:
                 best = max(exempt, key=lambda p: p[0])
                 detail["type_face"] = "exemption"
+    # C559 name-demand definitional-anaphora face: a question asking
+    # for the NAME of a thing ("...the name of that restaurant in
+    # Cihampelas Walk...") is answered by the sentence that DEFINES
+    # the entity under that name — "<ProperName>: this <head-noun>
+    # ..." — even when the distinctive floors hid it: cross-sentence
+    # evidence (the locator "Cihampelas Walk" sits in the INTRO
+    # sentence) left the bearer "Miss Bee Providore: This restaurant
+    # serves..." at raw=2 while the impostor list item "Take a
+    # cooking class: ... nasi goreng ..." (raw=3) parasitized the
+    # overlap (c4f10528 official-run casualty). The anaphor noun
+    # matching the question head noun separates the true bearer from
+    # the entity the LOCATOR names ("Cihampelas Walk: ... this
+    # shopping center ..." — wrong head) and from verb-prefix colon
+    # items ("Take a cooking class: ..." — not a name). Tier among
+    # passers first; exemption pass (raw >= 2, preface penalty +
+    # weighted_floor kept) mirrors the C534 shape; fires only when a
+    # best already exists — best=None falls through untouched
+    # (censused behavior, 8-row routing ∩ demand population, exactly
+    # 1 change / 0 kills).
+    head = _name_def_head(question)
+    if head and best is not None:
+        tier = [p for p in passers if _name_def_bearer(p[1], head)]
+        if tier:
+            faced = max(tier, key=lambda p: p[0])
+            if faced[1] != best[1]:
+                best = faced
+                detail["name_def_face"] = "tier"
+        else:
+            exempt: list[tuple[float, str, str | None, int]] = []
+            for s, sid in pool:
+                if not _name_def_bearer(s, head):
+                    continue
+                matched = [kw for kw in kws if w[kw]
+                           and _keyword_hits(s, [kw])]
+                if len(matched) < 2:
+                    continue
+                score = sum(w[kw] ** 2 for kw in matched)
+                if _RECALL_PREAMBLE_RE.match(s):
+                    score *= 0.25
+                if score >= weighted_floor:
+                    exempt.append((score, s, sid, len(matched)))
+            if exempt:
+                best = max(exempt, key=lambda p: p[0])
+                detail["name_def_face"] = "exemption"
     detail["best_score"] = round(best[0], 1) if best else 0
     if best is None:
         return None, detail
@@ -4146,6 +4190,64 @@ _RECALL_TYPE_DEMANDS = (
      re.compile(r"\b(?:19|20)\d{2}\b")),
     ("number", re.compile(r"\bhow many\b", re.I), re.compile(r"\d")),
 )
+
+
+# ── C559: name-demand definitional-anaphora face ───────────────
+# Question side: "...the name of that|the <head phrase> ..."; the
+# head phrase is cut at the first stopword/preposition ("restaurant
+# in Cihampelas Walk" -> {restaurant}). Candidate side: a sentence
+# of the form "<MultiCapitalWord Name>: ... this|that <anaphor
+# phrase> ..." — a definition by anaphora ("Miss Bee Providore:
+# This restaurant serves ..."). The face promotes such a bearer
+# only when the anaphor phrase overlaps the question head noun —
+# the structural test that separates the asked entity's definition
+# from locator-sibling definitions ("Cihampelas Walk: ... this
+# shopping center ...") and verb-prefix colon items ("Take a
+# cooking class: ...", lowercase prefix word -> not a name).
+_NAME_DEF_Q_RE = re.compile(
+    r"\bname\s+of\s+(?:that|this|the|a|an)\s+"
+    r"((?:[a-z'-]+\s+){0,3}[a-z'-]+)", re.I)
+_NAME_DEF_BEARER_RE = re.compile(
+    r"^[A-Z][\w'&.\-]*(?:\s+[A-Z][\w'&.\-]*)+\s*:")
+_NAME_DEF_ANAPHOR_RE = re.compile(
+    r"\b(?:this|that)\s+((?:[a-z'-]+\s+){0,2}[a-z'-]+)", re.I)
+_NAME_DEF_CUT = {"in", "at", "on", "of", "near", "by", "for", "with",
+                 "from", "to", "that", "which", "who", "whose", "and",
+                 "or", "but", "is", "was", "are", "were", "a", "an",
+                 "the", "you", "we", "i", "they"}
+
+
+def _name_def_tokens(phrase: str) -> list[str]:
+    """Head/anaphor phrase -> stemmed tokens, cut at the first
+    stopword/preposition (stops the capture window from swallowing
+    modifiers that belong to the rest of the sentence)."""
+    out: list[str] = []
+    for t in phrase.lower().split():
+        if t in _NAME_DEF_CUT:
+            break
+        out.append(t[:-1] if t.endswith("s") and len(t) > 3 else t)
+    return out
+
+
+def _name_def_head(question: str) -> list[str] | None:
+    """Question head-noun tokens of a name demand, or None."""
+    m = _NAME_DEF_Q_RE.search(question)
+    if not m:
+        return None
+    return _name_def_tokens(m.group(1)) or None
+
+
+def _name_def_bearer(sent: str, head: list[str]) -> bool:
+    """True when *sent* defines an entity under a proper name and the
+    anaphor phrase matches the demanded head noun (C559 guards)."""
+    if not head or not _NAME_DEF_BEARER_RE.match(sent):
+        return False
+    colon = sent.find(":")
+    for m in _NAME_DEF_ANAPHOR_RE.finditer(sent, colon + 1):
+        toks = _name_def_tokens(m.group(1))
+        if toks and set(toks) & set(head):
+            return True
+    return False
 
 
 # ── C536: ordinal-item face — "the fifth bottle you recommended" ──
