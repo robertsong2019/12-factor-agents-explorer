@@ -3239,6 +3239,134 @@ def _line_eff_date(line: str, sdate: str, question_date: str = "",
 _TA_PAIR_RE = re.compile(r"\bin a row\b|\bconsecutive\b", re.I)
 
 
+# ── Cycle 558: relative-advance composition (982b5123 family) ────
+# A winning anchor line can date its event only RELATIVE to another
+# event: "... for my best friend's wedding and had to book three
+# months in advance" — no absolute date, so the recency path
+# collapses onto the session date (== ask date → "0 months"). The
+# pivot event is dated by a second line relative to its own session
+# ("been to SF ... exactly two months ago ... wedding"). Census
+# (/tmp/c558): exactly ONE row of 500 carries an advance phrase on
+# its winning anchor line; the other three "in advance" rows carry
+# it on losing assistant-advice lines. Pivot identity = shared
+# content word with document frequency ≤ 5 over the candidate set
+# (wedding df=6, friend's df=3 qualify; francisco df=21, great
+# df=108, trip df=46 are thematic noise).
+_TA_NUMWORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+                "eleven": 11, "twelve": 12}
+_TA_ADVANCE_RE = re.compile(
+    r"\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+    r"twelve)\s+(day|week|month|year)s?\s+in advance\b", re.I)
+_TA_REL_AGO_RE = re.compile(
+    r"\b(?:exactly\s+|about\s+|almost\s+|nearly\s+|just\s+|over\s+)?"
+    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|"
+    r"twelve)\s+(day|week|month|year)s?\s+ago\b", re.I)
+_TA_PIVOT_DF = 5     # rare-shared-word identity threshold (census)
+_TA_PIVOT_STOP = {
+    "the", "a", "an", "to", "for", "in", "of", "and", "or", "is",
+    "are", "was", "were", "be", "been", "have", "has", "had", "i",
+    "you", "my", "me", "we", "our", "it", "its", "that", "this",
+    "these", "those", "with", "on", "at", "by", "from", "as", "if",
+    "so", "do", "does", "did", "not", "no", "yes", "user", "assistant",
+    "s", "t", "ve", "ll", "re", "can", "could", "will", "would",
+    "should", "may", "might", "must", "shall", "am", "when", "what",
+    "which", "who", "how", "where", "why", "there", "here", "some",
+    "any", "all", "get", "got", "go", "going", "like", "just", "also",
+    "very", "really", "about", "up", "out", "your", "than", "then",
+    "them", "they", "their", "he", "she", "his", "her", "one",
+}
+
+
+def _shift_months(d0: date, months: int) -> date:
+    """Calendar-month shift with end-of-month clamping
+    (Jan 31 − 1mo → Feb 28; leap years honored)."""
+    idx = d0.month - 1 + months
+    y = d0.year + idx // 12
+    m = idx % 12 + 1
+    try:
+        return date(y, m, d0.day)
+    except ValueError:
+        nxt = date(y + (m == 12), (m % 12) + 1, 1)
+        return nxt - timedelta(days=1)
+
+
+def _shift_delta(d0: date, n: int, unit: str) -> date:
+    """Shift *d0* by *n* day/week/month/year units (signed)."""
+    if unit == "day":
+        return d0 + timedelta(days=n)
+    if unit == "week":
+        return d0 + timedelta(weeks=n)
+    if unit == "year":
+        return _shift_months(d0, 12 * n)
+    return _shift_months(d0, n)
+
+
+def _ta_num(m: re.Match) -> tuple[int, str]:
+    """(number, unit) from a _TA_NUMWORDS-bearing duration match."""
+    g1 = m.group(1).lower()
+    return (_TA_NUMWORDS.get(g1) or int(g1), m.group(2).lower())
+
+
+def _compose_relative_advance(winner_line: str,
+                              dated_lines: list,
+                              qd: str) -> str | None:
+    """Resolve the anchor date through a two-hop relative chain.
+
+    The winner line carries ``<N> <unit> in advance`` (the anchor
+    event happened N units BEFORE a pivot event it names); a pivot
+    line dates that event relative to its own session (``M units
+    ago``). anchor_date = pivot_session − rel − advance. The pivot
+    must share a content word with df ≤ _TA_PIVOT_DF across the
+    candidate set (rare-word identity link; common-word overlap is
+    thematic noise). Returns an ISO date or None (no qualified
+    pivot / unresolvable / anchor after the ask) — callers keep
+    their existing behavior on None, never fabricate.
+    """
+    ma = _TA_ADVANCE_RE.search(winner_line)
+    if not ma:
+        return None
+    adv_n, adv_u = _ta_num(ma)
+    df: dict[str, int] = {}
+    toks = []
+    for line, _sd in dated_lines:
+        ws = set(w for w in re.findall(r"[a-z']+", (line or "").lower())
+                 if w not in _TA_PIVOT_STOP)
+        toks.append(ws)
+        for w in ws:
+            df[w] = df.get(w, 0) + 1
+    w_words = set(w for w in re.findall(r"[a-z']+", winner_line.lower())
+                  if w not in _TA_PIVOT_STOP)
+    best = None
+    for (line, sdate), ws in zip(dated_lines, toks):
+        if line == winner_line:
+            continue
+        m2 = _TA_REL_AGO_RE.search(line or "")
+        if not m2:
+            continue
+        shared = w_words & ws
+        if not any(df.get(w, 0) <= _TA_PIVOT_DF for w in shared):
+            continue
+        try:
+            ps = date.fromisoformat(sdate or "")
+        except ValueError:
+            continue
+        rel_n, rel_u = _ta_num(m2)
+        pdate = _shift_delta(ps, -rel_n, rel_u)   # rel-ago: before session
+        score = len(shared)
+        if best is None or score > best[0]:
+            best = (score, pdate)
+    if best is None:
+        return None
+    anchor = _shift_delta(best[1], -adv_n, adv_u)  # in advance: before pivot
+    try:
+        if anchor > date.fromisoformat(qd):
+            return None                            # never answer future "ago"
+    except ValueError:
+        return None
+    return anchor.isoformat()
+
+
 def recall_form(question: str) -> str | None:
     """Classify a speaker-recall question form (Cycle 468).
 
@@ -4633,6 +4761,10 @@ def answer_temporal_arith(question: str,
         "launching a service ... website campaigns" line, where
         the true line loses the future/past keys to its own
         "I want to make sure" scaffolding).
+        Returns ``(hits, eff, line, refined)`` — C558 added the
+        winning line text and whether ``eff`` came from an in-text
+        adverbial (the relative-advance composition only engages
+        when the line has no absolute date of its own).
         """
         ks = _anchor_keywords(anchor)
         if not ks:
@@ -4694,7 +4826,7 @@ def answer_temporal_arith(question: str,
                 date_key,
             )
             if best_key is None or key < best_key:
-                best, best_key = (hits, eff), key
+                best, best_key = (hits, eff, line, bool(ad)), key
         return best
 
     if kind in ("ago", "since"):
@@ -4727,10 +4859,27 @@ def answer_temporal_arith(question: str,
                          if (date.fromisoformat(b)
                              - date.fromisoformat(x)).days == 1]
             if pair_ends and max(pair_ends) <= qd:
-                ra = (ra[0], max(pair_ends))
+                ra = (ra[0], max(pair_ends), ra[2], ra[3])
         detail["anchors"] = [bool(ra)]
         if not qd or not ra:
             return None, detail
+        # C558: relative-advance composition — the winning line may
+        # date its event only relative to a pivot event ("<N> units
+        # in advance") that a second line dates relative to its own
+        # session ("M units ago"). Engages only when the line's date
+        # was NOT already refined by an in-text adverbial (an
+        # absolute date wins when present). No qualified pivot →
+        # unchanged recency behavior (census: 1/500 engagement,
+        # 982b5123).
+        if (kind == "ago" and not ra[3]
+                and _TA_ADVANCE_RE.search(ra[2])):
+            comp = _compose_relative_advance(ra[2], dated_lines, qd)
+            if comp is not None:
+                n = duration_units(qd, comp, unit)
+                detail["dates"] = [comp, qd]
+                detail["value"] = n
+                detail["compose"] = True
+                return f"{n} {unit}{'' if n == 1 else 's'}", detail
         if ra[1] > qd:              # anchor resolves AFTER the ask —
             return None, detail    # wrong session; don't fabricate
         n = duration_units(qd, ra[1], unit)
