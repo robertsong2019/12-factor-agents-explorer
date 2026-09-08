@@ -63,7 +63,7 @@ context-forge /path/to/my-project --dry-run
 - 📤 **Export health** — barrel files, re-export chains, unused exports, mixed styles (F57)
 - 📐 **Function metrics** — length, param count, return paths, arrow/async split (F58)
 
-### Code Structure & Safety (F75–F82)
+### Code Structure & Safety (F75–F83)
 
 - 🛡️ **Guard clauses** — deep nesting (4+ levels), if/else wrapping candidates (F75)
 - 📦 **Parameter objects** — 4+ scalar params, boolean flag confusion, consecutive optionals (F76)
@@ -73,6 +73,7 @@ context-forge /path/to/my-project --dry-run
 - 💧 **Resource leaks** — `setInterval`/listeners/streams/DB handles never released (F80)
 - 🧩 **Cognitive complexity** — SonarQube-style nesting-aware scoring (F81)
 - 🕵️ **Security anti-patterns** — 8 categories: eval, XSS, SQLi, prototype pollution, ReDoS, command injection (F82)
+- 📋 **Changelog health** — Keep a Changelog compliance: semver, ISO dates, descending order, empty releases, 6 standard sections, A-F grade (F83)
 
 ### Analysis Extras (F35–F45)
 
@@ -826,6 +827,38 @@ const sec = analyzeSecurityAntiPatterns(loadFiles('./src'))
 // prototype pollution, insecure-random, command-injection, ReDoS, hardcoded credentials
 // → { issues, summary: { totalIssues, critical, high, medium, low, categories, grade } }
 ```
+
+---
+
+## Changelog Health (F83)
+
+Keep a Changelog compliance audit. Takes a `{ path, content }` object (pass `null` to model a missing file):
+
+```javascript
+import { analyzeChangelogHealth, formatChangelogHealthReport } from './context-forge.mjs'
+
+const health = analyzeChangelogHealth({ path: 'CHANGELOG.md', content: fs.readFileSync('CHANGELOG.md', 'utf8') })
+// → { found, path, score, grade,
+//     versions: { count, latest, latestIsValidSemVer, inDescendingOrder,
+//                 unreleasedSection, versionsWithInvalidSemVer, versionsWithoutDate,
+//                 emptyReleases, isoDateFormats, latestValidDate },
+//     sections: { added, changed, deprecated, removed, fixed, security },
+//     issues: [{ severity, message }], stats: { length, releases } }
+
+console.log(formatChangelogHealthReport(health))
+// markdown report: grade + conventions checklist + sections checklist + issues
+```
+
+What it checks:
+
+- **Heading parsing** — four forms: `## [1.2.0] - date`, bare `## 1.2.0`, `v`-prefixed, parenthesised dates
+- **Semver validity** — latest release validated; per-version invalid-semver count
+- **Descending order** — numeric component comparison (1.10.0 > 1.9.0, not string order)
+- **ISO dates** — `YYYY-MM-DD` enforcement; undated releases counted per-version
+- **Unreleased section** — detected, excluded from release stats
+- **Empty releases** — a version heading with no body is flagged
+- **Six standard sections** — Added / Changed / Deprecated / Removed / Fixed / Security presence
+- **Grading** — additive 100-point scoring (releases +15, valid semver +10, descending +15, dated +10, ISO +10, sections +15, unreleased +5, no empty +10, no placeholders +10) minus severity penalties (critical −30, high −5), mapped to A-F; missing file = instant F
 
 ---
 

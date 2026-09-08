@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-10336-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-10370-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -66,7 +66,7 @@
 - **拓扑快捷统计** — hub_nodes/peripheral_nodes/mean_degree 一键获取关键结构指标 (Cycle 339)
 - **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 + 噪声鲁棒性测试 (Cycles 326-341)
 - **Temporal QA 家族 (5 路由)** — LongMemEval temporal-reasoning 零 LLM 解法：temporal_arith 日历算术 + pp_duration/pure_tenure 状态时长 + order 排序 + pairwise which-first，form gate + 最早-FRESH 锚定 + 负存在弃权，temporal-133 0.323→0.474 全程 zero-flip (Cycles 457-489)
-- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 破半后持续进化：0.494（Cycles 520-531）→ **0.576**（Cycles 548-557，答案面家族 + judge 侧 rescue faces + 计数/时序/时长值解析族 + 锚点选择三连（角色优先/事件跨度/多日期），见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)）
+- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 破半后持续进化：0.494（Cycles 520-531）→ **0.580**（Cycles 548-560，答案面家族 + judge 侧 rescue faces + 计数/时序/时长值解析族 + 锚点选择三连（角色优先/事件跨度/多日期）+ 两跳日期合成与定义式指代 bearer + judge 溯源指纹，见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)）
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 - **传播激活家族 (5 API)** — ACT-R 认知模型: spreading_activation (基础) → activation_trace (可解释) → competitive_spreading (多种子竞争) → temporal_spreading (时间衰减) → activation_diff (对比分析) (Cycles 366-383)
 - **流式熵追踪** — FINGEREntropy O(Δ) 增量 von Neumann 熵 + StreamingGraph 实时异常检测 (Cycle 361)
@@ -4429,6 +4429,22 @@ C554 点名的 plan-vs-realized 队首 census 证伪了原假设：gpt4_b0863698
 - **弃行也是产出**：370a8ff4（"10th jog" GT 15 weeks）census 证明不可达——标注者自己的证据对只有 81 天 ≈ 11.57 周，qd 锚定 39.7 周也不对，任何机制都给 11-12 周；生成器伪影，删队列。
 
 验证链：离线 A/B 48 行恰 2 翻转 + 46 byte-identical（两行 GT-exact CORRECT）；全 500 live replay 1224s 恰 2 pred 变化、恰 2 行 banked False→True、0 其他漂移；tripwire verdict FAIL 仍为白名单自身 bug（第 3 个 cycle，`expected_drift` 参数化转正下轮必做）。banked 286→288（0.576），+10 tests test_multidate_pair_faces.py（10326→10336）。
+
+## Cycles 558-560: 0.576→0.580 — 两跳日期合成、定义式指代、判分溯源
+
+> 官方口径轨迹：0.576（C557）→ **0.578（C558）** → **0.580（C559）**，banked 288→290，套件 10336→10370。本段主轴：C555 埋下的 relative-phrase composition 留观兑现（C558），跨句证据队列第一项清偿（C559），随后 C560 把「同一份代码、不同 judge 配置给出不同判定」变成 report 里可追溯的事实。教程同步增补：[TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md) §5.10-§5.11。
+
+#### C558：relative-advance composition face — 两跳相对日期合成 (01f8b9b)
+
+C555 census 证伪留观的 982b5123（GT "Five months ago"）兑现：winner 行只有 "three months in advance"（无绝对日期），真锚藏在另一行 "exactly two months ago … wedding"——**两跳合成**：pivot 行定婚礼日，anchor = pivot_session − 2mo − 3mo = 2022-12-21 → "5 months"（judge 数字词折叠认领 GT）。pivot 判别用**稀有共享词链接**（df≤5：wedding 6 / friend's 3 合格；francisco 21 / great 108 / trip 46 是主题噪声）；engagement 面 census 恰 1/500，其余 3 个 "in advance" 行全在输掉的 assistant 建议行上——零误伤面。同轮基建：tripwire `expected_drift` 参数化落地（`--expect-change/--expect-drift/--expect-total` + 方向检查），C555/C556/C557 三连 false-FAIL 白名单 bug 退役，首个带 rescue 的 PASS verdict。+11 tests test_relative_advance_faces.py（red-first；2 个初版断言错是测试自己的错不是机制的——Jan31−1mo=Dec31、月单位答案非天数）。banked 288→289（0.578），suite 10336→10347（台账口径；同 HEAD 次日实测 10352，±5 计数口径漂移，教训见 C559）。
+
+#### C559：name-demand definitional-anaphora face — 定义式 bearer 压过词面多数 (66adc0a)
+
+队列首 c4f10528（GT raw=2 败给 raw=3）：impostor "Take a cooking class: …nasi goreng…" 词面命中更多，GT bearer "Miss Bee Providore: This restaurant serves…" 输在**跨句证据**——locator "Cihampelas Walk" 在前导句里，bearer 句只含 {restaurant, serves}。机制：问题形如 "the name of that **restaurant**"（demand 一个专名）时，提升**定义式 bearer** `<ProperName>: this <anaphor≈head>`——anaphor 名词匹配问题中心名词，一石三鸟：认领 Miss Bee Providore（this restaurant ✓）、排除 locator-sibling（"Cihampelas Walk: …this shopping center"，anaphor≠restaurant）、排除动词冒号项（"Take a cooking class:"）。验证链：census 8 行全枚举恰 1 变化 → 接线 → 9/9 miniatures 绿 → live-500 tripwire（恰 1 pred change / 恰 1 drift / 290）。工程教训：**junitxml 是本机可靠的 suite 计数方式**（exec 后台 stdout 重定向会拿到缓冲空文件），且 suite 计数须同日同法测 base，否则 ±5 漂移让 delta 对不上。banked 289→290（0.580），+9 tests（10352→10361）。
+
+#### C560：judge provenance fingerprint — 判分溯源进 report (eab9d61)
+
+config-only、pred-neutral（零预测路径改动，按构造免 500 行重放）：同一份代码、不同 judge 配置会给出不同判定，但 report 里没有任何痕迹——这轮让溯源变成事实。`judge_prompt_sha12`（sha256(JUDGE_PROMPT)[:12]）进 dual/semantic 判分 config，紧挨 judge_llm_backend：prompt 一改，fingerprint 必变。`judge_model`：sticky `_JUDGE_MODEL` 由 judge_ollama 在**非 ERROR** verdict 时记录（ERROR = 未出判定，不认领身份），仅 backend==ollama 时浮现——一次 ollama 判定的 run 终于说出**是哪个模型判的**；mock/未咨询场景诚实缺席。+9 tests test_judge_provenance.py（red-first 2 wiring tests），suite 10361→10370（junit 306s 0F/0E）。
 
 ## 许可
 

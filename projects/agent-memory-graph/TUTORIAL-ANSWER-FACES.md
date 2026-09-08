@@ -165,7 +165,7 @@ judge cascade（exact → semantic → LLM）里有一个 NEEDS_JUDGE 区间：e
 
 ---
 
-## 5. 值解析与锚点族 face：数字、日期、时长、锚点选择（C549-C557）
+## 5. 值解析与锚点族 face：数字、日期、时长、锚点选择（C549-C559）
 
 §3-§4 的 face 都长在"**选哪句话**"上；C549-C554 是第三波：答案本身是个数值/日期/时长，face 长在"**值解析**"上——不是从候选里挑句子，而是从通过 gate 的内容里提炼出**正确的值**。C555-C557 是第四波：值对了还不够，**锚点选择**本身也是信号源——锚是谁说的（角色）、跨度怎么定义（口径）、行内多个日期选哪个（临近度/连续对）。外加一次方法论升级（C549：census-negative 的第三种用法）。
 
@@ -226,6 +226,18 @@ temporal 欠账队首的 census 证伪了原假设：潜在救回行的"真赢�
 - **行内多日期**：同一条消息可以装下两件事——篮球 "February 1st" 和 Converse "January 24th" 在同一行，最左匹配（`.search()`）把 14 天劫持成 22 天。修复：finditer 收集行内**全部** adverbial 日期，各过既有 gate，选**距锚关键词簇最近**者（平局取最左）。单候选行为 byte-identical，pairwise/ecm 路径零影响——精度提升不付扰动代价。
 - **连续对锚**：问题含 "in a row"/"consecutive" 时，这是**显式锚点指令**：找 Δ=1 事件对（02-14 Bike Ride + 02-15 Books for Kids），取对中较晚者（02-15），qd 04-18 − 02-15 = 2 个月 ✓。单事件 recency 锚（03-19）只给 1 个月。census 附带确认全 500 含该词形恰 2 行且另一行走别的路由——零误伤面。
 - **弃行也是产出**：370a8ff4（"10th jog" GT 15 weeks）用标注者自己的证据对验算只有 81 天 ≈ 11.57 周，任何机制都给 11-12 周——GT 本身不可达（生成器伪影）。census 拦下死队列，省一个 cycle 的实现加验证。
+
+### 5.10 C558 relative-advance composition — 两跳相对日期合成
+
+"Five months ago" 的答案埋在两行里：winner 行只有 "three months in advance"（相对量，无绝对日期），pivot 行 "exactly two months ago … wedding" 提供婚礼日。合成链：pivot_session − 2mo − 3mo = 2022-12-21 → "5 months"。关键在 **pivot 判别**：用稀有共享词链接（df≤5——wedding 6、friend's 3 合格；francisco 21、great 108 是主题噪声），而不是主题词——主题词哪行都有，稀有词才是「这两行说的是同一件事」的证据。census 先行：engagement 面恰 1/500，其余 "in advance" 行全在输掉的 assistant 建议行上——零误伤才接线。
+
+> C555 埋的留观（"不是所有欠账都能用现机制还"）在这里兑现：承认不可达的 census 数据没有白做，队里的行留观三个 cycle 后等来了自己的机制。同轮把 tripwire `expected_drift` 参数化——连续三个 cycle 的 false-FAIL 白名单 bug 退役。另：初版测试两个断言错是我测试自己的错（Jan31−1mo=Dec31 的月尾折算、月单位答案不该比对天数），红测试先绿机制再改测试。
+
+### 5.11 C559 name-demand definitional-anaphora — 定义式 bearer 压过词面多数
+
+"the name of that **restaurant**"：问题 demand 一个专名，中心名词 restaurant 就是类型签名。impostor "Take a cooking class: …nasi goreng…" raw=3 赢过 GT bearer "Miss Bee Providore: This restaurant serves…" raw=2——词面多数败给**跨句证据**（locator "Cihampelas Walk" 在前导句，bearer 句只含 {restaurant, serves}）。face 逻辑：demand 专名的问题提升**定义式 bearer** `<ProperName>: this <anaphor≈head>`，anaphor 名词匹配问题中心名词——一石三鸟：认领 Miss Bee Providore（this restaurant ✓）、排除 locator-sibling（this shopping center ✗）、排除动词冒号项（Take a cooking class: ✗）。
+
+> 两个坑：miniature 语料 N 太小，raw=2 bearer 过不了 weighted floor 10——离线迷你测试要显式做 N 填充（真实语料 N=4480 自动满足）；suite 计数要 junitxml + 同日同法测 base（C558 台账 10347 vs 同 HEAD 次日实测 10352，±5 漂移让 delta 对不上）。census 8 行全枚举恰 1 变化才接线，live-500 tripwire（恰 1 pred change / 恰 1 drift / 290）收尾。
 
 ---
 
@@ -300,6 +312,8 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 | 打分词表来自提问脚手架，assistant 复读者获胜 | user-anchor priority（tie ladder） | user-role 提到 gen-hits 前面；distinctive hits 仍第一键 | C555 |
 | 问题形如 "ago X when Y" | ago-when span（temporal） | 值 = X→Y 事件跨度，非 qd 距离；'yesterday' 行级日期 + possessive tie-break | C556 |
 | 同一行多个日期 / 问题含 "in a row" | multi-date proximity + consecutive-pair | 选距锚关键词簇最近日期（平局最左）；Δ=1 事件对取后一天（≤ qd） | C557 |
+| 答案是 "N <unit> ago"，锚需两跳相对日期合成 | relative-advance composition | pivot 行稀有共享词（df≤5）链接，anchor = pivot − N1 − N2 | C558 |
+| 问题 demand 专名（"the name of that X"） | definitional-anaphora（name-demand） | 定义式 bearer `<专名>: this <anaphor≈X>` 压过词面多数；locator-sibling 与动词冒号项排除 | C559 |
 | kh-floor 想救 kh=0 GT | 🚫 census-negative，不接线 | 1 救 vs 14 杀，absence pin 钉死 | C543 |
 | kh-elite 准入救窗口死区 | 🚫 census-negative，不接线 | impostor 杀率 23.3% vs 4 救，admission-only 全族否决 | C546 |
 | 松弛 run 门想多救几行 | 🚫 census-negative = 局部最优证书 | 全部 kill 是 run-TIE impostor；absence pin 钉死 C548 配置 | C549 |
@@ -317,4 +331,4 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 
 ---
 
-*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04；Cycles 546-548 增补：2026-09-05；Cycles 549-554 增补：2026-09-07；Cycles 555-557 增补：2026-09-08。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-557 段。*
+*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04；Cycles 546-548 增补：2026-09-05；Cycles 549-554 增补：2026-09-07；Cycles 555-557 增补：2026-09-08；Cycles 558-559 增补：2026-09-09。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-560 段。*
