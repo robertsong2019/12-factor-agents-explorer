@@ -1943,6 +1943,7 @@ def judge_ollama(question: str, answer: str, reference: str, *,
     Returns "CORRECT" / "WRONG" / "ERROR" (network/model failure).
     """
     import urllib.request
+    global _JUDGE_MODEL
     payload = {
         "model": model,
         "temperature": 0.0,
@@ -1964,8 +1965,10 @@ def judge_ollama(question: str, answer: str, reference: str, *,
         out = (body.get("choices", [{}])[0]
                .get("message", {}).get("content", "")).strip().upper()
         if "CORRECT" in out:
+            _JUDGE_MODEL = model
             return "CORRECT"
         if "WRONG" in out:
+            _JUDGE_MODEL = model
             return "WRONG"
         return "ERROR"
     except Exception:  # noqa: BLE001 — any failure grades as ERROR
@@ -2013,6 +2016,7 @@ def judge_llm(question: str, answer: str, reference: str, *,
 
 
 _JUDGE_MODE: str | None = None  # sticky auto-detect cache
+_JUDGE_MODEL: str | None = None  # C560: model that issued live verdicts
 
 
 # ── Semantic judge layer (Cycle 529 — Research #090/#092) ──────
@@ -10714,6 +10718,14 @@ def run_eval(dataset: list[dict], *, limit: int = 0,
         # decided everything; abs rows share the exact verdict and
         # never consult the LLM.
         report["config"]["judge_llm_backend"] = _JUDGE_MODE or "unconsulted"
+        # Cycle 560: judge provenance — prompt-template hash + model id.
+        # A JUDGE_PROMPT edit changes verdicts on identical code with no
+        # report trace; judge_ollama's model parameter was invisible, so
+        # ollama-resolved runs could not be told apart across models.
+        report["config"]["judge_prompt_sha12"] = hashlib.sha256(
+            JUDGE_PROMPT.encode("utf-8")).hexdigest()[:12]
+        if (_JUDGE_MODE or "") == "ollama" and _JUDGE_MODEL:
+            report["config"]["judge_model"] = _JUDGE_MODEL
     # Cycle 527: lineage fingerprint — dataset identity + interpreter
     # hash seed, recorded AFTER the dual-mode config overwrite so both
     # judge modes carry it. Rationale: the oracle-vs-s_cleaned dataset
