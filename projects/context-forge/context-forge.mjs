@@ -11933,6 +11933,261 @@ export function formatSecurityAntiPatternsReport(result) {
   return report;
 }
 
+// F83: Changelog Health Analysis
+// Keep a Changelog (https://keepachangelog.com) convention compliance:
+// version heading formats, semver validity, descending order, ISO dates,
+// standard change-type sections, Unreleased section, empty releases.
+const CHANGELOG_HEADING_RE = /^##[ \t]+\[?([^\]\s]+)\]?(?:[ \t]*[-–—][ \t]*(.+)|[ \t]*\((.+)\))?[ \t]*$/gm;
+const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function analyzeChangelogHealth(changelogFile = null) {
+  const result = {
+    found: false,
+    path: null,
+    score: 0,
+    grade: 'F',
+    versions: {
+      count: 0,
+      latest: null,
+      latestIsValidSemVer: false,
+      inDescendingOrder: true,
+      unreleasedSection: false,
+      versionsWithInvalidSemVer: 0,
+      versionsWithoutDate: 0,
+      emptyReleases: 0,
+      isoDateFormats: true,
+      latestValidDate: null,
+    },
+    sections: {
+      added: false,
+      changed: false,
+      deprecated: false,
+      removed: false,
+      fixed: false,
+      security: false,
+    },
+    issues: [],
+    stats: { length: 0, releases: 0 },
+  };
+
+  if (!changelogFile || changelogFile.content === null || changelogFile.content === undefined) {
+    result.issues.push({ severity: 'critical', message: 'No CHANGELOG file found' });
+    result.grade = 'F';
+    return result;
+  }
+
+  const content = changelogFile.content;
+  result.found = true;
+  result.path = changelogFile.path || 'CHANGELOG.md';
+  result.stats.length = content.length;
+
+  // --- Parse version headings ---
+  const headings = [];
+  let m;
+  CHANGELOG_HEADING_RE.lastIndex = 0;
+  while ((m = CHANGELOG_HEADING_RE.exec(content)) !== null) {
+    const raw = m[1];
+    const version = raw.replace(/^v/i, '');
+    const date = (m[2] || m[3] || '').trim();
+    headings.push({ raw, version, date, index: m.index, end: m.index + m[0].length });
+  }
+
+  const releases = headings.filter((h) => h.version.toLowerCase() !== 'unreleased');
+  const unreleased = headings.find((h) => h.version.toLowerCase() === 'unreleased');
+  result.stats.releases = releases.length;
+  result.versions.count = releases.length;
+  result.versions.unreleasedSection = Boolean(unreleased);
+
+  if (releases.length === 0) {
+    result.issues.push({ severity: 'high', message: 'No version headings found (expected e.g. "## [1.2.0] - 2024-06-15")' });
+  }
+
+  // Latest release
+  const latest = releases[0];
+  if (latest) {
+    result.versions.latest = latest.raw.replace(/^v/i, '');
+    result.versions.latestIsValidSemVer = SEMVER_RE.test(latest.version);
+    if (latest.date && ISO_DATE_RE.test(latest.date)) {
+      result.versions.latestValidDate = latest.date;
+    }
+  }
+
+  // Semver validity + dates + empty bodies
+  const bodyOf = (h, i) => {
+    const nextHeading = headings[i + 1];
+    return content.slice(h.end, nextHeading ? nextHeading.index : content.length);
+  };
+
+  headings.forEach((h, i) => {
+    if (h.version.toLowerCase() === 'unreleased') return;
+    if (!SEMVER_RE.test(h.version)) {
+      result.versions.versionsWithInvalidSemVer++;
+    }
+    const date = h.date;
+    if (!date || date.length === 0) {
+      result.versions.versionsWithoutDate++;
+    } else if (!ISO_DATE_RE.test(date)) {
+      result.versions.isoDateFormats = false;
+    }
+    const body = bodyOf(h, i);
+    if (body.trim().length < 5) {
+      result.versions.emptyReleases++;
+    }
+  });
+
+  if (result.versions.versionsWithInvalidSemVer > 0) {
+    result.issues.push({
+      severity: 'medium',
+      message: `${result.versions.versionsWithInvalidSemVer} version heading(s) use invalid semver (expected x.y.z)`,
+    });
+  }
+  if (!result.versions.latestIsValidSemVer && releases.length > 0) {
+    const inv = result.issues.find((i) => /invalid semver/i.test(i.message));
+    if (!inv) result.issues.push({ severity: 'high', message: `Latest version heading "${result.versions.latest}" is invalid semver` });
+  }
+  if (result.versions.versionsWithoutDate > 0) {
+    result.issues.push({
+      severity: 'medium',
+      message: `${result.versions.versionsWithoutDate} release(s) without a date`,
+    });
+  }
+  if (!result.versions.isoDateFormats) {
+    result.issues.push({ severity: 'low', message: 'Some release dates are not in ISO format (YYYY-MM-DD)' });
+  }
+  if (result.versions.emptyReleases > 0) {
+    result.issues.push({
+      severity: 'medium',
+      message: `${result.versions.emptyReleases} empty release section(s)`,
+    });
+  }
+
+  // --- Descending order (semver comparison) ---
+  const semverKey = (v) => v.split('.').map(Number);
+  const isLTE = (a, b) => {
+    // true if a <= b
+    const [aM, am, ap] = semverKey(a);
+    const [bM, bm, bp] = semverKey(b);
+    if (aM !== bM) return aM < bM;
+    if (am !== bm) return am < bm;
+    return ap <= bp;
+  };
+  const semverReleases = releases.filter((h) => SEMVER_RE.test(h.version));
+  for (let i = 0; i + 1 < semverReleases.length; i++) {
+    const cur = semverReleases[i].version;
+    const next = semverReleases[i + 1].version;
+    if (!isLTE(next, cur)) {
+      result.versions.inDescendingOrder = false;
+      result.issues.push({
+        severity: 'high',
+        message: `Versions are not in descending order ("${cur}" appears before newer/equal "${next}")`,
+      });
+      break;
+    }
+  }
+
+  // --- Keep a Changelog sections ---
+  const sectionPatterns = {
+    added: /^#{2,4}\s*(added)\b/im,
+    changed: /^#{2,4}\s*(changed)\b/im,
+    deprecated: /^#{2,4}\s*(deprecated)\b/im,
+    removed: /^#{2,4}\s*(removed)\b/im,
+    fixed: /^#{2,4}\s*(fixed)\b/im,
+    security: /^#{2,4}\s*(security)\b/im,
+  };
+  for (const [key, re] of Object.entries(sectionPatterns)) {
+    result.sections[key] = re.test(content);
+  }
+
+  // --- Placeholder content ---
+  if (/todo|tbd|placeholder|coming soon|lorem ipsum|wip/i.test(content)) {
+    const placeholders = (content.match(/todo|tbd|placeholder|coming soon|lorem ipsum|wip/gi) || []).length;
+    result.issues.push({ severity: 'low', message: `Contains ${placeholders} placeholder(s) (TODO, WIP, etc.)` });
+  }
+
+  // --- Scoring ---
+  let score = 0;
+  if (releases.length > 0) score += 15;
+  if (result.versions.latestIsValidSemVer) score += 10;
+  if (result.versions.inDescendingOrder && releases.length > 0) score += 15;
+  if (result.versions.versionsWithoutDate === 0 && releases.length > 0) score += 10;
+  if (result.versions.isoDateFormats && releases.length > 0) score += 10;
+
+  const sectionCount = Object.values(result.sections).filter(Boolean).length;
+  if (sectionCount >= 3) score += 15;
+  else if (sectionCount >= 1) score += 8;
+
+  if (result.versions.unreleasedSection) score += 5;
+  if (result.versions.emptyReleases === 0 && releases.length > 0) score += 10;
+  else if (releases.length > 0) score += Math.max(0, 10 - 5 * result.versions.emptyReleases);
+  if (!/todo|tbd|placeholder|coming soon|lorem ipsum|wip/i.test(content)) score += 10;
+
+  for (const issue of result.issues) {
+    if (issue.severity === 'critical') score -= 30;
+    else if (issue.severity === 'high') score -= 5;
+    else if (issue.severity === 'medium') score -= 3;
+    else if (issue.severity === 'low') score -= 1;
+  }
+
+  result.score = Math.max(0, Math.min(100, score));
+  result.grade = result.score >= 90 ? 'A' : result.score >= 80 ? 'B' : result.score >= 70 ? 'C' : result.score >= 60 ? 'D' : 'F';
+
+  return result;
+}
+
+/**
+ * F83: formatChangelogHealthReport() — markdown report for changelog health.
+ */
+export function formatChangelogHealthReport(result) {
+  if (!result) return '## Changelog Health Analysis\n\nNo data.\n';
+  if (!result.found) return '## Changelog Health Analysis\n\n❌ **No CHANGELOG file found.**\n';
+
+  let report = '## Changelog Health Analysis\n\n';
+  report += `**File:** ${result.path}\n`;
+  report += `**Grade:** ${result.grade} (${result.score}/100)\n`;
+  report += `**Releases:** ${result.stats.releases}`;
+  if (result.versions.latest) report += ` | **Latest:** ${result.versions.latest}`;
+  if (result.versions.latestValidDate) report += ` (${result.versions.latestValidDate})`;
+  report += '\n\n';
+
+  report += '### Conventions\n\n';
+  const flags = [
+    ['Unreleased section', result.versions.unreleasedSection],
+    ['Valid semver (latest)', result.versions.latestIsValidSemVer],
+    ['Descending order', result.versions.inDescendingOrder],
+    ['All releases dated', result.versions.versionsWithoutDate === 0],
+    ['ISO dates (YYYY-MM-DD)', result.versions.isoDateFormats],
+    ['No empty releases', result.versions.emptyReleases === 0],
+  ];
+  for (const [label, ok] of flags) {
+    report += `${ok ? '✅' : '⬜'} ${label}\n`;
+  }
+
+  report += '\n### Keep a Changelog Sections\n\n';
+  const labels = {
+    added: 'Added',
+    changed: 'Changed',
+    deprecated: 'Deprecated',
+    removed: 'Removed',
+    fixed: 'Fixed',
+    security: 'Security',
+  };
+  for (const [key, label] of Object.entries(labels)) {
+    const icon = result.sections[key] ? '✅' : '⬜';
+    report += `${icon} ${label}\n`;
+  }
+
+  if (result.issues.length > 0) {
+    report += '\n### Issues\n\n';
+    for (const issue of result.issues) {
+      const icon = issue.severity === 'critical' ? '🔴' : issue.severity === 'high' ? '🟠' : issue.severity === 'medium' ? '🟡' : '🔵';
+      report += `${icon} [${issue.severity}] ${issue.message}\n`;
+    }
+  }
+
+  return report;
+}
+
 // Only run main when executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch(e => { console.error("❌ Error:", e.message); process.exit(1); });
