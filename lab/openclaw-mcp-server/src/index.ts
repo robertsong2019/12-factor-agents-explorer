@@ -109,10 +109,14 @@ setInterval(() => {
   for (const [id, s] of sessions) {
     if (now - s.lastSeen > SESSION_TTL_MS) {
       sessions.delete(id);
+      // close() is Promise<void> (SDK Transport contract): a sync try/catch
+      // would let a rejection escape as unhandledRejection → process crash
+      // (same family as the C1 abort crash). Swallow both paths — reap is
+      // best-effort.
       try {
-        s.transport.close();
+        void Promise.resolve(s.transport.close()).catch(() => {});
       } catch {
-        // already closed — reap is best-effort
+        // sync throw (already closed)
       }
     }
   }

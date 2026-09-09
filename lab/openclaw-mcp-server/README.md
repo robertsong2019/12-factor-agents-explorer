@@ -35,6 +35,20 @@ npm run build && npm start
 
 Server starts at `http://localhost:3001/mcp` by default. Set `PORT` env var to change.
 
+### Environment Variables
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `PORT` | `3001` | HTTP listen port |
+| `SESSION_TTL_MS` | `1800000` (30 min) | Idle-session lifetime. A session is reaped after this much silence; every request refreshes it. Invalid values (NaN, ≤0) fall back to the default. Set low (e.g. `500`) to watch reaping in tests. |
+
+### Hardening Guarantees
+
+- **Crash-safe request path**: a client aborting mid-request never kills the process (all handler errors are contained; the response is destroyed cleanly).
+- **Bounded memory**: request bodies are capped at 1 MB — larger uploads are drained and answered `413`, never buffered.
+- **Correct JSON-RPC diagnosis**: malformed JSON on POST returns `-32700 Parse error` even without a session header (GET/DELETE keep transport semantics).
+- **No session leaks**: idle sessions are reaped after `SESSION_TTL_MS`; reaping is best-effort and can never crash the server.
+
 ## Connecting a Client
 
 Configure your MCP client to connect via Streamable HTTP:
