@@ -216,6 +216,84 @@ describe("protocol hardening", () => {
   });
 });
 
+describe("session TTL reaper", () => {
+  // Dedicated server with a short TTL: abandoned sessions must be reaped,
+  // actively-used sessions must survive.
+  const TTL_PORT = "3195";
+  const TTL_BASE = `http://localhost:${TTL_PORT}`;
+  const TTL_MS = 500;
+  let ttlProc;
+  let sid = null;
+
+  async function ttlPost(body) {
+    const headers = { ...HEADERS };
+    if (sid) headers["Mcp-Session-Id"] = sid;
+    return fetch(TTL_BASE, { method: "POST", headers, body });
+  }
+
+  async function ttlInit() {
+    sid = null; // initialize must start sessionless — never inherit stale state from prior tests
+    const res = await ttlPost(JSON.stringify({
+      jsonrpc: "2.0", id: 1, method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18", capabilities: {},
+        clientInfo: { name: "ttl-client", version: "1.0.0" },
+      },
+    }));
+    sid = res.headers.get("mcp-session-id");
+    await res.text();
+    assert.ok(sid, "ttl client should get a session id");
+  }
+
+  before(async () => {
+    ttlProc = spawn("node", ["dist/index.js"], {
+      env: { ...process.env, PORT: TTL_PORT, SESSION_TTL_MS: String(TTL_MS) },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("startup timeout")), 5000);
+      ttlProc.stdout.on("data", (data) => {
+        if (data.toString().includes("OpenClaw MCP Server running")) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      ttlProc.on("error", reject);
+    });
+  });
+
+  after(() => {
+    ttlProc?.kill();
+  });
+
+  it("actively-used session survives beyond TTL (keep-alive by requests)", async () => {
+    await ttlInit();
+    // Touch every 200ms across 2×TTL — session must stay alive throughout
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      const res = await ttlPost(JSON.stringify({ jsonrpc: "2.0", id: 10 + i, method: "tools/list" }));
+      assert.equal(res.status, 200, `touch ${i}: active session must survive (got ${res.status})`);
+      await res.text();
+    }
+  });
+
+  it("idle session past TTL is reaped: reuse gets 404", async () => {
+    // sid was last touched ≥TTL ago by the previous test; wait out the TTL
+    await new Promise((r) => setTimeout(r, TTL_MS + 600));
+    const res = await ttlPost(JSON.stringify({ jsonrpc: "2.0", id: 50, method: "tools/list" }));
+    assert.equal(res.status, 404, `expected reaped session to 404, got ${res.status}`);
+    await res.text();
+  });
+
+  it("fresh session works normally after reaping happened", async () => {
+    await ttlInit();
+    const res = await ttlPost(JSON.stringify({ jsonrpc: "2.0", id: 51, method: "tools/list" }));
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    assert.ok(text.includes("tools"), "tools/list must succeed on fresh session");
+  });
+});
+
 describe("MCP protocol: tool semantics over wire", () => {
   it("query_memory honors limit=1 (slice contract)", async () => {
     const res = await post(JSON.stringify({

@@ -90,9 +90,33 @@ function createMcpServer() {
 interface Session {
   server: McpServer;
   transport: StreamableHTTPServerTransport;
+  lastSeen: number;
 }
 
+// Idle-session reaper: clients that vanish without DELETE would otherwise
+// leak their McpServer+transport pair forever. A session dies after
+// SESSION_TTL_MS of silence; every request refreshes lastSeen.
+const SESSION_TTL_MS = (() => {
+  const v = process.env.SESSION_TTL_MS ? parseInt(process.env.SESSION_TTL_MS, 10) : NaN;
+  return Number.isFinite(v) && v > 0 ? v : 30 * 60 * 1000; // 30min default
+})();
+
 const sessions = new Map<string, Session>();
+
+const reapInterval = Math.max(50, Math.min(SESSION_TTL_MS / 2, 60_000));
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, s] of sessions) {
+    if (now - s.lastSeen > SESSION_TTL_MS) {
+      sessions.delete(id);
+      try {
+        s.transport.close();
+      } catch {
+        // already closed — reap is best-effort
+      }
+    }
+  }
+}, reapInterval);
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1MB — JSON-RPC messages are tiny; refuse DoS-scale bodies
 
@@ -140,6 +164,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: impo
   const rawSessionId = req.headers["mcp-session-id"];
   const sessionId = typeof rawSessionId === "string" ? rawSessionId : undefined;
   const session = sessionId ? sessions.get(sessionId) : undefined;
+  if (session) session.lastSeen = Date.now();
 
   if (!session && parsed && !Array.isArray(parsed) && isInitializeRequest(parsed)) {
     const server = createMcpServer();
@@ -155,7 +180,7 @@ async function handleRequest(req: import("node:http").IncomingMessage, res: impo
     };
     await server.connect(transport);
     await transport.handleRequest(req, res, parsed);
-    if (newSessionId) sessions.set(newSessionId, { server, transport });
+    if (newSessionId) sessions.set(newSessionId, { server, transport, lastSeen: Date.now() });
     return;
   }
 
