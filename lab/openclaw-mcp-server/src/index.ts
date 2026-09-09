@@ -94,16 +94,47 @@ interface Session {
 
 const sessions = new Map<string, Session>();
 
+const MAX_BODY_BYTES = 1024 * 1024; // 1MB — JSON-RPC messages are tiny; refuse DoS-scale bodies
+
 async function handleRequest(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) {
-  // Collect request body
+  // Collect request body. Oversized bodies are fully drained (never buffered
+  // beyond the cap) so memory stays bounded, then rejected with 413.
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total <= MAX_BODY_BYTES) chunks.push(chunk);
+  }
+  if (total > MAX_BODY_BYTES) {
+    res.writeHead(413, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      jsonrpc: "2.0",
+      error: { code: -32000, message: "Payload too large (max 1MB)" },
+      id: null,
+    }));
+    return;
+  }
   const body = Buffer.concat(chunks).toString("utf-8");
-  let parsed;
+  let parsed: unknown;
+  let parseFailed = false;
   try {
     parsed = JSON.parse(body);
   } catch {
     parsed = undefined;
+    parseFailed = true;
+  }
+
+  // JSON-RPC bodies only ride on POST: a malformed POST is a parse error,
+  // even without a session header (previously misdiagnosed as the unrelated
+  // "Mcp-Session-Id header is required"). GET/DELETE keep transport semantics.
+  if (req.method === "POST" && parseFailed) {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      jsonrpc: "2.0",
+      error: { code: -32700, message: "Parse error" },
+      id: null,
+    }));
+    return;
   }
 
   const rawSessionId = req.headers["mcp-session-id"];

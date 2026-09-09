@@ -194,6 +194,28 @@ describe("crash resilience", () => {
   });
 });
 
+describe("protocol hardening", () => {
+  it("oversized body (>1MB) is rejected with 413, server stays alive", async () => {
+    const big = "x".repeat(1.5 * 1024 * 1024);
+    const res = await post(JSON.stringify({
+      jsonrpc: "2.0", id: 20, method: "tools/call",
+      params: { name: "query_memory", arguments: { query: big } },
+    }), sessionB.sid);
+    assert.equal(res.status, 413, `expected 413 for oversized body, got ${res.status}`);
+    await res.text();
+    const after = await post(JSON.stringify({ jsonrpc: "2.0", id: 21, method: "tools/list" }), sessionB.sid);
+    assert.equal(after.status, 200, "server must survive oversized body");
+    await after.text();
+  });
+
+  it("malformed JSON with NO session header is a parse error -32700 (was: misleading -32000 session error)", async () => {
+    const res = await post("{broken", null);
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error.code, -32700, `expected parse error, got ${JSON.stringify(body.error)}`);
+  });
+});
+
 describe("MCP protocol: tool semantics over wire", () => {
   it("query_memory honors limit=1 (slice contract)", async () => {
     const res = await post(JSON.stringify({
