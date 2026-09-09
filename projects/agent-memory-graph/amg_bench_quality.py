@@ -8723,13 +8723,88 @@ def _meas_time_sum(sessions: list[dict]):
     return f"{total:g} minutes"
 
 
+# C562: category-sum face — the item_total sibling for questions
+# whose "items" are a CATEGORY, not an enumerated list ("total
+# amount I spent on luxury items"). Census (500,
+# /tmp/c562/step1_census.py): exactly one routed row reached
+# item_total with an empty _cnt_item_list (36b9f61e, GT $2,500 =
+# 800 + 1,200 + 500) — the T1-T4b binders never saw it. Evidence
+# (user-role only, verified from raw haystack,
+# /tmp/c562/step2_evidence.py): three splurge anchors, each
+# carrying exactly one price — same-sentence ("designer handbag
+# ... for $1,200", "leather boots ... that I got for $500") or
+# next-user-sentence anaphora ("...bought a luxury evening gown
+# for a wedding." / "It was a big purchase, $800, ...").
+# Assistant lifestyle math ($4,000 income, $1,400 discretionary,
+# even a literal $2,500 example) and non-category purchases
+# (H&M $20 graphic tees) are excluded by the role + category
+# faces; intent planning lines ("I'm considering splurging...")
+# are _CNT_INTENT_RE-poisoned (C561 lesson); multi-price anchors
+# are skipped, never guessed.
+_CNT_CAT_TERM_RE = re.compile(r'\bluxury\b', re.I)
+_CNT_CAT_ANCHOR_RE = re.compile(
+    r'\b(?:splurg\w*|bought|got|purchased?|purchases?|made)\b',
+    re.I)
+
+
+def _cnt_category_sum(question: str, sessions: list[dict]):
+    """Sum user-stated prices behind category splurge anchors.
+
+    Fires only when the question asks about spending on a named
+    category ("luxury items/purchases") — i.e. the enumerated
+    item list was empty. Each user anchor sentence contributes at
+    most ONE distinct price: same-sentence when unique, else the
+    next user sentence when it carries a cost face ("It was a
+    big purchase, $800"). Returns ``$<total>`` (lane render) or
+    ``None`` (question falls through untouched).
+    """
+    ql = ' '.join(question.lower().split())
+    if not (_CNT_CAT_TERM_RE.search(ql)
+            and re.search(r'\b(items|purchases)\b', ql)
+            and re.search(r'\b(spend|spent)\b', ql)):
+        return None
+    by_sess: dict[int, list[str]] = {}
+    for si, sent in _cnt_sents(sessions):
+        by_sess.setdefault(si, []).append(sent)
+    total = 0.0
+    seen = 0
+    for sents in by_sess.values():
+        for k, sent in enumerate(sents):
+            if sent.endswith('?') or _CNT_INTENT_RE.search(sent):
+                continue
+            if not (_CNT_CAT_TERM_RE.search(sent)
+                    and _CNT_CAT_ANCHOR_RE.search(sent)):
+                continue
+            vals = _cnt_item_money(sent)
+            if not vals:
+                if k + 1 < len(sents):
+                    nxt = sents[k + 1]
+                    if (not nxt.endswith('?')
+                            and not _CNT_INTENT_RE.search(nxt)
+                            and _CNT_ITEM_COST_FACE.search(nxt)):
+                        vals = _cnt_item_money(nxt)
+                if not vals:
+                    continue
+            if len(set(vals)) != 1:
+                continue          # ambiguous anchor — skip
+            total += vals[0]
+            seen += 1
+    if not seen:
+        return None
+    return f"${round(total, 2):g}"
+
+
 def _cnt_item_total(question: str, sessions: list[dict]):
     """Sum per-item prices for enumerated "total cost" questions.
 
     Cycle 500 ("What is the total cost of A and B I got?").
     Binding tiers, strictest first (first tier that resolves an
     item wins; every item must resolve or the question falls
-    through untouched):
+    through untouched). C562: when the question names a CATEGORY
+    instead of enumerated items (empty ``_cnt_item_list``), the
+    category-sum face (``_cnt_category_sum``) owns the lane —
+    "total amount I spent on luxury items" has no item list to
+    bind:
 
     T1 — same clause: the clause carries all item kws (len<=2),
          len-1 of them (len>=3, "Lola's vet visit" → lola+vet),
@@ -8754,7 +8829,10 @@ def _cnt_item_total(question: str, sessions: list[dict]):
     """
     items = _cnt_item_list(question)
     if not items:
-        return None
+        # C562: category-sum face — "luxury items" is not a list
+        # the T1-T4b binders can work with; the category face
+        # owns these rows (None when it doesn't match either)
+        return _cnt_category_sum(question, sessions)
     # per (session, turn) sentence lists — T3 needs turn locality
     turns: list[list[tuple[int, str]]] = []
     for si, s in enumerate(sessions):
