@@ -10217,9 +10217,22 @@ export function analyzeGuardClauses(files = []) {
               if (ifBraceDepth === 0 && k > j) { ifEnd = k; break; }
             }
 
-            // Check for else after the if block
-            const afterIf = lines[ifEnd]?.trim();
-            if (afterIf && afterIf.match(/^else\s*\{?/)) {
+            // Check for else after the if block. The `else` keyword often sits
+            // on its own line AFTER the closing brace (style `}\nelse {`):
+            // ifEnd is the brace line itself, so scan forward to the next
+            // non-empty line. Same-line style (`} else {`) re-opens a brace so
+            // ifBraceDepth never returns to 0 on that line — ifEnd lands on the
+            // function end and this check misses it (known limitation).
+            let elseText = lines[ifEnd]?.trim();
+            if (elseText && !/^else\s*\{?/.test(elseText)) {
+              for (let k = ifEnd + 1; k <= Math.min(ifEnd + 3, lineCount - 1); k++) {
+                const t2 = lines[k]?.trim();
+                if (!t2) continue;
+                elseText = t2;
+                break;
+              }
+            }
+            if (elseText && elseText.match(/^else\s*\{?/)) {
               // This is an if-else wrapping the function body — guard clause opportunity
               const fnBodyLines = fnEnd - fnStart;
               const ifBlockLines = ifEnd - ifStart;
