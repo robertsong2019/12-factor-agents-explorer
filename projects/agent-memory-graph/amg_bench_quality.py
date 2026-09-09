@@ -7734,6 +7734,13 @@ def counting_form(question: str) -> str | None:
     if re.match(r'^what (?:is|was) the total '
                r'(?:amount|cost|price)\b', ql):
         return "item_total"   # C500: enumerated-item money sum
+    # C561: measurement-unit sums — the non-money siblings of
+    # item_total ("total distance/weight/time"). Census (500):
+    # exactly 4 rows (d3ab962e/6c49646a/bc149d6b/1192316e), all
+    # previously WRONG, zero banked overlap.
+    if re.match(r'^what (?:is|was) the total '
+               r'(?:distance|weight|time)\b', ql):
+        return "measure_sum"
     if re.match(r'^how (much|many)\b', q, re.I) \
             and re.search(r'\btotal\b', ql):
         if re.search(r'\bhow many (hours|years|months)\b', ql):
@@ -8581,6 +8588,139 @@ def _cnt_item_money(sent: str) -> list[float]:
             continue
         vals.append(float(m2.group(1).replace(',', '')))
     return vals
+
+
+# C561: measurement-unit sums — distance/weight/time siblings of
+# item_total. Evidence discipline mirrors the money sums (#079):
+# USER-role sentences only, ranges ("20-40 miles") are capacities
+# not quantities. Intent refinement: an intent phrase BEFORE the
+# quantity poisons it ("I'm thinking of getting 30 pounds" —
+# planning mentions leak); intent phrasing AFTER the quantity
+# ("… takes about 30 minutes, so I want to make the most of that
+# time") does not — the takes/total anchor certifies the fact.
+# Two tiers for distance/weight: when any user sentence marks a
+# quantity with "total" ("covered a total of 1,800 miles"), ONLY
+# marked sentences sum (unmarked per-day/first-day quantities are
+# noise); otherwise all user quantities sum (3-mile loop + 5-mile
+# hike). Time evidence must be "takes"-anchored ("commute takes
+# about 30 minutes") — a quantity later in a takes-sentence
+# ("… includes a 20-minute meditation") is not the sentence's
+# duration, and "4.5-hour drive away" has no takes anchor at all.
+_MEAS_NUM = r'(\d{1,6}(?:,\d{3})*(?:\.\d+)?)'
+_MEAS_QTY_RE = {
+    'distance': re.compile(r'(?<![\d,.])' + _MEAS_NUM
+                           + r'\s*-?\s*miles?\b', re.I),
+    'weight': re.compile(r'(?<![\d,.])' + _MEAS_NUM
+                         + r'\s*-?\s*(?:pounds?|lbs?)\b', re.I),
+}
+_MEAS_RANGE_RE = {
+    'distance': re.compile(r'\d[\d,]*(?:\.\d+)?\s*(?:-|\u2013|to)'
+                           r'\s*\d[\d,]*(?:\.\d+)?\s*-?\s*'
+                           r'miles?\b', re.I),
+    'weight': re.compile(r'\d[\d,]*(?:\.\d+)?\s*(?:-|\u2013|to)'
+                         r'\s*\d[\d,]*(?:\.\d+)?\s*'
+                         r'(?:pounds?|lbs?)\b', re.I),
+}
+_MEAS_TIME_ANCHOR_RE = re.compile(
+    r'\b(?:take|takes|took)\s+(?:(?:me|him|her|them|us)\s+)?'
+    r'(?:about\s+|around\s+|roughly\s+|approximately\s+)?', re.I)
+_MEAS_TIME_DIGIT_RE = re.compile(
+    _MEAS_NUM + r'\s*(hours?|minutes?)\b', re.I)
+_MEAS_TIME_WORD_RE = re.compile(
+    r'^(a|an|one|two|three|four|five|six|seven|eight|nine|ten'
+    r'|eleven|twelve)\s*(hours?)\b'
+    r'(\s+and\s+a\s+half\b)?', re.I)
+
+
+def _meas_render(total: float, singular: str, plural: str) -> str:
+    t = round(total, 6)
+    if t == int(t):
+        n = int(t)
+        return f"1 {singular}" if n == 1 else f"{n:,} {plural}"
+    return f"{t:g} {plural}"
+
+
+def _cnt_measure_sum(question: str, sessions: list[dict]):
+    """C561: sum user-stated quantities of the question's measure
+    unit (distance/weight/time siblings of ``total_sum``). Returns
+    a unit-rendered string or ``None`` (fall through to the gate
+    chain; the gates own abstention).
+    """
+    m = re.match(r'^what (?:is|was) the total '
+                 r'(distance|weight|time)\b',
+                 ' '.join(question.lower().split()))
+    if not m:
+        return None
+    fam = m.group(1)
+    if fam == 'time':
+        return _meas_time_sum(sessions)
+    qty_re, range_re = _MEAS_QTY_RE[fam], _MEAS_RANGE_RE[fam]
+    marked, unmarked = [], []
+    for _, sent in _cnt_sents(sessions):
+        if sent.endswith('?'):
+            continue
+        poisoned = [im.start()
+                    for im in _CNT_INTENT_RE.finditer(sent)]
+        skip = [(rm.start(), rm.end())
+                for rm in range_re.finditer(sent)]
+        vals = [float(qm.group(1).replace(',', ''))
+                for qm in qty_re.finditer(sent)
+                if not any(s <= qm.start() < e for s, e in skip)
+                and not any(i < qm.start() for i in poisoned)]
+        if vals:
+            (marked if re.search(r'\btotal\b', sent, re.I)
+             else unmarked).extend(vals)
+    vals = marked or unmarked
+    if not vals:
+        return None
+    total = round(sum(vals), 6)
+    if fam == 'distance':
+        return _meas_render(total, 'mile', 'miles')
+    return _meas_render(total, 'pound', 'pounds')
+
+
+def _meas_time_sum(sessions: list[dict]):
+    """C561 time face: sum takes-anchored durations in minutes."""
+    mins = []
+    for _, sent in _cnt_sents(sessions):
+        if sent.endswith('?'):
+            continue
+        poisoned = [im.start()
+                    for im in _CNT_INTENT_RE.finditer(sent)]
+        for tm in _MEAS_TIME_ANCHOR_RE.finditer(sent):
+            if any(i < tm.start() for i in poisoned):
+                continue
+            tail = sent[tm.end():]
+            dm = _MEAS_TIME_DIGIT_RE.match(tail)
+            if dm:
+                n = float(dm.group(1).replace(',', ''))
+                mins.append(n * 60 if dm.group(2).lower().startswith(
+                    'hour') else n)
+                continue
+            wm = _MEAS_TIME_WORD_RE.match(tail)
+            if wm:
+                n = {'a': 1.0, 'an': 1.0, 'one': 1.0, 'two': 2.0,
+                     'three': 3.0, 'four': 4.0, 'five': 5.0,
+                     'six': 6.0, 'seven': 7.0, 'eight': 8.0,
+                     'nine': 9.0, 'ten': 10.0, 'eleven': 11.0,
+                     'twelve': 12.0}[wm.group(1).lower()]
+                if wm.group(3):          # "an hour and a half"
+                    n += 0.5
+                mins.append(n * 60)
+    if not mins:
+        return None
+    total = round(sum(mins), 6)
+    h = total / 60.0
+    if h == int(h):
+        n = int(h)
+        return "an hour" if n == 1 else f"{n} hours"
+    if abs(h - int(h) - 0.5) < 1e-9:
+        n = int(h)
+        if n == 0:
+            return "half an hour"
+        return ("an hour and a half" if n == 1
+                else f"{n} and a half hours")
+    return f"{total:g} minutes"
 
 
 def _cnt_item_total(question: str, sessions: list[dict]):
@@ -10424,6 +10564,7 @@ def answer_counting(question: str,
           "duration_family": _cnt_duration_family,
           "total_sum": _cnt_total_sum,
           "item_total": _cnt_item_total,
+          "measure_sum": _cnt_measure_sum,
           "unit_sum": _cnt_unit_sum,
           "freq_days": _cnt_freq_days,
           "enum_count": _cnt_enum_count,
