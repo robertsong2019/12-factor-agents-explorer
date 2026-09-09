@@ -5092,6 +5092,16 @@ _PP_TENURE_RE = re.compile(
 
 _PP_HEAD_RE = re.compile(r"^\s*how long\s+(?:had|have|did)\b", re.I)
 
+# Units-progressive head (C563): "How many weeks have I been taking
+# sculpting classes when …" — present-perfect PROGRESSIVE carries a
+# duration-up-to-event semantics identical to the ``how long``
+# family; the progressive ``-ing`` discriminator keeps the
+# perfect-passive siblings ("how many weeks have I been accepted …",
+# counting-gated, banked CORRECT) out by construction.
+_PP_UNITS_PROG_RE = re.compile(
+    r"^\s*how\s+many\s+(?:days?|weeks?|months?|years?)\s+"
+    r"(?:have|had)\s+I\s+been\s+[a-z]+ing\b", re.I)
+
 # clause stopwords — 3-letter content nouns ("rug", "amp") must
 # survive (#077 prototype v2 lesson: len>3 silently dropped them)
 _PP_STOP = frozenset({
@@ -5119,7 +5129,7 @@ def pp_duration_form(question: str) -> bool:
     questions carry no when/before clause either.
     """
     q = question.strip()
-    if not _PP_HEAD_RE.match(q):
+    if not (_PP_HEAD_RE.match(q) or _PP_UNITS_PROG_RE.match(q)):
         return False
     return bool(re.search(r"\b(?:when|before)\b", q, re.I))
 
@@ -5165,6 +5175,27 @@ def _pp_kws(clause: str) -> list[str]:
     """Distinctive content keywords of a state/event clause."""
     return [w for w in re.findall(r"[a-z]+", clause.lower())
             if w not in _PP_STOP and len(w) >= 3]
+
+
+def _pp_expr_sentence(line: str, expr: str) -> str:
+    """The sentence of ``line`` containing duration expr ``expr``.
+
+    Sentence is the unit of keyword-binding (C563): a tenure
+    mention and the keyword it contextualizes can sit in adjacent
+    sentences of one line — only same-sentence co-occurrence is
+    acquisition evidence ("Speaking of my new binoculars, I got
+    them exactly three weeks ago" vs "...for about a month now.
+    My new binoculars has made a huge difference").
+    """
+    i = line.lower().find(expr.lower())
+    if i < 0:
+        return line
+    off = 0
+    for s in re.split(r"(?<=[.!?])\s+", line):
+        if off <= i < off + len(s):
+            return s
+        off += len(s) + 1
+    return line
 
 
 def _pp_overlap(kw_list: list[str], line: str) -> int:
@@ -5243,6 +5274,73 @@ def _pp_tenure_str(line: str) -> str | None:
     return f"{n} {unit}" + ("s" if n != 1 else "")
 
 
+_PP_QUNIT_RE = re.compile(
+    r"^\s*how\s+many\s+(days?|weeks?|months?|years?)\b", re.I)
+
+
+def _pp_session_span(question: str,
+                     sessions: list[tuple[datetime, list[dict]]],
+                     sk: list[str], ek: list[str]) -> str | None:
+    """Route (d): session-pair span (C563).
+
+    Units-progressive heads ("how many weeks have I been X-ing
+    when Y?") often anchor state and event as same-session
+    "today" facts — no ago/now expressions anywhere, so route (b)
+    finds nothing to subtract. The span is the SESSION-pair
+    distance |event_session − state_session|, rendered in the
+    question's own unit (the unit is part of the question, not an
+    anchor's phrasing). Engages only after route (b) misses;
+    missing anchors, a shared line/date (unmeasurable span), or a
+    unit with no faithful render (years) → None — honest
+    fall-through, the gate chain keeps its claims.
+    """
+    if not (sk and ek):
+        return None
+    mu = _PP_QUNIT_RE.match(question)
+    if not mu:
+        return None
+    unit = mu.group(1).lower().rstrip("s")
+    if unit == "year":
+        return None
+    e_c, s_c = [], []
+    for si, (dt, turns) in enumerate(sessions):
+        for ti, turn in enumerate(turns):
+            if turn.get("role") != "user":
+                continue
+            line = str(turn.get("content", ""))
+            e_ov = _pp_overlap(ek, line)
+            s_ov = _pp_overlap(sk, line)
+            if e_ov >= min(2, len(ek)):
+                e_c.append(((si, ti), e_ov, -s_ov, dt))
+            if s_ov >= min(2, len(sk)):
+                s_c.append(((si, ti), s_ov, -e_ov, dt))
+    if not e_c or not s_c:
+        return None
+    ev_id, _ev_ov, _neg, ev_dt = max(e_c, key=lambda x: (x[1], x[2]))
+    st_c = [x for x in s_c if x[0] != ev_id]
+    if not st_c:
+        return None
+    st_id, _st_ov, _neg, st_dt = max(st_c,
+                                     key=lambda x: (x[1], x[2]))
+    if st_dt == ev_dt:
+        return None
+    days = float(abs((ev_dt - st_dt).days))
+    if unit == "week":
+        w = days / 7
+        r = round(w)
+        if 0 < r and abs(w - r) <= 0.5:
+            return f"{r} week" + ("s" if r != 1 else "")
+    if unit == "month":
+        mo = days / 30.44
+        r = round(mo)
+        if 0 < r and abs(mo - r) <= 0.5:
+            return f"{r} month" + ("s" if r != 1 else "")
+    d = round(days)
+    if d > 0:
+        return f"{d} day" + ("s" if d != 1 else "")
+    return None
+
+
 def answer_pp_duration(
         question: str,
         dated_sessions: list[tuple[str, list[dict]]],
@@ -5263,6 +5361,14 @@ def answer_pp_duration(
         (max event-overlap), then the state line EXCLUDING that
         line's identity — shared phrases ("bird watching") make
         single-line double-capture the dominant failure mode.
+        Overlap-tied state picks prefer same-sentence expressions
+        (C563: the acquisition sentence beats a cross-sentence
+        tenure mention sharing the line).
+    (d) *session span* (C563) — units-progressive heads whose
+        anchors are same-session "today" facts (no ago/now
+        expressions anywhere): the span is the session-pair
+        distance, rendered in the question's own unit. Only
+        engages after route (b) misses.
 
     Args:
         question: The question text.
@@ -5377,19 +5483,23 @@ def answer_pp_duration(
         state_clause, event_clause = re.split(
             r"\bbefore\b", question, 1, flags=re.I)
     state_clause = re.sub(
-        r"^\s*how long\s+(?:had|have|did)\s+(?:i\s+)?(?:been\s+)?",
+        r"^\s*how\s+(?:long|many\s+(?:days?|weeks?|months?|years?))"
+        r"\s+(?:had|have|did)\s+(?:i\s+)?(?:been\s+)?",
         "", state_clause, flags=re.I)
     sk, ek = _pp_kws(state_clause), _pp_kws(event_clause)
-    scored = []  # (line_id, s_ov, e_ov, anchor, n, unit, kind)
+    scored = []  # (line_id, s_ov, e_ov, anchor, n, unit, kind, s_ss)
     for si, (dt, turns) in enumerate(sessions):
         for ti, turn in enumerate(turns):
             if turn.get("role") != "user":
                 continue
             line = str(turn.get("content", ""))
-            for kind, n, u, _raw in _pp_dur_exprs(line):
+            for kind, n, u, raw in _pp_dur_exprs(line):
                 anchor = dt - timedelta(days=n * _PP_UNIT_DAYS[u])
+                low_sent = _pp_expr_sentence(line, raw).lower()
+                s_ss = sum(1 for w in sk if w in low_sent)
                 scored.append(((si, ti), _pp_overlap(sk, line),
-                               _pp_overlap(ek, line), anchor, n, u, kind))
+                               _pp_overlap(ek, line), anchor, n, u,
+                               kind, s_ss))
     # phase 1: event anchor (max event-overlap; ties prefer lines
     # whose event-overlap dominates over state-overlap). Short
     # clauses need all of their keywords, not a fixed 2 (census:
@@ -5400,11 +5510,23 @@ def answer_pp_duration(
     best_event = max(ev_c, key=lambda x: (x[2], -x[1])) if ev_c else None
     # phase 2: state anchor — max state-overlap among lines OTHER
     # than the event line (cross-exclusion by line identity).
+    # Same-sentence binding (C563): among overlap-tied candidates,
+    # a duration expression whose containing sentence also carries
+    # a state keyword is acquisition evidence; a cross-sentence
+    # tenure mention ("...for about a month now. By the way, my
+    # new binoculars...") is background context that happens to
+    # share the line. First-maximal falls out only when the ss
+    # column ties too — prior behavior preserved.
     st_c = [x for x in scored
             if len(sk) and x[1] >= min(2, len(sk))
             and x[0] != (best_event[0] if best_event else None)]
-    best_state = max(st_c, key=lambda x: (x[1], -x[2])) if st_c else None
+    best_state = max(st_c,
+                     key=lambda x: (x[1], x[7], -x[2])) if st_c else None
     if not best_state or not best_event:
+        span = _pp_session_span(question, sessions, sk, ek)
+        if span is not None:
+            detail["route"] = "session_span"
+            return span, detail
         detail["missing"] = ("state" if not best_state else "event") \
             + " anchor"
         return None, detail
@@ -5455,6 +5577,15 @@ def pp_duration_judge(question: str, truth: str,
                 <= int(rng.group(2)):
             return True
     if p == base:
+        return True
+    # Bare-number GT ("3" for a "how many weeks" question — the
+    # unit lives in the question, the oracle stores the count):
+    # credit only the pred that spells the question's own unit
+    # ("3 weeks"); a unit mismatch ("3 months") stays wrong.
+    _qm = re.match(r"\s*how\s+many\s+(days?|weeks?|months?|years?)\b",
+                   question, re.I)
+    if base.isdigit() and _qm and re.match(
+            rf"{base}\s+{_qm.group(1).lower()}", p):
         return True
     ps = re.sub(r"\b(?:a|an|the)\b|s\b", "", p).split()
     bs = re.sub(r"\b(?:a|an|the)\b|s\b", "", base).split()
