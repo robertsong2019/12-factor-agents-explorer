@@ -2,7 +2,7 @@
 
 > 基于 SQLite 的轻量知识图谱，模拟 AI Agent 的长期记忆管理
 
-[![Tests](https://img.shields.io/badge/tests-10370-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-10413-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10+-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero-success)]()
@@ -66,7 +66,7 @@
 - **拓扑快捷统计** — hub_nodes/peripheral_nodes/mean_degree 一键获取关键结构指标 (Cycle 339)
 - **图分类套件** — 8 种分类方法 + 基准评估 + 最大置信度元分类器 + 噪声鲁棒性测试 (Cycles 326-341)
 - **Temporal QA 家族 (5 路由)** — LongMemEval temporal-reasoning 零 LLM 解法：temporal_arith 日历算术 + pp_duration/pure_tenure 状态时长 + order 排序 + pairwise which-first，form gate + 最早-FRESH 锚定 + 负存在弃权，temporal-133 0.323→0.474 全程 zero-flip (Cycles 457-489)
-- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 破半后持续进化：0.494（Cycles 520-531）→ **0.580**（Cycles 548-560，答案面家族 + judge 侧 rescue faces + 计数/时序/时长值解析族 + 锚点选择三连（角色优先/事件跨度/多日期）+ 两跳日期合成与定义式指代 bearer + judge 溯源指纹，见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)）
+- **确定性语义判分级联** — judge_semantic 规范化阶梯（大小写/日期折叠/时间单位/守卫包含）零 LLM 可判面 + judge_cascade 仅 NEEDS_JUDGE 才降级 LLM；readonly 确定性召回让评估成为 dataset 纯函数，官方 LME_s cascade-500 破半后持续进化：0.494（Cycles 520-531）→ **0.594**（Cycles 548-563，答案面家族 + judge 侧 rescue faces + 计数/时序/时长值解析族 + 锚点选择三连（角色优先/事件跨度/多日期）+ 两跳日期合成、定义式指代 bearer、度量单位求和、类别求和与时长残留面 + judge 溯源指纹，见 [TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md)）
 - **零依赖** — 仅用 Python 标准库（sqlite3 + json + math），sqlite-vec 为可选依赖
 - **传播激活家族 (5 API)** — ACT-R 认知模型: spreading_activation (基础) → activation_trace (可解释) → competitive_spreading (多种子竞争) → temporal_spreading (时间衰减) → activation_diff (对比分析) (Cycles 366-383)
 - **流式熵追踪** — FINGEREntropy O(Δ) 增量 von Neumann 熵 + StreamingGraph 实时异常检测 (Cycle 361)
@@ -4445,6 +4445,22 @@ C555 census 证伪留观的 982b5123（GT "Five months ago"）兑现：winner �
 #### C560：judge provenance fingerprint — 判分溯源进 report (eab9d61)
 
 config-only、pred-neutral（零预测路径改动，按构造免 500 行重放）：同一份代码、不同 judge 配置会给出不同判定，但 report 里没有任何痕迹——这轮让溯源变成事实。`judge_prompt_sha12`（sha256(JUDGE_PROMPT)[:12]）进 dual/semantic 判分 config，紧挨 judge_llm_backend：prompt 一改，fingerprint 必变。`judge_model`：sticky `_JUDGE_MODEL` 由 judge_ollama 在**非 ERROR** verdict 时记录（ERROR = 未出判定，不认领身份），仅 backend==ollama 时浮现——一次 ollama 判定的 run 终于说出**是哪个模型判的**；mock/未咨询场景诚实缺席。+9 tests test_judge_provenance.py（red-first 2 wiring tests），suite 10361→10370（junit 306s 0F/0E）。
+
+## Cycles 561-563: 0.580→0.594 — 度量求和、类别求和、时长残留
+
+> 官方口径轨迹：0.580（C559）→ **0.588（C561）** → **0.590（C562）** → **0.594（C563）**，banked 290→297，套件 10370→10413。本段主轴：值解析族的残留地带清扫——counting 的非金钱度量兄弟（C561）、item_total 的空清单分支（C562）、时长族最后两个病根（C563）。三个 cycle 全部 census-first、零 kills。教程同步增补：[TUTORIAL-ANSWER-FACES.md](TUTORIAL-ANSWER-FACES.md) §5.12-§5.14。
+
+#### C561：measure_sum faces — counting 的非金钱兄弟 (5b42dc1)
+
+counting_form 一直只认 amount/cost/number；"What is the total **distance/weight/time**" 三个兄弟全 WRONG。census 先行：放宽形 `^what (is|was) the total (distance|weight|time)` 全 500 恰 4 行、全 WRONG、零 banked 重叠——按构造零误伤面。机制：user 角色数量的单位求和，难点全在词形与边界——连字符形容词（"3-mile loop trail"）、后置单位（"50-pound batch" + "20 pounds bought"）、**total 标记两档选择**（decoy "drove around 300 miles on the first day" 无 total 不算）、takes 锚定时长（"an hour and a half" = 60+30，内嵌 "20-minute meditation" 不算）。红测试先抓 2 个真 bug：weight 模式漏 `-?`（拿到 "20 pounds" 不是 "70 pounds"）、"and a half" 非捕获组 IndexError；第三个在 GREEN 阶段返工——通勤句 "takes about 30 minutes, so I want to..." 被 `_CNT_INTENT_RE` 误杀，意图毒化改成**位置敏感**（intent 在数量之前才毒化，之后不毒化），与真实语料原句逐字对齐。banked 290→294（0.588），4 救 0 杀（d3ab962e "8 miles" / 6c49646a "3,000 miles" / bc149d6b "70 pounds" / 1192316e "an hour and a half"），live-500 tripwire PASS（恰 4 pred change），+13 tests test_measure_sum_faces.py（10370→10383）。
+
+#### C562：category_sum face — 类别不是枚举清单 (1eab51d)
+
+"What is the total amount I spent on **luxury items**" 被正确路由进 item_total（C500 形），但 `_cnt_item_list("luxury items")` 返回空——**类别词指向一类购买，不是逐项清单**，行落到答案门弃权。新 `_cnt_category_sum` 只挂在空清单分支：user 角色挥霍锚（luxury 词 + buy 动词），每项一个独立价格——同句或下一句 user 句的价格面指代（"It was a big purchase, $800"）。证据核验先于设计：assistant 生活方式数学里有字面 $2,500 诱饵（可支配收入示例）+ $1,400 预算 + H&M $20 非类别购买，全靠角色 + 类别面排除。miniature 教训：合成的弃权 mini 凭空发明 iPad 提及，连续踩中既有 T4a/T4b 激进面——**合成夹具要贴近真实行的形状**（真实行里用户从没提 iPad，GT 弃权是证据缺席，不是绑定失败），重写后既有 T4 行为原样保留。渲染保持车道一致的 `:g`（$2500 无逗号）——改逗号渲染会扰动别的 banked 行，零收益不付扰动代价。banked 294→295（0.590），1 救 0 杀（36b9f61e $2,500 = $800 晚礼服 next-sentence 指代 + $1,200 Gucci 手袋 + $500 意大利设计师靴，三锚点逐字取自原文），live-500 tripwire PASS，+16 tests test_category_sum_faces.py（10383→10399）。
+
+#### C563：pp_duration residual faces — 同句状态绑定 + 进行体问头与会话跨度 (79d0cf2)
+
+两个病根一个家族。**同句状态绑定**：route (b) 相位 2 重叠平局的状态候选，改选**所在句带状态关键词**的 dur 表达（`_pp_expr_sentence`，ss 列进 scored tuple，ss 再平局保留 first-maximal）——gpt4_cd90e484 从 "3 weeks" 翻到 "2 weeks"：跨句 tenure 句 "for about a month now" 因带状态词胜过同句的 "Speaking of my new binoculars, I got them exactly three weeks ago"。**进行体问头**："How many weeks have I been X-ing when Y" 的 blanket 扩展问头在 census 里吞 25 行（含 banked counting/temporal_arith 行 "did it take"、"had passed since"），收窄到进行体 **-ing 判别式**恰剩目标行，被动式兄弟 gpt4_4cd9eba1 按构造留在 counting（banked CORRECT，零误伤）。新 route (d) `_pp_session_span`：同会话 "today" 锚（无 ago/now 表达）解析为**会话对距离**，按问题自身单位渲染（years 排除 → 诚实落穿）；`pp_duration_judge` 对裸数字 GT（"3"）只在预测带问题自身单位（"3 weeks"，绝不是 "3 months"）时认领。banked 295→297（0.594），2 救 0 杀（gpt4_cd90e484 route-b re-pick 23d→14d + 6e984301 counting "6 weeks" 幻觉 → 会话跨度 03-04 减 02-11 = 21 天 = "3 weeks" = oracle "3"），live-500 tripwire PASS（恰 2 pred change），+14 tests test_pp_duration_faces.py（10399→10413）。
 
 ## 许可
 

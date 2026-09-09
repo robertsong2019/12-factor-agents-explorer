@@ -63,7 +63,7 @@ context-forge /path/to/my-project --dry-run
 - 📤 **Export health** — barrel files, re-export chains, unused exports, mixed styles (F57)
 - 📐 **Function metrics** — length, param count, return paths, arrow/async split (F58)
 
-### Code Structure & Safety (F75–F83)
+### Code Structure & Safety (F75–F84)
 
 - 🛡️ **Guard clauses** — deep nesting (4+ levels), if/else wrapping candidates (F75)
 - 📦 **Parameter objects** — 4+ scalar params, boolean flag confusion, consecutive optionals (F76)
@@ -74,6 +74,7 @@ context-forge /path/to/my-project --dry-run
 - 🧩 **Cognitive complexity** — SonarQube-style nesting-aware scoring (F81)
 - 🕵️ **Security anti-patterns** — 8 categories: eval, XSS, SQLi, prototype pollution, ReDoS, command injection (F82)
 - 📋 **Changelog health** — Keep a Changelog compliance: semver, ISO dates, descending order, empty releases, 6 standard sections, A-F grade (F83)
+- 🎯 **Analyzer branch coverage** — direct tests for the 5 largest uncovered analyzer branches; guard-clause style-A `else` detection fix (F84)
 
 ### Analysis Extras (F35–F45)
 
@@ -859,6 +860,29 @@ What it checks:
 - **Empty releases** — a version heading with no body is flagged
 - **Six standard sections** — Added / Changed / Deprecated / Removed / Fixed / Security presence
 - **Grading** — additive 100-point scoring (releases +15, valid semver +10, descending +15, dated +10, ISO +10, sections +15, unreleased +5, no empty +10, no placeholders +10) minus severity penalties (critical −30, high −5), mapped to A-F; missing file = instant F
+
+---
+
+## Guard-Clause Else Detection & Branch Coverage (F84)
+
+Two additions to the code-structure suite:
+
+**Style-A `else` detection in `analyzeGuardClauses` (F75)** — the if/else-wrapping-body check only saw `} else {` on the same line; the common style with `else` on its own line after the closing brace was invisible:
+
+```javascript
+function handle(ctx) {
+  if (ctx.ready) {
+    return compute(ctx);   // big if wrapping most of the body
+  }
+  else {                   // ← style-A: else on the NEXT line — was never detected
+    return fallback(ctx);  // missed as a guard-clause opportunity
+  }
+}
+```
+
+The check now scans forward up to 3 lines past the if-block for the next non-empty line before testing for `else`. Known limitation: same-line `} else {` re-opens a brace, so `ifEnd` lands on the function end and this particular check still misses it.
+
+**Branch coverage tests** — the 5 largest non-main uncovered blocks (found via `--experimental-test-coverage`) got direct tests: `analyzeAsyncPatterns` unhandled-rejection look-ahead, `analyzeCodeSmells` arrow ≥5 params, `analyzeGuardClauses` if/else-wraps-body, `analyzeParameterObjects` trailing optional params, `analyzeReturnPaths` unreachable code on the return line. Suite 1511→1555.
 
 ---
 

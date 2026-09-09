@@ -165,9 +165,9 @@ judge cascade（exact → semantic → LLM）里有一个 NEEDS_JUDGE 区间：e
 
 ---
 
-## 5. 值解析与锚点族 face：数字、日期、时长、锚点选择（C549-C559）
+## 5. 值解析与锚点族 face：数字、日期、时长、锚点选择（C549-C563）
 
-§3-§4 的 face 都长在"**选哪句话**"上；C549-C554 是第三波：答案本身是个数值/日期/时长，face 长在"**值解析**"上——不是从候选里挑句子，而是从通过 gate 的内容里提炼出**正确的值**。C555-C557 是第四波：值对了还不够，**锚点选择**本身也是信号源——锚是谁说的（角色）、跨度怎么定义（口径）、行内多个日期选哪个（临近度/连续对）。外加一次方法论升级（C549：census-negative 的第三种用法）。
+§3-§4 的 face 都长在"**选哪句话**"上；C549-C554 是第三波：答案本身是个数值/日期/时长，face 长在"**值解析**"上——不是从候选里挑句子，而是从通过 gate 的内容里提炼出**正确的值**。C555-C557 是第四波：值对了还不够，**锚点选择**本身也是信号源——锚是谁说的（角色）、跨度怎么定义（口径）、行内多个日期选哪个（临近度/连续对）。外加一次方法论升级（C549：census-negative 的第三种用法）。C561-C563 是值解析族的残留地带清扫：counting 的非金钱度量兄弟（距离/重量/时长）、item_total 的空清单分支（类别求和）、时长族最后两个病根（同句状态绑定 + 进行体问头/会话跨度）。
 
 ### 5.1 C549 松弛空间穷举 — census-negative 变成局部最优证书
 
@@ -238,6 +238,24 @@ temporal 欠账队首的 census 证伪了原假设：潜在救回行的"真赢�
 "the name of that **restaurant**"：问题 demand 一个专名，中心名词 restaurant 就是类型签名。impostor "Take a cooking class: …nasi goreng…" raw=3 赢过 GT bearer "Miss Bee Providore: This restaurant serves…" raw=2——词面多数败给**跨句证据**（locator "Cihampelas Walk" 在前导句，bearer 句只含 {restaurant, serves}）。face 逻辑：demand 专名的问题提升**定义式 bearer** `<ProperName>: this <anaphor≈head>`，anaphor 名词匹配问题中心名词——一石三鸟：认领 Miss Bee Providore（this restaurant ✓）、排除 locator-sibling（this shopping center ✗）、排除动词冒号项（Take a cooking class: ✗）。
 
 > 两个坑：miniature 语料 N 太小，raw=2 bearer 过不了 weighted floor 10——离线迷你测试要显式做 N 填充（真实语料 N=4480 自动满足）；suite 计数要 junitxml + 同日同法测 base（C558 台账 10347 vs 同 HEAD 次日实测 10352，±5 漂移让 delta 对不上）。census 8 行全枚举恰 1 变化才接线，live-500 tripwire（恰 1 pred change / 恰 1 drift / 290）收尾。
+
+### 5.12 C561 measure_sum faces — counting 的非金钱兄弟
+
+counting_form 认得 amount/cost/number，但 "What is the total **distance/weight/time**" 三个兄弟全 WRONG。机制是 user 角色数量的单位求和，难点全在词形与边界：连字符形容词（"3-mile loop trail"）、后置单位（"50-pound batch" + "20 pounds bought"）、**total 标记两档选择**（decoy "drove around 300 miles on the first day" 没有 total，不算）、takes 锚定时长（"an hour and a half" = 60+30 分钟，内嵌 "20-minute meditation" 不算）。census 先行：放宽形 `^what (is|was) the total (distance|weight|time)` 全 500 恰 4 行、全 WRONG、零 banked 重叠——按构造零误伤面。
+
+> 红测试先抓 2 个真 bug（weight 模式漏 `-?`、"and a half" 非捕获组 IndexError），第三个在 GREEN 阶段返工：通勤句 "takes about 30 minutes，**so I want to**..." 被 intent 正则误杀——改成**位置敏感毒化**（intent 在数量之前才毒化，之后不毒化），与真实语料原句逐字对齐。census 顺带划清车道：2b8f3739 需要 qty×price 乘加、days 族需要日期锚定计数，都明确留在外面。
+
+### 5.13 C562 category_sum face — 类别不是枚举清单
+
+"What is the total amount I spent on **luxury items**" 路由正确（item_total 形），但 `_cnt_item_list("luxury items")` 返回空——类别词指向一类购买，不是逐项清单，行落到答案门弃权。修复只挂**空清单分支**：user 角色挥霍锚（luxury 词 + buy 动词），每项一个独立价格，同句或下一句 user 句的价格面指代（"It was a big purchase, $800"）。唯一救行 36b9f61e：$2,500 = $800 晚礼服（next-sentence anaphora）+ $1,200 Gucci 手袋 + $500 意大利设计师靴，三个锚点全部逐字取自原文；assistant 侧的字面 $2,500 诱饵（可支配收入示例）靠角色 + 类别面排除。
+
+> 合成交互的教训：第一版弃权 miniature 凭空发明了 iPad 提及，连续踩中既有 T4a/T4b 激进面（会话唯一 $378 → $756 双计 / 轮次唯一 $528）——合成夹具**要贴近真实行的形状**（真实行里用户从没提 iPad，GT 弃权是证据缺席，不是绑定失败），重写后既有 T4 行为原样保留。渲染保持车道一致的 `:g`（$2500 无逗号）：改逗号渲染会扰动别的 banked 行，零收益不付扰动代价。
+
+### 5.14 C563 pp_duration residual faces — 同句状态绑定与进行体问头
+
+时长族最后两个病根，一个家族两个 wrong。**同句状态绑定**：route (b) 相位 2 重叠平局的状态候选，改选**所在句带状态关键词**的 dur 表达（ss 列进 scored tuple，ss 再平局保留 first-maximal）——gpt4_cd90e484 从 "3 weeks" 翻到 "2 weeks"：跨句 tenure 句 "for about a month now" 因带状态词胜过同句的 "…exactly three weeks ago"。**进行体问头**："How many weeks have I been X-ing when Y" 的 blanket 扩展问头在 census 里吞 25 行（含 banked 行 "did it take"、"had passed since"），收窄到进行体 **-ing 判别式**恰剩目标行，被动式兄弟按构造留在 counting。新 route (d)：同会话 "today" 锚（无 ago/now 表达）解析为**会话对距离**，按问题自身单位渲染（years 排除 → 诚实落穿）；judge 对裸数字 GT（"3"）只在预测带问题自身单位（"3 weeks"，绝不是 "3 months"）时认领。
+
+> census 三连用到位：wrong 行普查 205 → pp 残留家族恰 2 行；扩展问头普查**提前**抓到 kill 风险（25 行 → 收窄后恰 1 行）；23 行定向 A/B 精确预测恰 2 处变化。kill 风险不是接线后才发现的——是接线前普查出来的。
 
 ---
 
@@ -314,6 +332,9 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 | 同一行多个日期 / 问题含 "in a row" | multi-date proximity + consecutive-pair | 选距锚关键词簇最近日期（平局最左）；Δ=1 事件对取后一天（≤ qd） | C557 |
 | 答案是 "N <unit> ago"，锚需两跳相对日期合成 | relative-advance composition | pivot 行稀有共享词（df≤5）链接，anchor = pivot − N1 − N2 | C558 |
 | 问题 demand 专名（"the name of that X"） | definitional-anaphora（name-demand） | 定义式 bearer `<专名>: this <anaphor≈X>` 压过词面多数；locator-sibling 与动词冒号项排除 | C559 |
+| 问题问总距离/总重量/总时长 | measure_sum（counting） | user 角色单位求和；连字符与后置单位词形；total 标记两档选择；takes 锚定时长 | C561 |
+| 问题问花在某类东西上的总额 | category_sum（item_total 空清单分支） | 类别 ≠ 枚举清单；user 挥霍锚每项一价；next-sentence 价格面指代 | C562 |
+| 时长候选平局 / 进行体问头 / 裸数字 GT | pp_duration residual（同句状态绑定 + session_span） | 所在句带状态关键词优先；-ing 判别式收窄问头；同会话 today 锚 = 会话对距离；裸数字须带问题单位 | C563 |
 | kh-floor 想救 kh=0 GT | 🚫 census-negative，不接线 | 1 救 vs 14 杀，absence pin 钉死 | C543 |
 | kh-elite 准入救窗口死区 | 🚫 census-negative，不接线 | impostor 杀率 23.3% vs 4 救，admission-only 全族否决 | C546 |
 | 松弛 run 门想多救几行 | 🚫 census-negative = 局部最优证书 | 全部 kill 是 run-TIE impostor；absence pin 钉死 C548 配置 | C549 |
@@ -331,4 +352,4 @@ answer-face 家族的开发纪律（每个 face 都走了这套流程）：
 
 ---
 
-*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04；Cycles 546-548 增补：2026-09-05；Cycles 549-554 增补：2026-09-07；Cycles 555-557 增补：2026-09-08；Cycles 558-559 增补：2026-09-09。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-560 段。*
+*生成：documentation-morning cron，2026-09-02；Cycles 540-542 增补：2026-09-03；Cycles 543-545 增补：2026-09-04；Cycles 546-548 增补：2026-09-05；Cycles 549-554 增补：2026-09-07；Cycles 555-557 增补：2026-09-08；Cycles 558-559 增补：2026-09-09；Cycles 561-563 增补：2026-09-10。数据口径：LongMemEval s_cleaned full-500，PYTHONHASHSEED=7，deterministic cascade banked。轨迹明细见 README Cycles 532-563 段。*
