@@ -94,7 +94,7 @@ interface Session {
 
 const sessions = new Map<string, Session>();
 
-const httpServer = createServer(async (req, res) => {
+async function handleRequest(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) {
   // Collect request body
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -151,6 +151,20 @@ const httpServer = createServer(async (req, res) => {
       id: null,
     }));
     void err;
+  }
+}
+
+const httpServer = createServer(async (req, res) => {
+  // Crash guard: a client aborting mid-request (ECONNRESET / 'aborted') makes
+  // the body-read loop throw. An uncaught rejection here kills the whole
+  // process (Node 15+ default), taking every live MCP session down with it.
+  try {
+    await handleRequest(req, res);
+  } catch {
+    if (!res.headersSent && !res.destroyed) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+    }
+    res.destroy();
   }
 });
 

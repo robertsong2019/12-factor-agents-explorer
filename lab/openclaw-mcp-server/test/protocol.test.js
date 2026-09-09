@@ -138,6 +138,62 @@ describe("MCP protocol: error paths", () => {
   });
 });
 
+describe("crash resilience", () => {
+  // Dedicated server: if the guard regresses, this server dies mid-suite
+  // and these tests fail loudly instead of poisoning the shared instances.
+  const CRASH_PORT = "3196";
+  const CRASH_BASE = `http://localhost:${CRASH_PORT}`;
+  let crashProc;
+
+  before(async () => {
+    crashProc = spawn("node", ["dist/index.js"], {
+      env: { ...process.env, PORT: CRASH_PORT },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("startup timeout")), 5000);
+      crashProc.stdout.on("data", (data) => {
+        if (data.toString().includes("OpenClaw MCP Server running")) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      crashProc.on("error", reject);
+    });
+  });
+
+  after(() => {
+    crashProc?.kill();
+  });
+
+  it("client aborting mid-body does not crash the process (red-first: exit code 1)", async () => {
+    const { connect: tcpConnect } = await import("node:net");
+    const sock = tcpConnect(CRASH_PORT, "127.0.0.1");
+    await new Promise((r) => sock.once("connect", r));
+    sock.write(
+      `POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 10000\r\n\r\n{"partial":`
+    );
+    await new Promise((r) => setTimeout(r, 150));
+    sock.destroy();
+
+    // Give the aborted request time to hit the handler and (if unguarded) the rejection
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(crashProc.exitCode, null, `server crashed with code ${crashProc.exitCode}`);
+    assert.equal(crashProc.signalCode, null, `server killed by ${crashProc.signalCode}`);
+  });
+
+  it("server is still fully functional after the abort", async () => {
+    const res = await fetch(CRASH_BASE, {
+      method: "POST",
+      headers: HEADERS,
+      body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "tools/list" }),
+    });
+    assert.equal(res.status, 400, "no session header → 400, but connection must be alive");
+    const body = await res.json();
+    assert.equal(body.error.code, -32000);
+  });
+});
+
 describe("MCP protocol: tool semantics over wire", () => {
   it("query_memory honors limit=1 (slice contract)", async () => {
     const res = await post(JSON.stringify({
